@@ -1,0 +1,172 @@
+//! The RootState named-state stack, driven against synthetic state scripts: boot →
+//! root.onInit → `add` children → each self-`show`s → sibling bus → `finish` →
+//! the background-task hook. Uses an in-memory script source so the test is
+//! self-contained (no game data).
+
+use std::collections::HashMap;
+
+use squirrel::{SQVM, SqArray, SqTable};
+use squirrel_bb::{LoadedScript, ModuleSystem, RootState, ScriptSource, install_natives};
+
+/// A trivial in-memory [`ScriptSource`] mapping path → source text.
+struct MemSource(HashMap<String, String>);
+
+impl ScriptSource for MemSource {
+	fn load(&self, path: &str) -> Option<LoadedScript> {
+		self.0
+			.get(path)
+			.map(|s| LoadedScript::Source(s.clone().into_bytes()))
+	}
+	fn list_prefix(&self, _prefix: &str) -> Option<Vec<String>> {
+		None
+	}
+}
+
+fn sources() -> MemSource {
+	let mut m = HashMap::new();
+	// Base: virtual hooks that log via ::log (getName is injected natively).
+	m.insert(
+		"scripts/states/state".into(),
+		r#"
+		this.state <- {
+			m = {},
+			function onInit()  { ::log.push(this.getName() + ":onInit"); }
+			function onShow()  { ::log.push(this.getName() + ":onShow"); }
+			function onHide()  { ::log.push(this.getName() + ":onHide"); }
+			function onFinish(){ ::log.push(this.getName() + ":onFinish"); }
+			function onSiblingSentMessage( _m ) { ::log.push(this.getName() + ":sib:" + _m); }
+		};
+		"#
+		.into(),
+	);
+	// Root: sets the Root global (like vanilla) and adds two child states.
+	m.insert(
+		"scripts/root_state".into(),
+		r#"
+		this.root_state <- this.inherit("scripts/states/state", {
+			function onInit() {
+				::Root <- this;
+				::log.push(this.getName() + ":onInit");
+				this.add("MenuA", "scripts/states/menu_a");
+				this.add("MenuB", "scripts/states/menu_b");
+			}
+		});
+		"#
+		.into(),
+	);
+	// MenuA: self-shows in onInit (the convention the engine relies on).
+	m.insert(
+		"scripts/states/menu_a".into(),
+		r#"
+		this.menu_a <- this.inherit("scripts/states/state", {
+			function onInit() { ::log.push(this.getName() + ":onInit"); this.show(); }
+		});
+		"#
+		.into(),
+	);
+	// MenuB: messages its siblings on init (MenuA should receive it).
+	m.insert(
+		"scripts/states/menu_b".into(),
+		r#"
+		this.menu_b <- this.inherit("scripts/states/state", {
+			function onInit() { ::log.push(this.getName() + ":onInit"); this.sendMessageToSiblings("hi"); }
+		});
+		"#
+		.into(),
+	);
+	MemSource(m)
+}
+
+#[test]
+fn boots_root_adds_children_and_runs_the_sibling_bus() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let modules = ModuleSystem::new(sources());
+	modules.install(&mut vm);
+	let root_state = RootState::new(modules.instantiator());
+	root_state.install(&mut vm);
+
+	vm.run_script("::log <- []; ::bgFired <- false;", "setup")
+		.expect("setup globals");
+
+	root_state
+		.boot(&vm, "scripts/root_state")
+		.expect("boot the root state");
+
+	// add() registered both children, in order.
+	assert_eq!(root_state.state_names(), ["MenuA", "MenuB"]);
+	assert!(root_state.root().is_some());
+	assert!(root_state.state("MenuA").is_some());
+
+	// The full lifecycle ran: root.onInit → add MenuA (onInit→self show) → add MenuB
+	// (onInit → message siblings → MenuA receives it). getName works throughout
+	// (the names in the log come from the injected getName).
+	let log: Vec<String> = SqTable::root(&vm)
+		.get::<SqArray>("log")
+		.expect("::log")
+		.to_vec::<String>();
+	assert_eq!(
+		log,
+		[
+			"RootState:onInit",
+			"MenuA:onInit",
+			"MenuA:onShow",
+			"MenuB:onInit",
+			"MenuA:sib:hi",
+		]
+	);
+
+	// finish() runs onFinish and removes the state from the registry.
+	root_state
+		.state("MenuA")
+		.unwrap()
+		.call_method(&vm, "finish", ())
+		.expect("finish MenuA");
+	assert_eq!(root_state.state_names(), ["MenuB"]);
+	assert!(root_state.state("MenuA").is_none());
+
+	root_state.clear();
+}
+
+#[test]
+fn background_task_hook() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let modules = ModuleSystem::new(sources());
+	modules.install(&mut vm);
+	let root_state = RootState::new(modules.instantiator());
+	root_state.install(&mut vm);
+
+	vm.run_script("::log <- []; ::bgFired <- false;", "setup")
+		.expect("setup globals");
+	root_state.boot(&vm, "scripts/root_state").expect("boot");
+
+	// Scripts register a background callback and poll the suspended flag on Root.
+	vm.run_script(
+		r#"
+		::Root.setBackgroundTaskCallback(function () { ::bgFired = true; });
+		::wasSuspended <- ::Root.isBackgroundTaskSuspended();
+		"#,
+		"bg",
+	)
+	.expect("background hook calls");
+
+	// The flag defaults false; the host can flip it; the callback is captured and
+	// the host can fire it (the cooperative-yield model worldgen uses).
+	assert_eq!(SqTable::root(&vm).get::<bool>("wasSuspended"), Some(false));
+	root_state.set_suspended(true);
+	vm.run_script(
+		"::nowSuspended <- ::Root.isBackgroundTaskSuspended();",
+		"bg2",
+	)
+	.expect("poll again");
+	assert_eq!(SqTable::root(&vm).get::<bool>("nowSuspended"), Some(true));
+
+	let callback = root_state
+		.background_callback()
+		.expect("callback registered");
+	callback.call(&vm, ()).expect("fire background callback");
+	assert_eq!(SqTable::root(&vm).get::<bool>("bgFired"), Some(true));
+
+	root_state.clear();
+}

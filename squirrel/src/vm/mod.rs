@@ -1,0 +1,104 @@
+//! The [`SQVM`] handle: owns the underlying `HSQUIRRELVM`, manages its
+//! lifecycle, and installs the default print / error / compiler-error callbacks.
+//!
+//! The VM's behaviour is split across focused submodules:
+//!   * [`stack`]  — typed reads/writes against the Squirrel value stack
+//!   * [`script`] — compiling/running scripts and allocating Rust userdata
+//!   * [`print`]  — the print / error / compile-error handler dispatch
+
+mod bytecode;
+mod print;
+mod script;
+mod stack;
+
+pub use print::CompileError;
+
+use print::{VmContext, compile_error_trampoline, error_trampoline, print_trampoline};
+
+pub struct SQVM {
+	ptr: squirrel_sys::HSQUIRRELVM,
+}
+
+impl SQVM {
+	pub fn new(stack_size: i64) -> Self {
+		let ptr = unsafe { squirrel_sys::sq_open(stack_size) };
+
+		// A boxed `VmContext` holds the (optional) output handlers and is reached
+		// from the C trampolines via the VM's foreign pointer. Ownership lives with
+		// this `SQVM`; `Drop` frees it after closing the VM.
+		let context = Box::into_raw(VmContext::boxed());
+		unsafe {
+			squirrel_sys::sq_setforeignptr(ptr, context as squirrel_sys::SQUserPointer);
+			squirrel_sys::sq_setprintfunc(ptr, Some(print_trampoline), Some(error_trampoline));
+			squirrel_sys::sq_setcompilererrorhandler(ptr, Some(compile_error_trampoline));
+
+			// Register the parts of the Squirrel standard library scripts use: the
+			// string library (`format`/`split`/`strip`/`regexp`/…) and the math
+			// library (`abs`/`sin`/`sqrt`/… at the root). Both install into the root
+			// table, so this must happen after `sq_open`. The system/io/blob libs are
+			// deliberately left out (no filesystem/process access for game scripts).
+			squirrel_sys::sq_pushroottable(ptr);
+			squirrel_sys::sqstd_register_stringlib(ptr);
+			squirrel_sys::sqstd_register_mathlib(ptr);
+			squirrel_sys::sq_pop(ptr, 1);
+		}
+
+		SQVM { ptr }
+	}
+
+	fn context(&mut self) -> &mut VmContext {
+		// SAFETY: `new` installed a non-null `VmContext` as the foreign pointer and
+		// only `Drop` clears it; `&mut self` ensures exclusive access.
+		unsafe { &mut *(squirrel_sys::sq_getforeignptr(self.ptr) as *mut VmContext) }
+	}
+
+	/// Route the VM's `print` output to `handler` instead of stdout.
+	pub fn set_print_handler(&mut self, handler: impl Fn(&str) + 'static) {
+		self.context().set_print(Box::new(handler));
+	}
+
+	/// Route the VM's `error` output to `handler` instead of stderr.
+	pub fn set_error_handler(&mut self, handler: impl Fn(&str) + 'static) {
+		self.context().set_error(Box::new(handler));
+	}
+
+	/// Route compile errors to `handler` instead of stderr.
+	pub fn set_compile_error_handler(&mut self, handler: impl Fn(&CompileError) + 'static) {
+		self.context().set_compile_error(Box::new(handler));
+	}
+
+	/// Install the Squirrel stdlib error handlers: an unhandled runtime error then
+	/// prints a full call stack (function + source:line + locals) via the print
+	/// handler before the call returns. Invaluable for locating a script error;
+	/// call after [`set_print_handler`](Self::set_print_handler).
+	pub fn install_standard_error_handlers(&mut self) {
+		unsafe { squirrel_sys::sqstd_seterrorhandlers(self.as_ptr()) };
+	}
+
+	/// The raw VM handle. Crate-internal: the safe wrappers in the sibling
+	/// modules go through this rather than touching the private `ptr` field.
+	pub(crate) fn as_ptr(&self) -> squirrel_sys::HSQUIRRELVM {
+		self.ptr
+	}
+
+	/// Borrow a raw handle without taking ownership, so `Drop` will not close it.
+	/// Used inside the native-call trampoline, where Squirrel owns the VM.
+	pub(crate) unsafe fn from_raw(ptr: squirrel_sys::HSQUIRRELVM) -> std::mem::ManuallyDrop<Self> {
+		std::mem::ManuallyDrop::new(SQVM { ptr })
+	}
+}
+
+impl Drop for SQVM {
+	fn drop(&mut self) {
+		unsafe {
+			// Take back the boxed `VmContext` we installed as the foreign pointer,
+			// then close the VM and drop it. Closing first means no callback can
+			// fire against a freed context.
+			let context = squirrel_sys::sq_getforeignptr(self.ptr) as *mut VmContext;
+			squirrel_sys::sq_close(self.ptr);
+			if !context.is_null() {
+				drop(Box::from_raw(context));
+			}
+		}
+	}
+}

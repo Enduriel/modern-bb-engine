@@ -1,0 +1,231 @@
+//! The `Time` service: three clocks (Real / Virtual / Rounds), the `TimeUnit`
+//! table, and `scheduleEvent`.
+//!
+//! Unlike the stateless natives, `Time` is **stateful and host-driven**: the host
+//! owns a [`TimeService`], installs it, and advances it each frame via
+//! [`tick`](TimeService::tick) (the engine supplies the real-time delta — this
+//! crate has no clock of its own). The Rounds clock is driven by scripts calling
+//! `Time.setRound`. Scheduled events fire when their clock passes the deadline.
+//!
+//! Conventions (BB's exact units are unconfirmed; these are internally consistent
+//! and isolated here so they can be corrected later):
+//! - Real/Virtual time and `scheduleEvent` Real/Virtual delays are in
+//!   **milliseconds**, and delays are **relative** to the current clock value.
+//! - A scheduled callback is invoked as `callback(userdata)` with `this` = the
+//!   root table (a `bindenv`'d callback uses its bound environment instead).
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
+
+const UNIT_REAL: i64 = 0;
+const UNIT_VIRTUAL: i64 = 1;
+const UNIT_ROUNDS: i64 = 2;
+
+/// A scheduled callback: fires when its clock reaches `fire_threshold`.
+struct Event {
+	unit: i64,
+	fire_threshold: f64,
+	callback: SqStrongRef,
+	userdata: SqStrongRef,
+}
+
+#[derive(Default)]
+struct TimeState {
+	real_time: f64,     // ms since boot, accumulated from `tick`
+	virtual_time: f64,  // ms of in-game time
+	virtual_speed: f64, // multiplier applied to real delta (1.0 = real-time)
+	round: i64,
+	frame: i64,
+	last_delta: f64, // real ms of the last frame
+	events: Vec<Event>,
+}
+
+/// The host-owned `Time` service. Construct one, [`install`](Self::install) it
+/// before running scripts, and drive it with [`tick`](Self::tick) each frame.
+///
+/// # Drop order
+/// Pending events hold [`SqStrongRef`]s, which release against the VM on drop, so
+/// a `TimeService` must be dropped **before** its [`SQVM`] is closed (releasing
+/// after `sq_close` is a use-after-free). The host naturally satisfies this by
+/// owning the VM at the top and dropping the service first; [`clear`](Self::clear)
+/// can drop all pending events explicitly while the VM is still live.
+pub struct TimeService {
+	state: Rc<RefCell<TimeState>>,
+}
+
+impl Default for TimeService {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl TimeService {
+	/// A fresh service: all clocks at zero, virtual speed 1.0.
+	pub fn new() -> Self {
+		TimeService {
+			state: Rc::new(RefCell::new(TimeState {
+				virtual_speed: 1.0,
+				..TimeState::default()
+			})),
+		}
+	}
+
+	/// Advance the Real and Virtual clocks by a frame of `real_delta_ms` real
+	/// milliseconds (the host supplies this from its own clock), then fire any due
+	/// Real/Virtual events. Call once per frame.
+	pub fn tick(&self, vm: &SQVM, real_delta_ms: f64) {
+		let due = {
+			let mut st = self.state.borrow_mut();
+			st.real_time += real_delta_ms;
+			st.frame += 1;
+			st.last_delta = real_delta_ms;
+			st.virtual_time += st.virtual_speed * real_delta_ms;
+			let (real_now, virtual_now) = (st.real_time, st.virtual_time);
+			drain_due(&mut st.events, |e| match e.unit {
+				UNIT_REAL => real_now >= e.fire_threshold,
+				UNIT_VIRTUAL => virtual_now >= e.fire_threshold,
+				_ => false,
+			})
+		};
+		fire_all(vm, due);
+	}
+
+	/// Drop all pending scheduled events (releasing their callback/userdata
+	/// references). Call before closing the VM if the service might outlive it. The
+	/// same as the script-side `Time.clearEvents()`.
+	pub fn clear(&self) {
+		self.state.borrow_mut().events.clear();
+	}
+
+	/// Install the `Time` table and the `TimeUnit` enum into the root.
+	pub fn install(&self, vm: &mut SQVM) {
+		// Each getter reads a value out of the shared clock state. A local macro
+		// expands to a concrete closure (the return-conversion trait is sealed, so
+		// a generic helper can't name the bound).
+		macro_rules! getter {
+			(|$st:ident| $body:expr) => {{
+				let state = self.state.clone();
+				vm.make_closure(move || {
+					let $st = state.borrow();
+					$body
+				})
+			}};
+		}
+
+		let entries: Vec<(&str, SqStrongRef)> = vec![
+			("getRealTime", getter!(|st| st.real_time as i64)),
+			("getRealTimeF", getter!(|st| st.real_time)),
+			("getExactTime", getter!(|st| st.real_time)),
+			("getVirtualTime", getter!(|st| st.virtual_time as i64)),
+			("getVirtualTimeF", getter!(|st| st.virtual_time)),
+			(
+				"getVirtualDelta",
+				getter!(|st| st.last_delta * st.virtual_speed),
+			),
+			("getDelta", getter!(|st| st.last_delta)),
+			("getVirtualSpeed", getter!(|st| st.virtual_speed)),
+			("getFrame", getter!(|st| st.frame)),
+			("getRound", getter!(|st| st.round)),
+			(
+				"getFPS",
+				getter!(|st| if st.last_delta > 0.0 {
+					1000.0 / st.last_delta
+				} else {
+					0.0
+				}),
+			),
+			("setVirtualSpeed", {
+				let state = self.state.clone();
+				vm.make_closure(move |speed: Number| state.borrow_mut().virtual_speed = speed.0)
+			}),
+			("setVirtualTime", {
+				let state = self.state.clone();
+				vm.make_closure(move |time: Number| state.borrow_mut().virtual_time = time.0)
+			}),
+			("clearEvents", {
+				let state = self.state.clone();
+				vm.make_closure(move || state.borrow_mut().events.clear())
+			}),
+			("hasEventScheduled", {
+				let state = self.state.clone();
+				vm.make_closure(move |unit: i64| {
+					state.borrow().events.iter().any(|e| e.unit == unit)
+				})
+			}),
+			("setRound", {
+				let state = self.state.clone();
+				vm.make_closure(move |vm: &SQVM, round: i64| {
+					// Setting the round fires any due Rounds events.
+					let due = {
+						let mut st = state.borrow_mut();
+						st.round = round;
+						let now = round as f64;
+						drain_due(&mut st.events, |e| {
+							e.unit == UNIT_ROUNDS && now >= e.fire_threshold
+						})
+					};
+					fire_all(vm, due);
+				})
+			}),
+			("scheduleEvent", {
+				let state = self.state.clone();
+				vm.make_closure(
+					move |unit: i64, delay: Number, callback: SqStrongRef, userdata: Retained| {
+						let mut st = state.borrow_mut();
+						let base = match unit {
+							UNIT_VIRTUAL => st.virtual_time,
+							UNIT_ROUNDS => st.round as f64,
+							_ => st.real_time, // UNIT_REAL and anything else
+						};
+						st.events.push(Event {
+							unit,
+							fire_threshold: base + delay.0,
+							callback,
+							userdata: userdata.0,
+						});
+					},
+				)
+			}),
+		];
+
+		let mut time = SqTable::new(vm);
+		for (name, func) in entries {
+			time.set(name, func);
+		}
+		SqTable::root(vm).set("Time", time);
+
+		let mut time_unit = SqTable::new(vm);
+		time_unit.set("Real", UNIT_REAL);
+		time_unit.set("Virtual", UNIT_VIRTUAL);
+		time_unit.set("Rounds", UNIT_ROUNDS);
+		SqTable::root(vm).set("TimeUnit", time_unit);
+	}
+}
+
+/// Remove and return the `(callback, userdata)` of every event matching `due`.
+fn drain_due(
+	events: &mut Vec<Event>,
+	due: impl Fn(&Event) -> bool,
+) -> Vec<(SqStrongRef, SqStrongRef)> {
+	let mut fired = Vec::new();
+	let mut i = 0;
+	while i < events.len() {
+		if due(&events[i]) {
+			let e = events.remove(i);
+			fired.push((e.callback, e.userdata));
+		} else {
+			i += 1;
+		}
+	}
+	fired
+}
+
+/// Invoke each due callback as `callback(userdata)`. Errors are swallowed: a
+/// scheduled callback that throws must not abort the frame.
+fn fire_all(vm: &SQVM, due: Vec<(SqStrongRef, SqStrongRef)>) {
+	for (callback, userdata) in due {
+		let _ = callback.call(vm, (userdata,));
+	}
+}
