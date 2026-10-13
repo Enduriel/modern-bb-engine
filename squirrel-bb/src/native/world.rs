@@ -1,36 +1,15 @@
-//! The `World` engine object. For now only `World.getTime()`, which is the one
-//! boot-critical piece: config scripts read `World.getTime().SecondsPerDay` (and
-//! `SecondsPerHour`) at table-construction time, so it must exist before the
-//! preload sweep. The rest of the `World` API (spawnEntity, getTile, …) belongs to
-//! the World/Campaign subsystem and lands later.
-
-use std::cell::Cell;
-use std::rc::Rc;
+//! The `World` engine table and its stateless or small pieces: the clock (see
+//! [`super::world_time`]; config scripts read `World.getTime().SecondsPerDay` at load
+//! time, so it must exist before them), save hooks, camera and weather. The grid,
+//! entities and rosters are added by their own services.
 
 use squirrel::{Retained, SQVM, SqStrongRef, SqTable, Variadic};
 
-use super::NativeConfig;
 
-/// Register the `World` table (`getTime`, `getPlayerRoster`) into the root.
-pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
-	let seconds_per_day = config.seconds_per_day;
-	let seconds_per_hour = config.seconds_per_hour;
-
-	// `getTime()` returns a fresh snapshot of the world clock. The constants are
-	// read at config-load time; the live fields (Days/Hours/TimeOfDay/IsDaytime)
-	// are zero/default until a running World clock supplies them.
-	let get_time = vm.make_closure(move |vm: &SQVM| -> SqStrongRef {
-		let mut time = SqTable::new(vm);
-		time.set("SecondsPerDay", seconds_per_day);
-		time.set("SecondsPerHour", seconds_per_hour);
-		time.set("Days", 0i64);
-		time.set("Hours", 0i64);
-		time.set("TimeOfDay", 0i64);
-		time.set("Time", 0i64);
-		time.set("IsDaytime", true);
-		time.to_strong()
-	});
-
+/// Register the `World` table (clock, save hooks, camera, weather) into the root, and
+/// return the world clock.
+pub(crate) fn install(vm: &mut SQVM) -> super::world_time::Clock {
+	let world_clock: super::world_time::Clock = Default::default();
 	// Rosters (getRoster/getPlayerRoster/createRoster/deleteRoster) are provided by the
 	// host-owned `TacticalEntities` service (real rosters whose `create` mints units),
 	// installed after this — see native/tactical_entities.rs.
@@ -42,26 +21,92 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 	let set_on_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 	let set_on_before_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 
-	// World speed multiplier (0 = paused, 1 = normal, higher = fast-forward). A shared
-	// scalar the world clock will eventually drive; for now setPause/setNormalTime just
-	// store + read it. (Real virtual-time scaling integrates with TimeService later.)
-	let speed_mult = Rc::new(Cell::new(1.0_f64));
-	let get_speed_mult = {
-		let s = speed_mult.clone();
-		vm.make_closure(move || s.get())
+	// World.getCamera(): a headless camera. Scripts move/zoom it (no-ops here) and read
+	// back `Zoom` (a plain, persistent table field) and `isInsideScreen`, which only
+	// gates visual fades; with no screen it is always false.
+	let camera = {
+		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+		let inside = vm.make_closure(|Variadic(_a): Variadic<Retained>| false);
+		let screen_to_world = vm.make_closure(|vm: &SQVM, Variadic(_a): Variadic<Retained>| -> Option<SqStrongRef> {
+			SqTable::root(vm)
+				.get::<SqStrongRef>("createVec")
+				.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (0.0, 0.0)).ok().flatten())
+		});
+		let mut cam = SqTable::new(vm);
+		cam.set("Zoom", 1.0);
+		for name in ["setPos", "moveTo", "moveToPos", "zoomTo", "zoomBy", "move", "update", "jumpTo"] {
+			cam.set(name, noop.clone());
+		}
+		cam.set("isInsideScreen", inside);
+		cam.set("screenToWorld", screen_to_world);
+		cam.to_strong()
 	};
-	let set_speed_mult = {
-		let s = speed_mult.clone();
-		vm.make_closure(move |m: f64| s.set(m))
+	let get_camera = {
+		let cam = camera.clone();
+		vm.make_closure(move || cam.clone())
 	};
 
+	// World.getWeather(): clouds, birds and lighting are visual only, and building them
+	// draws nothing from the script RNG (probed 2026-10-13), so headless they are no-ops.
+	// The settings objects only receive field writes from scripts, so each is a table
+	// pre-filled with every field vanilla writes (an absent key can't be assigned).
+	let weather = {
+		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+		const CLOUD: &[&str] = &[
+			"Color", "Direction", "MaxAlpha", "MaxClouds", "MaxScale", "MaxVelocity", "MinAlpha",
+			"MinClouds", "MinScale", "MinVelocity", "RandomizeDirection", "RandomizeRotation", "Sprite", "Type",
+		];
+		const BIRD: &[&str] = &["MaxBirds", "MaxVelocity", "MinBirds", "MinVelocity"];
+		const RAIN: &[&str] = &[
+			"MaxAlpha", "MaxDrops", "MaxScale", "MaxVelocity", "MinAlpha", "MinDrops", "MinScale",
+			"MinVelocity", "NumSplats",
+		];
+		let creators: Vec<(&str, SqStrongRef)> = [
+			("createCloudSettings", CLOUD),
+			("createBirdSettings", BIRD),
+			("createRainSettings", RAIN),
+		]
+		.into_iter()
+		.map(|(name, fields)| {
+			let create = vm.make_closure(move |vm: &SQVM| {
+				let mut t = SqTable::new(vm);
+				for f in fields {
+					t.set(f, 0.0);
+				}
+				t.to_strong()
+			});
+			(name, create)
+		})
+		.collect();
+		let mut w = SqTable::new(vm);
+		w.set("IsRaining", false);
+		for (name, create) in creators {
+			w.set(name, create);
+		}
+		for name in ["buildCloudCover", "buildBirds", "buildRain", "setAmbientLightingPreset", "setAmbientLightingSaturation"] {
+			w.set(name, noop.clone());
+		}
+		w.to_strong()
+	};
+	let get_weather = vm.make_closure(move || weather.clone());
+
+	// Footprints only feed the hover tooltip (and expire after 60 s); headless they are
+	// not kept. Particle effects are visual, and no script uses the returned effect.
+	let spawn_footprint = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	let spawn_particle_effect = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	let clock = super::world_time::world_entries(vm, &world_clock);
 	let mut world = SqTable::new(vm);
-	world.set("getTime", get_time);
+	world.set("getCamera", get_camera);
+	world.set("getWeather", get_weather);
+	world.set("spawnFootprint", spawn_footprint);
+	world.set("spawnParticleEffect", spawn_particle_effect);
 	world.set("setOnLoadCallback", set_on_load);
 	world.set("setOnBeforeLoadCallback", set_on_before_load);
 	world.set("setOnSaveCallback", set_on_save);
 	world.set("setOnBeforeSaveCallback", set_on_before_save);
-	world.set("getSpeedMult", get_speed_mult);
-	world.set("setSpeedMult", set_speed_mult);
+	for (name, closure) in clock {
+		world.set(name, closure);
+	}
 	SqTable::root(vm).set("World", world);
+	world_clock
 }

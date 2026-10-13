@@ -34,7 +34,7 @@ fn sources() -> MemSource {
 			function onShow()  { ::log.push(this.getName() + ":onShow"); }
 			function onHide()  { ::log.push(this.getName() + ":onHide"); }
 			function onFinish(){ ::log.push(this.getName() + ":onFinish"); }
-			function onSiblingSentMessage( _m ) { ::log.push(this.getName() + ":sib:" + _m); }
+			function onSiblingSentMessage( _from, _m ) { ::log.push(this.getName() + ":sib:" + _from + ":" + _m); }
 		};
 		"#
 		.into(),
@@ -112,7 +112,7 @@ fn boots_root_adds_children_and_runs_the_sibling_bus() {
 			"MenuA:onInit",
 			"MenuA:onShow",
 			"MenuB:onInit",
-			"MenuA:sib:hi",
+			"MenuA:sib:MenuB:hi",
 		]
 	);
 

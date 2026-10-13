@@ -31,12 +31,38 @@ struct Child {
 	name: String,
 	id: i64,
 	state: SqStrongRef,
+	frame: FrameHook,
 }
 
 /// The root state itself (the container; not one of its own children).
 struct Root {
 	id: i64,
 	state: SqStrongRef,
+	frame: FrameHook,
+}
+
+/// A state's per-frame hooks. Like the original, `onUpdate` and `onRender` are captured
+/// when the state is registered (replacing them on the instance later has no effect),
+/// and only a state that isn't hidden runs them (both probed 2026-10-13).
+struct FrameHook {
+	on_update: Option<SqStrongRef>,
+	on_render: Option<SqStrongRef>,
+	hidden: bool,
+}
+
+impl FrameHook {
+	/// Capture `state.onUpdate` and `state.onRender`, bound to the state.
+	fn capture(vm: &SQVM, state: &SqStrongRef) -> Self {
+		let bound = |name: &str| {
+			let table = state.as_table(vm)?;
+			state.get_member::<SqStrongRef>(vm, name)?.bindenv(vm, &table)
+		};
+		FrameHook {
+			on_update: bound("onUpdate"),
+			on_render: bound("onRender"),
+			hidden: false,
+		}
+	}
 }
 
 /// Shared state-stack machine: the registry, the constructor, the background-task
@@ -47,8 +73,15 @@ struct Machine {
 	instantiate: Instantiator,
 	bg_callback: Option<SqStrongRef>,
 	bg_suspended: bool,
+	/// What `State.updateScene()` runs: the host's scene updates (world thinkers, …).
+	scene_update: Option<SceneUpdate>,
+	/// What `State.renderScene()` runs: the logic side of rendering (discovery, …).
+	scene_render: Option<SceneUpdate>,
 	methods: Vec<(&'static str, SqStrongRef)>,
 }
+
+/// A host scene update, run by `State.updateScene()`.
+type SceneUpdate = Rc<dyn Fn(&SQVM) -> Result<(), String>>;
 
 impl Machine {
 	/// The registered name of the state with identity `id` (`"RootState"` for the
@@ -94,6 +127,33 @@ impl Machine {
 			.collect()
 	}
 
+	/// Whether the state with identity `id` is visible (not hidden).
+	fn is_visible(&self, id: i64) -> bool {
+		if let Some(root) = self.root.as_ref().filter(|r| r.id == id) {
+			return !root.frame.hidden;
+		}
+		self.children.iter().find(|c| c.id == id).is_some_and(|c| !c.frame.hidden)
+	}
+
+	/// Mark the state with identity `id` hidden or shown.
+	fn set_hidden(&mut self, id: i64, hidden: bool) {
+		if let Some(root) = self.root.as_mut().filter(|r| r.id == id) {
+			root.frame.hidden = hidden;
+		} else if let Some(child) = self.children.iter_mut().find(|c| c.id == id) {
+			child.frame.hidden = hidden;
+		}
+	}
+
+	/// A captured hook of every visible state: the root, then the children in
+	/// registration order.
+	fn visible_hooks(&self, hook: fn(&FrameHook) -> Option<SqStrongRef>) -> Vec<SqStrongRef> {
+		let root = self.root.iter().map(|r| &r.frame);
+		root.chain(self.children.iter().map(|c| &c.frame))
+			.filter(|f| !f.hidden)
+			.filter_map(hook)
+			.collect()
+	}
+
 	/// Remove the child with identity `id`, returning it (root is never removed).
 	fn remove(&mut self, id: i64) -> Option<SqStrongRef> {
 		let pos = self.children.iter().position(|c| c.id == id)?;
@@ -123,10 +183,12 @@ fn add_child(
 	let child = instantiate(vm, path)?;
 	let id = child.identity();
 	inject(machine, vm, &child);
+	let frame = FrameHook::capture(vm, &child);
 	machine.borrow_mut().children.push(Child {
 		name: name.to_string(),
 		id,
 		state: child.clone(),
+		frame,
 	});
 	child.call_method(vm, "onInit", ())
 }
@@ -163,6 +225,8 @@ impl RootState {
 				instantiate,
 				bg_callback: None,
 				bg_suspended: false,
+				scene_update: None,
+				scene_render: None,
 				methods: Vec::new(),
 			})),
 		}
@@ -193,14 +257,18 @@ impl RootState {
 		let show = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
-				let target = m.borrow().by_id(vm.this_identity());
+				let id = vm.this_identity();
+				m.borrow_mut().set_hidden(id, false);
+				let target = m.borrow().by_id(id);
 				target.map_or(Ok(()), |t| t.call_method(vm, "onShow", ()))
 			})
 		};
 		let hide = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
-				let target = m.borrow().by_id(vm.this_identity());
+				let id = vm.this_identity();
+				m.borrow_mut().set_hidden(id, true);
+				let target = m.borrow().by_id(id);
 				target.map_or(Ok(()), |t| t.call_method(vm, "onHide", ()))
 			})
 		};
@@ -215,12 +283,17 @@ impl RootState {
 			let m = self.machine.clone();
 			vm.make_closure(
 				move |vm: &SQVM, msg: squirrel::Retained| -> Result<(), String> {
-					let siblings = m.borrow().siblings_of(vm.this_identity());
+					// Each sibling hears `onSiblingSentMessage(senderName, message)`.
+					let (sender, siblings) = {
+						let machine = m.borrow();
+						let id = vm.this_identity();
+						(machine.name_of(id), machine.siblings_of(id))
+					};
 					for sibling in siblings {
 						ignore_missing(sibling.call_method(
 							vm,
 							"onSiblingSentMessage",
-							(msg.0.clone(),),
+							(sender.clone(), msg.0.clone()),
 						))?;
 					}
 					Ok(())
@@ -238,7 +311,74 @@ impl RootState {
 			vm.make_closure(move || -> bool { m.borrow().bg_suspended })
 		};
 
+		let is_visible = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| m.borrow().is_visible(vm.this_identity()))
+		};
+		// updateScene(): the original updates every scene (sprite animation, and the world
+		// scene's entity thinkers). Headless, only the host's logic updates run.
+		let update_scene = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let hook = m.borrow().scene_update.clone();
+				hook.map_or(Ok(()), |f| f(vm))
+			})
+		};
+		// The parent of a child is the root; the root has none.
+		let get_parent = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Option<SqStrongRef> {
+				let machine = m.borrow();
+				let root = machine.root.as_ref()?;
+				(root.id != vm.this_identity()).then(|| root.state.clone())
+			})
+		};
+		let has_children = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| {
+				let machine = m.borrow();
+				machine.root.as_ref().is_some_and(|r| r.id == vm.this_identity()) && !machine.children.is_empty()
+			})
+		};
+		// finishChildren(): finish every child of the root (children have none).
+		let finish_children = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let is_root = m.borrow().root.as_ref().is_some_and(|r| r.id == vm.this_identity());
+				if !is_root {
+					return Ok(());
+				}
+				let ids: Vec<i64> = m.borrow().children.iter().map(|c| c.id).collect();
+				for id in ids {
+					let target = m.borrow_mut().remove(id);
+					if let Some(t) = target {
+						t.call_method(vm, "onFinish", ())?;
+					}
+				}
+				Ok(())
+			})
+		};
+		// renderScene(): the original draws every scene; what drawing decides for the
+		// game (which entities the player discovers) is the host's render hook.
+		let render_scene = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let hook = m.borrow().scene_render.clone();
+				hook.map_or(Ok(()), |f| f(vm))
+			})
+		};
+		// Draw order doesn't exist headless.
+		let render_noop = vm.make_closure(|| {});
+
 		self.machine.borrow_mut().methods = vec![
+			("isVisible", is_visible),
+			("updateScene", update_scene),
+			("renderScene", render_scene),
+			("toFront", render_noop.clone()),
+			("toBack", render_noop),
+			("getParent", get_parent),
+			("hasChildren", has_children),
+			("finishChildren", finish_children),
 			("getName", get_name),
 			("add", add),
 			("get", get),
@@ -260,9 +400,11 @@ impl RootState {
 		let root = instantiate(vm, root_path)?;
 		let id = root.identity();
 		inject(&self.machine, vm, &root);
+		let frame = FrameHook::capture(vm, &root);
 		self.machine.borrow_mut().root = Some(Root {
 			id,
 			state: root.clone(),
+			frame,
 		});
 		SqTable::root(vm).set("RootState", root.clone());
 		root.call_method(vm, "onInit", ())?;
@@ -270,6 +412,44 @@ impl RootState {
 	}
 
 	// ---- host / inspection API ----
+
+	/// Set what `State.updateScene()` runs each frame (the host's scene updates).
+	pub fn set_scene_update(&self, update: impl Fn(&SQVM) -> Result<(), String> + 'static) {
+		self.machine.borrow_mut().scene_update = Some(Rc::new(update));
+	}
+
+	/// Set what `State.renderScene()` runs each frame (the logic side of rendering).
+	pub fn set_scene_render(&self, render: impl Fn(&SQVM) -> Result<(), String> + 'static) {
+		self.machine.borrow_mut().scene_render = Some(Rc::new(render));
+	}
+
+	/// Run `onUpdate` on every visible state (the root, then the children in
+	/// registration order), as one frame of the original's loop does. States added or
+	/// removed during the pass take effect next frame.
+	pub fn update(&self, vm: &SQVM) -> Result<(), String> {
+		let updates = self.machine.borrow().visible_hooks(|f| f.on_update.clone());
+		for on_update in updates {
+			on_update.call(vm, ())?;
+		}
+		Ok(())
+	}
+
+	/// Run `onRender` on every visible state, as the original does after the updates.
+	pub fn render(&self, vm: &SQVM) -> Result<(), String> {
+		let renders = self.machine.borrow().visible_hooks(|f| f.on_render.clone());
+		for on_render in renders {
+			on_render.call(vm, ())?;
+		}
+		Ok(())
+	}
+
+	/// Run the registered background task (`Root.setBackgroundTaskCallback`) once, as
+	/// the original does after the states' updates every frame, whether or not the
+	/// state that registered it is visible.
+	pub fn run_background(&self, vm: &SQVM) -> Result<(), String> {
+		let callback = self.machine.borrow().bg_callback.clone();
+		callback.map_or(Ok(()), |c| c.call(vm, ()))
+	}
 
 	/// The root state instance, if booted.
 	pub fn root(&self) -> Option<SqStrongRef> {

@@ -9,15 +9,16 @@
 //! structure and the native API that `worldmap_generator.fill` runs on.
 
 use std::cell::RefCell;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 use std::rc::Rc;
 
 use squirrel::{
-	ClassBuilder, Native, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, This, Variadic,
+	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, This, Variadic,
 };
 
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
+use super::world_layout;
+use super::world_nav::{self, NavSettings, NavTile};
+use super::world_search;
 
 /// Axial neighbour deltas `(dq, dr)` indexed by `Const.Direction`: N, NE, SE, S, SW, NW.
 const DIRECTION_STEP: [(i64, i64); 6] = [(0, 1), (1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1)];
@@ -43,6 +44,62 @@ struct TileData {
 	is_flipped: bool,
 	is_discovered: bool,
 	has_river: bool,
+	/// The terrain brush name (`setBrush`/`getBrush`/`resetBrush`). Worldgen reads it
+	/// back (`tile.getBrush() != "world_highlands_03"`), so it is real state, not a
+	/// render no-op. `""` when unset, like the original (probed 2026-10-13).
+	brush: String,
+}
+
+/// The map's share of a save: its size and every tile's gameplay state. Details
+/// (decorations) are visual and not kept.
+struct GridPart(Rc<RefCell<GridState>>);
+
+impl super::save::SavePart for GridPart {
+	fn save(&self, cx: &super::save::SaveCx) -> Result<(), String> {
+		let g = self.0.borrow();
+		let mut w = cx.writer.borrow_mut();
+		w.i64(g.width);
+		w.i64(g.height);
+		for t in &g.tiles {
+			for v in [t.type_, t.tactical_type, t.subregion, t.region, t.road_directions, t.river_directions, t.heat] {
+				w.i64(v);
+			}
+			w.f64(t.z_offset);
+			for b in [t.is_occupied, t.is_flipped, t.is_discovered, t.has_river] {
+				w.bool(b);
+			}
+			w.str(&t.brush);
+		}
+		Ok(())
+	}
+
+	fn load(&self, cx: &super::save::LoadCx) -> Result<(), String> {
+		let mut g = self.0.borrow_mut();
+		let mut r = cx.reader.borrow_mut();
+		let (w, h) = (r.i64()?, r.i64()?);
+		g.width = w;
+		g.height = h;
+		let mut tiles = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
+		for i in 0..(w * h).max(0) {
+			let mut t = TileData::new(i as usize, i % w, i / w);
+			t.type_ = r.i64()?;
+			t.tactical_type = r.i64()?;
+			t.subregion = r.i64()?;
+			t.region = r.i64()?;
+			t.road_directions = r.i64()?;
+			t.river_directions = r.i64()?;
+			t.heat = r.i64()?;
+			t.z_offset = r.f64()?;
+			t.is_occupied = r.bool()?;
+			t.is_flipped = r.bool()?;
+			t.is_discovered = r.bool()?;
+			t.has_river = r.bool()?;
+			t.brush = r.str()?;
+			tiles.push(t);
+		}
+		g.tiles = tiles;
+		Ok(())
+	}
 }
 
 /// A scene detail (decoration) minted by `tile.spawnDetail(...)`. Rendering is
@@ -75,6 +132,22 @@ struct PathData {
 	grid: Rc<RefCell<GridState>>,
 	tiles: Vec<usize>,
 	cursor: usize,
+}
+
+impl PathData {
+	/// The axial `{X, Y}` of waypoint `at`.
+	fn coords_at(&self, vm: &SQVM, at: usize) -> Option<SqStrongRef> {
+		let id = *self.tiles.get(at)?;
+		let g = self.grid.borrow();
+		Some(xy_table(vm, g.tiles[id].q, g.tiles[id].r))
+	}
+
+	/// The tile id of axial `{X, Y}` coords, if on the map.
+	fn tile_of(&self, vm: &SQVM, coords: &SqStrongRef) -> Option<usize> {
+		let q = coords.get_member::<i64>(vm, "X")?;
+		let r = coords.get_member::<i64>(vm, "Y")?;
+		self.grid.borrow().idx(q, r + q / 2)
+	}
 }
 
 impl TileData {
@@ -366,6 +439,56 @@ impl WorldGrid {
 		// assigned (Region != 0) tile within `dist` whose Type matches `type` (type 0 ==
 		// any), else 0 — the flood-fill grouping that buildLabels uses to merge tiles
 		// into regions.
+		// World.uncoverFogOfWar(pos, radius): mark tiles discovered, exactly like the
+		// original (disassembly, 2026-10-13; verified on 8 probed shapes): with
+		// rt = radius / 100, every tile within hex distance trunc(rt) + 3 of the tile
+		// under `pos`, clipped to columns [q - trunc(rt/2) - 3, q + trunc(rt/2) + 4) and
+		// rows [row - trunc(rt) - 3, row + trunc(rt) + 3).
+		let uncover_fog_of_war = {
+			let g = self.grid.clone();
+			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| {
+				let px = pos.0.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
+				let py = pos.0.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+				let mut grid = g.borrow_mut();
+				let (w, h) = (grid.width, grid.height);
+				let (cq, cr) = world_layout::world_to_tile(px, py, w, h);
+				let row = cr + cq / 2;
+				let rt = (radius.0 as f32) / 100.0;
+				let ri = rt as i64;
+				let half = (f64::from(rt) * 0.5) as i64;
+				for x in (cq - half - 3).max(0)..(cq + half + 4).min(w) {
+					for y in (row - ri - 3).max(0)..(row + ri + 3).min(h) {
+						let (q, r) = (x, y - x / 2);
+						let d = ((q - cq).abs() + (r - cr).abs() + (q - cq + r - cr).abs()) / 2;
+						if d <= ri + 3 {
+							if let Some(id) = grid.idx(q, r + q / 2) {
+								grid.tiles[id].is_discovered = true;
+							}
+						}
+					}
+				}
+			})
+		};
+		// Fog-of-war switches. setFogOfWar(false) reveals the whole map, as the original
+		// does. (The player's view, `setPlayerPos`/`setPlayerVisionRadius`, lives with the
+		// entities: it decides `isHiddenToPlayer`.)
+		let fog_on = Rc::new(std::cell::Cell::new(true));
+		let is_using_fog_of_war = {
+			let f = fog_on.clone();
+			vm.make_closure(move || f.get())
+		};
+		let set_fog_of_war = {
+			let f = fog_on.clone();
+			let g = self.grid.clone();
+			vm.make_closure(move |on: bool| {
+				f.set(on);
+				if !on {
+					for t in &mut g.borrow_mut().tiles {
+						t.is_discovered = true;
+					}
+				}
+			})
+		};
 		let find_next_region = {
 			let g = self.grid.clone();
 			vm.make_closure(
@@ -373,28 +496,37 @@ impl WorldGrid {
 					let (q, r) = resolve_nav_coords(vm, &tile.0)
 						.ok_or("findNextRegion: could not resolve tile")?;
 					let grid = g.borrow();
-					Ok(closest_in_disk(&grid, q, r, dist, |t| {
-						t.region != 0 && (ty == 0 || t.type_ == ty)
-					})
-					.map_or(0, |id| grid.tiles[id].region))
+					let found = world_search::flood_last(
+						(q, r),
+						dist,
+						|q, r| grid.idx(q, r + q / 2).is_some(),
+						|q, r| {
+							let t = &grid.tiles[grid.idx(q, r + q / 2)?];
+							(t.region != 0 && (ty == 0 || t.type_ == ty)).then_some(t.region)
+						},
+					);
+					Ok(found.unwrap_or(0))
 				},
 			)
 		};
-		// World.worldToTile(pos): invert `tile.Pos` (structural square coords) back to a
-		// tile's axial {X=q, Y=r} (consumed by getTile).
+		// World.worldToTile(pos): the axial {X=q, Y=r} of the tile containing a world
+		// pixel position (consumed by getTile); exact original semantics, see world_layout.
 		let world_to_tile = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<SqStrongRef, String> {
-				let px = pos.0.get_member::<f64>(vm, "X").unwrap_or(0.0);
-				let py = pos.0.get_member::<f64>(vm, "Y").unwrap_or(0.0);
-				let col = px.round() as i64;
-				let row = py.round() as i64;
-				let _ = g.borrow(); // keep the capture meaningful / consistent
-				Ok(xy_table(vm, col, row - col / 2)) // square -> axial
+				let px = pos.0.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
+				let py = pos.0.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+				let (w, h) = {
+					let grid = g.borrow();
+					(grid.width, grid.height)
+				};
+				let (q, r) = world_layout::world_to_tile(px, py, w, h);
+				Ok(xy_table(vm, q, r))
 			})
 		};
 		// World.findNextTileOfType(tile, dist, type, result): set result.Result to the
-		// nearest tile of `type` within `dist`; return whether one was found.
+		// first tile of `type` in the original's candidate order (see world_search);
+		// return whether one was found.
 		let find_next_tile_of_type = {
 			let g = self.grid.clone();
 			vm.make_closure(
@@ -408,7 +540,10 @@ impl WorldGrid {
 						.ok_or("findNextTileOfType: could not resolve tile")?;
 					let found = {
 						let grid = g.borrow();
-						closest_in_disk(&grid, q, r, dist, |t| t.type_ == ty)
+						world_search::even_lattice_rings((q, r), dist)
+							.into_iter()
+							.filter_map(|(q, r)| grid.idx(q, r + q / 2))
+							.find(|&id| grid.tiles[id].type_ == ty)
 					};
 					match found.and_then(|id| {
 						let (c, row) = {
@@ -437,14 +572,19 @@ impl WorldGrid {
 		// tiles (TerrainTypeNavCost, maxLen 0); the road phases reuse it later.
 		let navigator = {
 			let create_settings = vm.make_closure(|vm: &SQVM| -> SqStrongRef {
+				// The original's defaults (createSettings disassembly): every cost 2,
+				// RoadMult 0.0 (roads are free unless a script sets it), HeatCost 0.
+				let d = NavSettings::default();
+				let mut costs = SqArray::new(vm);
+				for c in d.costs {
+					costs.push(i64::from(c));
+				}
 				let mut s = SqTable::new(vm);
-				// Pre-create every field the callers assign with `=` (a table `=` needs
-				// the slot to exist; callers set ActionPointCosts always, RoadMult/
-				// StopAtRoad in the road phases).
-				s.set("ActionPointCosts", None::<i64>);
-				s.set("RoadMult", 1.0);
-				s.set("StopAtRoad", false);
-				s.set("RoadOnly", false);
+				s.set("ActionPointCosts", costs);
+				s.set("RoadMult", f64::from(d.road_mult));
+				s.set("HeatCost", i64::from(d.heat_cost));
+				s.set("StopAtRoad", d.stop_at_road);
+				s.set("RoadOnly", d.road_only);
 				s.to_strong()
 			});
 			let find_path = {
@@ -462,19 +602,21 @@ impl WorldGrid {
 							.ok_or("findPath: could not resolve 'from'")?;
 						let to_c = resolve_nav_coords(vm, &to.0)
 							.ok_or("findPath: could not resolve 'to'")?;
-						let costs = settings
-							.get::<SqArray>("ActionPointCosts")
-							.map(|a| a.to_vec::<f64>())
-							.unwrap_or_default();
-						let road_mult = settings.get::<f64>("RoadMult").unwrap_or(1.0);
-						let road_only = settings.get::<bool>("RoadOnly").unwrap_or(false);
-						let full = {
+						let nav = nav_settings(&settings);
+						let tiles = {
 							let grid = g.borrow();
-							a_star(&grid, from_c, to_c, &costs, road_mult, road_only, max_len)
+							world_nav::find_path(from_c, to_c, max_len, &nav, |q, r| {
+								grid.idx(q, r + q / 2).map(|id| {
+									let t = &grid.tiles[id];
+									NavTile {
+										id,
+										type_: usize::try_from(t.type_).unwrap_or(usize::MAX),
+										road: t.road_directions != 0,
+										heat: t.heat as u8,
+									}
+								})
+							})
 						};
-						// a_star returns [start, .., goal]; the path's waypoints are the
-						// tiles after the start (callers hold the start themselves).
-						let tiles: Vec<usize> = full.into_iter().skip(1).collect();
 						let class = g
 							.borrow()
 							.nav_path_class
@@ -505,6 +647,7 @@ impl WorldGrid {
 			vm.make_closure(move || nav.clone())
 		};
 
+		let tile_to_world = tile_to_world_overloads(vm);
 		let mut world = SqTable::root(vm)
 			.get::<SqTable>("World")
 			.expect("World table must be installed before WorldGrid");
@@ -521,7 +664,13 @@ impl WorldGrid {
 		world.set("queryTilesInRange", query_tiles_in_range);
 		world.set("updateTilesWithHeat", update_tiles_with_heat);
 		world.set("findNextRegion", find_next_region);
+		world.set("uncoverFogOfWar", uncover_fog_of_war);
+		world.set("isUsingFogOfWar", is_using_fog_of_war);
+		world.set("setFogOfWar", set_fog_of_war);
 		world.set("worldToTile", world_to_tile);
+		for (key, closure) in tile_to_world {
+			world.set(&key, closure);
+		}
 		world.set("findNextTileOfType", find_next_tile_of_type);
 		world.set("spawnRegionText", spawn_region_text);
 		world.set("getNavigator", get_navigator);
@@ -541,6 +690,11 @@ impl WorldGrid {
 
 	/// Release the retained `WorldTile`/`WorldDetail` class refs. Call before the VM
 	/// closes (breaks the Rust↔VM cycle; [`Engine`](crate::Engine) does this for you).
+	/// The map's share of a save (see [`GridPart`]).
+	pub(crate) fn save_part(&self) -> Rc<dyn super::save::SavePart> {
+		Rc::new(GridPart(self.grid.clone()))
+	}
+
 	pub fn clear(&self) {
 		let mut g = self.grid.borrow_mut();
 		g.class = None;
@@ -607,6 +761,29 @@ fn build_world_detail_class(vm: &mut SQVM) -> SqClass<DetailData> {
 		.build(vm)
 }
 
+/// `World.tileToWorld(coords)` / `tileToWorld(x, y)`: an axial tile's centre in world
+/// pixels, as a vector.
+fn tile_to_world_overloads(vm: &mut SQVM) -> Vec<(String, SqStrongRef)> {
+	fn centre(vm: &SQVM, q: i64, r: i64) -> Result<Option<SqStrongRef>, String> {
+		let create_vec = SqTable::root(vm)
+			.get::<SqStrongRef>("createVec")
+			.ok_or("tileToWorld: createVec missing")?;
+		create_vec.call_ret::<SqStrongRef, _>(vm, world_layout::tile_pos(q, r + q / 2))
+	}
+	let from_coords = vm.make_closure(|vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
+		let q = coords.0.get_member::<i64>(vm, "X").ok_or("tileToWorld: coords need X")?;
+		let r = coords.0.get_member::<i64>(vm, "Y").ok_or("tileToWorld: coords need Y")?;
+		centre(vm, q, r)
+	});
+	let from_xy = vm.make_closure(|vm: &SQVM, q: i64, r: i64| centre(vm, q, r));
+	let dispatch = make_dispatcher(vm, "tileToWorld");
+	vec![
+		(overload_key("tileToWorld", 1), from_coords),
+		(overload_key("tileToWorld", 2), from_xy),
+		("tileToWorld".to_string(), dispatch),
+	]
+}
+
 /// Build the `WorldNavigationPath` class returned by `findPath`. `isEmpty()` powers the
 /// connectivity check; `getCurrent()`/`pop()`/`getSize()` are the road-laying cursor
 /// (the loop `while (path.getSize() >= 1) { getTile(path.getCurrent()); path.pop(); }`).
@@ -634,153 +811,70 @@ fn build_world_navigation_path_class(vm: &mut SQVM) -> SqClass<PathData> {
 				p.cursor += 1;
 			}
 		})
+		// getNext and getNextNext are one function in the original: the second waypoint
+		// if there are two or more, else the current one.
+		.method("getNext", |p: &mut PathData, vm: &SQVM| -> Option<SqStrongRef> {
+			let at = if p.tiles.len().saturating_sub(p.cursor) > 1 { p.cursor + 1 } else { p.cursor };
+			p.coords_at(vm, at)
+		})
+		.method("getNextNext", |p: &mut PathData, vm: &SQVM| -> Option<SqStrongRef> {
+			let at = if p.tiles.len().saturating_sub(p.cursor) > 1 { p.cursor + 1 } else { p.cursor };
+			p.coords_at(vm, at)
+		})
+		.method("getLast", |p: &mut PathData, vm: &SQVM| -> Option<SqStrongRef> {
+			if p.cursor >= p.tiles.len() {
+				return None;
+			}
+			p.coords_at(vm, p.tiles.len() - 1)
+		})
+		.method("pushFront", |p: &mut PathData, vm: &SQVM, coords: Retained| {
+			if let Some(id) = p.tile_of(vm, &coords.0) {
+				p.tiles.insert(p.cursor, id);
+			}
+		})
+		.method("pushBack", |p: &mut PathData, vm: &SQVM, coords: Retained| {
+			if let Some(id) = p.tile_of(vm, &coords.0) {
+				p.tiles.push(id);
+			}
+		})
+		// isAtWaypoint(pos): within 4 px of the current waypoint's tile centre (an empty
+		// path counts as arrived). From the original's disassembly.
+		.method("isAtWaypoint", |p: &mut PathData, vm: &SQVM, pos: Retained| -> bool {
+			let Some(&id) = p.tiles.get(p.cursor) else {
+				return true;
+			};
+			let (q, r) = {
+				let g = p.grid.borrow();
+				(g.tiles[id].q, g.tiles[id].r)
+			};
+			let x = pos.0.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
+			let y = pos.0.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+			let centre = world_layout::tile_pos(q, r + q / 2);
+			super::world_query::distance(centre, (x, y)) <= 4.0
+		})
 		.build(vm)
 }
 
-/// Axial cube distance between two axial coords (the hex metric / A* heuristic).
-fn hex_dist_axial(aq: i64, ar: i64, bq: i64, br: i64) -> i64 {
-	let (dq, dr) = (aq - bq, ar - br);
-	(dq.abs() + dr.abs() + (dq + dr).abs()) / 2
-}
 
-/// The flat id of the closest tile within hex distance `dist` of axial `(cq, cr)` (the
-/// center itself excluded) whose data satisfies `pred`, or `None`. Backs `findNextRegion`
-/// and `findNextTileOfType`.
-fn closest_in_disk(
-	g: &GridState,
-	cq: i64,
-	cr: i64,
-	dist: i64,
-	pred: impl Fn(&TileData) -> bool,
-) -> Option<usize> {
-	let mut best: Option<(i64, usize)> = None;
-	for dq in -dist..=dist {
-		let lo = (-dist).max(-dq - dist);
-		let hi = dist.min(-dq + dist);
-		for dr in lo..=hi {
-			let d = (dq.abs() + dr.abs() + (dq + dr).abs()) / 2;
-			if d == 0 || d > dist {
-				continue;
-			}
-			let (nq, nr) = (cq + dq, cr + dr);
-			if let Some(id) = g.idx(nq, nr + nq / 2)
-				&& pred(&g.tiles[id])
-				&& best.is_none_or(|(bd, _)| d < bd)
-			{
-				best = Some((d, id));
-			}
+/// Read a script-side settings table the way the original's settings object stores it:
+/// `ActionPointCosts` entries truncated to ints (numbers, not strict floats: the cost
+/// tables mix an integer `0` with floats), at most 32, unset entries keeping the default.
+fn nav_settings(t: &SqTable) -> NavSettings {
+	let mut s = NavSettings::default();
+	if let Some(costs) = t.get::<SqArray>("ActionPointCosts") {
+		for (i, c) in costs.to_vec::<Number>().into_iter().take(32).enumerate() {
+			s.costs[i] = world_nav::cvtt_i32(c.0);
 		}
 	}
-	best.map(|(_, id)| id)
-}
-
-/// Hex A* over the grid: the min-cost path of tile ids from axial `from` to `to`,
-/// honoring per-terrain `costs` (**0 == impassable**, e.g. Ocean) scaled by `road_mult`
-/// on road tiles, bounded to `max_len` steps (0 == unbounded). Empty if unreachable.
-/// Structural (BFS-of-costs) correctness; exact C++ tie-breaking is deferred with the
-/// PRNG/seed work.
-fn a_star(
-	g: &GridState,
-	from: (i64, i64),
-	to: (i64, i64),
-	costs: &[f64],
-	road_mult: f64,
-	road_only: bool,
-	max_len: i64,
-) -> Vec<usize> {
-	let start = match g.idx(from.0, from.1 + from.0 / 2) {
-		Some(i) => i,
-		None => return Vec::new(),
-	};
-	let goal = match g.idx(to.0, to.1 + to.0 / 2) {
-		Some(i) => i,
-		None => return Vec::new(),
-	};
-	if start == goal {
-		return vec![start];
+	if let Some(m) = t.get::<Number>("RoadMult") {
+		s.road_mult = m.0 as f32;
 	}
-
-	// Scaled i64 cost to ENTER tile `id`; None if impassable (cost 0, e.g. Ocean).
-	let enter_cost = |id: usize| -> Option<i64> {
-		let t = &g.tiles[id];
-		let base = costs.get(t.type_ as usize).copied().unwrap_or(0.0);
-		if base <= 0.0 {
-			return None;
-		}
-		let c = if t.road_directions != 0 {
-			base * road_mult
-		} else {
-			base
-		};
-		Some((c * 1000.0).round().max(1.0) as i64)
-	};
-	let min_cost = costs
-		.iter()
-		.copied()
-		.filter(|&c| c > 0.0)
-		.fold(f64::INFINITY, f64::min);
-	let h_unit = if min_cost.is_finite() {
-		(min_cost * 1000.0).round().max(1.0) as i64
-	} else {
-		1
-	};
-
-	let n = g.tiles.len();
-	let mut g_score = vec![i64::MAX; n];
-	let mut came = vec![usize::MAX; n];
-	let mut depth = vec![0i32; n];
-	g_score[start] = 0;
-	let mut heap: BinaryHeap<Reverse<(i64, usize)>> = BinaryHeap::new();
-	heap.push(Reverse((
-		hex_dist_axial(from.0, from.1, to.0, to.1) * h_unit,
-		start,
-	)));
-
-	while let Some(Reverse((_f, cur))) = heap.pop() {
-		if cur == goal {
-			let mut path = vec![goal];
-			let mut c = goal;
-			while c != start {
-				c = came[c];
-				path.push(c);
-			}
-			path.reverse();
-			return path;
-		}
-		let (cq, cr) = {
-			let t = &g.tiles[cur];
-			(t.q, t.r)
-		};
-		for (dq, dr) in DIRECTION_STEP {
-			let (nq, nr) = (cq + dq, cr + dr);
-			let nid = match g.idx(nq, nr + nq / 2) {
-				Some(i) => i,
-				None => continue,
-			};
-			// RoadOnly: only road tiles are traversable (the goal endpoint is always
-			// allowed, since a settlement tile may anchor a road without carrying one).
-			if road_only && nid != goal && g.tiles[nid].road_directions == 0 {
-				continue;
-			}
-			let step = match enter_cost(nid) {
-				Some(c) => c,
-				None => continue, // impassable
-			};
-			let nd = depth[cur] + 1;
-			if max_len > 0 && i64::from(nd) > max_len {
-				continue;
-			}
-			let tentative = g_score[cur].saturating_add(step);
-			if tentative < g_score[nid] {
-				g_score[nid] = tentative;
-				came[nid] = cur;
-				depth[nid] = nd;
-				let h = hex_dist_axial(nq, nr, to.0, to.1) * h_unit;
-				heap.push(Reverse((tentative.saturating_add(h), nid)));
-			}
-		}
+	if let Some(h) = t.get::<Number>("HeatCost") {
+		s.heat_cost = world_nav::cvtt_i32(h.0);
 	}
-	Vec::new()
+	s.road_only = t.get::<bool>("RoadOnly").unwrap_or(false);
+	s.stop_at_road = t.get::<bool>("StopAtRoad").unwrap_or(false);
+	s
 }
 
 /// Resolve a `findPath` argument — a `WorldTile`, or an entity with `getTile()` — to its
@@ -851,12 +945,15 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			let (c, r) = t.with(|d| (d.col, d.row));
 			xy_table(vm, c, r)
 		})
-		// Structural world position: the square coords as a stand-in for pixels (real
-		// pixel layout / tile size is deferred). Invertible with `World.worldToTile`, so
-		// the region-label centroid math is meaningful even without real pixels.
+		// The tile centre in world pixels, as a vec2f (like the original); see
+		// `world_layout`.
 		.property_obj("Pos", |t, vm| {
 			let (c, r) = t.with(|d| (d.col, d.row));
-			xy_table(vm, c, r)
+			let (x, y) = world_layout::tile_pos(c, r);
+			SqTable::root(vm)
+				.get::<SqStrongRef>("createVec")
+				.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (x, y)).ok().flatten())
+				.unwrap_or_else(|| xy_table(vm, x as i64, y as i64))
 		});
 
 	// methods
@@ -1004,6 +1101,14 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			},
 		);
 
+	// The terrain brush is state worldgen reads back.
+	b = b
+		.method("setBrush", |t: &mut TileHandle, brush: &str| {
+			t.with_mut(|d| d.brush = brush.to_string())
+		})
+		.method("resetBrush", |t: &mut TileHandle| t.with_mut(|d| d.brush.clear()))
+		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.clone()) });
+
 	// visual / detail methods — no-op stubs (the render/detail subsystem is later).
 	// `clear`/`clearAllBut`/`setColor` are themselves Sqrat overloads; they stay lenient
 	// no-op stubs until the detail subsystem lands (worldgen never reads their result).
@@ -1011,9 +1116,6 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		"clear",
 		"clearAllBut",
 		"clearAndFade",
-		"setBrush",
-		"resetBrush",
-		"getBrush",
 		"setColor",
 		"onRoadPass",
 	] {

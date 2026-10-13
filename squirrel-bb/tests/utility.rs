@@ -223,7 +223,8 @@ fn platform_stubs_behave() {
 			assert(getPersistentStat("Unknown") == 0);
 
 			assert(typeof GameInfo.getVersionNumber() == "string");
-			assert(GameInfo.getCompany() == "Overhype Studios");
+			assert(GameInfo.getCompany() == "(c) Overhype Studios GmbH"); // as the original reports
+			assert(GameInfo.getVersionNumber() == "1.5.2.3");
 			"#,
 		"platform",
 	)
@@ -235,12 +236,15 @@ fn world_get_time_exposes_constants_and_boot_defaults() {
 	vm().run_script(
 		r#"
 			local t = World.getTime();
-			// constants read at config-load time
-			assert(t.SecondsPerDay == 86400);
-			assert(t.SecondsPerHour == 3600);
-			// live fields default to zero at boot (no world clock yet)
-			assert(t.Days == 0 && t.TimeOfDay == 0 && t.Hours == 0);
+			// The original's day (probed 2026-10-13), read by config at load time.
+			assert(t.SecondsPerDay == 105);
+			assert(t.SecondsPerHour == 4.375);
+			// A fresh world reads Day 1, 0:10, Dawn.
+			assert(t.Time == 105.75);
+			assert(t.Days == 1 && t.Hours == 0 && t.Minutes == 10 && t.TimeOfDay == 0);
 			assert(t.IsDaytime == true);
+			// One live object, like the original's.
+			assert(World.getTime() == t);
 			// usable in the float arithmetic config does (e.g. 1.0 / SecondsPerDay)
 			assert(1.0 / World.getTime().SecondsPerDay > 0.0);
 			"#,
@@ -250,14 +254,12 @@ fn world_get_time_exposes_constants_and_boot_defaults() {
 }
 
 #[test]
-fn native_config_drives_build_flags_and_time() {
+fn native_config_drives_build_flags() {
 	let mut vm = SQVM::new(4096);
 	let config = NativeConfig {
 		is_steam_build: true,
 		is_devmode: true,
 		owned_dlc: vec![17, 42],
-		seconds_per_day: 1000,
-		seconds_per_hour: 100,
 		version_number: "9.9.9".to_string(),
 		..NativeConfig::default()
 	};
@@ -270,13 +272,11 @@ fn native_config_drives_build_flags_and_time() {
 		assert(hasDLC(17) == true);     // owned
 		assert(hasDLC(42) == true);     // owned
 		assert(hasDLC(99) == false);    // not owned
-		assert(World.getTime().SecondsPerDay == 1000);
-		assert(World.getTime().SecondsPerHour == 100);
 		assert(GameInfo.getVersionNumber() == "9.9.9");
 		"#,
 		"config",
 	)
-	.expect("NativeConfig drives build flags + time");
+	.expect("NativeConfig drives build flags");
 }
 
 #[test]

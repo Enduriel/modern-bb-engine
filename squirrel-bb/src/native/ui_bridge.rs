@@ -46,6 +46,8 @@ pub struct UiCall {
 struct BridgeState {
 	connections: HashMap<(String, Option<String>), SqStrongRef>,
 	log: Vec<UiCall>,
+	/// Connections made since the last [`UiBridge::take_new_connections`].
+	pending_connects: Vec<(String, Option<String>)>,
 	class: Option<SqClass<JsHandle>>,
 }
 
@@ -54,6 +56,7 @@ impl BridgeState {
 		BridgeState {
 			connections: HashMap::new(),
 			log: Vec::new(),
+			pending_connects: Vec::new(),
 			class: None,
 		}
 	}
@@ -133,7 +136,8 @@ impl UiBridge {
 					let class = {
 						let mut st = h.state.borrow_mut();
 						st.connections
-							.insert((h.screen.clone(), Some(module_id)), obj.0);
+							.insert((h.screen.clone(), Some(module_id.clone())), obj.0);
+						st.pending_connects.push((h.screen.clone(), Some(module_id)));
 						st.class.clone().expect("JSHandle class set during install")
 					};
 					class.instantiate(vm, child)
@@ -148,10 +152,11 @@ impl UiBridge {
 			let class = class.clone();
 			vm.make_closure(
 				move |vm: &SQVM, screen: String, obj: Retained| -> SqStrongRef {
-					state
-						.borrow_mut()
-						.connections
-						.insert((screen.clone(), None), obj.0);
+					{
+						let mut st = state.borrow_mut();
+						st.connections.insert((screen.clone(), None), obj.0);
+						st.pending_connects.push((screen.clone(), None));
+					}
 					class.instantiate(
 						vm,
 						JsHandle {
@@ -178,11 +183,12 @@ impl UiBridge {
 			})
 		};
 
-		// Cursor natives — no-op / false stubs (no windowing headless).
+		// Cursor natives (no windowing headless). `setCursorPosition` answers whether the
+		// cursor is over the UI: headless there is no world view to hover, so it always is.
 		let set_cursor = vm.make_closure(|_name: String| {});
 		let set_cursor_hardware = vm.make_closure(|value: bool| value);
 		let is_cursor_hardware = vm.make_closure(|| false);
-		let set_cursor_position = vm.make_closure(|_x: Number, _y: Number| false);
+		let set_cursor_position = vm.make_closure(|_x: Number, _y: Number| true);
 		let get_cursor_size = vm.make_closure(|vm: &SQVM| -> SqStrongRef {
 			let mut t = SqTable::new(vm);
 			t.set("Width", 0i64);
@@ -248,6 +254,17 @@ impl UiBridge {
 			.collect()
 	}
 
+	/// Take the recorded SQ→JS calls, leaving the log empty (for a client that consumes
+	/// them every frame; see [`crate::ui_client`]).
+	pub fn take_calls(&self) -> Vec<UiCall> {
+		std::mem::take(&mut self.state.borrow_mut().log)
+	}
+
+	/// Take the `(screen, module)` connections made since the last call.
+	pub fn take_new_connections(&self) -> Vec<(String, Option<String>)> {
+		std::mem::take(&mut self.state.borrow_mut().pending_connects)
+	}
+
 	/// Number of recorded SQ→JS calls.
 	pub fn call_count(&self) -> usize {
 		self.state.borrow().log.len()
@@ -259,6 +276,7 @@ impl UiBridge {
 		let mut st = self.state.borrow_mut();
 		st.connections.clear();
 		st.log.clear();
+		st.pending_connects.clear();
 		st.class = None;
 	}
 }

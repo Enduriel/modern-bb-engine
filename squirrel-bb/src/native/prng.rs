@@ -1,85 +1,98 @@
-//! The pseudo-random generator behind `Math.rand` / `Math.seedRandom`.
+//! The random generators behind `Math.rand` / `Math.seedRandom` / `Math.seedRandomString`,
+//! matching the ORIGINAL engine bit-for-bit (reverse-engineered from sequences captured
+//! in the original game):
 //!
-//! Battle Brothers' exact RNG algorithm is unknown (it would only matter for
-//! reproducing a specific campaign seed or save, both out of scope), so this is a
-//! deliberately self-contained, deterministic stand-in: SplitMix64. It is
-//! isolated here precisely so the algorithm can be swapped later without touching
-//! the `Math` table. The two-arg gameplay RNG and the seed functions all share
-//! one state, matching the observable BB contract (`seedRandom(x)` then `rand(...)`).
+//! * `rand(min, max)` draws from one global [`Mt19937_64`]: `min + X % (max - min + 1)`.
+//!   An empty range (`max <= min`) returns `min` **without** consuming a draw.
+//! * `seedRandom(x)` truncates `x` toward zero and reinterprets it as a **u32**
+//!   (`-1` → `0xFFFFFFFF`), then reseeds the twister with it.
+//! * `seedRandomString(s)` reseeds with the 64-bit x65599 (sdbm) hash of its bytes.
+//! * `rand()` (no args) is the C runtime's `rand()` — the MSVC LCG — a **separate**
+//!   stream that the seed functions never touch.
+//!
+//! One [`Prng`] is created by the native installer and shared with `color.varyRGB`.
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Shared, mutable RNG state (a single 64-bit SplitMix64 register).
+use super::mt64::Mt19937_64;
+
+/// The MSVC CRT `rand()` LCG (`state * 214013 + 2531011`, bits 16..30).
+struct CrtRand {
+	state: u32,
+}
+
+impl CrtRand {
+	fn next(&mut self) -> i64 {
+		self.state = self.state.wrapping_mul(214_013).wrapping_add(2_531_011);
+		i64::from((self.state >> 16) & 0x7FFF)
+	}
+}
+
+struct State {
+	mt: Mt19937_64,
+	crt: CrtRand,
+}
+
+/// Shared RNG state (cheap to clone; all clones draw from the same streams).
 #[derive(Clone)]
 pub(crate) struct Prng {
-	state: Rc<Cell<u64>>,
+	state: Rc<RefCell<State>>,
 }
 
 impl Prng {
-	/// A new generator with a fixed, deterministic default seed.
+	/// A new generator. The twister starts at the C++ default seed (5489) and the C
+	/// runtime stream at its default (`srand(1)`); the game seeds explicitly wherever
+	/// determinism matters.
 	pub(crate) fn new() -> Self {
 		Prng {
-			state: Rc::new(Cell::new(0x2545_F491_4F6C_DD1D)),
+			state: Rc::new(RefCell::new(State {
+				mt: Mt19937_64::new(5489),
+				crt: CrtRand { state: 1 },
+			})),
 		}
 	}
 
-	/// Re-seed from an integer.
+	/// `seedRandom`: the (already truncated) integer is reinterpreted as a u32.
 	pub(crate) fn seed(&self, seed: i64) {
-		self.state.set(seed as u64);
+		self.state.borrow_mut().mt = Mt19937_64::new(u64::from(seed as u32));
 	}
 
-	/// Re-seed from a string (FNV-1a 64-bit of its bytes).
+	/// `seedRandomString`: x65599 hash (`h = h * 65599 + byte`) over the bytes, 64-bit.
 	pub(crate) fn seed_str(&self, text: &str) {
-		const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-		const PRIME: u64 = 0x0000_0100_0000_01b3;
-		let mut hash = OFFSET;
-		for byte in text.as_bytes() {
-			hash ^= u64::from(*byte);
-			hash = hash.wrapping_mul(PRIME);
-		}
-		self.state.set(hash);
+		let hash = text
+			.as_bytes()
+			.iter()
+			.fold(0u64, |h, &b| h.wrapping_mul(65_599).wrapping_add(u64::from(b)));
+		self.state.borrow_mut().mt = Mt19937_64::new(hash);
 	}
 
-	/// Next raw 64 bits (advances the state); SplitMix64.
-	fn next_u64(&self) -> u64 {
-		let mut z = self.state.get().wrapping_add(0x9E37_79B9_7F4A_7C15);
-		self.state.set(z);
-		z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-		z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-		z ^ (z >> 31)
-	}
-
-	/// An integer in `[0, 32767]` (the BB zero-arg `Math.rand()` range).
+	/// `rand()`: the separate C-runtime stream, in `[0, 32767]`.
 	pub(crate) fn rand_default(&self) -> i64 {
-		(self.next_u64() % 32768) as i64
+		self.state.borrow_mut().crt.next()
 	}
 
-	/// A uniform float in `[0, 1)`, using the top 53 bits (exact in an `f64`).
-	fn next_unit(&self) -> f64 {
-		(self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
-	}
-
-	/// A uniform float in `[lo, hi)` (returns `lo` if `hi <= lo`). Backs
-	/// `color.varyRGB`, whose channel factors draw from `[1-f, 1+f]`.
-	pub(crate) fn rand_range_f(&self, lo: f64, hi: f64) -> f64 {
-		if hi <= lo {
-			return lo;
-		}
-		lo + self.next_unit() * (hi - lo)
-	}
-
-	/// An integer in `[min, max]` inclusive. If `max <= min`, returns `min`.
+	/// `rand(min, max)`: inclusive; `min` (and no draw) when `max <= min`.
 	///
-	/// Computed in `i128` so it cannot overflow or divide by zero for *any* `i64`
-	/// inputs — a panic here would unwind across the C trampoline (UB). Vanilla
-	/// only ever passes small ranges, but a script/mod could pass extremes.
+	/// Computed in `i128`/`u128` so no `i64` inputs can overflow — a panic here would
+	/// unwind across the C trampoline.
 	pub(crate) fn rand_range(&self, min: i64, max: i64) -> i64 {
 		if max <= min {
 			return min;
 		}
-		let span = (max as i128 - min as i128) as u128 + 1;
-		let offset = (u128::from(self.next_u64()) % span) as i128;
-		(min as i128 + offset) as i64
+		let span = (i128::from(max) - i128::from(min)) as u128 + 1;
+		let x = u128::from(self.state.borrow_mut().mt.next_u64());
+		(i128::from(min) + (x % span) as i128) as i64
+	}
+
+	/// A uniform float in `[lo, hi)` from the twister (returns `lo` if `hi <= lo`).
+	/// Backs `color.varyRGB`. NOTE: the original's exact float derivation for varyRGB
+	/// is not yet verified; this uses the top 53 bits of one draw.
+	pub(crate) fn rand_range_f(&self, lo: f64, hi: f64) -> f64 {
+		if hi <= lo {
+			return lo;
+		}
+		let x = self.state.borrow_mut().mt.next_u64();
+		lo + ((x >> 11) as f64 / (1u64 << 53) as f64) * (hi - lo)
 	}
 }

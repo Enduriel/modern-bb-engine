@@ -4,11 +4,12 @@
 //! primitives those classes expect.
 //!
 //! This mirrors [`WorldEntities`](crate::native::WorldEntities): a `this_identity`
-//! registry, per-clone-level method injection (BB instances are clone chains sharing one
-//! `m`; super-calls rebind `this` to a delegate level — see [`crate::native`]), inert
-//! sprite stubs, and the module [`Instantiator`] for script-class loading. It differs in
-//! lifecycle: tactical entities live in rosters (not at world `(q,r)` tiles), their
-//! faction comes from the owning roster, and they are not placed on the world map
+//! registry, natives injected on the instance's base class level and bound to the leaf
+//! (see [`super::inject`]), inert sprite stubs, and the module [`Instantiator`] for
+//! script-class loading. It differs in
+//! lifecycle: tactical entities live in rosters (not at world `(q,r)` tiles), start with
+//! no faction (0, whatever roster creates them; scripts then call `setFaction`, as
+//! probed in the original 2026-10-13), and they are not placed on the world map
 //! (`getTile` → null, `isPlacedOnMap` → false).
 //!
 //! Skills/items/backgrounds run as REAL script classes (mod + seed fidelity); only the
@@ -21,6 +22,9 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
+use super::inject::inject_natives;
+
+mod persist;
 use crate::module::Instantiator;
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
@@ -69,16 +73,23 @@ struct RosterData {
 	id: i64,
 }
 
-/// One registered tactical unit: its native id, the instance, and its faction (the id of
-/// the roster it was created in).
+/// One registered tactical unit: its native id, the instance, and its faction (0 until a
+/// script calls `setFaction`).
 struct UnitRecord {
 	id: i64,
-	#[allow(dead_code)]
+	/// The script it was created from (to re-create it on load).
+	path: String,
 	entity: SqStrongRef,
 	faction: i64,
 	/// `isInitialized()`: false during the first `onInit` (so actor.onInit's one-time
 	/// property/overlay setup runs), then set true once spawn finishes onInit.
 	initialized: bool,
+	/// `isDiscovered`/`setDiscovered` (false until player.onInit sets it, like the original).
+	discovered: bool,
+	/// `isBlockingSight`/`setBlockSight`.
+	blocks_sight: bool,
+	/// `getPos`/`setPos` world position (0,0 while off any map, like the original).
+	pos: (f64, f64),
 	sprites: HashMap<String, SqStrongRef>,
 }
 
@@ -113,10 +124,9 @@ fn ignore_missing(result: Result<(), String>) -> Result<(), String> {
 	}
 }
 
-/// Inject the shared natives onto every clone level of `entity` (the levels sharing its
-/// `m`), registering each level's identity against `record_idx`. Same approach as
-/// [`WorldEntities`](crate::native::WorldEntities) — needed because super-calls rebind
-/// `this` to a delegate level.
+/// Inject the shared natives into `entity` (on its base class level, bound to the
+/// leaf; see [`inject_natives`]) and register every level's identity against
+/// `record_idx`.
 fn inject_levels(
 	machine: &Rc<RefCell<TacticalMachine>>,
 	vm: &SQVM,
@@ -132,56 +142,50 @@ fn inject_levels(
 	let Some(leaf) = entity.as_table(vm) else {
 		return;
 	};
-	let Some(shared_m) = leaf.get::<SqTable>("m").map(|m| m.to_strong().identity()) else {
-		return;
-	};
-	let mut level = Some(leaf);
-	while let Some(mut t) = level {
-		if t.get::<SqTable>("m").map(|m| m.to_strong().identity()) != Some(shared_m) {
-			break;
-		}
-		for (name, closure) in &methods {
-			// Inject only methods the class does NOT already define — the truly-native
-			// primitives. Many names we want as inert no-ops (e.g. addDefaultStatusSprites,
-			// updateOverlay) are actually SCRIPT methods in actor/human that call native
-			// `addSprite`; overwriting them with a no-op would skip real sprite setup.
-			if t.get::<SqStrongRef>(name).is_none() {
-				t.set(name, closure.clone());
-			}
-		}
-		machine
-			.borrow_mut()
-			.by_identity
-			.insert(t.to_strong().identity(), record_idx);
-		level = t.delegate();
+	for identity in inject_natives(vm, &leaf, &methods) {
+		machine.borrow_mut().by_identity.insert(identity, record_idx);
 	}
 }
 
-/// Instantiate `path` (runs `create()`), register it with `faction` (the roster id),
-/// inject the natives across its clone levels, then run `onInit`/`onAfterInit`.
-fn spawn(
+/// Instantiate `path` (runs `create()`) as unit `id` with no faction, and inject the
+/// natives (base class level, bound to the leaf). Returns the instance and its record
+/// index. Runs no other script.
+fn create_unit(
 	machine: &Rc<RefCell<TacticalMachine>>,
 	vm: &SQVM,
 	path: &str,
-	faction: i64,
-) -> Result<SqStrongRef, String> {
+	id: i64,
+) -> Result<(SqStrongRef, usize), String> {
 	let instantiate = machine.borrow().instantiate.clone();
 	let entity = instantiate(vm, path)?;
 	let record_idx = {
 		let mut m = machine.borrow_mut();
-		let id = m.next_id;
-		m.next_id += 1;
 		let idx = m.units.len();
 		m.units.push(UnitRecord {
 			id,
+			path: path.to_string(),
 			entity: entity.clone(),
-			faction,
+			faction: 0,
 			initialized: false,
+			discovered: false,
+			blocks_sight: false,
+			pos: (0.0, 0.0),
 			sprites: HashMap::new(),
 		});
 		idx
 	};
 	inject_levels(machine, vm, &entity, record_idx);
+	Ok((entity, record_idx))
+}
+
+/// Create a new unit of `path` with the next id, then run `onInit`/`onAfterInit`.
+fn spawn(machine: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, path: &str) -> Result<SqStrongRef, String> {
+	let id = {
+		let mut m = machine.borrow_mut();
+		m.next_id += 1;
+		m.next_id - 1
+	};
+	let (entity, record_idx) = create_unit(machine, vm, path, id)?;
 	entity.call_method(vm, "onInit", ())?;
 	ignore_missing(entity.call_method(vm, "onAfterInit", ()))?;
 	// The one-time onInit setup has run; the entity is now initialized.
@@ -306,7 +310,7 @@ fn build_roster_class(
 		.method(
 			"create",
 			move |r: &mut RosterData, vm: &SQVM, path: &str| -> Result<SqStrongRef, String> {
-				let entity = spawn(&m_create, vm, path, r.id)?;
+				let entity = spawn(&m_create, vm, path)?;
 				m_create
 					.borrow_mut()
 					.rosters
@@ -380,6 +384,16 @@ impl TacticalEntities {
 				m.borrow().record(vm.this_identity()).map_or(0, |r| r.faction)
 			})
 		};
+		// setFactionEx(f): the native half of actor.setFaction (which handles the
+		// map-side bookkeeping in script).
+		let set_faction_ex = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, faction: i64| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.faction = faction;
+				}
+			})
+		};
 		let add_sprite = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
@@ -434,10 +448,50 @@ impl TacticalEntities {
 			},
 		);
 		let noop = vm.make_closure(|_a: Variadic<Retained>| {});
+		// Unit state the scripts read back (semantics probed in the original, 2026-10-13).
+		let flag = |vm: &mut SQVM, m: &Rc<RefCell<TacticalMachine>>, get: fn(&UnitRecord) -> bool, set: fn(&mut UnitRecord, bool)| {
+			let mg = m.clone();
+			let getter = vm.make_closure(move |vm: &SQVM| -> bool { mg.borrow().record(vm.this_identity()).is_some_and(get) });
+			let ms = m.clone();
+			let setter = vm.make_closure(move |vm: &SQVM, v: bool| {
+				if let Some(rec) = ms.borrow_mut().record_mut(vm.this_identity()) {
+					set(rec, v);
+				}
+			});
+			(getter, setter)
+		};
+		let (is_discovered, set_discovered) =
+			flag(vm, &self.machine, |r| r.discovered, |r, v| r.discovered = v);
+		let (is_blocking_sight, set_block_sight) =
+			flag(vm, &self.machine, |r| r.blocks_sight, |r, v| r.blocks_sight = v);
+		// Not on a tactical map headless, so never hidden (the original says false even
+		// for an undiscovered unit off the map).
+		let is_hidden_to_player = vm.make_closure(|| false);
+		let get_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
+				let (x, y) = m.borrow().record(vm.this_identity()).map_or((0.0, 0.0), |r| r.pos);
+				let create_vec = SqTable::root(vm)
+					.get::<SqStrongRef>("createVec")
+					.ok_or("getPos: createVec missing")?;
+				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
+			})
+		};
+		let set_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, pos: Retained| {
+				let x = pos.0.get_member::<squirrel::Number>(vm, "X").map_or(0.0, |n| n.0);
+				let y = pos.0.get_member::<squirrel::Number>(vm, "Y").map_or(0.0, |n| n.0);
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.pos = (x, y);
+				}
+			})
+		};
 
 		let mut methods: Vec<(&'static str, SqStrongRef)> = vec![
 			("getID", get_id),
 			("getFaction", get_faction),
+			("setFactionEx", set_faction_ex),
 			("addSprite", add_sprite),
 			("getSprite", get_sprite),
 			("hasSprite", has_sprite),
@@ -446,13 +500,19 @@ impl TacticalEntities {
 			("isInitialized", is_initialized),
 			("isPlacedOnMap", is_placed_on_map),
 			("getTile", get_tile),
+			("isDiscovered", is_discovered),
+			("setDiscovered", set_discovered),
+			("isBlockingSight", is_blocking_sight),
+			("setBlockSight", set_block_sight),
+			("isHiddenToPlayer", is_hidden_to_player),
+			("getPos", get_pos),
+			("setPos", set_pos),
 		];
 		for name in [
 			"setDirty",
 			"setVisibility",
 			"setVisibleInFogOfWar",
 			"setPreventOcclusion",
-			"setBlockSight",
 			"setSpriteScaling",
 			"setSpriteOffset",
 			"setSpriteColorization",
@@ -460,6 +520,14 @@ impl TacticalEntities {
 			"updateOverlay",
 			"setOverlayValues",
 			"setOverlayIcons",
+			// Render-only, or map-only while units aren't placed:
+			"fadeIn",
+			"fadeOut",
+			"setAlpha",
+			"moveSpriteOffset",
+			"setRenderCallbackEnabled",
+			"updateVisibility",
+			"removeFromMap",
 		] {
 			methods.push((name, noop.clone()));
 		}
@@ -498,6 +566,23 @@ impl TacticalEntities {
 			})
 		};
 
+		// Tactical.getEntityByID(id): a unit that still exists, i.e. is in a roster (a
+		// unit removed from every roster is gone, so e.g. a dead employer's contract
+		// becomes invalid).
+		let get_entity_by_id = {
+			let m = self.machine.clone();
+			vm.make_closure(move |id: i64| -> Option<SqStrongRef> {
+				let machine = m.borrow();
+				let unit = machine.units.iter().find(|u| u.id == id)?;
+				let identity = unit.entity.identity();
+				machine
+					.rosters
+					.values()
+					.flatten()
+					.find(|e| e.identity() == identity)
+					.cloned()
+			})
+		};
 		let mut world = SqTable::root(vm)
 			.get::<SqTable>("World")
 			.expect("World table must be installed before TacticalEntities");
@@ -505,6 +590,15 @@ impl TacticalEntities {
 		world.set("getPlayerRoster", get_player_roster);
 		world.set("createRoster", create_roster);
 		world.set("deleteRoster", delete_roster);
+		let mut tactical = SqTable::root(vm)
+			.get::<SqTable>("Tactical")
+			.expect("Tactical table must be installed before TacticalEntities");
+		tactical.set("getEntityByID", get_entity_by_id);
+	}
+
+	/// The rosters' share of a save (see [`persist`]).
+	pub(crate) fn save_part(&self) -> Rc<dyn crate::native::save::SavePart> {
+		Rc::new(persist::RostersPart(self.machine.clone()))
 	}
 
 	/// Total units created (host/test inspection).

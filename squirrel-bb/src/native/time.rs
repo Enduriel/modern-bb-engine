@@ -7,10 +7,15 @@
 //! crate has no clock of its own). The Rounds clock is driven by scripts calling
 //! `Time.setRound`. Scheduled events fire when their clock passes the deadline.
 //!
-//! Conventions (BB's exact units are unconfirmed; these are internally consistent
-//! and isolated here so they can be corrected later):
-//! - Real/Virtual time and `scheduleEvent` Real/Virtual delays are in
-//!   **milliseconds**, and delays are **relative** to the current clock value.
+//! Units, as probed in the original:
+//! - `getRealTime`/`getVirtualTime` are integer **milliseconds**; `getRealTimeF`,
+//!   `getVirtualTimeF`, `getExactTime` and `getDelta` are **seconds**.
+//! - `scheduleEvent` Real/Virtual delays are milliseconds, relative to the current
+//!   clock value.
+//! - The virtual clock runs at `getVirtualSpeed()` times real time; `World.setSpeedMult`
+//!   sets that speed (0 while the game is paused).
+//! - `getVirtualDelta` is assumed to be the frame's real delta times the virtual speed
+//!   (seconds); not yet checked against the original.
 //! - A scheduled callback is invoked as `callback(userdata)` with `this` = the
 //!   root table (a `bindenv`'d callback uses its bound environment instead).
 
@@ -92,6 +97,13 @@ impl TimeService {
 		fire_all(vm, due);
 	}
 
+	/// The clocks' share of a save: virtual time and the round. (Real time keeps
+	/// running; scheduled events hold script callbacks and are cleared on load by the
+	/// world state.)
+	pub(crate) fn save_part(&self) -> Rc<dyn super::save::SavePart> {
+		Rc::new(TimePart(self.state.clone()))
+	}
+
 	/// Drop all pending scheduled events (releasing their callback/userdata
 	/// references). Call before closing the VM if the service might outlive it. The
 	/// same as the script-side `Time.clearEvents()`.
@@ -116,15 +128,15 @@ impl TimeService {
 
 		let entries: Vec<(&str, SqStrongRef)> = vec![
 			("getRealTime", getter!(|st| st.real_time as i64)),
-			("getRealTimeF", getter!(|st| st.real_time)),
-			("getExactTime", getter!(|st| st.real_time)),
+			("getRealTimeF", getter!(|st| st.real_time / 1000.0)),
+			("getExactTime", getter!(|st| st.real_time / 1000.0)),
 			("getVirtualTime", getter!(|st| st.virtual_time as i64)),
-			("getVirtualTimeF", getter!(|st| st.virtual_time)),
+			("getVirtualTimeF", getter!(|st| st.virtual_time / 1000.0)),
 			(
 				"getVirtualDelta",
-				getter!(|st| st.last_delta * st.virtual_speed),
+				getter!(|st| st.last_delta * st.virtual_speed / 1000.0),
 			),
-			("getDelta", getter!(|st| st.last_delta)),
+			("getDelta", getter!(|st| st.last_delta / 1000.0)),
 			("getVirtualSpeed", getter!(|st| st.virtual_speed)),
 			("getFrame", getter!(|st| st.frame)),
 			("getRound", getter!(|st| st.round)),
@@ -227,5 +239,25 @@ fn drain_due(
 fn fire_all(vm: &SQVM, due: Vec<(SqStrongRef, SqStrongRef)>) {
 	for (callback, userdata) in due {
 		let _ = callback.call(vm, (userdata,));
+	}
+}
+
+struct TimePart(Rc<RefCell<TimeState>>);
+
+impl super::save::SavePart for TimePart {
+	fn save(&self, cx: &super::save::SaveCx) -> Result<(), String> {
+		let st = self.0.borrow();
+		let mut w = cx.writer.borrow_mut();
+		w.f64(st.virtual_time);
+		w.i64(st.round);
+		Ok(())
+	}
+
+	fn load(&self, cx: &super::save::LoadCx) -> Result<(), String> {
+		let mut st = self.0.borrow_mut();
+		let mut r = cx.reader.borrow_mut();
+		st.virtual_time = r.f64()?;
+		st.round = r.i64()?;
+		Ok(())
 	}
 }

@@ -110,3 +110,79 @@ fn stub_visual_methods_are_noops() {
 	.expect("stub methods are no-ops");
 	grid.clear();
 }
+
+#[test]
+fn tile_brush_is_state_like_the_original() {
+	let mut vm = squirrel::SQVM::new(1024);
+	squirrel_bb::install_natives(&mut vm);
+	let grid = squirrel_bb::WorldGrid::new();
+	grid.install(&mut vm);
+	vm.run_script(
+		r#"
+		World.resizeScene(4, 4);
+		local t = World.getTileSquare(1, 1);
+		assert(typeof t.getBrush() == "string" && t.getBrush() == "");
+		t.setBrush("world_highlands_03");
+		assert(t.getBrush() == "world_highlands_03");
+		assert(World.getTileSquare(1, 1).getBrush() == "world_highlands_03"); // handles alias
+		t.resetBrush();
+		assert(t.getBrush() == "");
+		t.setBrush("x");
+		World.clearTiles();
+		assert(t.getBrush() == "");
+		"#,
+		"brush",
+	)
+	.expect("brush round-trips");
+	grid.clear();
+}
+
+/// Routes captured from the ORIGINAL game's `findPath` (2026-10-13) on a
+/// 140x170 all-plains map and on a deterministic mixed-cost map. The navigator must
+/// reproduce them exactly: worldgen builds roads along these routes.
+#[test]
+fn find_path_matches_the_original_routes() {
+	let mut vm = squirrel::SQVM::new(1024);
+	squirrel_bb::install_natives(&mut vm);
+	let grid = squirrel_bb::WorldGrid::new();
+	grid.install(&mut vm);
+	vm.run_script(
+		r#"
+		::Const <- { World = { TerrainTypeNavCost = [0] } };
+		foreach (s in [0.0, 1.0, 0.5, 0.65, 0.65, 0.65, 0.65, 0.65, 0.25, 0.5, 1.0, 0.75, 0.9, 0.9, 1.0, 0.5, 0.75, 0.9])
+			::Const.World.TerrainTypeNavCost.push(10 * (1.0 / s)); // speed 0 -> inf, like the game
+		World.resizeScene(140, 170);
+		local function setMap( _mixed )
+		{
+			for (local x = 0; x < 140; x++)
+				for (local y = 0; y < 170; y++)
+				{
+					local t = World.getTileSquare(x, y);
+					t.RoadDirections = 0;
+					t.Type = _mixed ? [2, 2, 2, 4, 5, 10, 12, 13, 9][(x * 7 + y * 13 + (x * y) % 5) % 9] : 2;
+				}
+		}
+		local function path( _fx, _fy, _tx, _ty )
+		{
+			local nav = World.getNavigator();
+			local s = nav.createSettings();
+			s.ActionPointCosts = ::Const.World.TerrainTypeNavCost;
+			local p = nav.findPath(World.getTileSquare(_fx, _fy), World.getTileSquare(_tx, _ty), s, 0);
+			local out = "";
+			while (!p.isEmpty()) { local c = p.getCurrent(); local t = World.getTile(c.X, c.Y); out += t.SquareCoords.X + "," + t.SquareCoords.Y + " "; p.pop(); }
+			return out;
+		}
+		setMap(false);
+		assert(path(91, 19, 101, 32) == "92,20 93,20 94,21 94,22 94,23 94,24 94,25 95,25 95,26 95,27 96,28 97,28 98,29 99,29 100,30 101,30 101,31 101,32 ");
+		assert(path(26, 75, 50, 100) == "27,75 28,76 29,76 30,77 31,77 32,78 33,78 34,79 35,79 36,80 37,80 38,81 39,81 40,82 41,82 42,83 43,83 44,84 44,85 44,86 44,87 44,88 44,89 44,90 44,91 44,92 44,93 45,93 46,94 47,94 48,95 49,95 49,96 49,97 49,98 49,99 50,100 ");
+		assert(path(65, 113, 88, 118) == "66,114 67,114 68,115 69,115 70,116 71,116 72,117 73,117 74,118 75,117 76,118 77,118 78,118 79,117 80,117 81,116 82,117 83,116 84,116 85,116 86,117 87,117 88,118 ");
+		assert(path(66, 15, 69, 34) == "66,16 66,17 66,18 66,19 66,20 66,21 66,22 66,23 66,24 66,25 66,26 66,27 66,28 66,29 66,30 66,31 66,32 67,32 68,33 68,34 69,34 ");
+		setMap(true);
+		assert(path(91, 102, 100, 117) == "92,103 92,104 92,105 93,105 93,106 93,107 93,108 93,109 93,110 93,111 94,112 95,112 96,113 97,113 98,114 99,114 99,115 99,116 100,117 ");
+		assert(path(25, 48, 34, 67) == "26,49 27,49 28,50 28,51 28,52 28,53 28,54 28,55 28,56 28,57 29,57 30,58 31,58 31,59 31,60 32,61 33,61 33,62 33,63 34,64 34,65 34,66 34,67 ");
+		"#,
+		"nav_golden",
+	)
+	.expect("routes match the original");
+	grid.clear();
+}

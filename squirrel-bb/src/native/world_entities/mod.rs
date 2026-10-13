@@ -1,0 +1,780 @@
+//! The World entity host: `World.spawnLocation` + the native methods every world
+//! entity (settlement / location / party) needs that aren't defined in script.
+//!
+//! BB's world entities are real `.nut` classes (`world_entity` ← `location` ←
+//! `settlement`, etc.) whose *script* half defines `onInit`/`create`/gameplay, while a
+//! C++ base supplies the engine primitives — identity, tile binding, and the
+//! sprite/label render handles. We keep the real script classes (for mod + seed
+//! fidelity) and inject the engine primitives, using the shared-method registry
+//! approach of [`RootState`](crate::RootState).
+//!
+//! ## Where the natives go
+//!
+//! Like the original engine, the natives are injected onto the instance's **base**
+//! class-level table (bound to the leaf), and every level's identity is registered
+//! against the entity's record; see [`super::inject`] and [`crate::class`].
+//!
+//! Rendering is deliberately stubbed: `addSprite`/`addLabel` return live-but-inert
+//! [`SpriteData`]/[`LabelData`] objects (readable/writable props, zero rendering).
+//! `getTile` delegates to the existing `World.getTile` grid native.
+//!
+//! Host-owned (holds [`SqStrongRef`]s): **[`clear`](WorldEntities::clear) before VM
+//! close** ([`Engine`](crate::Engine) does it).
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
+
+use super::inject::inject_natives;
+use super::overload::{make_dispatcher, overload_key};
+use super::world_layout;
+use super::world_query::{self, Candidate};
+use crate::module::Instantiator;
+
+mod movement;
+mod persist;
+mod render;
+mod think;
+mod view;
+
+/// A render sprite handle (`entity.addSprite(name)`). Inert: fields are read/written by
+/// script (`Visible`, `Scale`, `Alpha`, …) but drive no rendering yet.
+#[derive(Clone)]
+struct SpriteData {
+	brush: String,
+	alpha: f64,
+	scale: f64,
+	visible: bool,
+	ignore_ambient: bool,
+	fading_done: bool,
+}
+
+impl SpriteData {
+	fn fresh() -> Self {
+		SpriteData {
+			brush: String::new(),
+			alpha: 255.0,
+			scale: 1.0,
+			visible: true,
+			ignore_ambient: false,
+			fading_done: true, // no fade in progress
+		}
+	}
+}
+
+/// A text label handle (`entity.addLabel(name)`). Inert, like [`SpriteData`].
+#[derive(Clone, Default)]
+struct LabelData {
+	text: String,
+	visible: bool,
+}
+
+/// One registered world entity: its native id, the instance, its tile coords (axial),
+/// and its named sprite/label handles. Reached from any of its class levels' identities
+/// via [`EntityMachine::by_identity`].
+struct EntityRecord {
+	id: i64,
+	/// The script it was created from (to re-create it on load).
+	path: String,
+	entity: SqStrongRef,
+	q: i64,
+	r: i64,
+	/// World pixel position (a tile centre until `setPos` moves it).
+	pos: (f64, f64),
+	/// `setRenderedTop`: true by default (parties); locations clear it in `onInit`.
+	/// Decides which half of the spatial queries finds the entity (see `world_query`).
+	rendered_top: bool,
+	/// Multiplier on the radius it can be seen from (`get/setVisibility`, default 1.0).
+	visibility: f32,
+	visible: bool,
+	discovered: bool,
+	visible_in_fog_of_war: bool,
+	ignore_collision: bool,
+	important: bool,
+	z_offset: i64,
+	think: think::ThinkState,
+	render: render::RenderState,
+	faction: i64,
+	/// Cleared by `die`/`fadeAndDie` (which are idempotent, like the original's).
+	alive: bool,
+	/// When a `fadeAndDie` lets it die (real-time ms).
+	dies_at: Option<i64>,
+	sprites: HashMap<String, SqStrongRef>,
+	labels: HashMap<String, SqStrongRef>,
+}
+
+/// Shared entity host state: the registry, the `this.new` capability, the stub classes,
+/// the id counter, and the shared native method closures to inject onto each instance.
+struct EntityMachine {
+	instantiate: Instantiator,
+	sprite_class: Option<SqClass<SpriteData>>,
+	label_class: Option<SqClass<LabelData>>,
+	next_id: i64,
+	entities: Vec<EntityRecord>,
+	/// Every class-level identity of every entity → its record index in `entities`.
+	by_identity: HashMap<i64, usize>,
+	methods: Vec<(&'static str, SqStrongRef)>,
+	player_view: view::PlayerView,
+	thinkers: think::Thinkers,
+}
+
+impl EntityMachine {
+	/// The live entities as query candidates, with their instances at the same indices.
+	fn candidates(&self) -> (Vec<Candidate>, Vec<SqStrongRef>) {
+		self.entities
+			.iter()
+			.filter(|rec| rec.alive)
+			.map(|rec| {
+				let cand = Candidate {
+					id: rec.id,
+					pos: rec.pos,
+					rendered_top: rec.rendered_top,
+					tile: (rec.q, rec.r),
+					visibility: rec.visibility,
+				};
+				(cand, rec.entity.clone())
+			})
+			.unzip()
+	}
+
+	fn record(&self, identity: i64) -> Option<&EntityRecord> {
+		self.by_identity.get(&identity).map(|&i| &self.entities[i])
+	}
+	fn record_mut(&mut self, identity: i64) -> Option<&mut EntityRecord> {
+		let i = *self.by_identity.get(&identity)?;
+		Some(&mut self.entities[i])
+	}
+}
+
+/// Ignore a "no method" error (an optional hook the entity didn't define), but
+/// propagate a real error raised inside one that does.
+fn ignore_missing(result: Result<(), String>) -> Result<(), String> {
+	match result {
+		Err(e) if e.starts_with("no method") => Ok(()),
+		other => other,
+	}
+}
+
+/// Inject the shared natives into `entity` (on its base class level, bound to the
+/// leaf; see [`inject_natives`]) and register every level's identity against
+/// `record_idx`.
+fn inject_levels(
+	machine: &Rc<RefCell<EntityMachine>>,
+	vm: &SQVM,
+	entity: &SqStrongRef,
+	record_idx: usize,
+) {
+	let methods: Vec<(&'static str, SqStrongRef)> = machine
+		.borrow()
+		.methods
+		.iter()
+		.map(|(n, c)| (*n, c.clone()))
+		.collect();
+	let Some(leaf) = entity.as_table(vm) else {
+		return;
+	};
+	for identity in inject_natives(vm, &leaf, &methods) {
+		machine.borrow_mut().by_identity.insert(identity, record_idx);
+	}
+}
+
+/// Instantiate `path` (runs `create()`) as entity `id` at axial `(q, r)`, and inject
+/// the native methods (base class level, bound to the leaf). Returns the instance and
+/// its record index. Runs no other script.
+fn create_entity(
+	machine: &Rc<RefCell<EntityMachine>>,
+	vm: &SQVM,
+	path: &str,
+	id: i64,
+	q: i64,
+	r: i64,
+) -> Result<(SqStrongRef, usize), String> {
+	let instantiate = machine.borrow().instantiate.clone();
+	let entity = instantiate(vm, path)?;
+	let record_idx = {
+		let mut m = machine.borrow_mut();
+		let idx = m.entities.len();
+		m.entities.push(EntityRecord {
+			id,
+			path: path.to_string(),
+			entity: entity.clone(),
+			q,
+			r,
+			pos: world_layout::tile_pos(q, r + q / 2),
+			// The original's constructor defaults.
+			rendered_top: true,
+			visibility: 1.0,
+			visible: true,
+			discovered: false,
+			visible_in_fog_of_war: false,
+			ignore_collision: false,
+			important: false,
+			z_offset: 0,
+			think: think::ThinkState::default(),
+			render: render::RenderState::default(),
+			faction: 0, // Neutral until settlement.onBuild/addFaction assigns one
+			alive: true,
+			dies_at: None,
+			sprites: HashMap::new(),
+			labels: HashMap::new(),
+		});
+		idx
+	};
+	inject_levels(machine, vm, &entity, record_idx);
+	Ok((entity, record_idx))
+}
+
+/// Spawn a new entity of `path` at axial `(q, r)`: create it with the next id, then run
+/// `onInit` + `onAfterInit`. No machine borrow is held across the script-running calls
+/// (they re-enter the host).
+fn spawn(
+	machine: &Rc<RefCell<EntityMachine>>,
+	vm: &SQVM,
+	path: &str,
+	q: i64,
+	r: i64,
+	occupy: bool,
+) -> Result<SqStrongRef, String> {
+	let id = {
+		let mut m = machine.borrow_mut();
+		m.next_id += 1;
+		m.next_id - 1
+	};
+	let (entity, _) = create_entity(machine, vm, path, id, q, r)?;
+	// Like the original, a spawned location occupies its tile (cleared again by the
+	// script's `onFinish` when it dies); a spawned party does not (probed 2026-10-13).
+	if occupy {
+		set_tile_occupied(vm, q, r, true)?;
+	}
+	entity.call_method(vm, "onInit", ())?;
+	ignore_missing(entity.call_method(vm, "onAfterInit", ()))?;
+	Ok(entity)
+}
+
+/// Kill entity `idx`: it stops being alive, then its script `onFinish` (which frees its
+/// tile and unregisters it from the managers) runs, once. Verified against the original.
+fn kill(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize) -> Result<(), String> {
+	let entity = {
+		let mut machine = m.borrow_mut();
+		let rec = &mut machine.entities[idx];
+		if !rec.alive {
+			return Ok(());
+		}
+		rec.alive = false;
+		rec.entity.clone()
+	};
+	ignore_missing(entity.call_method(vm, "onFinish", ()))
+}
+
+/// Kill entity `idx` if its `fadeAndDie` delay has run out by real time `now` (ms).
+/// Returns whether it is dead.
+fn reap(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, now: i64) -> Result<bool, String> {
+	let due = {
+		let machine = m.borrow();
+		let rec = &machine.entities[idx];
+		if !rec.alive {
+			return Ok(true);
+		}
+		rec.dies_at.is_some_and(|t| now >= t)
+	};
+	if due {
+		kill(m, vm, idx)?;
+	}
+	Ok(due)
+}
+
+/// The `X`/`Y` of a script vector.
+fn vec_xy(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
+	let x = v.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
+	let y = v.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+	(x, y)
+}
+
+/// The axial tile under a world pixel position (`World.worldToTile`).
+fn tile_under(vm: &SQVM, pos: &SqStrongRef) -> Result<(i64, i64), String> {
+	let world = SqTable::root(vm)
+		.get::<SqStrongRef>("World")
+		.ok_or("World table missing")?;
+	let coords = world
+		.call_method_ret::<SqStrongRef, _>(vm, "worldToTile", (pos.clone(),))?
+		.ok_or("worldToTile returned null")?;
+	let q = coords.get_member::<i64>(vm, "X").ok_or("worldToTile: no X")?;
+	let r = coords.get_member::<i64>(vm, "Y").ok_or("worldToTile: no Y")?;
+	Ok((q, r))
+}
+
+/// A script array of the entities at `hits` (indices into `refs`).
+fn entity_array(vm: &SQVM, refs: &[SqStrongRef], hits: Vec<usize>) -> SqStrongRef {
+	let mut arr = SqArray::new(vm);
+	for i in hits {
+		arr.push(refs[i].clone());
+	}
+	arr.to_strong()
+}
+
+/// `World.getTile(q, r).IsOccupied = occupied`.
+fn set_tile_occupied(vm: &SQVM, q: i64, r: i64, occupied: bool) -> Result<(), String> {
+	let world = SqTable::root(vm)
+		.get::<SqStrongRef>("World")
+		.ok_or("World table missing")?;
+	let tile = world
+		.call_method_ret::<SqStrongRef, _>(vm, "getTile", (q, r))?
+		.ok_or("spawnLocation: no tile at the entity's coords")?;
+	tile.set_member(vm, "IsOccupied", occupied)
+}
+
+/// Build the inert sprite stub class returned by `addSprite`.
+fn build_sprite_class(vm: &mut SQVM) -> SqClass<SpriteData> {
+	ClassBuilder::<SpriteData>::new("WorldEntitySprite")
+		.property(
+			"Alpha",
+			|s: &SpriteData| s.alpha,
+			|s: &mut SpriteData, v: f64| s.alpha = v,
+		)
+		.property(
+			"Scale",
+			|s: &SpriteData| s.scale,
+			|s: &mut SpriteData, v: f64| s.scale = v,
+		)
+		.property(
+			"Visible",
+			|s: &SpriteData| s.visible,
+			|s: &mut SpriteData, v: bool| s.visible = v,
+		)
+		.property(
+			"IgnoreAmbientColor",
+			|s: &SpriteData| s.ignore_ambient,
+			|s: &mut SpriteData, v: bool| s.ignore_ambient = v,
+		)
+		.property(
+			"IsFadingDone",
+			|s: &SpriteData| s.fading_done,
+			|s: &mut SpriteData, v: bool| s.fading_done = v,
+		)
+		.property_noop("Color") // render tint: set by some entities, unread headless
+		.property("HasBrush", |s: &SpriteData| !s.brush.is_empty(), |_s: &mut SpriteData, _v: bool| {})
+		.method("setBrush", |s: &mut SpriteData, brush: &str| {
+			s.brush = brush.to_string()
+		})
+		// Scripts read `getBrush().Name`.
+		.method("getBrush", |s: &mut SpriteData, vm: &SQVM| -> SqStrongRef {
+			let mut t = SqTable::new(vm);
+			t.set("Name", s.brush.clone());
+			t.to_strong()
+		})
+		// Render-only transforms.
+		.method("setOffset", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
+		.method("fadeIn", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
+		.method("fadeOut", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
+		.method(
+			"setHorizontalFlipping",
+			|_s: &mut SpriteData, _a: Variadic<Retained>| {},
+		)
+		.build(vm)
+}
+
+/// Build the inert label stub class returned by `addLabel`.
+fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
+	ClassBuilder::<LabelData>::new("WorldEntityLabel")
+		.property(
+			"Text",
+			|l: &LabelData| l.text.clone(),
+			|l: &mut LabelData, v: String| l.text = v,
+		)
+		.property(
+			"Visible",
+			|l: &LabelData| l.visible,
+			|l: &mut LabelData, v: bool| l.visible = v,
+		)
+		.property_noop("Color") // render color: set by updatePlayerRelation, unread headless
+		.property_noop("Offset") // render offset vec: set by party.onInit, unread headless
+		.build(vm)
+}
+
+/// The native World-entity subsystem (`World.spawnLocation` + injected entity methods).
+pub struct WorldEntities {
+	machine: Rc<RefCell<EntityMachine>>,
+}
+
+impl WorldEntities {
+	/// Create the subsystem. `instantiate` is the `this.new` capability (from
+	/// [`ModuleSystem::instantiator`](crate::ModuleSystem::instantiator)).
+	pub fn new(instantiate: Instantiator) -> Self {
+		WorldEntities {
+			machine: Rc::new(RefCell::new(EntityMachine {
+				instantiate,
+				sprite_class: None,
+				label_class: None,
+				next_id: 1,
+				entities: Vec::new(),
+				by_identity: HashMap::new(),
+				methods: Vec::new(),
+				player_view: view::PlayerView::default(),
+				thinkers: think::Thinkers::default(),
+			})),
+		}
+	}
+
+	/// Build the stub classes + the shared entity methods, and register
+	/// `World.spawnLocation` (2-arg `coords` and 3-arg `x,y` overloads). Call once with
+	/// `&mut SQVM`, after the `World` table + grid natives exist.
+	pub fn install(&self, vm: &mut SQVM) {
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm));
+		self.machine.borrow_mut().label_class = Some(build_label_class(vm));
+
+		// --- injected entity methods (each recovers its record via this_identity) ---
+		let get_id = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> i64 {
+				m.borrow().record(vm.this_identity()).map_or(0, |r| r.id)
+			})
+		};
+		// getTile delegates to the existing World.getTile grid native (axial coords).
+		let get_tile = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
+				let (q, r) = m
+					.borrow()
+					.record(vm.this_identity())
+					.map(|rec| (rec.q, rec.r))
+					.ok_or("getTile: entity not registered")?;
+				let world = SqTable::root(vm)
+					.get::<SqStrongRef>("World")
+					.ok_or("getTile: World table missing")?;
+				world.call_method_ret::<SqStrongRef, _>(vm, "getTile", (q, r))
+			})
+		};
+		// setPos(vec): move to a world pixel position; the entity's tile follows.
+		let set_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<(), String> {
+				let xy = vec_xy(vm, &pos.0);
+				let (q, r) = tile_under(vm, &pos.0)?;
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.pos = xy;
+					(rec.q, rec.r) = (q, r);
+				}
+				Ok(())
+			})
+		};
+		// getPos: the entity's world pixel position.
+		let get_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
+				let (x, y) = m
+					.borrow()
+					.record(vm.this_identity())
+					.map(|rec| rec.pos)
+					.ok_or("getPos: entity not registered")?;
+				let create_vec = SqTable::root(vm)
+					.get::<SqStrongRef>("createVec")
+					.ok_or("getPos: createVec missing")?;
+				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
+			})
+		};
+		let add_sprite = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+				let class = m.borrow().sprite_class.clone()?;
+				let sprite = class.instantiate(vm, SpriteData::fresh());
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.sprites.insert(name, sprite.clone());
+				}
+				Some(sprite)
+			})
+		};
+		let get_sprite = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+				m.borrow()
+					.record(vm.this_identity())
+					.and_then(|rec| rec.sprites.get(&name).cloned())
+			})
+		};
+		let has_sprite = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> bool {
+				m.borrow()
+					.record(vm.this_identity())
+					.is_some_and(|rec| rec.sprites.contains_key(&name))
+			})
+		};
+		let add_label = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+				let class = m.borrow().label_class.clone()?;
+				let label = class.instantiate(vm, LabelData::default());
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.labels.insert(name, label.clone());
+				}
+				Some(label)
+			})
+		};
+		let get_label = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+				m.borrow()
+					.record(vm.this_identity())
+					.and_then(|rec| rec.labels.get(&name).cloned())
+			})
+		};
+		let has_label = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> bool {
+				m.borrow()
+					.record(vm.this_identity())
+					.is_some_and(|rec| rec.labels.contains_key(&name))
+			})
+		};
+		// Faction: getFaction is native; script setFaction calls native setFactionEx
+		// then updatePlayerRelation. 0 == Neutral until a faction is assigned.
+		let get_faction = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> i64 {
+				m.borrow().record(vm.this_identity()).map_or(0, |r| r.faction)
+			})
+		};
+		let set_faction_ex = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, faction: i64| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.faction = faction;
+				}
+			})
+		};
+		let remove_label = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.labels.remove(&name);
+				}
+			})
+		};
+		let remove_all_labels = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.labels.clear();
+				}
+			})
+		};
+		// Render/sim no-ops: accept any args, do nothing (shared across all the names).
+		let noop = vm.make_closure(|_a: Variadic<Retained>| {});
+
+		let mut methods: Vec<(&'static str, SqStrongRef)> = vec![
+			("getID", get_id),
+			("getTile", get_tile),
+			("getPos", get_pos),
+			("setPos", set_pos),
+			("addSprite", add_sprite),
+			("getSprite", get_sprite),
+			("hasSprite", has_sprite),
+			("addLabel", add_label),
+			("getLabel", get_label),
+			("hasLabel", has_label),
+			("getFaction", get_faction),
+			("setFactionEx", set_faction_ex),
+		];
+		// die / fadeAndDie: run the entity's script `onFinish` (which marks it dead,
+		// frees its tile and unregisters it from the managers) once; later calls are
+		// no-ops. Verified against the original (2026-10-13). Rendering has no fade.
+		let die = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let idx = m.borrow().by_identity.get(&vm.this_identity()).copied();
+				idx.map_or(Ok(()), |idx| kill(&m, vm, idx))
+			})
+		};
+		// fadeAndDie(): the original fades the entity out and lets it die 500 ms of real
+		// time later (from the next think or render pass after that); until then it is
+		// still alive and found by queries. Later calls don't extend the delay.
+		let fade_and_die = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let now = render::real_time_ms(vm)?;
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					if rec.alive && rec.dies_at.is_none() {
+						rec.dies_at = Some(now + 500);
+					}
+				}
+				Ok(())
+			})
+		};
+		methods.extend(view::entity_methods(&self.machine, vm));
+		methods.extend(think::entity_methods(&self.machine, vm));
+		methods.extend(movement::entity_methods(&self.machine, vm));
+		methods.push(("removeLabel", remove_label));
+		methods.push(("removeAllLabels", remove_all_labels));
+		methods.push(("isInitialized", vm.make_closure(|| true)));
+		methods.push(("isStoringColor", vm.make_closure(|| false)));
+		methods.push(("die", die));
+		methods.push(("fadeAndDie", fade_and_die));
+		// Render-only natives.
+		for name in [
+			"setZ",
+			"storeSpriteColors",
+			"restoreSpriteColors",
+			"fadeTo",
+			"fadeToStoredColors",
+			"fadeIn",
+			"fadeOut",
+			"setAlpha",
+			"setSpriteOcclusion",
+			"moveSpriteOffset",
+			"moveSpriteScale",
+			"setAlwaysApplySpriteOffset",
+			"setSpriteRenderToTexture",
+			"setRenderCallbackEnabled",
+			"setSpriteScaling",
+			"setSpriteOffset",
+			"setSpriteColorization",
+		] {
+			methods.push((name, noop.clone()));
+		}
+		self.machine.borrow_mut().methods = methods;
+
+		// --- World.spawnLocation / World.spawnEntity: Sqrat overloads (1 ctx / 2 coords /
+		// 3 x,y). We serve the 2- and 3-arg forms; the 1-arg context form errors (the
+		// scripts never use it). Locations occupy their tile, parties don't.
+		let mut slots: Vec<(String, SqStrongRef)> = Vec::new();
+		for (name, occupy) in [("spawnLocation", true), ("spawnEntity", false)] {
+			let spawn_2 = {
+				let m = self.machine.clone();
+				vm.make_closure(
+					move |vm: &SQVM, path: &str, coords: SqTable| -> Result<SqStrongRef, String> {
+						let q = coords.get::<i64>("X").ok_or("spawn: coords table needs X")?;
+						let r = coords.get::<i64>("Y").ok_or("spawn: coords table needs Y")?;
+						spawn(&m, vm, path, q, r, occupy)
+					},
+				)
+			};
+			let spawn_3 = {
+				let m = self.machine.clone();
+				vm.make_closure(
+					move |vm: &SQVM, path: &str, x: i64, y: i64| -> Result<SqStrongRef, String> {
+						spawn(&m, vm, path, x, y, occupy)
+					},
+				)
+			};
+			let dispatch = make_dispatcher(vm, name);
+			slots.push((overload_key(name, 2), spawn_2));
+			slots.push((overload_key(name, 3), spawn_3));
+			slots.push((name.to_string(), dispatch));
+		}
+		// World spatial queries and id lookup over the live entities.
+		let all_at_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
+				let center = vec_xy(vm, &pos.0);
+				let (cands, refs) = m.borrow().candidates();
+				entity_array(vm, &refs, world_query::all_at_pos(center, radius.0, &cands))
+			})
+		};
+		let all_and_one_location_at_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(
+				move |vm: &SQVM, pos: Retained, radius: Number| -> Result<SqStrongRef, String> {
+					let center = vec_xy(vm, &pos.0);
+					let tile = tile_under(vm, &pos.0)?;
+					let (cands, refs) = m.borrow().candidates();
+					let hits = world_query::all_and_one_location_at_pos(center, radius.0, tile, &cands);
+					Ok(entity_array(vm, &refs, hits))
+				},
+			)
+		};
+		let all_visible_at_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
+				let center = vec_xy(vm, &pos.0);
+				let (cands, refs) = m.borrow().candidates();
+				entity_array(vm, &refs, world_query::all_visible_at_pos(center, radius.0, &cands))
+			})
+		};
+		// getPlayerEntity(): the first entity by id in the player's faction (from the
+		// original's disassembly).
+		let get_player_entity = {
+			let m = self.machine.clone();
+			vm.make_closure(move || -> Option<SqStrongRef> {
+				let machine = m.borrow();
+				machine
+					.entities
+					.iter()
+					.filter(|rec| rec.alive && rec.faction == 1)
+					.min_by_key(|rec| rec.id)
+					.map(|rec| rec.entity.clone())
+			})
+		};
+		let get_entity_at_tile = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Option<SqStrongRef> {
+				let q = coords.0.get_member::<i64>(vm, "X")?;
+				let r = coords.0.get_member::<i64>(vm, "Y")?;
+				let (cands, refs) = m.borrow().candidates();
+				world_query::entity_at_tile((q, r), &cands).map(|i| refs[i].clone())
+			})
+		};
+		let get_entity_by_id = {
+			let m = self.machine.clone();
+			vm.make_closure(move |id: i64| -> Option<SqStrongRef> {
+				let machine = m.borrow();
+				machine
+					.entities
+					.iter()
+					.find(|rec| rec.alive && rec.id == id)
+					.map(|rec| rec.entity.clone())
+			})
+		};
+		slots.push(("getAllEntitiesAtPos".to_string(), all_at_pos));
+		slots.push(("getAllEntitiesAndOneLocationAtPos".to_string(), all_and_one_location_at_pos));
+		slots.push(("getEntityByID".to_string(), get_entity_by_id));
+		slots.push(("getEntityAtTile".to_string(), get_entity_at_tile));
+		slots.push(("getPlayerEntity".to_string(), get_player_entity));
+		slots.push(("getAllEntitiesVisibleAtPos".to_string(), all_visible_at_pos));
+		slots.extend(view::world_methods(&self.machine, vm));
+		slots.extend(render::world_methods(&self.machine, vm));
+
+		let mut world = SqTable::root(vm)
+			.get::<SqTable>("World")
+			.expect("World table must be installed before WorldEntities");
+		for (key, closure) in slots {
+			world.set(&key, closure);
+		}
+	}
+
+	/// The per-frame think pass (see [`think`]), for the world scene's update. The
+	/// returned hook shares this host's state.
+	pub fn scene_update_hook(&self) -> impl Fn(&SQVM) -> Result<(), String> + 'static {
+		let m = self.machine.clone();
+		move |vm: &SQVM| think::run_pass(&m, vm)
+	}
+
+	/// The world entities' share of a save (see [`persist`]).
+	pub(crate) fn save_part(&self) -> Rc<dyn crate::native::save::SavePart> {
+		Rc::new(persist::EntitiesPart(self.machine.clone()))
+	}
+
+	/// The per-frame render pass (see [`render`]): which entities the player discovers.
+	pub fn scene_render_hook(&self) -> impl Fn(&SQVM) -> Result<(), String> + 'static {
+		let m = self.machine.clone();
+		move |vm: &SQVM| render::run_pass(&m, vm)
+	}
+
+	/// Number of spawned entities (host/test inspection).
+	pub fn count(&self) -> usize {
+		self.machine.borrow().entities.len()
+	}
+
+	/// Release every retained ref (instances, their sprites/labels, the stub classes,
+	/// the method closures). Call before the VM is closed.
+	pub fn clear(&self) {
+		let mut m = self.machine.borrow_mut();
+		m.entities.clear();
+		m.by_identity.clear();
+		m.thinkers = think::Thinkers::default();
+		m.methods.clear();
+		m.sprite_class = None;
+		m.label_class = None;
+	}
+}

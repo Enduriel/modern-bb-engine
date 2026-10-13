@@ -13,10 +13,14 @@
 //! every service *while the VM is still fully alive*, then lets the `vm` field (the
 //! last-declared field) drop last for a clean `sq_close`.
 
+use std::rc::Rc;
+
 use squirrel::{SQVM, SqStrongRef};
 
 use crate::error::ScriptError;
 use crate::module::ModuleSystem;
+use crate::native::save::SaveSystem;
+use crate::native::world_time::ClockPart;
 use crate::native::{NativeConfig, TacticalEntities, TimeService, UiBridge, WorldEntities, WorldGrid};
 use crate::source::ScriptSource;
 use crate::state_stack::RootState;
@@ -27,6 +31,7 @@ use crate::state_stack::RootState;
 /// **last** (dropped last). The [`Drop`] impl `clear()`s the services first (while
 /// the VM lives), so no `SqStrongRef` is ever released into a closing VM.
 pub struct Engine<S: ScriptSource> {
+	saves: SaveSystem,
 	root_state: RootState,
 	world_grid: WorldGrid,
 	world_entities: WorldEntities,
@@ -47,7 +52,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// and all four stateful services. Stack size is the BB-typical 64K.
 	pub fn with_config(source: S, config: &NativeConfig) -> Self {
 		let mut vm = SQVM::new(1 << 16);
-		config.install(&mut vm);
+		let natives = config.install(&mut vm);
 
 		let modules = ModuleSystem::new(source);
 		modules.install(&mut vm);
@@ -67,8 +72,22 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_entities.install(&mut vm);
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
+		// The world scene's per-frame update (entity thinkers) runs from updateScene.
+		root_state.set_scene_update(world_entities.scene_update_hook());
+		root_state.set_scene_render(world_entities.scene_render_hook());
+		// Saving and loading, over every stateful part (in load order).
+		let saves = SaveSystem::new();
+		saves.install(&mut vm);
+		saves.add_part(Rc::new(ClockPart(natives.world_clock.clone())));
+		saves.add_part(time.save_part());
+		saves.add_part(world_grid.save_part());
+		// Entities before rosters: units' onDeserialize reads the settlements (e.g.
+		// character backgrounds build their description from them).
+		saves.add_part(world_entities.save_part());
+		saves.add_part(tactical_entities.save_part());
 
 		Engine {
+			saves,
 			root_state,
 			world_grid,
 			world_entities,
@@ -92,6 +111,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 	pub fn modules(&self) -> &ModuleSystem<S> {
 		&self.modules
+	}
+	/// The save system (e.g. to keep saves in a directory).
+	pub fn saves(&self) -> &SaveSystem {
+		&self.saves
 	}
 	pub fn time(&self) -> &TimeService {
 		&self.time
@@ -135,6 +158,16 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.time.tick(&self.vm, real_delta_ms);
 	}
 
+	/// Run one frame of the original's main loop with `real_delta_ms` of real time
+	/// (order probed 2026-10-13): advance the clocks and fire due scheduled events, run
+	/// `onUpdate` then `onRender` on every visible state, then the background task once.
+	pub fn frame(&self, real_delta_ms: f64) -> Result<(), String> {
+		self.time.tick(&self.vm, real_delta_ms);
+		self.root_state.update(&self.vm)?;
+		self.root_state.render(&self.vm)?;
+		self.root_state.run_background(&self.vm)
+	}
+
 	/// Install logging to a custom sink (defaults to stderr/stdout otherwise).
 	pub fn set_log_handler(&mut self, handler: impl Fn(crate::native::LogLevel, &str) + 'static) {
 		crate::native::install_logging(&mut self.vm, handler);
@@ -145,6 +178,7 @@ impl<S: ScriptSource> Drop for Engine<S> {
 	fn drop(&mut self) {
 		// Release every service's SqStrongRefs while the VM is still alive; the `vm`
 		// field then drops last (clean `sq_close`).
+		self.saves.clear();
 		self.root_state.clear();
 		self.tactical_entities.clear();
 		self.world_entities.clear();

@@ -59,6 +59,9 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 		("storeStatistics", vm.make_closure(|| {})),
 		("__ping", vm.make_closure(|| {})),
 		("isModified", vm.make_closure(|| false)),
+		// A root global the original answers `false` for (probed 2026-10-13); scripts use
+		// it to gate RNG-consuming branches, so the value matters for seed parity.
+		("isSomethingToSee", vm.make_closure(|| false)),
 		// `crash` is a debug tool that takes any argument(s); a no-op here.
 		("crash", vm.make_closure(|_args: Variadic<SqRef>| {})),
 		("reloadTextures", vm.make_closure(|| {})),

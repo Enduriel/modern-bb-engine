@@ -43,11 +43,13 @@ fn clocks_start_at_zero_and_advance_with_tick() {
 	time.tick(&vm, 16.0); // one ~60fps frame
 	vm.run_script(
 		r#"
+		// Integer clocks are ms; the F variants, exact time and deltas are seconds.
 		assert(Time.getRealTime() == 16);
-		assert(Time.getRealTimeF() == 16.0);
-		assert(Time.getExactTime() == 16.0);
+		assert(Time.getRealTimeF() == 0.016);
+		assert(Time.getExactTime() == 0.016);
 		assert(Time.getVirtualTime() == 16);   // speed 1.0
-		assert(Time.getDelta() == 16.0);
+		assert(Time.getVirtualTimeF() == 0.016);
+		assert(Time.getDelta() == 0.016);
 		assert(Time.getFrame() == 1);
 		assert(Time.getFPS() == 1000.0 / 16.0);
 		"#,
@@ -67,7 +69,7 @@ fn virtual_speed_scales_and_pauses_virtual_time() {
 		r#"
 		assert(Time.getRealTime() == 10);
 		assert(Time.getVirtualTime() == 20);   // 2x
-		assert(Time.getVirtualDelta() == 20.0); // 10ms * 2.0
+		assert(Time.getVirtualDelta() == 0.02); // 10ms * 2.0, in seconds
 		"#,
 		"fast_check",
 	)
