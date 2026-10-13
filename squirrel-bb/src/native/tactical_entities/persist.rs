@@ -23,7 +23,22 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 	for v in [s.alpha, s.scale, s.rotation, s.saturation, s.render_anim_start] {
 		w.f64(v);
 	}
-	for b in [s.visible, s.raising_weapon, s.lowering_weapon, s.raising_shield, s.lowering_shield] {
+	w.f64(s.highlight_factor);
+	w.f64(s.torque);
+	for b in [
+		s.visible,
+		s.raising_weapon,
+		s.lowering_weapon,
+		s.raising_shield,
+		s.lowering_shield,
+		s.flipped,
+		s.highlight,
+		s.finished,
+		s.fading,
+		s.fading_done,
+		s.ignore_ambient,
+		s.ignore_camera_flip,
+	] {
 		w.bool(b);
 	}
 }
@@ -36,11 +51,20 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		rotation: r.f64()?,
 		saturation: r.f64()?,
 		render_anim_start: r.f64()?,
+		highlight_factor: r.f64()?,
+		torque: r.f64()?,
 		visible: r.bool()?,
 		raising_weapon: r.bool()?,
 		lowering_weapon: r.bool()?,
 		raising_shield: r.bool()?,
 		lowering_shield: r.bool()?,
+		flipped: r.bool()?,
+		highlight: r.bool()?,
+		finished: r.bool()?,
+		fading: r.bool()?,
+		fading_done: r.bool()?,
+		ignore_ambient: r.bool()?,
+		ignore_camera_flip: r.bool()?,
 	})
 }
 

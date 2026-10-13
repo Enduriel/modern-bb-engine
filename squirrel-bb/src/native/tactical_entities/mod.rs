@@ -23,12 +23,23 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::inject_natives;
+use super::overload::{make_dispatcher, overload_key};
 
 mod persist;
+mod effects;
+mod placement;
+mod vision;
 use crate::module::Instantiator;
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
 const PLAYER_ROSTER_ID: i64 = -1;
+/// The other fixed rosters: the world's guests (`World.getGuestRoster`), and a battle's
+/// casualties, survivors, retreated units and temporary units (`Tactical.get…Roster`).
+const GUEST_ROSTER_ID: i64 = -2;
+const CASUALTY_ROSTER_ID: i64 = -3;
+const SURVIVOR_ROSTER_ID: i64 = -4;
+const RETREAT_ROSTER_ID: i64 = -5;
+const TEMPORARY_ROSTER_ID: i64 = -6;
 
 /// An inert render sprite handle for a tactical unit. Richer than the world sprite stub
 /// (units read more back): also `Rotation`, `Color` (no-op), `HasBrush`, `getBrush`,
@@ -46,6 +57,16 @@ struct UnitSpriteData {
 	lowering_weapon: bool,
 	raising_shield: bool,
 	lowering_shield: bool,
+	/// `setHorizontalFlipping` / `isFlippedHorizontally`.
+	flipped: bool,
+	highlight: bool,
+	highlight_factor: f64,
+	finished: bool,
+	fading: bool,
+	fading_done: bool,
+	torque: f64,
+	ignore_ambient: bool,
+	ignore_camera_flip: bool,
 }
 
 impl UnitSpriteData {
@@ -62,6 +83,15 @@ impl UnitSpriteData {
 			lowering_weapon: false,
 			raising_shield: false,
 			lowering_shield: false,
+			flipped: false,
+			highlight: false,
+			highlight_factor: 0.0,
+			finished: false,
+			fading: false,
+			fading_done: true,
+			torque: 0.0,
+			ignore_ambient: false,
+			ignore_camera_flip: false,
 		}
 	}
 }
@@ -90,6 +120,14 @@ struct UnitRecord {
 	blocks_sight: bool,
 	/// `getPos`/`setPos` world position (0,0 while off any map, like the original).
 	pos: (f64, f64),
+	/// The battle tile it stands on, if placed.
+	tile: Option<usize>,
+	/// `isActor()`: a unit (its class derives from `actor`) rather than a map object.
+	is_actor: bool,
+	/// The entity id given to the 4-argument `Tactical.spawnEntity` (kept, unused).
+	link: Option<i64>,
+	/// `die()` ran: gone from the battle (`getEntityByID` no longer finds it).
+	dead: bool,
 	sprites: HashMap<String, SqStrongRef>,
 }
 
@@ -104,6 +142,8 @@ struct TacticalMachine {
 	sprite_class: Option<SqClass<UnitSpriteData>>,
 	next_id: i64,
 	methods: Vec<(&'static str, SqStrongRef)>,
+	/// The battle map, for placing units and objects.
+	grid: Option<crate::native::tactical_grid::Grid>,
 }
 
 impl TacticalMachine {
@@ -158,6 +198,10 @@ fn create_unit(
 ) -> Result<(SqStrongRef, usize), String> {
 	let instantiate = machine.borrow().instantiate.clone();
 	let entity = instantiate(vm, path)?;
+	let is_actor = SqTable::root(vm)
+		.get::<SqStrongRef>("isKindOf")
+		.and_then(|f| f.call_ret::<bool, _>(vm, (entity.clone(), "actor".to_string())).ok().flatten())
+		.unwrap_or(false);
 	let record_idx = {
 		let mut m = machine.borrow_mut();
 		let idx = m.units.len();
@@ -170,6 +214,10 @@ fn create_unit(
 			discovered: false,
 			blocks_sight: false,
 			pos: (0.0, 0.0),
+			tile: None,
+			is_actor,
+			link: None,
+			dead: false,
 			sprites: HashMap::new(),
 		});
 		idx
@@ -250,11 +298,13 @@ fn build_sprite_class(vm: &mut SQVM) -> SqClass<UnitSpriteData> {
 		.method("setBrush", |s: &mut UnitSpriteData, brush: &str| {
 			s.brush = brush.to_string()
 		})
-		// getBrush(): a minimal brush stub carrying just `.Name` (the stored brush id),
-		// which is what setAppearance reads (`getBrush().Name + "_top"`).
+		// getBrush(): a minimal brush stub: `.Name` (the stored brush id), which is what
+		// setAppearance reads (`getBrush().Name + "_top"`), and an empty `.TextureName`
+		// (only ever handed to Tactical.addResource, a no-op headless).
 		.method("getBrush", |s: &mut UnitSpriteData, vm: &SQVM| -> SqStrongRef {
 			let mut t = SqTable::new(vm);
 			t.set("Name", s.brush.clone());
+			t.set("TextureName", String::new());
 			t.to_strong()
 		})
 		.method("resetBrush", |s: &mut UnitSpriteData| s.brush = String::new())
@@ -262,7 +312,27 @@ fn build_sprite_class(vm: &mut SQVM) -> SqClass<UnitSpriteData> {
 			"setRenderCallbackEnabled",
 			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| {},
 		)
-		.method("setHorizontalFlipping", |_s: &mut UnitSpriteData, _f: bool| {})
+		.method("setHorizontalFlipping", |s: &mut UnitSpriteData, f: bool| s.flipped = f)
+		.method("isFlippedHorizontally", |s: &mut UnitSpriteData| s.flipped)
+		.property("HasBrush", |s: &UnitSpriteData| !s.brush.is_empty(), |_s: &mut UnitSpriteData, _v: bool| {})
+		.property("Highlight", |s: &UnitSpriteData| s.highlight, |s: &mut UnitSpriteData, v: bool| s.highlight = v)
+		.property("HighlightFactor", |s: &UnitSpriteData| s.highlight_factor, |s: &mut UnitSpriteData, v: f64| s.highlight_factor = v)
+		.property("Finished", |s: &UnitSpriteData| s.finished, |s: &mut UnitSpriteData, v: bool| s.finished = v)
+		.property("Fading", |s: &UnitSpriteData| s.fading, |s: &mut UnitSpriteData, v: bool| s.fading = v)
+		.property("IsFadingDone", |s: &UnitSpriteData| s.fading_done, |s: &mut UnitSpriteData, v: bool| s.fading_done = v)
+		.property("Torque", |s: &UnitSpriteData| s.torque, |s: &mut UnitSpriteData, v: f64| s.torque = v)
+		.property("IgnoreAmbientColor", |s: &UnitSpriteData| s.ignore_ambient, |s: &mut UnitSpriteData, v: bool| s.ignore_ambient = v)
+		.property("IgnoreCameraFlip", |s: &UnitSpriteData| s.ignore_camera_flip, |s: &mut UnitSpriteData, v: bool| s.ignore_camera_flip = v)
+		// Animation and fades are visual; a fade that hides does so at once headless.
+		.method("fadeOutAndHide", |s: &mut UnitSpriteData, _a: Variadic<Retained>| s.visible = false)
+		.method("play", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("stop", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("finish", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("fade", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("fadeIn", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("fadeOut", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("fadeToAlpha", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("setOffset", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method("varyColor", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method(
 			"varySaturation",
@@ -343,6 +413,70 @@ fn build_roster_class(
 }
 
 /// The native tactical-entity / roster subsystem.
+/// What other services need of a unit: its faction and the tile it stands on.
+pub(crate) struct UnitInfo {
+	pub faction: i64,
+	pub tile: Option<usize>,
+}
+
+/// The identity a native should look a unit up by: the value's own, or, for a
+/// `WeakTableRef` (how AI code holds units), the referenced table's. The original's
+/// natives resolve their argument through its `CppInstance`, which a `WeakTableRef`
+/// forwards to the table the same way.
+pub(crate) fn unit_identity(vm: &SQVM, value: &SqStrongRef) -> i64 {
+	value
+		.get_member::<SqStrongRef>(vm, "WeakTable")
+		.filter(|t| t.as_table(vm).is_some())
+		.map_or_else(|| value.identity(), |t| t.identity())
+}
+
+/// What the navigator does to units: look them up, move them between tiles, discover
+/// them. (A handle on the entity host's records; no borrow outlives a call.)
+#[derive(Clone)]
+pub(crate) struct Units(Rc<RefCell<TacticalMachine>>);
+
+impl Units {
+	/// Faction and tile of the unit with this identity.
+	pub fn info(&self, identity: i64) -> Option<UnitInfo> {
+		self.0.borrow().record(identity).map(|r| UnitInfo {
+			faction: r.faction,
+			tile: r.tile,
+		})
+	}
+
+	/// The unit's script instance.
+	pub fn entity(&self, identity: i64) -> Option<SqStrongRef> {
+		self.0.borrow().record(identity).map(|r| r.entity.clone())
+	}
+
+	/// Move the unit onto `tile` the way the original's set-tile does (see
+	/// [`placement::place`]); no callbacks.
+	pub fn move_to(&self, identity: i64, tile: usize) -> Result<(), String> {
+		let (idx, is_actor) = {
+			let m = self.0.borrow();
+			let idx = *m.by_identity.get(&identity).ok_or("move: not a tactical unit")?;
+			(idx, m.units[idx].is_actor)
+		};
+		placement::place(&self.0, idx, tile, is_actor)
+	}
+
+	/// Discover the unit for the player; a newly discovered one runs `onDiscovered`.
+	pub fn discover(&self, vm: &SQVM, identity: i64) -> Result<(), String> {
+		let newly = {
+			let mut m = self.0.borrow_mut();
+			m.record_mut(identity).and_then(|r| {
+				let newly = !r.discovered;
+				r.discovered = true;
+				newly.then(|| r.entity.clone())
+			})
+		};
+		match newly {
+			Some(e) => ignore_missing(e.call_method(vm, "onDiscovered", ())),
+			None => Ok(()),
+		}
+	}
+}
+
 pub struct TacticalEntities {
 	machine: Rc<RefCell<TacticalMachine>>,
 }
@@ -361,6 +495,7 @@ impl TacticalEntities {
 				sprite_class: None,
 				next_id: 1,
 				methods: Vec::new(),
+				grid: None,
 			})),
 		}
 	}
@@ -435,8 +570,85 @@ impl TacticalEntities {
 				m.borrow().record(vm.this_identity()).is_some_and(|r| r.initialized)
 			})
 		};
-		let is_placed_on_map = vm.make_closure(|| false);
-		let get_tile = vm.make_closure(|| None::<SqStrongRef>); // not on the world map
+		let is_placed_on_map = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> bool { m.borrow().record(vm.this_identity()).is_some_and(|r| r.tile.is_some()) })
+		};
+		let get_tile = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Option<SqStrongRef> {
+				let idx = m.borrow().by_identity.get(&vm.this_identity()).copied()?;
+				placement::tile_of(&m, vm, idx)
+			})
+		};
+		let is_actor = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> bool { m.borrow().record(vm.this_identity()).is_some_and(|r| r.is_actor) })
+		};
+		// setTile(tile): stand on another tile (moved there directly, as a teleport).
+		let set_tile = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, tile: squirrel::Native<crate::native::tactical_grid::TileHandle>| -> Result<(), String> {
+				let Some(idx) = m.borrow().by_identity.get(&vm.this_identity()).copied() else {
+					return Ok(());
+				};
+				let is_actor = m.borrow().units[idx].is_actor;
+				placement::unplace(&m, idx);
+				placement::place(&m, idx, tile.0.id, is_actor)
+			})
+		};
+		let get_relative_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
+				let (x, y) = m.borrow().record(vm.this_identity()).map_or((0.0, 0.0), |r| r.pos);
+				let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("createVec missing")?;
+				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
+			})
+		};
+		let insert_sprite = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String, Variadic(_rest): Variadic<Retained>| -> Option<SqStrongRef> {
+				let class = m.borrow().sprite_class.clone()?;
+				let sprite = class.instantiate(vm, UnitSpriteData::fresh());
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.sprites.insert(name, sprite.clone());
+				}
+				Some(sprite)
+			})
+		};
+		let remove_sprite = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.sprites.remove(&name);
+				}
+			})
+		};
+		// die(): the entity's onFinish runs (an actor's lifts its zones while still on
+		// the map), then it leaves the map and the battle (probed 2026-10-13: right
+		// after die() it is off the map, its tile empty, getEntityByID null).
+		let die = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let idx = m.borrow().by_identity.get(&vm.this_identity()).copied();
+				let Some(idx) = idx else { return Ok(()) };
+				let entity = m.borrow().units[idx].entity.clone();
+				ignore_missing(entity.call_method(vm, "onFinish", ()))?;
+				placement::unplace(&m, idx);
+				m.borrow_mut().units[idx].dead = true;
+				Ok(())
+			})
+		};
+		let remove_from_map = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+				let idx = m.borrow().by_identity.get(&vm.this_identity()).copied();
+				match idx {
+					Some(idx) => placement::remove_from_map(&m, vm, idx),
+					None => Ok(()),
+				}
+			})
+		};
 		// getSpriteOffset(name): sprite offsets are visual; return a zero vec (the one
 		// caller, actor.onAfterInit, only feeds it straight into no-op setSpriteOffset).
 		let get_sprite_offset = vm.make_closure(
@@ -460,13 +672,9 @@ impl TacticalEntities {
 			});
 			(getter, setter)
 		};
-		let (is_discovered, set_discovered) =
-			flag(vm, &self.machine, |r| r.discovered, |r, v| r.discovered = v);
+		let (is_discovered, _) = flag(vm, &self.machine, |r| r.discovered, |r, v| r.discovered = v);
 		let (is_blocking_sight, set_block_sight) =
 			flag(vm, &self.machine, |r| r.blocks_sight, |r, v| r.blocks_sight = v);
-		// Not on a tactical map headless, so never hidden (the original says false even
-		// for an undiscovered unit off the map).
-		let is_hidden_to_player = vm.make_closure(|| false);
 		let get_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
@@ -501,12 +709,18 @@ impl TacticalEntities {
 			("isPlacedOnMap", is_placed_on_map),
 			("getTile", get_tile),
 			("isDiscovered", is_discovered),
-			("setDiscovered", set_discovered),
 			("isBlockingSight", is_blocking_sight),
 			("setBlockSight", set_block_sight),
-			("isHiddenToPlayer", is_hidden_to_player),
 			("getPos", get_pos),
 			("setPos", set_pos),
+			("removeFromMap", remove_from_map),
+			("die", die),
+			("isActor", is_actor),
+			("setTile", set_tile),
+			("getRelativePos", get_relative_pos),
+			("insertSprite", insert_sprite),
+			("removeSprite", remove_sprite),
+			("isStoringColor", vm.make_closure(|| false)),
 		];
 		for name in [
 			"setDirty",
@@ -526,11 +740,21 @@ impl TacticalEntities {
 			"setAlpha",
 			"moveSpriteOffset",
 			"setRenderCallbackEnabled",
-			"updateVisibility",
-			"removeFromMap",
+			"clearVisibility",
+			"setZ",
+			"storeSpriteColors",
+			"restoreSpriteColors",
+			"fadeTo",
+			"fadeToStoredColors",
+			"setSpriteOcclusion",
+			"moveSpriteScale",
+			"setAlwaysApplySpriteOffset",
+			"setSpriteRenderToTexture",
+			"copySpritesFrom",
 		] {
 			methods.push((name, noop.clone()));
 		}
+		methods.extend(vision::unit_natives(vm, &self.machine));
 		self.machine.borrow_mut().methods = methods;
 
 		// Roster handle class + the World roster accessors.
@@ -553,6 +777,15 @@ impl TacticalEntities {
 			let mint = mint_roster.clone();
 			vm.make_closure(move |vm: &SQVM| -> Option<SqStrongRef> { mint(vm, PLAYER_ROSTER_ID) })
 		};
+		let fixed_roster = |vm: &mut SQVM, id: i64| {
+			let mint = mint_roster.clone();
+			vm.make_closure(move |vm: &SQVM| -> Option<SqStrongRef> { mint(vm, id) })
+		};
+		let get_guest_roster = fixed_roster(vm, GUEST_ROSTER_ID);
+		let get_casualty_roster = fixed_roster(vm, CASUALTY_ROSTER_ID);
+		let get_survivor_roster = fixed_roster(vm, SURVIVOR_ROSTER_ID);
+		let get_retreat_roster = fixed_roster(vm, RETREAT_ROSTER_ID);
+		let get_temporary_roster = fixed_roster(vm, TEMPORARY_ROSTER_ID);
 		let create_roster = {
 			let m = self.machine.clone();
 			vm.make_closure(move |id: i64| {
@@ -573,7 +806,11 @@ impl TacticalEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |id: i64| -> Option<SqStrongRef> {
 				let machine = m.borrow();
-				let unit = machine.units.iter().find(|u| u.id == id)?;
+				let unit = machine.units.iter().find(|u| u.id == id && !u.dead)?;
+				// On the battle map (spawned or added): the scene knows it.
+				if unit.tile.is_some() {
+					return Some(unit.entity.clone());
+				}
 				let identity = unit.entity.identity();
 				machine
 					.rosters
@@ -583,6 +820,46 @@ impl TacticalEntities {
 					.cloned()
 			})
 		};
+		// Tactical.addEntityToMap(entity, x, y) and the spawnEntity overloads (semantics
+		// probed in the original, 2026-10-13; see `placement`).
+		let add_entity_to_map = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, entity: Retained, q: i64, r: i64| placement::add_to_map(&m, vm, &entity.0, q, r))
+		};
+		let spawn_tile = |m: &Rc<RefCell<TacticalMachine>>, q: i64, r: i64| -> Result<usize, String> {
+			let grid = m.borrow().grid.clone().ok_or("spawnEntity: no battle map")?;
+			let id = grid.borrow().idx_axial(q, r);
+			id.ok_or_else(|| format!("spawnEntity: ({q}, {r}) is off the map"))
+		};
+		// spawnEntity(path) spawns at the tile under the cursor (a debug key); with none
+		// the original crashes.
+		let spawn_1 = vm.make_closure(|_path: String| -> Result<Option<SqStrongRef>, String> {
+			Err("spawnEntity(path): spawns at the hovered tile, and there is none headless".to_string())
+		});
+		let spawn_2 = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, path: String, coords: Retained| -> Result<Option<SqStrongRef>, String> {
+				let q = coords.0.get_member::<squirrel::Number>(vm, "X").ok_or("spawnEntity: coords need X")?.0 as i64;
+				let r = coords.0.get_member::<squirrel::Number>(vm, "Y").ok_or("spawnEntity: coords need Y")?.0 as i64;
+				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, None)
+			})
+		};
+		let spawn_3 = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, path: String, q: i64, r: i64| -> Result<Option<SqStrongRef>, String> {
+				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, None)
+			})
+		};
+		let spawn_4 = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, path: String, q: i64, r: i64, link: i64| -> Result<Option<SqStrongRef>, String> {
+				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, Some(link))
+			})
+		};
+		let spawn_dispatch = make_dispatcher(vm, "spawnEntity");
+		let vision_natives = vision::tactical_natives(vm, &self.machine);
+		let effect_natives = effects::natives(vm, &self.machine);
+
 		let mut world = SqTable::root(vm)
 			.get::<SqTable>("World")
 			.expect("World table must be installed before TacticalEntities");
@@ -590,10 +867,37 @@ impl TacticalEntities {
 		world.set("getPlayerRoster", get_player_roster);
 		world.set("createRoster", create_roster);
 		world.set("deleteRoster", delete_roster);
+		world.set("getGuestRoster", get_guest_roster);
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
 			.expect("Tactical table must be installed before TacticalEntities");
 		tactical.set("getEntityByID", get_entity_by_id);
+		tactical.set("addEntityToMap", add_entity_to_map);
+		for (name, f) in vision_natives.into_iter().chain(effect_natives) {
+			tactical.set(name, f);
+		}
+		for (arity, f) in [(1, spawn_1), (2, spawn_2), (3, spawn_3), (4, spawn_4)] {
+			tactical.set(&overload_key("spawnEntity", arity), f);
+		}
+		tactical.set("spawnEntity", spawn_dispatch);
+		tactical.set("getCasualtyRoster", get_casualty_roster);
+		tactical.set("getSurvivorRoster", get_survivor_roster);
+		tactical.set("getRetreatRoster", get_retreat_roster);
+		tactical.set("getTemporaryRoster", get_temporary_roster);
+	}
+
+	/// Place units and objects on `grid`, and create the objects `tile.spawnObject`
+	/// asks for.
+	pub fn attach_map(&self, grid: &crate::native::TacticalGrid) {
+		self.machine.borrow_mut().grid = Some(grid.handle());
+		grid.set_object_spawner(placement::object_spawner(&self.machine));
+		let m = self.machine.clone();
+		grid.set_occupant_lookup(Rc::new(move || vision::occupants(&m)));
+	}
+
+	/// The navigator's handle on the units.
+	pub(crate) fn units(&self) -> Units {
+		Units(self.machine.clone())
 	}
 
 	/// The rosters' share of a save (see [`persist`]).
@@ -616,5 +920,6 @@ impl TacticalEntities {
 		m.methods.clear();
 		m.roster_class = None;
 		m.sprite_class = None;
+		m.grid = None;
 	}
 }

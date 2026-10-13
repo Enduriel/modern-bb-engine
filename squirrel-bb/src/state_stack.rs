@@ -77,6 +77,8 @@ struct Machine {
 	scene_update: Option<SceneUpdate>,
 	/// What `State.renderScene()` runs: the logic side of rendering (discovery, …).
 	scene_render: Option<SceneUpdate>,
+	/// Added states whose `onInit` hasn't run yet.
+	pending_init: Vec<SqStrongRef>,
 	methods: Vec<(&'static str, SqStrongRef)>,
 }
 
@@ -170,15 +172,19 @@ fn ignore_missing(result: Result<(), String>) -> Result<(), String> {
 	}
 }
 
-/// Construct `path`, inject the state methods, register it as a child, then run its
-/// `onInit` (the state shows itself from there). No machine borrow is held across
-/// the script-running calls (they re-enter).
+/// Construct `path`, inject the state methods, register it as a child, tell the other
+/// children (`onSiblingAdded(name)`), and queue its `onInit` for the next update. As in
+/// the original, the caller gets the new state back before it initializes: e.g. the
+/// world state hands the new tactical state its battle (`setStrategicProperties`), and
+/// the main menu hands the world state its campaign settings from `onSiblingAdded`,
+/// before their `onInit`s read them. No machine borrow is held across the
+/// script-running calls (they re-enter).
 fn add_child(
 	machine: &Rc<RefCell<Machine>>,
 	vm: &SQVM,
 	name: &str,
 	path: &str,
-) -> Result<(), String> {
+) -> Result<SqStrongRef, String> {
 	let instantiate = machine.borrow().instantiate.clone();
 	let child = instantiate(vm, path)?;
 	let id = child.identity();
@@ -190,7 +196,26 @@ fn add_child(
 		state: child.clone(),
 		frame,
 	});
-	child.call_method(vm, "onInit", ())
+	let siblings = machine.borrow().siblings_of(id);
+	for sibling in siblings {
+		ignore_missing(sibling.call_method(vm, "onSiblingAdded", (name.to_string(),)))?;
+	}
+	machine.borrow_mut().pending_init.push(child.clone());
+	Ok(child)
+}
+
+/// Run the queued `onInit`s, including those of states added meanwhile.
+fn init_pending(machine: &Rc<RefCell<Machine>>, vm: &SQVM) -> Result<(), String> {
+	loop {
+		let next = {
+			let mut m = machine.borrow_mut();
+			if m.pending_init.is_empty() {
+				return Ok(());
+			}
+			m.pending_init.remove(0)
+		};
+		next.call_method(vm, "onInit", ())?;
+	}
 }
 
 /// Drop the shared native methods onto `state` as ordinary slots (`set` needs only
@@ -227,6 +252,7 @@ impl RootState {
 				bg_suspended: false,
 				scene_update: None,
 				scene_render: None,
+				pending_init: Vec::new(),
 				methods: Vec::new(),
 			})),
 		}
@@ -245,7 +271,7 @@ impl RootState {
 		let add = {
 			let m = self.machine.clone();
 			vm.make_closure(
-				move |vm: &SQVM, name: String, path: String| -> Result<(), String> {
+				move |vm: &SQVM, name: String, path: String| -> Result<SqStrongRef, String> {
 					add_child(&m, vm, &name, &path)
 				},
 			)
@@ -408,10 +434,18 @@ impl RootState {
 		});
 		SqTable::root(vm).set("RootState", root.clone());
 		root.call_method(vm, "onInit", ())?;
+		// The engine's first update would run the states the root added.
+		init_pending(&self.machine, vm)?;
 		Ok(root)
 	}
 
 	// ---- host / inspection API ----
+
+	/// Run the `onInit` of every state added since the last update (the original runs
+	/// them on its next update; a host driving the boot itself calls this instead).
+	pub fn init_pending(&self, vm: &SQVM) -> Result<(), String> {
+		init_pending(&self.machine, vm)
+	}
 
 	/// Set what `State.updateScene()` runs each frame (the host's scene updates).
 	pub fn set_scene_update(&self, update: impl Fn(&SQVM) -> Result<(), String> + 'static) {
@@ -427,6 +461,7 @@ impl RootState {
 	/// registration order), as one frame of the original's loop does. States added or
 	/// removed during the pass take effect next frame.
 	pub fn update(&self, vm: &SQVM) -> Result<(), String> {
+		init_pending(&self.machine, vm)?;
 		let updates = self.machine.borrow().visible_hooks(|f| f.on_update.clone());
 		for on_update in updates {
 			on_update.call(vm, ())?;
@@ -489,6 +524,9 @@ impl RootState {
 		let mut machine = self.machine.borrow_mut();
 		machine.children.clear();
 		machine.root = None;
+		machine.pending_init.clear();
+		machine.scene_update = None;
+		machine.scene_render = None;
 		machine.bg_callback = None;
 		machine.methods.clear();
 	}

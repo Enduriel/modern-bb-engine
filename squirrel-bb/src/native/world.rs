@@ -46,48 +46,8 @@ pub(crate) fn install(vm: &mut SQVM) -> super::world_time::Clock {
 		vm.make_closure(move || cam.clone())
 	};
 
-	// World.getWeather(): clouds, birds and lighting are visual only, and building them
-	// draws nothing from the script RNG (probed 2026-10-13), so headless they are no-ops.
-	// The settings objects only receive field writes from scripts, so each is a table
-	// pre-filled with every field vanilla writes (an absent key can't be assigned).
-	let weather = {
-		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-		const CLOUD: &[&str] = &[
-			"Color", "Direction", "MaxAlpha", "MaxClouds", "MaxScale", "MaxVelocity", "MinAlpha",
-			"MinClouds", "MinScale", "MinVelocity", "RandomizeDirection", "RandomizeRotation", "Sprite", "Type",
-		];
-		const BIRD: &[&str] = &["MaxBirds", "MaxVelocity", "MinBirds", "MinVelocity"];
-		const RAIN: &[&str] = &[
-			"MaxAlpha", "MaxDrops", "MaxScale", "MaxVelocity", "MinAlpha", "MinDrops", "MinScale",
-			"MinVelocity", "NumSplats",
-		];
-		let creators: Vec<(&str, SqStrongRef)> = [
-			("createCloudSettings", CLOUD),
-			("createBirdSettings", BIRD),
-			("createRainSettings", RAIN),
-		]
-		.into_iter()
-		.map(|(name, fields)| {
-			let create = vm.make_closure(move |vm: &SQVM| {
-				let mut t = SqTable::new(vm);
-				for f in fields {
-					t.set(f, 0.0);
-				}
-				t.to_strong()
-			});
-			(name, create)
-		})
-		.collect();
-		let mut w = SqTable::new(vm);
-		w.set("IsRaining", false);
-		for (name, create) in creators {
-			w.set(name, create);
-		}
-		for name in ["buildCloudCover", "buildBirds", "buildRain", "setAmbientLightingPreset", "setAmbientLightingSaturation"] {
-			w.set(name, noop.clone());
-		}
-		w.to_strong()
-	};
+	// World.getWeather(): visual only (see `weather`).
+	let weather = super::weather::weather(vm);
 	let get_weather = vm.make_closure(move || weather.clone());
 
 	// Footprints only feed the hover tooltip (and expire after 60 s); headless they are
@@ -95,8 +55,18 @@ pub(crate) fn install(vm: &mut SQVM) -> super::world_time::Clock {
 	let spawn_footprint = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 	let spawn_particle_effect = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 	let clock = super::world_time::world_entries(vm, &world_clock);
+	// World.setVisible/isVisible: whether the campaign map is drawn (the world state
+	// hides it during a battle).
+	let visible = std::rc::Rc::new(std::cell::Cell::new(true));
+	let set_visible = {
+		let v = visible.clone();
+		vm.make_closure(move |on: bool| v.set(on))
+	};
+	let is_visible = vm.make_closure(move || visible.get());
 	let mut world = SqTable::new(vm);
 	world.set("getCamera", get_camera);
+	world.set("setVisible", set_visible);
+	world.set("isVisible", is_visible);
 	world.set("getWeather", get_weather);
 	world.set("spawnFootprint", spawn_footprint);
 	world.set("spawnParticleEffect", spawn_particle_effect);

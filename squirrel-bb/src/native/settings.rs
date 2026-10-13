@@ -62,16 +62,31 @@ pub(crate) fn install(vm: &mut SQVM) {
 			vm,
 			ControlSettings {
 				use_hardware_cursor: false,
-				use_drag_style_scrolling: false,
+				use_drag_style_scrolling: true,
 			},
 		)
 	});
 	// Gameplay settings: persistent shared tables (the same one each call) so script
 	// writes like `getTempGameplaySettings().CameraLocked = false` stick and later reads
-	// see them. Pre-create the fields scripts assign with `=`; add more as needed.
+	// see them. The fields and values are the ones the original reports (probed
+	// 2026-10-13 on a configured install; they are player preferences).
 	let gameplay = {
 		let mut t = SqTable::new(vm);
-		t.set("RestoreEquipment", true);
+		for (name, value) in [
+			("AdjustCameraLevel", true),
+			("AlwaysFocusCamera", false),
+			("AlwaysHideTrees", true),
+			("AutoLoot", false),
+			("AutoPauseAfterCity", true),
+			("DontAutoEndTurns", true),
+			("FasterAIMovement", true),
+			("FasterPlayerMovement", true),
+			("RestoreEquipment", true),
+			("ShowOrientationOverlays", true),
+			("ShowOverlayStats", true),
+		] {
+			t.set(name, value);
+		}
 		t.to_strong()
 	};
 	let get_gameplay = {
@@ -80,8 +95,17 @@ pub(crate) fn install(vm: &mut SQVM) {
 	};
 	let temp_gameplay = {
 		let mut t = SqTable::new(vm);
-		t.set("CameraLocked", false);
-		t.set("ShowTracking", true);
+		for (name, value) in [
+			("FasterAIMovement", false),
+			("FasterPlayerMovement", false),
+			("HideTrees", false),
+			("HighlightBlockedTiles", false),
+			("ShowOverlayStats", false),
+			("CameraLocked", false),
+			("ShowTracking", true),
+		] {
+			t.set(name, value);
+		}
 		t.to_strong()
 	};
 	let get_temp_gameplay = {

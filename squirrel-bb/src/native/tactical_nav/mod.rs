@@ -1,0 +1,274 @@
+//! The tactical navigator (`Tactical.getNavigator()`): path search over the battle map
+//! ([`pathfind`]), what a path costs a unit ([`cost`]), and the shared search settings
+//! ([`settings`]). All reproduced from the original's natives.
+//!
+//! The current path lives here: `findPath` replaces it, `clipPathToDistance`,
+//! `popLastWaypoint` and `clearPath` trim it, and the cost queries read it. Moving a
+//! unit along it (`travel`, `teleport`, `switchEntities`) is not implemented yet.
+//!
+//! Host-owned like the other services: it holds script references, so
+//! [`clear`](TacticalNavigator::clear) it before the VM closes.
+
+mod cost;
+#[cfg(test)]
+mod ground_truth;
+mod heap;
+mod pathfind;
+mod settings;
+mod travel;
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
+
+use crate::native::TacticalGrid;
+use crate::native::tactical_entities::{Units, unit_identity};
+use crate::native::tactical_grid::{self, Grid, TileHandle};
+use pathfind::{Query, Step};
+use settings::{NavSettings, SettingsHandle};
+
+struct NavState {
+	grid: Grid,
+	units: Units,
+	/// The move in progress (`travel`), if any.
+	travel: Option<travel::Travel>,
+	settings: Rc<RefCell<NavSettings>>,
+	path: Vec<Step>,
+	settings_class: Option<SqClass<SettingsHandle>>,
+	/// The one `Tactical.getNavigator()` instance.
+	instance: Option<SqStrongRef>,
+}
+
+impl NavState {
+	fn settings_handle(&self, vm: &SQVM) -> Option<SqStrongRef> {
+		let class = self.settings_class.clone()?;
+		Some(class.instantiate(vm, SettingsHandle(self.settings.clone())))
+	}
+
+	/// The settings behind a script handle.
+	fn settings_of(&self, vm: &SQVM, value: &SqStrongRef) -> Option<NavSettings> {
+		let class = self.settings_class.clone()?;
+		class.with_payload(vm, value, |h| h.0.borrow().clone())
+	}
+
+	/// The faction of whoever stands on each tile.
+	fn occupants(&self) -> Vec<Option<i64>> {
+		let g = self.grid.borrow();
+		g.tiles
+			.iter()
+			.map(|t| {
+				t.occupant
+					.as_ref()
+					.map(|(e, _)| self.units.info(e.identity()).map_or(0, |u| u.faction))
+			})
+			.collect()
+	}
+
+	/// The tile a placed unit stands on (`entity` may be a `WeakTableRef` to it).
+	fn unit_tile(&self, vm: &SQVM, entity: &SqStrongRef) -> Option<usize> {
+		self.units.info(unit_identity(vm, entity))?.tile
+	}
+}
+
+/// A script handle to the navigator.
+#[derive(Clone)]
+struct NavHandle(Rc<RefCell<NavState>>);
+
+pub struct TacticalNavigator {
+	state: Rc<RefCell<NavState>>,
+}
+
+impl TacticalNavigator {
+	pub(crate) fn new(grid: &TacticalGrid, units: Units) -> Self {
+		TacticalNavigator {
+			state: Rc::new(RefCell::new(NavState {
+				grid: grid.handle(),
+				units,
+				travel: None,
+				settings: Rc::new(RefCell::new(NavSettings::default())),
+				path: Vec::new(),
+				settings_class: None,
+				instance: None,
+			})),
+		}
+	}
+
+	/// Build the navigator and settings classes and set `Tactical.getNavigator`. Call
+	/// once, after the `Tactical` table exists.
+	pub fn install(&self, vm: &mut SQVM) {
+		let grid = self.state.borrow().grid.clone();
+		let settings_class = settings::build_class(vm, grid);
+		self.state.borrow_mut().settings_class = Some(settings_class);
+		let class = build_class(vm);
+		let instance = class.instantiate(vm, NavHandle(self.state.clone()));
+		self.state.borrow_mut().instance = Some(instance.clone());
+		let get = vm.make_closure(move || instance.clone());
+		// Tactical.update(): the original updates the navigator (moving a travelling unit
+		// along its path), the camera shaker and the weather; only the first is logic,
+		// and nothing travels yet.
+		let update = vm.make_closure(|| {});
+		let mut tactical = SqTable::root(vm)
+			.get::<SqTable>("Tactical")
+			.expect("Tactical table must be installed before TacticalNavigator");
+		tactical.set("getNavigator", get);
+		tactical.set("update", update);
+	}
+
+	/// Release every script reference. Call before the VM is closed.
+	pub fn clear(&self) {
+		let mut st = self.state.borrow_mut();
+		st.instance = None;
+		st.settings_class = None;
+		st.path.clear();
+		st.travel = None;
+	}
+}
+
+fn not_yet(name: &str) -> String {
+	format!("TacticalNavigator.{name}: not implemented yet (headless engine)")
+}
+
+/// `getCostForPath`'s result when there's no unit on the map or no path.
+fn empty_cost(vm: &SQVM) -> SqStrongRef {
+	let mut t = SqTable::new(vm);
+	for k in ["ActionPoints", "Fatigue", "ActionPointsRequired", "FatigueRequired", "Tiles"] {
+		t.set(k, 0i64);
+	}
+	for k in ["IsComplete", "IsTraversable", "IsMissingActionPoints", "IsMissingFatigue"] {
+		t.set(k, false);
+	}
+	for k in ["First", "End", "LastBeforeEnd"] {
+		t.set(k, 0i64);
+	}
+	t.to_strong()
+}
+
+fn cost_table(vm: &SQVM, grid: &Grid, c: &cost::PathCost) -> SqStrongRef {
+	let tile = |id: usize| tactical_grid::tile_handle(grid, vm, id);
+	let mut t = SqTable::new(vm);
+	t.set("ActionPoints", c.ap as i64);
+	t.set("Fatigue", c.fatigue as i64);
+	t.set("ActionPointsRequired", c.ap_required as i64);
+	t.set("FatigueRequired", c.fatigue_required as i64);
+	t.set("Tiles", c.tiles as i64);
+	t.set("IsComplete", c.is_complete);
+	t.set("IsTraversable", false);
+	t.set("IsMissingActionPoints", c.missing_ap);
+	t.set("IsMissingFatigue", c.missing_fatigue);
+	t.set("First", tile(c.first));
+	t.set("End", tile(c.end));
+	t.set("LastBeforeEnd", tile(c.last_before_end));
+	t.set("SecondLastBeforeEnd", tile(c.second_last_before_end));
+	t.to_strong()
+}
+
+fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
+	ClassBuilder::<NavHandle>::new("TacticalNavigator")
+		.method("createSettings", |n: &mut NavHandle, vm: &SQVM| -> Option<SqStrongRef> {
+			let st = n.0.borrow();
+			*st.settings.borrow_mut() = NavSettings::default();
+			st.settings_handle(vm)
+		})
+		.method("getLastSettings", |n: &mut NavHandle, vm: &SQVM| -> Option<SqStrongRef> { n.0.borrow().settings_handle(vm) })
+		.method(
+			"findPath",
+			|n: &mut NavHandle, from: Native<TileHandle>, to: Native<TileHandle>, s: Native<SettingsHandle>, within: i64| -> bool {
+				let mut st = n.0.borrow_mut();
+				// The original refuses (keeping the path) while a unit is moving.
+				if st.travel.is_some() {
+					return false;
+				}
+				st.path.clear();
+				let occupants = st.occupants();
+				let settings = s.0.0.borrow().clone();
+				let path = {
+					let g = st.grid.borrow();
+					let q = Query {
+						grid: &g,
+						occupant: &occupants,
+						settings: &settings,
+					};
+					pathfind::find_path(&q, from.0.id, to.0.id, within as i32)
+				};
+				match path {
+					Some(p) => {
+						st.path = p;
+						true
+					}
+					None => false,
+				}
+			},
+		)
+		.method("clearPath", |n: &mut NavHandle| n.0.borrow_mut().path.clear())
+		.method("popLastWaypoint", |n: &mut NavHandle| {
+			n.0.borrow_mut().path.pop();
+		})
+		// Keep the leading steps within `d` of `tile`; cut from the first one beyond.
+		.method("clipPathToDistance", |n: &mut NavHandle, tile: Native<TileHandle>, d: i64| {
+			let st = &mut *n.0.borrow_mut();
+			pathfind::clip_to_distance(&st.grid.borrow(), &mut st.path, tile.0.id, d);
+		})
+		.method(
+			"getCostForPath",
+			|n: &mut NavHandle, vm: &SQVM, entity: Retained, s: Native<SettingsHandle>, ap: i64, fatigue: i64| -> SqStrongRef {
+				let st = n.0.borrow();
+				let Some(from) = st.unit_tile(vm, &entity.0) else { return empty_cost(vm) };
+				if st.path.is_empty() {
+					return empty_cost(vm);
+				}
+				let occupants = st.occupants();
+				let settings = s.0.0.borrow().clone();
+				let c = {
+					let g = st.grid.borrow();
+					cost::cost_for_path(&g, |i| occupants[i].is_some(), &st.path, &settings, from, ap as i32, fatigue as i32)
+				};
+				cost_table(vm, &st.grid, &c)
+			},
+		)
+		// (unit, settings, ap) or (unit, settings, ap, target tile, faction).
+		.method(
+			"getTurnsRequiredForPath",
+			|n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<f64, String> {
+				let st = n.0.borrow();
+				if args.len() != 3 && args.len() != 5 {
+					return Err("getTurnsRequiredForPath: wrong number of parameters".to_string());
+				}
+				let settings = st.settings_of(vm, &args[1].0).ok_or("getTurnsRequiredForPath: expected settings")?;
+				let ap = args[2].0.get_value::<Number>(vm).ok_or("getTurnsRequiredForPath: expected a number")?.0 as i32;
+				let target = if args.len() == 5 {
+					let tile = tactical_grid::tile_id_of(&st.grid, vm, &args[3].0).ok_or("getTurnsRequiredForPath: expected a tile")?;
+					let faction = args[4].0.get_value::<Number>(vm).ok_or("getTurnsRequiredForPath: expected a faction")?.0 as i64;
+					Some((tile, faction))
+				} else {
+					None
+				};
+				let Some(from) = st.unit_tile(vm, &args[0].0) else { return Ok(0.0) };
+				if st.path.is_empty() {
+					return Ok(0.0);
+				}
+				let g = st.grid.borrow();
+				Ok(cost::turns_required(&g, &st.path, &settings, from, ap, target) as f64)
+			},
+		)
+		// isTravelling(entity): whether that unit is moving along a path.
+		.method("isTravelling", |n: &mut NavHandle, vm: &SQVM, entity: Retained| -> bool {
+			let id = unit_identity(vm, &entity.0);
+			n.0.borrow().travel.as_ref().is_some_and(|t| t.identity == id)
+		})
+		.property("HasValidPath", |n: &NavHandle| !n.0.borrow().path.is_empty(), |_n: &mut NavHandle, _v: bool| {})
+		.property("IsTravelling", |n: &NavHandle| n.0.borrow().travel.is_some(), |_n: &mut NavHandle, _v: bool| {})
+		// travel(entity, ap, fatigue): start or continue moving along the path (see
+		// `travel`); true while the move is under way.
+		.method("travel", |n: &mut NavHandle, vm: &SQVM, entity: Retained, _ap: Number, _fatigue: Number| -> Result<bool, String> {
+			travel::travel(&n.0, vm, &entity.0)
+		})
+		.method("teleport", |_n: &mut NavHandle, _a: Variadic<Retained>| -> Result<(), String> { Err(not_yet("teleport")) })
+		.method("switchEntities", |_n: &mut NavHandle, _a: Variadic<Retained>| -> Result<(), String> { Err(not_yet("switchEntities")) })
+		// The path overlay is visual.
+		.method("buildVisualisation", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
+		.method("clearVisualisation", |_n: &mut NavHandle| {})
+		.method("render", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
+		.method("update", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
+		.build(vm)
+}

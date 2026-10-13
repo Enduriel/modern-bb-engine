@@ -13,6 +13,7 @@
 //! every service *while the VM is still fully alive*, then lets the `vm` field (the
 //! last-declared field) drop last for a clean `sq_close`.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef};
@@ -21,7 +22,7 @@ use crate::error::ScriptError;
 use crate::module::ModuleSystem;
 use crate::native::save::SaveSystem;
 use crate::native::world_time::ClockPart;
-use crate::native::{NativeConfig, TacticalEntities, TimeService, UiBridge, WorldEntities, WorldGrid};
+use crate::native::{NativeConfig, TacticalEntities, TacticalGrid, TacticalNavigator, TimeService, UiBridge, WorldEntities, WorldGrid};
 use crate::source::ScriptSource;
 use crate::state_stack::RootState;
 
@@ -36,7 +37,11 @@ pub struct Engine<S: ScriptSource> {
 	world_grid: WorldGrid,
 	world_entities: WorldEntities,
 	tactical_entities: TacticalEntities,
+	tactical_grid: TacticalGrid,
+	tactical_navigator: TacticalNavigator,
 	ui: UiBridge,
+	/// The headless browser side answering the UI (see [`crate::ui_client`]).
+	ui_client: RefCell<crate::ui_client::UiClient>,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -70,6 +75,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// World.getRoster/getPlayerRoster/createRoster, replacing the bare stubs).
 		let tactical_entities = TacticalEntities::new(modules.instantiator());
 		tactical_entities.install(&mut vm);
+		// The battle map, with units and objects placed on it by the entity host.
+		let tactical_grid = TacticalGrid::new();
+		tactical_grid.install(&mut vm);
+		tactical_entities.attach_map(&tactical_grid);
+		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
+		tactical_navigator.install(&mut vm);
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.
@@ -92,7 +103,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			world_grid,
 			world_entities,
 			tactical_entities,
+			tactical_grid,
+			tactical_navigator,
 			ui,
+			ui_client: RefCell::new(crate::ui_client::UiClient::new()),
 			time,
 			modules,
 			vm,
@@ -119,6 +133,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn time(&self) -> &TimeService {
 		&self.time
 	}
+	/// Let the headless UI client answer what the scripts asked of the UI since the
+	/// last pump (see [`crate::ui_client::UiClient::pump`]).
+	pub fn pump_ui(&self) -> Result<Vec<crate::UiCall>, String> {
+		self.ui_client.borrow_mut().pump(&self.ui, &self.vm)
+	}
+
 	pub fn ui(&self) -> &UiBridge {
 		&self.ui
 	}
@@ -158,6 +178,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.time.tick(&self.vm, real_delta_ms);
 	}
 
+	/// Run the `onInit` of states added since the last frame (see
+	/// [`RootState::init_pending`]), for hosts driving a sequence between frames.
+	pub fn init_pending_states(&self) -> Result<(), String> {
+		self.root_state.init_pending(&self.vm)
+	}
+
 	/// Run one frame of the original's main loop with `real_delta_ms` of real time
 	/// (order probed 2026-10-13): advance the clocks and fire due scheduled events, run
 	/// `onUpdate` then `onRender` on every visible state, then the background task once.
@@ -181,6 +207,8 @@ impl<S: ScriptSource> Drop for Engine<S> {
 		self.saves.clear();
 		self.root_state.clear();
 		self.tactical_entities.clear();
+		self.tactical_navigator.clear();
+		self.tactical_grid.clear();
 		self.world_entities.clear();
 		self.world_grid.clear();
 		self.ui.clear();

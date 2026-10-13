@@ -357,11 +357,11 @@ impl WorldGrid {
 			})
 		};
 		// World.queryTilesInRange(center, minRange, maxRange, callback, userdata):
-		// for every tile whose hex distance from `center` is in [min, max], call
-		// `callback(tile, userdata)`. The world callers pass a `bindenv`'d closure that
+		// for every tile (not the centre) whose hex distance from `center` is in
+		// [min, max], call `callback(tile, userdata)`, in the original's walk order. The world callers pass a `bindenv`'d closure that
 		// mutates `userdata` (e.g. tallying terrain types in a region); the return value
-		// is unused. (Tactical.queryTilesInRange is a separate, overloaded native — its
-		// 7/8-arg forms collect into a result list — and is added when tactical lands.)
+		// is unused. (Tactical.queryTilesInRange is a separate, overloaded native with more
+		// filters; see `tactical_grid::query`.)
 		let query_tiles_in_range = {
 			let g = self.grid.clone();
 			vm.make_closure(
@@ -372,22 +372,26 @@ impl WorldGrid {
 				      callback: SqStrongRef,
 				      userdata: Retained|
 				      -> Result<(), String> {
+					// The original's range walk (`hex_range`): sector order, centre
+					// excluded; then the inner rings closer than `min` are skipped. No grid
+					// borrow is held across the callback (it runs arbitrary script that
+					// may re-enter the grid).
 					let (cq, cr) = center.0.with(|d| (d.q, d.r));
-					// Walk the hex disk of radius `max` in axial space; skip the inner
-					// rings closer than `min`. No grid borrow is held across the
-					// callback (it runs arbitrary script that may re-enter the grid).
-					for dq in -max..=max {
-						let lo = (-max).max(-dq - max);
-						let hi = max.min(-dq + max);
-						for dr in lo..=hi {
-							let dist = (dq.abs() + dr.abs() + (dq + dr).abs()) / 2;
-							if dist < min {
-								continue;
-							}
-							let (nq, nr) = (cq + dq, cr + dr);
-							if let Some(tile) = tile_at(&g, vm, nq, nr + nq / 2) {
-								callback.call(vm, (tile, userdata.0.clone()))?;
-							}
+					let ids = {
+						let gb = g.borrow();
+						super::hex_range::tiles_in_range((cq, cr), max, gb.tiles.len(), |q, r| gb.idx(q, r + q / 2))
+					};
+					for id in ids {
+						let (q, r) = {
+							let gb = g.borrow();
+							(gb.tiles[id].q, gb.tiles[id].r)
+						};
+						let dist = ((q - cq).abs() + (r - cr).abs() + (q - cq + r - cr).abs()) / 2;
+						if dist < min {
+							continue;
+						}
+						if let Some(tile) = tile_at(&g, vm, q, r + q / 2) {
+							callback.call(vm, (tile, userdata.0.clone()))?;
 						}
 					}
 					Ok(())
