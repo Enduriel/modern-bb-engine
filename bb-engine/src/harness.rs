@@ -59,7 +59,7 @@ pub fn boot_menu(engine: &GameEngine) -> Result<(), String> {
 	engine.boot("scripts/root_state")?;
 	engine.run_script("::Cursor.setPosition(0, 0);", "cursor")?;
 	// Let the UI answer the menu's screens (connected, shown) before anything else.
-	squirrel_bb::ui_client::pump(engine.ui(), engine.vm()).map(|_| ())
+	engine.pump_ui().map(|_| ())
 }
 
 /// Add the world state and give it new-campaign settings for `seed`, ready for
@@ -71,7 +71,8 @@ pub fn prepare_new_campaign(engine: &GameEngine, seed: &str) -> Result<(), Strin
 		this.include("scripts/states/world_state");
 		this.world_state.init = function() {};
 
-		// onInit stands up the 11 managers, the UI and the disabled init.
+		// Its onInit (run once it has its settings, see below) stands up the 11 managers,
+		// the UI and the disabled init.
 		this.RootState.add("WorldState", "scripts/states/world_state");
 		local ws = this.RootState.get("WorldState");
 		ws.setNewCampaignSettings({
@@ -90,7 +91,10 @@ pub fn prepare_new_campaign(engine: &GameEngine, seed: &str) -> Result<(), Strin
 		::__bootWorldState <- ws;
 		"#
 	.replace("@SEED@", seed);
-	engine.run_script(&script, "world_boot")
+	engine.run_script(&script, "world_boot")?;
+	// The new state initializes after it has been handed its settings, as in the
+	// original (its next update).
+	engine.init_pending_states()
 }
 
 /// Run the genuine `startNewCampaign`: worldgen, assets, factions, the starting
@@ -102,22 +106,99 @@ pub fn start_new_campaign(engine: &GameEngine) -> Result<(), String> {
 /// Let the world run, as a player does after starting a campaign: unpause, and from
 /// then on let [`run_frame`]'s scripted player answer events.
 pub fn unpause_world(engine: &GameEngine) -> Result<(), String> {
-	engine.run_script(AUTOPLAY, "autoplay")?;
+	install_autoplay(engine)?;
 	engine.run_script(
 		"::__bootWorldState.setAutoPause(false); ::__bootWorldState.setPause(false);",
 		"unpause",
 	)
 }
 
+/// Install the scripted player ([`AUTOPLAY`]) without unpausing the world; [`run_frame`]
+/// runs it.
+pub fn install_autoplay(engine: &GameEngine) -> Result<(), String> {
+	engine.run_script(AUTOPLAY, "autoplay")
+}
+
 /// The scripted player: picks the first option of whatever event or contract screen
-/// is open, as clicking its first button would.
+/// is open, as clicking its first button would. With `::__autoplayEngage` set, it also
+/// engages when the combat dialog offers a battle. In a battle it ends each of its
+/// units' turns at once (the turn bar's own guards hold the press while the bar is
+/// busy), leaving the fighting to the AI, and leaves the result screen when it's over
+/// (recording `::__lastCombatResult`). With `::__autoplayFight` set, the AI fights for
+/// the player's units too.
 const AUTOPLAY: &str = r#"
+::__autoplayEngage <- false;
+::__autoplayFight <- false;
 ::__autoplay <- function()
 {
+	if (("State" in ::Tactical) && ::Tactical.State != null)
+	{
+		local st = ::Tactical.State;
+		if (::__autoplayFight && !st.isBattleEnded())
+		{
+			// Hand the player's units to the AI (as a charm does), so both sides fight.
+			foreach (bro in ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player))
+			{
+				if (!bro.m.IsControlledByPlayer) continue;
+				local agent = ::new("scripts/ai/tactical/agents/military_melee_agent");
+				agent.setActor(bro);
+				bro.setAIAgent(agent);
+				bro.m.IsControlledByPlayer = false;
+				// Its turn may already be under way: tell the new agent, as the turn
+				// start does.
+				if (bro.isTurnStarted()) agent.onTurnStarted();
+			}
+		}
+		if (!st.isBattleEnded())
+		{
+			local bar = ::Tactical.TurnSequenceBar;
+			local active = bar.getActiveEntity();
+			if (active != null && active.isPlayerControlled()) bar.onNextTurnButtonPressed();
+		}
+		else
+		{
+			local results = st.m.TacticalCombatResultScreen;
+			if (results != null && results.isVisible() && !results.isAnimating())
+			{
+				::__lastCombatResult <- ::Tactical.Entities.getCombatResult();
+				results.onLeaveButtonPressed();
+			}
+		}
+		return;
+	}
 	if (!("State" in ::World) || ::World.State == null) return;
-	local screen = ::World.State.getEventScreen();
+	local state = ::World.State;
+	local screen = state.getEventScreen();
 	if (screen != null && screen.isVisible() && !screen.isAnimating()) screen.onButtonPressed(0);
+	local dialog = state.m.CombatDialog;
+	if (::__autoplayEngage && dialog != null && dialog.isVisible() && !dialog.isAnimating()) dialog.onEngageButtonPressed();
 };
+"#;
+
+/// Put the player next to the nearest hostile party and offer its battle; the
+/// autoplay (installed by [`unpause_world`]) engages, after which the loading screen
+/// shows and the world state starts the combat and hides itself. Run frames to fight.
+pub fn engage_nearest_hostile(engine: &GameEngine) -> Result<(), String> {
+	engine.run_script(ENGAGE_NEAREST_HOSTILE, "engage")
+}
+
+const ENGAGE_NEAREST_HOSTILE: &str = r#"
+local player = ::World.State.getPlayer();
+local target = null;
+local best = 0;
+foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
+{
+	if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || e.getTroops().len() == 0) continue;
+	local d = e.getDistanceTo(player);
+	if (target == null || d < best) { target = e; best = d; }
+}
+if (target == null) throw "no hostile party to fight";
+::logInfo("combat target: " + target.getName() + " (" + target.getTroops().len() + " troops)");
+local tp = target.getPos();
+player.setPos(::createVec(tp.X - 30, tp.Y));
+::World.setPlayerPos(player.getPos());
+::__autoplayEngage = true;
+::World.State.showCombatDialog(true, true, true, null, player.getPos());
 "#;
 
 /// One frame of a headless game with real time `real_delta_ms`: the engine's frame,
@@ -125,7 +206,7 @@ const AUTOPLAY: &str = r#"
 /// player (installed by [`unpause_world`]).
 pub fn run_frame(engine: &GameEngine, real_delta_ms: f64) -> Result<(), String> {
 	engine.frame(real_delta_ms)?;
-	squirrel_bb::ui_client::pump(engine.ui(), engine.vm()).map_err(|e| format!("ui client: {e}"))?;
+	engine.pump_ui().map_err(|e| format!("ui client: {e}"))?;
 	let autoplay = squirrel::SqTable::root(engine.vm()).get::<squirrel::SqStrongRef>("__autoplay");
 	autoplay.map_or(Ok(()), |f| f.call(engine.vm(), ())).map_err(|e| format!("autoplay: {e}"))
 }
