@@ -42,14 +42,18 @@ pub(crate) fn include<S: ScriptSource>(
 		st.load_stack.push(norm.clone());
 	}
 
-	// Source is compiled+run; bytecode is loaded then run with `this` = root (the
-	// same effect `run_script` has). No state borrow is held across either.
-	let result = match script {
-		LoadedScript::Source(bytes) => vm.run_script(&String::from_utf8_lossy(&bytes), &norm),
-		LoadedScript::Bytecode(bytes) => vm
-			.load_closure(&bytes)
-			.and_then(|closure| closure.call(vm, ())),
+	// Source is compiled, bytecode loaded; either way the closure runs with `this` =
+	// root. Game (and mod) scripts compute floats in single precision like the
+	// original 32-bit-float engine — required for seed-exact worldgen (see
+	// `SqStrongRef::set_f32_math`). No state borrow is held across the run.
+	let closure = match script {
+		LoadedScript::Source(bytes) => vm.compile(&String::from_utf8_lossy(&bytes), &norm),
+		LoadedScript::Bytecode(bytes) => vm.load_closure(&bytes),
 	};
+	let result = closure.and_then(|closure| {
+		closure.set_f32_math(vm, true);
+		closure.call(vm, ())
+	});
 
 	state.borrow_mut().load_stack.pop();
 	result.map_err(ScriptError::Runtime)
@@ -136,16 +140,26 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		};
 		let by_name = {
 			let state = self.state.clone();
-			vm.make_closure(move |path: &str| -> i64 {
-				// Compute the hash and remember the mapping, so a later
-				// `scriptFilenameByHash` can reverse it even for an unloaded path.
+			vm.make_closure(move |path: &str| -> Option<i64> {
+				// Like the original: only an existing script, named by its exact
+				// canonical path, has a hash; anything else (wrong case, a `.nut`
+				// suffix, an unknown path) yields null. Remember the mapping so a later
+				// `scriptFilenameByHash` can reverse it even for an unloaded script.
+				if path != normalize_path(path) {
+					return None;
+				}
+				let known = state.borrow().prototypes.contains_key(path)
+					|| state.borrow().source.load(path).is_some();
+				if !known {
+					return None;
+				}
 				let hash = class_name_hash(path);
 				state
 					.borrow_mut()
 					.by_hash
 					.entry(hash)
-					.or_insert_with(|| normalize_path(path));
-				hash
+					.or_insert_with(|| path.to_string());
+				Some(hash)
 			})
 		};
 		let enumerate = {

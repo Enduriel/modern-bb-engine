@@ -243,6 +243,10 @@ fn io_registry_round_trips_and_matches_class_name_hash() {
 		local h = IO.scriptHashByFilename("scripts/skills/bash");
 		assert(IO.scriptFilenameByHash(h) == "scripts/skills/bash");
 		assert(IO.scriptFilenameByHash(999999) == null); // unknown hash -> null
+		// Like the original: only an existing script, by its exact canonical path.
+		assert(IO.scriptHashByFilename("scripts/nope") == null);
+		assert(IO.scriptHashByFilename("scripts/skills/bash.nut") == null);
+		assert(IO.scriptHashByFilename("") == null);
 
 		// The instance carries that same ClassNameHash.
 		local b = this.new("scripts/skills/bash");
@@ -389,4 +393,93 @@ fn missing_script_is_reported() {
 		matches!(err, squirrel_bb::ScriptError::NotFound(_)),
 		"got {err:?}"
 	);
+}
+
+// A three-level chain mirroring entity → actor → player, for the layout facts probed
+// in the ORIGINAL engine (2026-10-13).
+const L_ENTITY: &str = r#"
+this.entity <- {
+	m = { ID = 0, Name = "" },
+	function getName() { return this.m.Name; }
+	function whoAmI() { return this; }
+};
+"#;
+const L_ACTOR: &str = r#"
+this.actor <- this.inherit("scripts/entity/tactical/entity", {
+	m = { Hitpoints = 10, Stored = null },
+	function create() { this.m.Name = "actor"; }
+	function onInit() { this.m.Stored = this; }      // like setActor(this)
+	function getHitpoints() { return this.m.Hitpoints; }
+});
+"#;
+const L_PLAYER: &str = r#"
+this.player <- this.inherit("scripts/entity/tactical/actor", {
+	m = { Mood = 3 },
+	function create() { this.actor.create(); this.m.Name = "player"; }
+	function onInit() { this.actor.onInit(); }
+	function getMoodState() { return this.m.Mood; }    // derived-only
+	function getName() { return "P:" + this.actor.getName(); }
+});
+"#;
+
+fn three_levels() -> (SQVM, ModuleSystem<MemSource>) {
+	vm_with(&[
+		("scripts/entity/tactical/entity", L_ENTITY),
+		("scripts/entity/tactical/actor", L_ACTOR),
+		("scripts/entity/tactical/player", L_PLAYER),
+	])
+}
+
+#[test]
+fn super_calls_run_with_this_as_the_leaf() {
+	let (vm, _m) = three_levels();
+	vm.run_script(
+		r#"
+		local p = this.new("scripts/entity/tactical/player");
+		p.onInit();
+		// actor.onInit stored `this` during a super-call: it must be the leaf …
+		assert(p.m.Stored == p);
+		// … so derived-only methods resolve through it (the getMoodState case).
+		assert(p.m.Stored.getMoodState() == 3);
+		// Methods found on a super level are bound to the leaf: .call(other) is ignored.
+		local other = this.new("scripts/entity/tactical/player");
+		assert(p.actor.whoAmI() == p);
+		assert(p.actor.whoAmI.call(other) == p);
+		// Super dispatch still picks the ancestor's version.
+		assert(p.getName() == "P:player");
+		"#,
+		"super_this",
+	)
+	.expect("super-calls keep this = leaf");
+}
+
+#[test]
+fn instance_levels_and_member_tables_match_the_original_layout() {
+	let (vm, _m) = three_levels();
+	vm.run_script(
+		r#"
+		local p = this.new("scripts/entity/tactical/player");
+		local q = this.new("scripts/entity/tactical/player");
+		local a = p.actor, e = a.entity;
+		// Per-instance level tables, chained by delegate, base has none.
+		assert(p.getdelegate() == a && a.getdelegate() == e && e.getdelegate() == null);
+		assert(p.actor != q.actor);
+		// Each level holds only its own methods.
+		assert(p.rawin("getMoodState") && !a.rawin("getMoodState") && !p.rawin("getHitpoints"));
+		// Each level has its own m with only its declared fields, delegate-chained.
+		assert(p.m.rawin("Mood") && !p.m.rawin("Hitpoints") && !p.m.rawin("ID"));
+		assert(a.m.rawin("Hitpoints") && e.m.rawin("ID"));
+		assert(p.m.getdelegate() == a.m && a.m.getdelegate() == e.m);
+		// Reads fall through; writes land in the level that owns the field.
+		p.m.ID = 42;
+		assert(!p.m.rawin("ID") && e.m.rawget("ID") == 42 && a.m.ID == 42);
+		// Instances never share member state.
+		assert(q.m.ID == 0);
+		// Metadata: ClassName per level, SuperName on derived levels.
+		assert(p.ClassName == "player" && p.SuperName == "actor" && a.SuperName == "entity");
+		assert(e.ClassName == "entity" && !e.rawin("SuperName"));
+		"#,
+		"layout",
+	)
+	.expect("layout matches the original engine");
 }

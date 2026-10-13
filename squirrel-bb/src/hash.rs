@@ -5,10 +5,13 @@
 //! that path — `ClassNameHash` — onto every object the module system builds, and
 //! exposes a bidirectional path↔hash registry through `IO`.
 //!
-//! The original engine's exact hash algorithm is unconfirmed, and save-file
-//! compatibility is out of scope, so this uses its own stable hash (FNV-1a). The
-//! same function is used both to stamp objects and to answer `IO` queries, so it
-//! round-trips with itself, which is all the module system needs.
+//! The original engine's hash algorithm is unknown: values captured from the
+//! original (e.g. `scripts/skills/skill` → -315995513) match no common 32-bit hash
+//! (FNV, CRC32, djb2, murmur3, xxh32, …) on any obvious path variant. Save-file
+//! compatibility isn't an MVP goal, so this uses its own stable hash (FNV-1a), kept
+//! behind this one function so a later save importer can swap in the original
+//! algorithm or a captured hash→path table. The same function stamps objects and
+//! answers `IO` queries, so it round-trips with itself.
 
 /// Normalize a script path for use as a cache key and hash input: backslashes to
 /// forward slashes, a trailing `.nut` removed, surrounding whitespace trimmed.

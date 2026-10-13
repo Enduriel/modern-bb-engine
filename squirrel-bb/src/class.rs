@@ -6,17 +6,26 @@
 //! or the result of `this.inherit(parentPath, body)` (a derived class). The
 //! structure these functions build, for an instance of a derived class:
 //!
+//! The layout matches the ORIGINAL engine (probed in the real game). For an instance of `brave_trait` →
+//! `character_trait` → `skill`:
+//!
 //! ```text
-//!   instance ── delegate ─▶ parentClone ── delegate ─▶ … ─▶ baseClone
-//!     │  .m = sharedM           │  .m = sharedM              │  .m = sharedM
-//!     │  ["parent"] ───────────▶┘  ["grandparent"] ─────────▶┘
+//!   leaf ──delegate──▶ T_character_trait ──delegate──▶ T_skill ──▶ (none)
+//!    │ .character_trait ─▶┘   │ .skill ──────────────▶┘
+//!    │ .m ──delegate──▶ .m ──delegate──▶ .m      (each level's OWN fields)
 //! ```
 //!
-//! * Every level shares one member table (`sharedM`), so `this.m.X` written by any
-//!   ancestor's `create()` lands on the same instance state.
-//! * Method lookups fall through the **delegate** chain (so inherited methods
-//!   resolve), and explicit super-calls go through a slot named after the parent
-//!   class (`this.actor.create()`), which points at the same per-level clone.
+//! * Every class level is a **per-instance table** holding that level's own methods
+//!   (plus `ClassName`/`ClassNameHash`/`SuperName`), reached from the level below by
+//!   delegate (method inheritance) and by a slot named after the parent class
+//!   (explicit super-calls: `this.actor.onInit()`).
+//! * Each level has its **own `m`** holding only the fields that level declares;
+//!   the `m` tables are delegate-chained the same way. Reads fall through, and
+//!   Squirrel's assignment fallthrough writes an inherited field where it lives, so
+//!   `this.m.X = v` from any level updates the one instance state.
+//! * Every closure on every level is **bound to the leaf** (`bindenv`), so a
+//!   super-call still runs with `this` = the full instance: `setActor(this)` inside
+//!   `actor.onInit` stores the leaf, and derived-only methods stay reachable.
 //! * `create()` is invoked on the leaf; each level's `create` chains up by calling
 //!   `this.<parent>.create()`.
 //!
@@ -72,6 +81,8 @@ pub(crate) fn prototype<'vm, S: ScriptSource>(
 		})?;
 	let hash = class_name_hash(&norm);
 	proto.set("ClassNameHash", hash);
+	proto.set("ClassName", basename(&norm).to_string());
+	ensure_m(vm, &mut proto);
 	{
 		let mut st = state.borrow_mut();
 		st.prototypes.insert(norm.clone(), proto.to_strong());
@@ -94,25 +105,22 @@ pub(crate) fn inherit<S: ScriptSource>(
 	// The child's own path is the script currently being loaded.
 	let child_path = state.borrow().load_stack.last().cloned();
 
-	// Layer the parent's (already-complete) member defaults beneath the child's,
-	// so this prototype's `m` carries every inherited default.
-	if let Some(parent_m) = parent.get::<SqTable>("m") {
-		let mut merged = parent_m.deep_clone();
-		if let Some(body_m) = body.get::<SqTable>("m") {
-			merged.deep_merge_from(&body_m);
-		}
-		body.set("m", merged);
-	}
+	// The prototype keeps only the fields it declares in its own `m` (like the
+	// original); `new` chains the per-level `m` tables by delegate.
+	ensure_m(vm, &mut body);
 
 	// Method inheritance via the delegate; explicit super-calls via a slot named
-	// after the parent class (`this.<parent>.create()`). Both reference the parent
-	// prototype here — `new` re-points them at per-instance clones.
+	// after the parent class (`this.<parent>.create()`), recorded in `SuperName`
+	// (which hook frameworks walk: `p = p[p.SuperName]`). Both reference the parent
+	// prototype here — `new` re-points them at per-instance level tables.
 	body.set_delegate(&parent);
+	body.set("SuperName", basename(&parent_norm).to_string());
 	body.set(basename(&parent_norm), parent);
 
 	if let Some(child) = child_path {
 		let hash = class_name_hash(&child);
 		body.set("ClassNameHash", hash);
+		body.set("ClassName", basename(&child).to_string());
 		let mut st = state.borrow_mut();
 		st.prototypes.insert(child.clone(), body.to_strong());
 		st.parents.insert(child.clone(), parent_norm);
@@ -130,7 +138,8 @@ pub(crate) fn new_instance<S: ScriptSource>(
 	path: &str,
 ) -> Result<SqStrongRef, ScriptError> {
 	let norm = normalize_path(path);
-	let leaf = prototype(vm, state, &norm)?;
+	// Load the class (and, through `inherit`, its whole chain).
+	prototype(vm, state, &norm)?;
 
 	// The chain leaf → … → base, via the recorded parent links.
 	let chain: Vec<String> = {
@@ -144,17 +153,11 @@ pub(crate) fn new_instance<S: ScriptSource>(
 		chain
 	};
 
-	// One member table for the whole instance, deep-cloned from the leaf's
-	// already-merged defaults so instances never share mutable state.
-	let shared_m = match leaf.get::<SqTable>("m") {
-		Some(m) => m.deep_clone(),
-		None => SqTable::new(vm),
-	}
-	.to_strong();
-
-	// Clone base → leaf, sharing `m` and wiring each level's delegate + super-ref.
-	let mut prev: Option<SqTable> = None;
-	let mut prev_name: Option<String> = None;
+	// One table per class level, base → leaf: a shallow clone of the level's
+	// prototype (its own methods + metadata), with its own deep-cloned `m` whose
+	// delegate is the parent level's `m`, and the parent level as both delegate and
+	// super-slot.
+	let mut levels: Vec<SqTable> = Vec::with_capacity(chain.len());
 	for level in chain.iter().rev() {
 		let proto = {
 			let st = state.borrow();
@@ -164,15 +167,34 @@ pub(crate) fn new_instance<S: ScriptSource>(
 				.as_table(vm)
 				.expect("prototype is a table")
 		};
-		let mut clone = proto.shallow_clone();
-		clone.set("m", shared_m.as_table(vm).expect("shared m is a table"));
-		if let (Some(parent_clone), Some(name)) = (prev.take(), prev_name.take()) {
-			clone.set_delegate(&parent_clone);
-			clone.set(&name, parent_clone);
+		let mut table = proto.shallow_clone();
+		let mut m = match proto.get_owned::<SqTable>("m") {
+			Some(own) => own.deep_clone(),
+			None => SqTable::new(vm),
+		};
+		match levels.last() {
+			Some(parent) => {
+				if let Some(parent_m) = parent.get::<SqTable>("m") {
+					m.set_delegate(&parent_m);
+				}
+				table.set_delegate(parent);
+				let parent_name = basename(chain_parent(&chain, level)).to_string();
+				table.set(&parent_name, parent.to_strong());
+			}
+			None => table.clear_delegate(),
 		}
-		prev = Some(clone);
-		prev_name = Some(basename(level).to_string());
+		table.set("m", m);
+		levels.push(table);
 	}
+
+	// Bind every level's methods to the leaf, so `this` is the full instance even in
+	// super-calls.
+	let leaf_table = levels.last().expect("the chain is never empty").to_strong();
+	let leaf_table = leaf_table.as_table(vm).expect("leaf is a table");
+	for table in &mut levels {
+		table.bind_closures_to(&leaf_table);
+	}
+	let prev = levels.pop();
 
 	let mut instance = prev.expect("the chain is never empty");
 	instance.set("ClassNameHash", class_name_hash(&norm));
@@ -206,4 +228,34 @@ pub(crate) fn is_kind_of<S: ScriptSource>(
 		cur = level.delegate();
 	}
 	false
+}
+
+/// The parent path of `level` within `chain` (leaf → base order).
+fn chain_parent<'a>(chain: &'a [String], level: &str) -> &'a str {
+	let i = chain
+		.iter()
+		.position(|p| p == level)
+		.expect("level is in its own chain");
+	&chain[i + 1]
+}
+
+/// Give a prototype an (empty) `m` if its script declared none, so every level's
+/// member table can join the instance's `m` delegate chain.
+fn ensure_m(vm: &SQVM, proto: &mut SqTable) {
+	if proto.get_owned::<SqTable>("m").is_none() {
+		proto.set("m", SqTable::new(vm));
+	}
+}
+
+/// An instance's class-level tables, leaf first, base last (the delegate chain a
+/// BB instance is built from). Hosts that inject native methods use this to reach
+/// the base level and to register every level's identity.
+pub(crate) fn instance_levels<'vm>(leaf: SqTable<'vm>) -> Vec<SqTable<'vm>> {
+	let mut levels = Vec::new();
+	let mut cur = Some(leaf);
+	while let Some(level) = cur {
+		cur = level.delegate();
+		levels.push(level);
+	}
+	levels
 }
