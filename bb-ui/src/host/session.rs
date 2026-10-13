@@ -325,6 +325,17 @@ impl UiSession {
 		}
 	}
 
+	/// The page as [`crate::parity`] compares it with the original's goldens.
+	pub fn snapshot(&self) -> Result<crate::parity::Snapshot, String> {
+		let code = format!(
+			"(function () {{ {} return BBSnapshot.take(); }})()",
+			crate::parity::SNAPSHOT_JS
+		);
+		let text = self.eval(&code)?;
+		let json = Json::parse(text.as_str().ok_or("the snapshot is not text")?)?;
+		crate::parity::Snapshot::parse(&json)
+	}
+
 	/// Whether the page is mid-animation (jQuery or Velocity, which the UI uses to
 	/// slide and fade its screens): clicks then may land where a moving element was.
 	pub fn animating(&self) -> Result<bool, String> {

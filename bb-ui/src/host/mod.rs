@@ -24,6 +24,7 @@
 
 mod app;
 mod client;
+pub mod goldens;
 mod ipc;
 mod renderer;
 mod scheme;

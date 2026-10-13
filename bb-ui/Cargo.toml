@@ -20,6 +20,10 @@ cef-dll-sys = { version = "=154.5.0", optional = true }
 name = "boot_menu_ui"
 required-features = ["cef"]
 
+[[example]]
+name = "ui_parity"
+required-features = ["cef"]
+
 # Own `main`: Chromium re-runs the test binary for its child processes, and CEF can
 # start only once per process.
 [[test]]
