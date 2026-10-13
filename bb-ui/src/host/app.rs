@@ -29,6 +29,35 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("force-device-scale-factor", Some("1")),
 ];
 
+/// Chrome preferences for every page, set on CEF's UI thread once its context exists
+/// (and kept in the profile, under the cache dir).
+///
+/// The font minimum is Coherent's WebKit's "smart minimum" (probed): font sizes
+/// relative to the user default, like `body`'s 62.5% of 62.5% of `medium`, compute to
+/// at least 8px, and `em` lengths use the result. Absolute sizes below it are left
+/// alone. Chromium's default is 6. (`BrowserSettings::minimum_logical_font_size`
+/// doesn't reach Blink; the profile preference wins.)
+const PREFERENCES: &[(&str, i32)] = &[("webkit.webprefs.minimum_logical_font_size", 8)];
+
+fn set_preferences() {
+	let Some(context) = request_context_get_global_context() else {
+		eprintln!("bb-ui: no global request context; preferences not set");
+		return;
+	};
+	for (name, value) in PREFERENCES {
+		let Some(mut pref) = value_create() else {
+			continue;
+		};
+		pref.set_int(*value);
+		// Not `CefString::default()`: that passes a null `error`, which CEF rejects
+		// without setting anything.
+		let mut error = CefString::from(" ");
+		if context.set_preference(Some(&(*name).into()), Some(&mut pref), Some(&mut error)) != 1 {
+			eprintln!("bb-ui: could not set preference {name}: {error}");
+		}
+	}
+}
+
 wrap_browser_process_handler! {
 	struct BrowserReady {
 		ready: Arc<Mutex<Option<mpsc::Sender<()>>>>,
@@ -36,6 +65,7 @@ wrap_browser_process_handler! {
 
 	impl BrowserProcessHandler {
 		fn on_context_initialized(&self) {
+			set_preferences();
 			if let Some(ready) = self.ready.lock().unwrap_or_else(|e| e.into_inner()).take() {
 				let _ = ready.send(());
 			}
