@@ -30,8 +30,8 @@ pub use error::ScriptError;
 pub use hash::{basename, class_name_hash, normalize_path};
 pub use module::{FileReader, Instantiator, ModuleSystem};
 pub use native::{
-	Color, DLC_SCRIPTS, LogLevel, NativeConfig, SaveSystem, TimeService, UiBridge, UiCall, Vec2f, Vec2i, WorldGrid,
-	install_logging, install_natives, installed_dlc,
+	Color, DLC_SCRIPTS, LogLevel, NativeConfig, SaveSystem, TimeService, UiBridge, UiCall, UiFrontend, Vec2f, Vec2i,
+	WorldGrid, install_logging, install_natives, installed_dlc,
 };
 pub use source::{LoadedScript, ScriptSource};
 pub use state_stack::RootState;

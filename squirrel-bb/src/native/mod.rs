@@ -51,7 +51,7 @@ pub use tactical_entities::TacticalEntities;
 pub use tactical_grid::TacticalGrid;
 pub use tactical_nav::TacticalNavigator;
 pub use time::TimeService;
-pub use ui_bridge::{UiBridge, UiCall};
+pub use ui_bridge::{UiBridge, UiCall, UiFrontend};
 pub use vec::{Vec2f, Vec2i};
 pub use world_entities::WorldEntities;
 pub use save::SaveSystem;

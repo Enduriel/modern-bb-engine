@@ -16,6 +16,10 @@
 //! Together they let World/Tactical *logic* be tested deterministically with no
 //! browser.
 //!
+//! A real UI host attaches a [`UiFrontend`] instead ([`UiBridge::set_frontend`]): the
+//! calls then go to it rather than to the log, and the browser calls back into the
+//! connected objects through their handle ids ([`UiBridge::receiver_for_handle`]).
+//!
 //! Like [`TimeService`](super::TimeService), the bridge is host-owned and holds
 //! `SqStrongRef`s (the connected tables + recorded `data`), so **[`clear`](UiBridge::clear)
 //! it (or drop it) before the VM is closed.**
@@ -41,24 +45,88 @@ pub struct UiCall {
 	pub sync: bool,
 }
 
+/// A real UI on the other side of the bridge (the browser host): it receives every
+/// SQ→JS call as it happens, in place of the headless call log.
+///
+/// In the original every one of these runs the UI's JS before returning, and that JS
+/// may call back into the scripts (probed); `bridge` is how a frontend finds
+/// the connected objects for those nested calls.
+pub trait UiFrontend {
+	/// `UI.connect(screen, obj)` (`module` is `None`) or
+	/// `JSHandle.connectToModule(module, obj)`: `obj` is now reachable as `handle`.
+	fn connect(&self, vm: &SQVM, bridge: &UiBridge, handle: u64, screen: &str, module: Option<&str>);
+	/// `UI.disconnect` of the connection `handle`.
+	fn disconnect(&self, vm: &SQVM, bridge: &UiBridge, handle: u64, screen: &str, module: Option<&str>);
+	/// `JSHandle.asyncCall(method, data)` or `JSHandle.call(method, data)`: the same
+	/// native in the original (both return `null` to the script).
+	fn call(&self, vm: &SQVM, bridge: &UiBridge, screen: &str, module: Option<&str>, method: &str, data: &SqStrongRef);
+}
+
 /// Shared mutable bridge state: the connection registry, the SQ→JS call log, and
 /// the `JSHandle` class (used to mint child handles in `connectToModule`).
 struct BridgeState {
 	connections: HashMap<(String, Option<String>), SqStrongRef>,
+	/// Handle id → its connection key (what the UI passes back to call a script).
+	handles: HashMap<u64, (String, Option<String>)>,
+	next_handle: u64,
 	log: Vec<UiCall>,
 	/// Connections made since the last [`UiBridge::take_new_connections`].
 	pending_connects: Vec<(String, Option<String>)>,
 	class: Option<SqClass<JsHandle>>,
+	frontend: Option<Rc<dyn UiFrontend>>,
 }
 
 impl BridgeState {
 	fn new() -> Self {
 		BridgeState {
 			connections: HashMap::new(),
+			handles: HashMap::new(),
+			next_handle: 1,
 			log: Vec::new(),
 			pending_connects: Vec::new(),
 			class: None,
+			frontend: None,
 		}
+	}
+
+	/// Register `obj` as connected for `(screen, module)`; returns its new handle id
+	/// and the frontend to tell (if any).
+	fn connect(
+		&mut self,
+		screen: &str,
+		module: Option<&str>,
+		obj: SqStrongRef,
+	) -> (u64, Option<Rc<dyn UiFrontend>>) {
+		let key = (screen.to_string(), module.map(str::to_string));
+		let id = self.next_handle;
+		self.next_handle += 1;
+		self.connections.insert(key.clone(), obj);
+		self.handles.insert(id, key.clone());
+		if self.frontend.is_none() {
+			self.pending_connects.push(key);
+		}
+		(id, self.frontend.clone())
+	}
+
+	/// Record (headless) or hand over (frontend attached) one SQ→JS call.
+	fn call(
+		&mut self,
+		h: &JsHandle,
+		method: String,
+		data: SqStrongRef,
+		sync: bool,
+	) -> Option<Rc<dyn UiFrontend>> {
+		if self.frontend.is_some() {
+			return self.frontend.clone();
+		}
+		self.log.push(UiCall {
+			screen: h.screen.clone(),
+			module: h.module.clone(),
+			method,
+			data,
+			sync,
+		});
+		None
 	}
 }
 
@@ -66,6 +134,7 @@ impl BridgeState {
 /// a shared handle to the bridge state it records into.
 #[derive(Clone)]
 struct JsHandle {
+	id: u64,
 	screen: String,
 	module: Option<String>,
 	state: Rc<RefCell<BridgeState>>,
@@ -100,47 +169,56 @@ impl UiBridge {
 		let class = ClassBuilder::<JsHandle>::new("JSHandle")
 			.method(
 				"asyncCall",
-				|h: &mut JsHandle, method: String, data: Retained| {
-					let call = UiCall {
-						screen: h.screen.clone(),
-						module: h.module.clone(),
-						method,
-						data: data.0,
-						sync: false,
-					};
-					h.state.borrow_mut().log.push(call);
+				|h: &mut JsHandle, vm: &SQVM, method: String, data: Retained| {
+					let frontend =
+						h.state
+							.borrow_mut()
+							.call(h, method.clone(), data.0.clone(), false);
+					if let Some(frontend) = frontend {
+						let bridge = UiBridge { state: h.state.clone() };
+						frontend.call(vm, &bridge, &h.screen, h.module.as_deref(), &method, &data.0);
+					}
 				},
 			)
 			.method(
 				"call",
-				|h: &mut JsHandle, method: String, data: Retained| {
-					// Return value is unused by all (turn_sequence_bar) call sites → null.
-					let call = UiCall {
-						screen: h.screen.clone(),
-						module: h.module.clone(),
-						method,
-						data: data.0,
-						sync: true,
-					};
-					h.state.borrow_mut().log.push(call);
+				|h: &mut JsHandle, vm: &SQVM, method: String, data: Retained| {
+					// The same native as `asyncCall` in the original; the log keeps which
+					// one a script used.
+					let frontend =
+						h.state
+							.borrow_mut()
+							.call(h, method.clone(), data.0.clone(), true);
+					if let Some(frontend) = frontend {
+						let bridge = UiBridge { state: h.state.clone() };
+						frontend.call(vm, &bridge, &h.screen, h.module.as_deref(), &method, &data.0);
+					}
 				},
 			)
 			.method(
 				"connectToModule",
 				|h: &mut JsHandle, vm: &SQVM, module_id: String, obj: Retained| -> SqStrongRef {
+					let (id, frontend, class) = {
+						let mut st = h.state.borrow_mut();
+						let (id, frontend) = st.connect(&h.screen, Some(&module_id), obj.0);
+						(
+							id,
+							frontend,
+							st.class.clone().expect("JSHandle class set during install"),
+						)
+					};
 					let child = JsHandle {
+						id,
 						screen: h.screen.clone(),
 						module: Some(module_id.clone()),
 						state: h.state.clone(),
 					};
-					let class = {
-						let mut st = h.state.borrow_mut();
-						st.connections
-							.insert((h.screen.clone(), Some(module_id.clone())), obj.0);
-						st.pending_connects.push((h.screen.clone(), Some(module_id)));
-						st.class.clone().expect("JSHandle class set during install")
-					};
-					class.instantiate(vm, child)
+					let handle = class.instantiate(vm, child);
+					if let Some(frontend) = frontend {
+						let bridge = UiBridge { state: h.state.clone() };
+						frontend.connect(vm, &bridge, id, &h.screen, Some(&module_id));
+					}
+					handle
 				},
 			)
 			.build(vm);
@@ -152,19 +230,21 @@ impl UiBridge {
 			let class = class.clone();
 			vm.make_closure(
 				move |vm: &SQVM, screen: String, obj: Retained| -> SqStrongRef {
-					{
-						let mut st = state.borrow_mut();
-						st.connections.insert((screen.clone(), None), obj.0);
-						st.pending_connects.push((screen.clone(), None));
-					}
-					class.instantiate(
+					let (id, frontend) = state.borrow_mut().connect(&screen, None, obj.0);
+					let handle = class.instantiate(
 						vm,
 						JsHandle {
-							screen,
+							id,
+							screen: screen.clone(),
 							module: None,
 							state: state.clone(),
 						},
-					)
+					);
+					if let Some(frontend) = frontend {
+						let bridge = UiBridge { state: state.clone() };
+						frontend.connect(vm, &bridge, id, &screen, None);
+					}
+					handle
 				},
 			)
 		};
@@ -173,12 +253,19 @@ impl UiBridge {
 		// do `m.JSHandle = UI.disconnect(m.JSHandle)`.
 		let disconnect = {
 			let state = self.state.clone();
-			vm.make_closure(move |handle: Option<Native<JsHandle>>| {
+			vm.make_closure(move |vm: &SQVM, handle: Option<Native<JsHandle>>| {
 				if let Some(h) = handle {
-					state
-						.borrow_mut()
-						.connections
-						.remove(&(h.0.screen.clone(), h.0.module.clone()));
+					let frontend = {
+						let mut st = state.borrow_mut();
+						st.connections
+							.remove(&(h.0.screen.clone(), h.0.module.clone()));
+						st.handles.remove(&h.0.id);
+						st.frontend.clone()
+					};
+					if let Some(frontend) = frontend {
+						let bridge = UiBridge { state: state.clone() };
+						frontend.disconnect(vm, &bridge, h.0.id, &h.0.screen, h.0.module.as_deref());
+					}
 				}
 			})
 		};
@@ -212,6 +299,19 @@ impl UiBridge {
 		ui.set("getCursorSize", get_cursor_size);
 		ui.set("getCursorOffsets", get_cursor_offsets);
 		SqTable::root(vm).set("UI", ui);
+	}
+
+	/// Send every SQ→JS call to `frontend` from now on (instead of the call log).
+	pub fn set_frontend(&self, frontend: Rc<dyn UiFrontend>) {
+		self.state.borrow_mut().frontend = Some(frontend);
+	}
+
+	/// The connected object behind handle id `handle` (the id the frontend got in
+	/// [`UiFrontend::connect`]), while it is connected.
+	pub fn receiver_for_handle(&self, handle: u64) -> Option<SqStrongRef> {
+		let st = self.state.borrow();
+		let key = st.handles.get(&handle)?;
+		st.connections.get(key).cloned()
 	}
 
 	// ---- harness / inspection API ----
@@ -275,8 +375,10 @@ impl UiBridge {
 	pub fn clear(&self) {
 		let mut st = self.state.borrow_mut();
 		st.connections.clear();
+		st.handles.clear();
 		st.log.clear();
 		st.pending_connects.clear();
 		st.class = None;
+		st.frontend = None;
 	}
 }
