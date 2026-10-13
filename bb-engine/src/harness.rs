@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use squirrel_bb::{Engine, NativeConfig, installed_dlc};
 
+use crate::assets::load_sprites;
 use crate::{DatScriptSource, ScriptCache};
 
 /// The data directory of a default Linux Steam install.
@@ -34,15 +35,23 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// An engine over the install at `dir`, configured as the original sees a Steam install:
 /// DLC ownership is whichever DLC archives Steam installed (each ships its own
 /// `scripts/dlc/` init script). Transcoded scripts are cached on disk as
-/// [`ScriptCache::from_env`] configures (`BB_SCRIPT_CACHE=off` disables it).
+/// [`ScriptCache::from_env`] configures (`BB_SCRIPT_CACHE=off` disables it). The sprite
+/// sheets are loaded, as the original does before any script runs; a sheet that fails
+/// to load is reported on stderr.
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
 	let source = DatScriptSource::open(data_archives(dir)?)?.with_cache(ScriptCache::from_env());
+	let sprites = source.with_archives(|archives| load_sprites(archives));
+	for failure in &sprites.failures {
+		eprintln!("[Error] brush {failure}");
+	}
 	let config = NativeConfig {
 		is_steam_build: true,
 		owned_dlc: installed_dlc(&source),
 		..NativeConfig::default()
 	};
-	Ok(Engine::with_config(source, &config))
+	let engine = Engine::with_config(source, &config);
+	engine.sprites().set(sprites.registry);
+	Ok(engine)
 }
 
 /// Run the game's own `scripts/preload`, as the original does before the menu: config

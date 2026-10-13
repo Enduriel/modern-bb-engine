@@ -13,6 +13,7 @@
 //! `GameInfo` stubs). The engine-state natives (Time scheduler, World) land later.
 
 mod audio;
+mod brushes;
 mod color;
 mod identity;
 mod inject;
@@ -43,6 +44,7 @@ pub(crate) mod save;
 mod world_nav;
 mod world_search;
 
+pub use brushes::Sprites;
 pub use color::Color;
 pub use log::{LogLevel, install_logging};
 pub use tactical_entities::TacticalEntities;
@@ -154,17 +156,19 @@ impl NativeConfig {
 		platform::install(vm, self);
 		let world_clock = world::install(vm);
 		tactical::install(vm);
+		let sprites = brushes::install(vm);
 		settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock }
+		InstalledNatives { world_clock, sprites }
 	}
 }
 
 /// Handles to state the stateless-looking natives keep, for the host (e.g. to save it).
 pub struct InstalledNatives {
 	pub(crate) world_clock: world_time::Clock,
+	pub(crate) sprites: Sprites,
 }
 
 /// Install all native globals with the [default](NativeConfig::default) config.

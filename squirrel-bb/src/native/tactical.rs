@@ -1,5 +1,5 @@
-//! Tactical-layer natives needed at construction time, plus the tile/brush
-//! rendering globals that sit beside them.
+//! Tactical-layer natives needed at construction time, plus the tile-transition
+//! globals that sit beside them.
 //!
 //! `map_generator.create()` registers every map template and calls each one's
 //! `init()`. The tactical tile templates (38 of them) build a tile-transition
@@ -11,9 +11,7 @@
 //! its configuration, and `Tactical.setTransitions` stores it in a per-VM registry
 //! keyed by tile-brush name. The *consumer* — the tactical renderer that draws the
 //! blended tile borders from this data — is not built yet, so the registry is
-//! written but not yet read. `doesBrushExist` likewise can't consult a real sprite
-//! atlas yet, so it reports `false` (callers use it only to gate optional
-//! decorative brushes, so a `false` simply skips them — never an error).
+//! written but not yet read.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -48,8 +46,8 @@ impl TileTransition {
 	}
 }
 
-/// Register the tile-transition class, the `createTileTransition` / `doesBrushExist`
-/// root globals, and the `Tactical` table (currently just `setTransitions`).
+/// Register the tile-transition class, the `createTileTransition` root global, and
+/// the `Tactical` table (currently just `setTransitions`).
 pub(crate) fn install(vm: &mut SQVM) {
 	// The descriptor class: three mutating setters over the payload.
 	let transition = ClassBuilder::<TileTransition>::new("TileTransition")
@@ -74,10 +72,6 @@ pub(crate) fn install(vm: &mut SQVM) {
 	vm.register("createTileTransition", move |vm: &SQVM| {
 		transition.instantiate(vm, TileTransition::new())
 	});
-
-	// doesBrushExist(name) -> false until a real sprite atlas exists (callers only
-	// gate optional decorative brushes on it, so false safely skips them).
-	vm.register("doesBrushExist", |_name: &str| false);
 
 	// Tactical.setTransitions(tileBrushName, transition): cache the descriptor for
 	// the (future) renderer. The registry holds plain Rust data (no VM handles), so

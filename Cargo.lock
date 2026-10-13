@@ -81,6 +81,7 @@ version = "0.1.0"
 name = "bb-engine"
 version = "0.1.0"
 dependencies = [
+ "bb-assets",
  "criterion",
  "squirrel",
  "squirrel-bb",
@@ -693,6 +694,7 @@ dependencies = [
 name = "squirrel-bb"
 version = "0.1.0"
 dependencies = [
+ "bb-assets",
  "criterion",
  "squirrel",
 ]

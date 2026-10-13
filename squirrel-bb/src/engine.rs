@@ -22,7 +22,7 @@ use crate::error::ScriptError;
 use crate::module::ModuleSystem;
 use crate::native::save::SaveSystem;
 use crate::native::world_time::ClockPart;
-use crate::native::{NativeConfig, TacticalEntities, TacticalGrid, TacticalNavigator, TimeService, UiBridge, WorldEntities, WorldGrid};
+use crate::native::{NativeConfig, Sprites, TacticalEntities, TacticalGrid, TacticalNavigator, TimeService, UiBridge, WorldEntities, WorldGrid};
 use crate::source::ScriptSource;
 use crate::state_stack::RootState;
 
@@ -42,6 +42,8 @@ pub struct Engine<S: ScriptSource> {
 	ui: UiBridge,
 	/// The headless browser side answering the UI (see [`crate::ui_client`]).
 	ui_client: RefCell<crate::ui_client::UiClient>,
+	/// Every loaded sprite (no VM handles, so no teardown).
+	sprites: Sprites,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -108,6 +110,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tactical_navigator,
 			ui,
 			ui_client: RefCell::new(crate::ui_client::UiClient::new()),
+			sprites: natives.sprites,
 			time,
 			modules,
 			vm,
@@ -133,6 +136,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 	pub fn time(&self) -> &TimeService {
 		&self.time
+	}
+	/// The sprite registry behind `doesBrushExist`; the host fills it at startup.
+	pub fn sprites(&self) -> &Sprites {
+		&self.sprites
 	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the
 	/// last pump (see [`crate::ui_client::UiClient::pump`]).

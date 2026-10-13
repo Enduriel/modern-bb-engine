@@ -44,6 +44,11 @@ impl DatScriptSource {
 		})
 	}
 
+	/// Run `f` over the opened archives, in load order (e.g. to load the brushes).
+	pub fn with_archives<R>(&self, f: impl FnOnce(&mut [DatArchive]) -> R) -> R {
+		f(&mut self.archives.borrow_mut())
+	}
+
 	/// Keep scripts in `cache` (see [`ScriptCache`]): transcoded `.cnut`s, and `.nut`s
 	/// compiled by the module system.
 	pub fn with_cache(mut self, cache: Option<ScriptCache>) -> Self {

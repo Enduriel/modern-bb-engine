@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 squirrel = { path = "../squirrel" }
 squirrel-bb = { path = "../squirrel-bb" }
+bb-assets = { path = "../bb-assets" }
 # STORED (base .dat) + DEFLATE (mod .zip) only — the heavier codecs (bzip2/zstd/aes)
 # are off to keep the dependency set minimal.
 zip = { version = "1.1.4", default-features = false, features = ["deflate"] }

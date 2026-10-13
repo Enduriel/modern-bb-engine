@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 squirrel = { path = "../squirrel" }
+bb-assets = { path = "../bb-assets", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

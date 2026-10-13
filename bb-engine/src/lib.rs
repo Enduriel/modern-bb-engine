@@ -6,6 +6,7 @@
 //! system + native globals).
 //!
 //! Current pieces:
+//!   * [`assets`] — loading the sprite sheets (`.brush`) at startup
 //!   * [`crypt`] — XXTEA, the cipher on the compiled scripts in the `.dat`s
 //!   * [`vfs`]   — reading `.dat` (ZIP) archives
 //!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
@@ -15,6 +16,7 @@
 //! 3.0.4 / 32-bit compiled bytecode; we run a newer 64-bit VM, so the `.cnut`
 //! bytecode is converted on load rather than matched VM-side).
 
+pub mod assets;
 pub mod crypt;
 pub mod datsource;
 pub mod harness;
