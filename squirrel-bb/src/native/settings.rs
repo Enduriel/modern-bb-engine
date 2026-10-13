@@ -1,20 +1,63 @@
 //! The `Settings` engine table + the `VideoMode` / `ControlSettings` value classes.
 //!
-//! Headless stub: the value classes carry sensible defaults (1920×1080, software
-//! cursor) and the setters / persistence are no-ops. `main_menu_state.onShow` reads
-//! `Settings.getVideoMode().Width/Height`; `cursor` reads
-//! `getControlSettings().UseHardwareCursor`. The Options panel (resolution
-//! enumeration, real persistence) is a later concern — fields are filled in as the
-//! menu drive surfaces them.
+//! Headless stub: the value classes carry sensible defaults (1920×1080 borderless,
+//! software cursor) and the setters / persistence are no-ops. `main_menu_state.onShow`
+//! reads `Settings.getVideoMode().Width/Height`; `cursor` reads
+//! `getControlSettings().UseHardwareCursor`; the Options screen reads every field and
+//! the display modes ([`super::display_modes`]). Real persistence is a later concern.
 
-use squirrel::{ClassBuilder, Retained, SQVM, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqTable, Variadic};
 
-/// Display mode — the payload behind a `VideoMode` instance.
+use super::display_modes::{self, DisplayMode};
+
+/// Display mode — the payload behind a `VideoMode` instance. The fields are the
+/// original's (probed); `getVideoMode` returns a fresh instance each call.
 #[derive(Clone, Copy)]
 struct VideoMode {
 	width: i64,
 	height: i64,
+	color_bits: i64,
+	fullscreen: bool,
+	borderless: bool,
+	vsync: bool,
+	depth_of_field: bool,
 	ui_scale: f64,
+	scene_scale: f64,
+	refresh_rate: i64,
+}
+
+impl VideoMode {
+	/// The default (the setting a fresh install gets).
+	const DEFAULT: VideoMode = VideoMode {
+		width: 1920,
+		height: 1080,
+		color_bits: 32,
+		fullscreen: false,
+		borderless: true,
+		vsync: true,
+		depth_of_field: false,
+		ui_scale: 1.0,
+		scene_scale: 1.0,
+		refresh_rate: 60,
+	};
+
+	/// A display mode as the resolution queries hand it out.
+	fn of(mode: DisplayMode) -> VideoMode {
+		VideoMode {
+			width: mode.width,
+			height: mode.height,
+			color_bits: mode.color_bits,
+			..VideoMode::DEFAULT
+		}
+	}
+
+	fn display_mode(&self) -> DisplayMode {
+		DisplayMode {
+			width: self.width,
+			height: self.height,
+			color_bits: self.color_bits,
+		}
+	}
 }
 
 /// Input/control settings — the payload behind a `ControlSettings` instance.
@@ -29,7 +72,14 @@ pub(crate) fn install(vm: &mut SQVM) {
 	let video = ClassBuilder::<VideoMode>::new("VideoMode")
 		.property("Width", |v| v.width, |v, x| v.width = x)
 		.property("Height", |v| v.height, |v, x| v.height = x)
+		.property("ColorBits", |v| v.color_bits, |v, x| v.color_bits = x)
+		.property("Fullscreen", |v| v.fullscreen, |v, x| v.fullscreen = x)
+		.property("Borderless", |v| v.borderless, |v, x| v.borderless = x)
+		.property("VSync", |v| v.vsync, |v, x| v.vsync = x)
+		.property("DepthOfField", |v| v.depth_of_field, |v, x| v.depth_of_field = x)
 		.property("UIScale", |v| v.ui_scale, |v, x| v.ui_scale = x)
+		.property("SceneScale", |v| v.scene_scale, |v, x| v.scene_scale = x)
+		.property("RefreshRate", |v| v.refresh_rate, |v, x| v.refresh_rate = x)
 		.build(vm);
 	let controls = ClassBuilder::<ControlSettings>::new("ControlSettings")
 		.property(
@@ -46,15 +96,32 @@ pub(crate) fn install(vm: &mut SQVM) {
 
 	let get_video_mode = {
 		let video = video.clone();
-		vm.make_closure(move |vm: &SQVM| {
-			video.instantiate(
-				vm,
-				VideoMode {
-					width: 1920,
-					height: 1080,
-					ui_scale: 1.0,
-				},
-			)
+		vm.make_closure(move |vm: &SQVM| video.instantiate(vm, VideoMode::DEFAULT))
+	};
+	// The display modes (minimum width, height and color bits); see `display_modes`.
+	let query_resolutions = {
+		let video = video.clone();
+		vm.make_closure(move |vm: &SQVM, w: i64, h: i64, bits: i64| {
+			let mut list = SqArray::new(vm);
+			for mode in display_modes::query(w, h, bits) {
+				list.push(video.instantiate(vm, VideoMode::of(mode)));
+			}
+			list.to_strong()
+		})
+	};
+	let query_index_by_video_mode = vm.make_closure(
+		|mode: Native<VideoMode>, w: i64, h: i64, bits: i64| -> i64 {
+			display_modes::index_of(mode.0.display_mode(), w, h, bits)
+		},
+	);
+	let query_by_index = {
+		let video = video.clone();
+		vm.make_closure(move |vm: &SQVM, index: i64, w: i64, h: i64, bits: i64| {
+			let modes = display_modes::query(w, h, bits);
+			usize::try_from(index)
+				.ok()
+				.and_then(|i| modes.get(i))
+				.map(|&mode| video.instantiate(vm, VideoMode::of(mode)))
 		})
 	};
 	let get_control_settings = vm.make_closure(move |vm: &SQVM| {
@@ -125,6 +192,7 @@ pub(crate) fn install(vm: &mut SQVM) {
 	let set_video_mode = noop!();
 	let save = noop!();
 	let save_with_custom = noop!();
+	let load = noop!();
 
 	let mut settings = SqTable::new(vm);
 	settings.set("getVideoMode", get_video_mode);
@@ -138,5 +206,9 @@ pub(crate) fn install(vm: &mut SQVM) {
 	settings.set("setVideoMode", set_video_mode);
 	settings.set("save", save);
 	settings.set("saveWithCustomVideoMode", save_with_custom);
+	settings.set("load", load);
+	settings.set("queryResolutions", query_resolutions);
+	settings.set("queryResolutionIndexByVideoMode", query_index_by_video_mode);
+	settings.set("queryResolutionByIndex", query_by_index);
 	SqTable::root(vm).set("Settings", settings);
 }

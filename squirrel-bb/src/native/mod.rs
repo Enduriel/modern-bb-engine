@@ -15,6 +15,7 @@
 mod audio;
 mod brushes;
 mod color;
+mod display_modes;
 mod identity;
 mod inject;
 mod log;
