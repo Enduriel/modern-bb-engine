@@ -124,8 +124,6 @@ struct UnitRecord {
 	tile: Option<usize>,
 	/// `isActor()`: a unit (its class derives from `actor`) rather than a map object.
 	is_actor: bool,
-	/// The entity id given to the 4-argument `Tactical.spawnEntity` (kept, unused).
-	link: Option<i64>,
 	/// `die()` ran: gone from the battle (`getEntityByID` no longer finds it).
 	dead: bool,
 	sprites: HashMap<String, SqStrongRef>,
@@ -216,14 +214,25 @@ fn create_unit(
 			pos: (0.0, 0.0),
 			tile: None,
 			is_actor,
-			link: None,
 			dead: false,
 			sprites: HashMap::new(),
 		});
 		idx
 	};
 	inject_levels(machine, vm, &entity, record_idx);
+	set_parent_id(vm, &entity, 0);
 	Ok((entity, record_idx))
+}
+
+/// `m.ParentID`: the original adds it to the base level of every tactical entity's `m`
+/// (where `entity.nut`'s own fields live), 0 unless the 4-argument `spawnEntity` gave
+/// an id (the lindwurm tail's body, which its `onInit` reads). Probed 2026-10-13.
+pub(super) fn set_parent_id(vm: &SQVM, entity: &SqStrongRef, parent: i64) {
+	let Some(mut m) = entity.as_table(vm).and_then(|t| t.get::<SqTable>("m")) else { return };
+	while let Some(d) = m.delegate() {
+		m = d;
+	}
+	m.set("ParentID", parent);
 }
 
 /// Create a new unit of `path` with the next id, then run `onInit`/`onAfterInit`.
@@ -848,19 +857,19 @@ impl TacticalEntities {
 			vm.make_closure(move |vm: &SQVM, path: String, coords: Retained| -> Result<Option<SqStrongRef>, String> {
 				let q = coords.0.get_member::<squirrel::Number>(vm, "X").ok_or("spawnEntity: coords need X")?.0 as i64;
 				let r = coords.0.get_member::<squirrel::Number>(vm, "Y").ok_or("spawnEntity: coords need Y")?.0 as i64;
-				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, None)
+				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, 0)
 			})
 		};
 		let spawn_3 = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, path: String, q: i64, r: i64| -> Result<Option<SqStrongRef>, String> {
-				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, None)
+				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, 0)
 			})
 		};
 		let spawn_4 = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, path: String, q: i64, r: i64, link: i64| -> Result<Option<SqStrongRef>, String> {
-				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, Some(link))
+			vm.make_closure(move |vm: &SQVM, path: String, q: i64, r: i64, parent: i64| -> Result<Option<SqStrongRef>, String> {
+				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, parent)
 			})
 		};
 		let spawn_dispatch = make_dispatcher(vm, "spawnEntity");

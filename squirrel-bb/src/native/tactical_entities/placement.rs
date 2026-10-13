@@ -102,9 +102,9 @@ pub(super) fn add_to_map(m: &Machine, vm: &SQVM, entity: &SqStrongRef, q: i64, r
 /// `Tactical.spawnEntity(path, …)` at tile `tile`: create the entity, put it on the
 /// tile, run `onInit` (and `onAfterInit`), then `onPlacedOnMap`. Spawning onto an
 /// occupied tile only warns (the occupant keeps the tile). A missing script gives
-/// `null`. `link` is the 4-argument form's entity id (the lindwurm tail's body); the
-/// original stores it with the entity, and nothing reads it yet.
-pub(super) fn spawn_at(m: &Machine, vm: &SQVM, path: &str, tile: usize, link: Option<i64>) -> Result<Option<SqStrongRef>, String> {
+/// `null`. `parent` is the 4-argument form's entity id (the lindwurm tail's body), 0
+/// otherwise; it becomes the entity's `m.ParentID` before `onInit`.
+pub(super) fn spawn_at(m: &Machine, vm: &SQVM, path: &str, tile: usize, parent: i64) -> Result<Option<SqStrongRef>, String> {
 	let id = {
 		let mut machine = m.borrow_mut();
 		machine.next_id += 1;
@@ -127,7 +127,7 @@ pub(super) fn spawn_at(m: &Machine, vm: &SQVM, path: &str, tile: usize, link: Op
 	if occupied {
 		eprintln!("TacticalScene: Spawned Entity at ({},{}) although the tile is already occupied.", coords.0, coords.1);
 	}
-	m.borrow_mut().units[idx].link = link;
+	super::set_parent_id(vm, &entity, parent);
 	place(m, idx, tile, is_actor)?;
 	entity.call_method(vm, "onInit", ())?;
 	ignore_missing(entity.call_method(vm, "onAfterInit", ()))?;
@@ -158,6 +158,6 @@ pub(super) fn script_path(path: &str) -> String {
 pub(super) fn object_spawner(m: &Machine) -> ObjectSpawner {
 	let m = m.clone();
 	Rc::new(move |vm: &SQVM, path: &str, tile: usize| -> Result<SqStrongRef, String> {
-		spawn_at(&m, vm, path, tile, None)?.ok_or_else(|| format!("spawnObject: no script {path}"))
+		spawn_at(&m, vm, path, tile, 0)?.ok_or_else(|| format!("spawnObject: no script {path}"))
 	})
 }
