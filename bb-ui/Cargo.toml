@@ -26,3 +26,8 @@ required-features = ["cef"]
 name = "menu_ui"
 harness = false
 required-features = ["cef"]
+
+[[test]]
+name = "campaign_ui"
+harness = false
+required-features = ["cef"]
