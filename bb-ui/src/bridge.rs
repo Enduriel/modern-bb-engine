@@ -29,6 +29,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use squirrel::{SQVM, SqRef, SqStrongRef, SqTable};
 use squirrel_bb::{UiBridge, UiFrontend};
@@ -94,7 +95,16 @@ pub struct UiProtocol<T: Transport> {
 	transport: T,
 	screens: RefCell<Vec<String>>,
 	registration_finished: Cell<bool>,
+	stats: Cell<CallStats>,
 	log: Box<dyn Fn(&str)>,
+}
+
+/// The game's calls into the page so far: how many, and how long they took, counting
+/// the page's calls back into the game that they caused.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CallStats {
+	pub calls: u64,
+	pub time: Duration,
 }
 
 impl<T: Transport + 'static> UiProtocol<T> {
@@ -104,6 +114,7 @@ impl<T: Transport + 'static> UiProtocol<T> {
 			transport,
 			screens: RefCell::new(Vec::new()),
 			registration_finished: Cell::new(false),
+			stats: Cell::new(CallStats::default()),
 			log: Box::new(log),
 		})
 	}
@@ -130,6 +141,11 @@ impl<T: Transport> UiProtocol<T> {
 		self.screens.borrow().clone()
 	}
 
+	/// The game's calls into the page so far.
+	pub fn stats(&self) -> CallStats {
+		self.stats.get()
+	}
+
 	/// Run `engine._trigger(event, args...)` in the page now, serving the page's calls
 	/// back into the game while it runs.
 	pub fn trigger(
@@ -143,7 +159,13 @@ impl<T: Transport> UiProtocol<T> {
 		entry.extend(args);
 		let entry = Json::Array(entry);
 		let mut serve = |message: &Json| self.handle_message(vm, bridge, message);
-		if let Err(error) = self.transport.run(&entry, &mut serve) {
+		let start = Instant::now();
+		let result = self.transport.run(&entry, &mut serve);
+		let mut stats = self.stats.get();
+		stats.calls += 1;
+		stats.time += start.elapsed();
+		self.stats.set(stats);
+		if let Err(error) = result {
 			(self.log)(&format!(
 				"ui: {} failed in the page: {error}",
 				describe(&entry)
