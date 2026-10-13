@@ -7,53 +7,123 @@ fn hex_distance(aq: i64, ar: i64, bq: i64, br: i64) -> i64 {
 	(dq.abs() + dr.abs() + (dq + dr).abs()) / 2
 }
 
-/// What a flood callback tells the traversal about a tile (the original's codes).
+/// What a flood callback tells the traversal about a tile it entered (the original's
+/// codes; its code 0, "skip", is a tile the flood's `enter` test rejects).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Visit {
-	/// 0: ignore it entirely (not marked, so another path may offer it again).
-	Skip = 0,
+enum Visit {
 	/// 1: mark it and keep flooding through it.
 	Expand = 1,
 	/// 3: mark it but do not flood through it.
 	Stop = 3,
 }
 
+/// The tiles a flood has marked.
+trait Marks {
+	fn insert(&mut self, t: (i64, i64));
+	fn contains(&self, t: (i64, i64)) -> bool;
+}
+
+impl Marks for std::collections::HashSet<(i64, i64)> {
+	fn insert(&mut self, t: (i64, i64)) {
+		std::collections::HashSet::insert(self, t);
+	}
+
+	fn contains(&self, t: (i64, i64)) -> bool {
+		std::collections::HashSet::contains(self, &t)
+	}
+}
+
+/// Marks for a flood that never enters a tile more than `reach` steps (on either axial
+/// axis) from `center`: a dense square window around it.
+struct Window {
+	center: (i64, i64),
+	reach: i64,
+	marked: Vec<bool>,
+}
+
+impl Window {
+	fn new(center: (i64, i64), reach: i64) -> Window {
+		let side = (2 * reach + 1) as usize;
+		Window {
+			center,
+			reach,
+			marked: vec![false; side * side],
+		}
+	}
+
+	/// The tile's slot, or `None` outside the window.
+	fn slot(&self, (q, r): (i64, i64)) -> Option<usize> {
+		let (dq, dr) = (
+			q - self.center.0 + self.reach,
+			r - self.center.1 + self.reach,
+		);
+		let side = 2 * self.reach + 1;
+		(0..side).contains(&dq).then_some(())?;
+		(0..side).contains(&dr).then(|| (dq * side + dr) as usize)
+	}
+}
+
+impl Marks for Window {
+	fn insert(&mut self, t: (i64, i64)) {
+		let slot = self
+			.slot(t)
+			.expect("a flood only enters tiles inside its window");
+		self.marked[slot] = true;
+	}
+
+	fn contains(&self, t: (i64, i64)) -> bool {
+		self.slot(t).is_some_and(|slot| self.marked[slot])
+	}
+}
+
 /// The world map's recursive flood (mode 1 of the original's tile traversal, as used by
 /// `World.findNextRegion`; recovered from the disassembly, 2026-10-13). Starting at the
 /// centre (never offered to `visit`), each tile tries its neighbours in the order
-/// N, S, NE, NW, SE, SW; an unmarked in-grid neighbour is offered to `visit`, and unless
-/// that answers [`Visit::Skip`] the flood recurses into it, marking it on entry. A tile
-/// entered with [`Visit::Stop`] is not expanded.
-pub(crate) fn flood(center: (i64, i64), in_grid: impl Fn(i64, i64) -> bool, mut visit: impl FnMut(i64, i64) -> Visit) {
+/// N, S, NE, NW, SE, SW; an unmarked neighbour that `enter` accepts is offered to
+/// `visit`, and the flood recurses into it, marking it on entry. A tile entered with
+/// [`Visit::Stop`] is not expanded. Rejected tiles stay unmarked, so another path may
+/// offer them again.
+///
+/// The recursion runs on an explicit stack: each frame is a tile and the next of its six
+/// directions to try, which visits tiles in exactly the recursive order.
+fn flood(
+	center: (i64, i64),
+	marks: &mut impl Marks,
+	enter: impl Fn(i64, i64) -> bool,
+	mut visit: impl FnMut(i64, i64) -> Visit,
+) {
 	const ORDER: [(i64, i64); 6] = [(0, 1), (0, -1), (1, 0), (-1, 1), (1, -1), (-1, 0)];
-	fn rec(
-		t: (i64, i64),
-		how: Visit,
-		marked: &mut std::collections::HashSet<(i64, i64)>,
-		in_grid: &dyn Fn(i64, i64) -> bool,
-		visit: &mut dyn FnMut(i64, i64) -> Visit,
-	) {
-		if marked.insert(t) && how == Visit::Stop {
-			return;
+	marks.insert(center);
+	let mut stack = vec![(center, 0)];
+	while let Some((t, dir)) = stack.last_mut() {
+		let Some(&(dq, dr)) = ORDER.get(*dir) else {
+			stack.pop();
+			continue;
+		};
+		*dir += 1;
+		let n = (t.0 + dq, t.1 + dr);
+		if !enter(n.0, n.1) || marks.contains(n) {
+			continue;
 		}
-		for (dq, dr) in ORDER {
-			let n = (t.0 + dq, t.1 + dr);
-			if !in_grid(n.0, n.1) || marked.contains(&n) {
-				continue;
+		match visit(n.0, n.1) {
+			Visit::Expand => {
+				marks.insert(n);
+				stack.push((n, 0));
 			}
-			let res = visit(n.0, n.1);
-			if res != Visit::Skip {
-				rec(n, res, marked, in_grid, visit);
-			}
+			Visit::Stop => marks.insert(n),
 		}
 	}
-	let mut marked = std::collections::HashSet::new();
-	rec(center, Visit::Expand, &mut marked, &in_grid, &mut visit);
 }
+
+/// The largest `dist` [`flood_last`] marks in a dense window (`(2 * dist + 1)^2` cells);
+/// farther floods fall back to a hash set.
+const WINDOW_MAX_DIST: i64 = 127;
 
 /// `World.findNextRegion`: flood within `dist` of the centre; `test` picks matching
 /// tiles, which are not flooded through. The **last** match wins (the original's
-/// callback overwrites its result and carries on).
+/// callback overwrites its result and carries on). `in_grid` must not have side effects:
+/// it is consulted after the distance check, so it may run fewer times than in the
+/// original (`test` runs exactly as often, in the same order).
 pub(crate) fn flood_last<T>(
 	center: (i64, i64),
 	dist: i64,
@@ -61,18 +131,23 @@ pub(crate) fn flood_last<T>(
 	mut test: impl FnMut(i64, i64) -> Option<T>,
 ) -> Option<T> {
 	let mut found = None;
-	flood(center, in_grid, |q, r| {
-		if hex_distance(q, r, center.0, center.1) > dist {
-			return Visit::Skip;
+	// The original's callback skips tiles beyond `dist`; checking that before `in_grid`
+	// and the marks is the same, as neither has side effects.
+	let enter = |q, r| hex_distance(q, r, center.0, center.1) <= dist && in_grid(q, r);
+	let visit = |q, r| match test(q, r) {
+		Some(hit) => {
+			found = Some(hit);
+			Visit::Stop
 		}
-		match test(q, r) {
-			Some(hit) => {
-				found = Some(hit);
-				Visit::Stop
-			}
-			None => Visit::Expand,
-		}
-	});
+		None => Visit::Expand,
+	};
+	// Only tiles within `dist` are ever entered, and those lie within `dist` on both
+	// axial axes, so the window covers every mark.
+	if dist <= WINDOW_MAX_DIST {
+		flood(center, &mut Window::new(center, dist.max(0)), enter, visit);
+	} else {
+		flood(center, &mut std::collections::HashSet::new(), enter, visit);
+	}
 	found
 }
 

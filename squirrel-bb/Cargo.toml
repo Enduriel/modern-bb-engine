@@ -12,3 +12,7 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 [[bench]]
 name = "world_nav"
 harness = false
+
+[[bench]]
+name = "world_search"
+harness = false
