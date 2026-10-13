@@ -36,26 +36,45 @@
 		return value === '0' ? '0px' : value;
 	}
 
-	function centreLikeCss21(rules) {
+	function centreLikeCss21(style) {
+		var lengths = [style.top, style.bottom, style.height];
+		if (style.position !== 'absolute' || style.marginTop !== 'auto' || style.marginBottom !== 'auto' ||
+			lengths.some(function (v) { return v === '' || v === 'auto'; })) {
+			return;
+		}
+		var top = zeroWithUnit(style.top);
+		var bottom = zeroWithUnit(style.bottom);
+		style.top = 'calc((' + top + ' - ' + bottom + ') / 2)';
+		style.bottom = 'calc((' + bottom + ' - ' + top + ') / 2)';
+	}
+
+	// Percentages. Old WebKit laid out in whole pixels: a percentage resolved to a
+	// length is cut down to whole pixels (`height: 12.2%` of 250px is 30px there, 30.5px
+	// here), and stacked boxes don't drift by half pixels. CSS's `round()` does the same
+	// in the declaration.
+	var BOX_PROPERTIES = ['width', 'height', 'min-width', 'min-height', 'max-width', 'max-height',
+		'top', 'right', 'bottom', 'left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+		'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
+
+	function wholePixelPercentages(style) {
+		for (var i = 0; i < BOX_PROPERTIES.length; i++) {
+			var property = BOX_PROPERTIES[i];
+			var value = style.getPropertyValue(property);
+			if (/^-?[\d.]+%$/.test(value)) {
+				style.setProperty(property, 'round(to-zero, ' + value + ', 1px)', style.getPropertyPriority(property));
+			}
+		}
+	}
+
+	function fixRules(rules) {
 		for (var i = 0; i < rules.length; i++) {
 			var rule = rules[i];
 			if (rule.type === CSSRule.MEDIA_RULE || rule.type === CSSRule.SUPPORTS_RULE) {
-				centreLikeCss21(rule.cssRules);
-				continue;
+				fixRules(rule.cssRules);
+			} else if (rule.type === CSSRule.STYLE_RULE) {
+				centreLikeCss21(rule.style);
+				wholePixelPercentages(rule.style);
 			}
-			if (rule.type !== CSSRule.STYLE_RULE) {
-				continue;
-			}
-			var style = rule.style;
-			var lengths = [style.top, style.bottom, style.height];
-			if (style.position !== 'absolute' || style.marginTop !== 'auto' || style.marginBottom !== 'auto' ||
-				lengths.some(function (v) { return v === '' || v === 'auto'; })) {
-				continue;
-			}
-			var top = zeroWithUnit(style.top);
-			var bottom = zeroWithUnit(style.bottom);
-			style.top = 'calc((' + top + ' - ' + bottom + ') / 2)';
-			style.bottom = 'calc((' + bottom + ' - ' + top + ') / 2)';
 		}
 	}
 
@@ -74,7 +93,7 @@
 				continue; // not loaded yet
 			}
 			seenSheets.add(sheet);
-			centreLikeCss21(rules);
+			fixRules(rules);
 		}
 	}
 	document.addEventListener('load', function (e) {
