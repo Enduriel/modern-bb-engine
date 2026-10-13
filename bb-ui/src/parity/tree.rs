@@ -237,11 +237,59 @@ fn pixels(value: &str) -> Option<f64> {
 	value.strip_suffix("px")?.parse().ok()
 }
 
+/// `value` split into its numbers and the text around them: `"rgba(0, 0, 0, 0.3)"` is
+/// `"rgba(#, #, #, #)"` with 0, 0, 0 and 0.3.
+fn numbers(value: &str) -> (String, Vec<f64>) {
+	let bytes = value.as_bytes();
+	let mut skeleton = String::new();
+	let mut found = Vec::new();
+	let mut i = 0;
+	while i < bytes.len() {
+		let digit_at = |j: usize| bytes.get(j).is_some_and(u8::is_ascii_digit);
+		let starts = digit_at(i)
+			|| (bytes[i] == b'.' && digit_at(i + 1))
+			|| (bytes[i] == b'-'
+				&& (digit_at(i + 1) || (bytes.get(i + 1) == Some(&b'.') && digit_at(i + 2))));
+		if !starts {
+			skeleton.push(bytes[i] as char);
+			i += 1;
+			continue;
+		}
+		let start = i;
+		i += 1;
+		while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+			i += 1;
+		}
+		match value[start..i].parse() {
+			Ok(number) => {
+				skeleton.push('#');
+				found.push(number);
+			}
+			Err(_) => skeleton.push_str(&value[start..i]),
+		}
+	}
+	(skeleton, found)
+}
+
+/// Whether `a` and `b` are the same apart from numbers within one 8-bit step (1/255)
+/// of each other: old WebKit keeps colour alpha in 8 bits and opacity as a 32-bit
+/// float, so it reports 0.3 as 0.298039 and 0.4 as 0.4000000059604645.
+fn close_numbers(a: &str, b: &str) -> bool {
+	let ((a_text, a_numbers), (b_text, b_numbers)) = (numbers(a), numbers(b));
+	a_text == b_text
+		&& a_numbers.len() == b_numbers.len()
+		&& a_numbers
+			.iter()
+			.zip(&b_numbers)
+			.all(|(x, y)| (x - y).abs() <= 1.0 / 255.0 + 1e-9)
+}
+
 /// Whether the golden's and our (normalized) values of `property` show the same
 /// thing. Beyond equal text, this allows what old WebKit reports differently for the
 /// same rendering:
 /// - lengths it snapped to whole pixels (e.g. `auto` margins: 422px + 423px where
 ///   Chromium computes 422.5px twice);
+/// - numbers it stored with less precision ([`close_numbers`]);
 /// - `z-index: 0` for elements that form a stacking context without one (`auto`);
 /// - the declared border width on a side with no border style (the spec computes 0).
 fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
@@ -251,6 +299,9 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
 	if let (Some(a), Some(b)) = (pixels(theirs), pixels(mine))
 		&& (a - b).abs() <= 1.0
 	{
+		return true;
+	}
+	if close_numbers(theirs, mine) {
 		return true;
 	}
 	match property {
@@ -405,7 +456,7 @@ fn align(g: &[Node], o: &[Node]) -> Vec<Step> {
 
 #[cfg(test)]
 mod tests {
-	use super::{Difference, Snapshot, Tolerance, compare, normalize_style};
+	use super::{Difference, Snapshot, Tolerance, close_numbers, compare, normalize_style};
 	use crate::json::Json;
 
 	fn snapshot(text: &str) -> Snapshot {
@@ -437,6 +488,20 @@ mod tests {
 			normalize_style("rgb(0, 0, 0) 1px 1px 2px"),
 			"rgba(0, 0, 0, 1) 1px 1px 2px"
 		);
+	}
+
+	#[test]
+	fn numbers_within_an_8_bit_step_match() {
+		assert!(close_numbers(
+			"rgba(0, 0, 0, 0.298039)",
+			"rgba(0, 0, 0, 0.3)"
+		));
+		assert!(close_numbers("0.4000000059604645", "0.4"));
+		assert!(close_numbers("-0.5px 1px", "-0.5px 1px"));
+		assert!(!close_numbers("rgba(0, 0, 0, 0.29)", "rgba(0, 0, 0, 0.3)"));
+		assert!(!close_numbers("rgba(1, 0, 0, 0.3)", "rgba(0, 0, 0, 0.3)"));
+		assert!(!close_numbers("0.4 1", "0.4"));
+		assert!(!close_numbers("solid", "dashed"));
 	}
 
 	#[test]
