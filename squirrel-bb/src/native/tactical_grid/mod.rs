@@ -440,7 +440,7 @@ impl TacticalGrid {
 	pub fn install(&self, vm: &mut SQVM) {
 		let class = tile::build_class(vm);
 		let detail_class = detail::build_class(vm);
-		let properties_delegate = tile::properties_delegate(vm);
+		let properties_delegate = tile::properties_delegate(vm, &self.grid);
 		let camera_class = camera::build_class(vm);
 		let camera = camera::instance(vm, &camera_class, &self.grid);
 		{

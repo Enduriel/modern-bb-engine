@@ -27,21 +27,36 @@ impl TileHandle {
 /// The methods every tile's `Properties` object delegates to: a small flag store
 /// (`set`/`add`/`get`/`has`/`remove`), next to the plain `Effect` and
 /// `IsMarkedForImpact` fields scripts read and write directly.
-pub(super) fn properties_delegate(vm: &SQVM) -> SqStrongRef {
+///
+/// The tile's `IsCorpseSpawned` is whether its `Properties` hold a `Corpse` (probed: set
+/// by `set("Corpse", …)` or `add("Corpse")`, even to null; cleared by `remove`; untouched
+/// by `tile.clear()`), so those calls report the `Corpse` key to the map through
+/// `set_corpse(tile, on)`.
+pub(super) fn properties_delegate(vm: &mut SQVM, grid: &Grid) -> SqStrongRef {
 	let src = r#"
 	return {
-		set = function( _key, _value ) { this.Flags[_key] <- _value; },
-		add = function( _key ) { this.Flags[_key] <- true; },
+		set = function( _key, _value ) { this.Flags[_key] <- _value; if (_key == "Corpse") this.__setCorpse(this.__tile, true); },
+		add = function( _key ) { this.Flags[_key] <- true; if (_key == "Corpse") this.__setCorpse(this.__tile, true); },
 		get = function( _key ) { return _key in this.Flags ? this.Flags[_key] : null; },
 		has = function( _key ) { return _key in this.Flags; },
-		remove = function( _key ) { if (_key in this.Flags) delete this.Flags[_key]; }
+		remove = function( _key ) { if (_key in this.Flags) delete this.Flags[_key]; if (_key == "Corpse") this.__setCorpse(this.__tile, false); }
 	};
 	"#;
+	let set_corpse = {
+		let g = grid.clone();
+		vm.make_closure(move |id: i64, on: bool| {
+			let mut g = g.borrow_mut();
+			if let Some(t) = usize::try_from(id).ok().and_then(|i| g.tiles.get_mut(i)) {
+				t.is_corpse_spawned = on;
+			}
+		})
+	};
 	let f = vm.compile(src, "tile_properties").expect("tile properties delegate compiles");
-	f.call_ret::<SqStrongRef, _>(vm, ())
-		.ok()
-		.flatten()
-		.expect("tile properties delegate builds")
+	let delegate = f.call_ret::<SqStrongRef, _>(vm, ()).ok().flatten().expect("tile properties delegate builds");
+	if let Some(mut d) = delegate.as_table(vm) {
+		d.set("__setCorpse", set_corpse);
+	}
+	delegate
 }
 
 /// `tile.Properties`, made on first use.
@@ -54,6 +69,7 @@ fn properties(t: &TileHandle, vm: &SQVM) -> SqStrongRef {
 	table.set("Effect", Option::<SqStrongRef>::None);
 	table.set("IsMarkedForImpact", false);
 	table.set("Flags", SqTable::new(vm).to_strong());
+	table.set("__tile", t.id as i64);
 	if let Some(d) = delegate.and_then(|d| d.as_table(vm)) {
 		table.set_delegate(&d);
 	}
@@ -103,7 +119,8 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = rw!(b, "IsSpecialTerrain", is_special_terrain, bool);
 	b = rw!(b, "IsDefensibleTerrain", is_defensible_terrain, bool);
 	b = rw!(b, "IsHidingEntity", is_hiding_entity, bool);
-	b = rw!(b, "IsCorpseSpawned", is_corpse_spawned, bool);
+	// Read-only: it follows `Properties` (see `properties_delegate`).
+	b = ro!(b, "IsCorpseSpawned", |t: &TileHandle| t.with(|d| d.is_corpse_spawned), bool);
 	b = rw!(b, "IsDiscovered", is_discovered, bool);
 	b = rw!(b, "IsContainingItemsFlipped", is_containing_items_flipped, bool);
 	b = ro!(b, "ID", |t: &TileHandle| t.id as i64, i64);
