@@ -1,113 +1,91 @@
 //! Drive the REAL new-game flow into a running (paused) campaign world, headless:
-//! boot the menu, then add `WorldState` (its `onInit` stands up the 11 world managers),
-//! and run the genuine `startNewCampaign` (worldgen + `Assets.init` + faction creation +
-//! the starting scenario spawning the player). UI init is stubbed (logic-first) and the
-//! auto-`init()` neutered so we drive the sequence explicitly. Reports how far the world
-//! boot gets before hitting an unimplemented World native — the next-gap signal for the
-//! running-world tier (analogous to `boot_worldgen`).
+//! boot the menu, add `WorldState` (its `onInit` stands up the 11 world managers), and
+//! run the genuine `startNewCampaign` (worldgen, `Assets.init`, faction creation, the
+//! starting scenario, the faction simulation). The world UI is stubbed (logic-first);
+//! see [`bb_engine::harness`]. Reports how far the boot gets: an error names the next
+//! missing native.
 //!
-//! Run: `cargo run -p bb-engine --example boot_world -- [data-dir]`
+//! Run: `cargo run -p bb-engine --example boot_world -- [data-dir] [--seed S]
+//! [--setup FILE] [--after FILE] [--frames N] [--end FILE]`. With `BB_SAVE_DIR` set,
+//! saves go to that directory instead of memory.
 
 use std::path::PathBuf;
 
-use bb_engine::DatScriptSource;
-use squirrel_bb::Engine;
+use bb_engine::harness;
 
-const DEFAULT_DATA: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data");
+/// `--setup` runs just before `startNewCampaign` (e.g. to instrument worldgen), `--after`
+/// once it returns: the same hooks the probe runner offers in the original, so
+/// traces compare 1:1.
+struct Args {
+	dir: PathBuf,
+	seed: String,
+	setup: Option<String>,
+	after: Option<String>,
+	/// Frames of the running world to simulate after the boot (60 fps steps).
+	frames: u32,
+	/// Runs after the frames.
+	end: Option<String>,
+}
+
+fn parse_args() -> Args {
+	let mut args = Args {
+		dir: PathBuf::from(harness::STEAM_DATA_DIR),
+		seed: "rust-engine-test".to_string(),
+		setup: None,
+		after: None,
+		frames: 0,
+		end: None,
+	};
+	let mut it = std::env::args().skip(1);
+	while let Some(a) = it.next() {
+		let read = |f: Option<String>| std::fs::read_to_string(f.expect("missing value")).expect("read script");
+		match a.as_str() {
+			"--seed" => args.seed = it.next().expect("--seed value"),
+			"--setup" => args.setup = Some(read(it.next())),
+			"--after" => args.after = Some(read(it.next())),
+			"--end" => args.end = Some(read(it.next())),
+			"--frames" => args.frames = it.next().and_then(|n| n.parse().ok()).expect("--frames N"),
+			dir => args.dir = PathBuf::from(dir),
+		}
+	}
+	args
+}
 
 fn main() {
-	let dir = PathBuf::from(
-		std::env::args()
-			.nth(1)
-			.unwrap_or_else(|| DEFAULT_DATA.to_string()),
-	);
-	let mut dats: Vec<PathBuf> = std::fs::read_dir(&dir)
-		.expect("read data dir")
-		.flatten()
-		.map(|e| e.path())
-		.filter(|p| {
-			let n = p
-				.file_name()
-				.map(|n| n.to_string_lossy().into_owned())
-				.unwrap_or_default();
-			n.starts_with("data_") && n.ends_with(".dat")
-		})
-		.collect();
-	dats.sort();
-	let source = DatScriptSource::open(&dats).expect("open archives");
-
-	let mut engine = Engine::new(source);
+	let args = parse_args();
+	let mut engine = harness::open_install(&args.dir).expect("open install");
+	if let Ok(dir) = std::env::var("BB_SAVE_DIR") {
+		engine.saves().set_directory(dir.into());
+	}
 	engine.vm_mut().set_print_handler(|s| eprint!("{s}"));
 	engine.vm_mut().install_standard_error_handlers();
 
-	engine
-		.run_script(
-			r#"
-			::Const <- {};
-			local function inc(f) { try { ::include(f); } catch(e){} }
-			inc("scripts/tools/weak_table_ref");
-			foreach (g in ["scripts/config/global","scripts/config/ui","scripts/config/strings",
-			               "scripts/config/character_names","scripts/config/spawnlist_master"]) inc(g);
-			foreach (f in ::IO.enumerateFiles("scripts/config/")) inc(f);
-			local dlc = ::IO.enumerateFiles("scripts/dlc/");
-			if (dlc != null) foreach (f in dlc) inc(f);
-			"#,
-			"config",
-		)
-		.expect("config");
-	engine.boot("scripts/root_state").expect("boot menu");
+	harness::boot_menu(&engine).expect("boot menu");
 	println!("menu booted; driving new-game world boot…");
 
-	// Drive the genuine new-game sequence. Errors name the next missing World native.
-	let result = engine.run_script(
-		r#"
-		// Stub the world UI init + neuter the auto-init so we drive the new-game
-		// sequence explicitly (logic-first; the ~30 UI screens are deferred to later).
-		// The stub gives each UI ref world_state's LOGIC touches a generic no-op object
-		// (a table whose _get returns a no-op closure), so e.g. setPause's
-		// World.TopbarDayTimeModule.hideMessage() is harmless.
-		this.include("scripts/states/world_state");
-		this.world_state.onInitUI = function() {
-			local function uiStub() {
-				local s = {};
-				s.setdelegate({ _get = function( _k ) { return function( ... ) {}; } });
-				return s;
+	let result = harness::prepare_new_campaign(&engine, &args.seed)
+		.and_then(|()| match &args.setup {
+			Some(setup) => engine.run_script(setup, "setup"),
+			None => Ok(()),
+		})
+		.and_then(|()| harness::start_new_campaign(&engine))
+		.and_then(|()| match &args.after {
+			Some(after) => engine.run_script(after, "after"),
+			None => Ok(()),
+		})
+		.and_then(|()| {
+			if args.frames > 0 {
+				harness::unpause_world(&engine)?;
 			}
-			foreach (n in ["MenuStack","WorldScreen","WorldTownScreen","EventScreen","CombatDialog",
-			               "WorldEventPopupScreen","RelationsScreen","ObituaryScreen","CampfireScreen",
-			               "WorldMenuScreen","WorldGameFinishScreen","CharacterScreen"])
-				this.m.rawset(n, uiStub());
-			this.World.rawset("TopbarDayTimeModule", uiStub());
-		};
-		this.world_state.init = function() {};
-
-		// Add the world state as a RootState child: its onInit stands up the 11
-		// managers (EntityManager/FactionManager/…), the stubbed onInitUI, the neutered
-		// init, and sets World.State + the manager refs.
-		this.RootState.add("WorldState", "scripts/states/world_state");
-		local ws = this.RootState.get("WorldState");
-
-		// Build new-campaign settings with the real starting scenario, then run the
-		// genuine generation (worldgen → Assets.init → createFactions → scenario spawn).
-		local settings = {
-			Name = "Boot Test Company",
-			Banner = "banner_04",
-			Difficulty = 1,
-			EconomicDifficulty = 1,
-			BudgetDifficulty = 1,
-			Ironman = false,
-			PermanentDestruction = false,
-			ExplorationMode = false,
-			GreaterEvil = this.Const.World.GreaterEvilType.Random,
-			Seed = "rust-engine-test",
-			StartingScenario = this.new("scripts/scenarios/world/early_access_scenario")
-		};
-		ws.setNewCampaignSettings(settings);
-		ws.startNewCampaign();
-		::genOk <- true;
-		"#,
-		"world_boot",
-	);
+			for n in 0..args.frames {
+				harness::run_frame(&engine, 1000.0 / 60.0).map_err(|e| format!("frame {n}: {e}"))?;
+			}
+			Ok(())
+		})
+		.and_then(|()| match &args.end {
+			Some(end) => engine.run_script(end, "end"),
+			None => Ok(()),
+		});
 	match result {
 		Ok(()) => {
 			println!("✅ new-game world boot ran to completion");
@@ -117,6 +95,17 @@ fn main() {
 				r#"
 				this.logInfo("settlements = " + this.World.EntityManager.getSettlements().len());
 				this.logInfo("player = " + (this.World.State.m.Player != null ? "set" : "null"));
+				local t = this.World.getTime();
+				this.logInfo("world time: day " + t.Days + " " + t.Hours + ":" + t.Minutes + " (TimeOfDay " + t.TimeOfDay + ", speed " + this.World.getSpeedMult() + ")");
+				local all = this.World.getAllEntitiesAtPos(this.World.State.getPlayer().getPos(), 100000.0);
+				local parties = 0;
+				foreach (e in all) if (e.isParty()) parties++;
+				this.logInfo("live entities = " + all.len() + ", parties = " + parties);
+				local discovered = 0;
+				foreach (e in all) if (e.isDiscovered()) discovered++;
+				local pl = this.World.State.getPlayer();
+				this.logInfo("player pos " + pl.getPos().X + "," + pl.getPos().Y + " vision " + pl.getVisionRadius() + " hasPath " + (pl.getPath() != null) + " dest " + (pl.m.Destination != null));
+				this.logInfo("discovered = " + discovered + ", LocationsDiscovered stat = " + this.World.Statistics.getFlags().get("LocationsDiscovered"));
 				"#,
 				"diag",
 			);
