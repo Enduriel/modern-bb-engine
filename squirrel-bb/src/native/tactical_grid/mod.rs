@@ -238,16 +238,107 @@ impl TacticalGridState {
 
 pub(crate) type Grid = Rc<RefCell<TacticalGridState>>;
 
-/// The tile centre in world pixels for square coords.
+/// The tile centre in world pixels for square coords, on level 0.
 pub(crate) fn tile_pos(col: i64, row: i64) -> (f64, f64) {
 	let odd = if col % 2 != 0 { 40.0 } else { 0.0 };
 	(80.0 + 120.0 * col as f64, 40.0 + 80.0 * row as f64 + odd)
 }
 
-/// The direction (0..6) from tile `a` towards tile `b`, as `tile.getDirectionTo`.
+/// World pixels per tile level: a raised tile sits this much further down the map
+/// (probed: `Pos`, `tileToWorld` and actor positions all include it).
+const LEVEL_HEIGHT: f64 = 40.0;
+
+impl TacticalTileData {
+	/// The tile's world position, as the original's tile-to-world helper: its centre,
+	/// moved by its level. `tile.Pos`, `getDirection8To` and unit positions use it.
+	pub(crate) fn world_pos(&self) -> (f64, f64) {
+		let (x, y) = tile_pos(self.col, self.row);
+		(x, y + LEVEL_HEIGHT * self.level as f64)
+	}
+}
+
+/// The direction (0..6) from tile `a` towards tile `b`, as `tile.getDirectionTo` (the
+/// original's, disassembled): not an angle but the signs of the axial deltas. Straight
+/// up or down the column is 0 (down the rows) or 3 (otherwise, the tile itself
+/// included); to the right 1, or 2 when `dr < 0`; to the left 4, or 5 when `dr > 0`.
 pub(crate) fn direction_between(g: &TacticalGridState, a: usize, b: usize) -> usize {
 	let (ta, tb) = (&g.tiles[a], &g.tiles[b]);
-	super::world_query::direction6(tile_pos(ta.col, ta.row), tile_pos(tb.col, tb.row)) as usize
+	axial_direction(tb.q - ta.q, tb.r - ta.r)
+}
+
+fn axial_direction(dq: i64, dr: i64) -> usize {
+	match (dq.signum(), dr.signum()) {
+		(0, 1) => 0,
+		(0, _) => 3,
+		(1, -1) => 2,
+		(1, _) => 1,
+		(-1, 1) => 5,
+		_ => 4,
+	}
+}
+
+#[cfg(test)]
+mod direction_tests {
+	use super::axial_direction;
+
+	#[test]
+	fn the_six_neighbours_and_far_tiles() {
+		// The neighbour steps map to their own directions.
+		for (d, (dq, dr)) in super::DIRECTION_STEP.iter().enumerate() {
+			assert_eq!(axial_direction(*dq, *dr), d);
+		}
+		// Far tiles go by the signs alone.
+		assert_eq!(axial_direction(5, 7), 1);
+		assert_eq!(axial_direction(-5, -7), 4);
+		assert_eq!(axial_direction(0, 0), 3);
+	}
+
+	/// `getDirectionTo`, `getDirection8To` and `getDistanceTo` from 7 tiles to every
+	/// tile of a 32x32 battle map with raised tiles, and every tile's `Level` and
+	/// `Pos`, as the original answers them (`testdata/directions.txt`, probed
+	/// 2026-10-13).
+	#[test]
+	fn directions_match_the_original() {
+		use super::{TacticalGridState, direction_between, hex_distance};
+		use crate::native::world_query::direction8;
+		let data = include_str!("testdata/directions.txt");
+		let mut g = TacticalGridState::for_test(32, 32);
+		// `L x level:posX:posY,...` per column, rows in order.
+		let mut raised = 0;
+		for line in data.lines().filter(|l| l.starts_with("L ")) {
+			let (x, cells) = line[2..].split_once(' ').unwrap();
+			for (y, cell) in cells.split(',').filter(|c| !c.is_empty()).enumerate() {
+				let f: Vec<f64> = cell.split(':').map(|v| v.parse().unwrap()).collect();
+				let id = g.idx(x.parse().unwrap(), y as i64).unwrap();
+				g.tiles[id].level = f[0] as i64;
+				raised += usize::from(f[0] > 0.0);
+				assert_eq!(g.tiles[id].world_pos(), (f[1], f[2]), "Pos of {x},{y}");
+			}
+		}
+		assert!(raised > 0);
+		let mut rows = 0;
+		for line in data.lines().filter(|l| l.starts_with("D ")) {
+			let f: Vec<&str> = line.split(' ').collect();
+			let (sx, sy) = f[1].split_once(',').unwrap();
+			let src = g.idx(sx.parse().unwrap(), sy.parse().unwrap()).unwrap();
+			let d6: Vec<u8> = f[2].bytes().map(|b| b - b'0').collect();
+			let d8: Vec<u8> = f[3].bytes().map(|b| b - b'0').collect();
+			let dist: Vec<i64> = f[4].split(',').filter(|x| !x.is_empty()).map(|x| x.parse().unwrap()).collect();
+			let mut k = 0;
+			for x in 0..32 {
+				for y in 0..32 {
+					let dst = g.idx(x, y).unwrap();
+					let (a, b) = (&g.tiles[src], &g.tiles[dst]);
+					assert_eq!(direction_between(&g, src, dst), d6[k] as usize, "dir6 {sx},{sy} -> {x},{y}");
+					assert_eq!(direction8(a.world_pos(), b.world_pos()), d8[k] as i64, "dir8 {sx},{sy} -> {x},{y}");
+					assert_eq!(hex_distance(a, b), dist[k], "dist {sx},{sy} -> {x},{y}");
+					k += 1;
+				}
+			}
+			rows += 1;
+		}
+		assert_eq!(rows, 7);
+	}
 }
 
 /// Hex distance between two tiles.
@@ -376,11 +467,15 @@ impl TacticalGrid {
 			})
 		};
 		let get_tile_dispatch = make_dispatcher(vm, "getTile");
-		let tile_to_world_1 = vm.make_closure(|vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
-			let q = coords.0.get_member::<i64>(vm, "X").ok_or("tileToWorld: coords need X")?;
-			let r = coords.0.get_member::<i64>(vm, "Y").ok_or("tileToWorld: coords need Y")?;
-			vec(vm, tile_pos(q, r + q / 2))
-		});
+		let tile_to_world_1 = {
+			let grid = self.grid.clone();
+			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
+				let q = coords.0.get_member::<i64>(vm, "X").ok_or("tileToWorld: coords need X")?;
+				let r = coords.0.get_member::<i64>(vm, "Y").ok_or("tileToWorld: coords need Y")?;
+				let g = grid.borrow();
+				vec(vm, g.idx_axial(q, r).map_or_else(|| tile_pos(q, r + q / 2), |id| g.tiles[id].world_pos()))
+			})
+		};
 		let tile_to_world_2 = vm.make_closure(|vm: &SQVM, q: i64, r: i64| vec(vm, tile_pos(q, r + q / 2)));
 		let tile_to_world_dispatch = make_dispatcher(vm, "tileToWorld");
 		let queries = query::natives(vm, &self.grid);

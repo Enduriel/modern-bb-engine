@@ -31,7 +31,7 @@ pub(super) fn place(m: &Machine, idx: usize, tile: usize, is_actor: bool) -> Res
 		if t.occupant.is_none() {
 			t.occupant = Some((entity, is_actor));
 		}
-		tactical_grid::tile_pos(t.col, t.row)
+		t.world_pos()
 	};
 	let rec = &mut machine.units[idx];
 	rec.tile = Some(tile);

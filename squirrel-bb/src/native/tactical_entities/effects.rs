@@ -11,7 +11,7 @@ use std::rc::Rc;
 use squirrel::{Native, Number, Retained, SQVM, SqArray, SqStrongRef, Variadic};
 
 use super::{TacticalMachine, UnitSpriteData};
-use crate::native::tactical_grid::{self, TileHandle};
+use crate::native::tactical_grid::TileHandle;
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
@@ -50,8 +50,7 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 		|_brush: Retained, from: Native<TileHandle>, to: Native<TileHandle>, _speed: Number, time_scale: Number, Variadic(_rest): Variadic<Retained>| -> i64 {
 			let pos = |t: &TileHandle| {
 				let g = t.grid.borrow();
-				let d = &g.tiles[t.id];
-				tactical_grid::tile_pos(d.col, d.row)
+				g.tiles[t.id].world_pos()
 			};
 			projectile_ms(pos(&from.0), pos(&to.0), time_scale.0 as f32)
 		},

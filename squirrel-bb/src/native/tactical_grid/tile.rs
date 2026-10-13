@@ -2,7 +2,7 @@
 
 use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
-use super::{Grid, TacticalTileData, detail, hex_distance, tile_handle, tile_pos, vec};
+use super::{Grid, TacticalTileData, detail, hex_distance, tile_handle, vec};
 use crate::native::world_query;
 
 /// A script handle to one tile (a shared map + the tile's index).
@@ -20,7 +20,7 @@ impl TileHandle {
 		f(&mut self.grid.borrow_mut().tiles[self.id])
 	}
 	fn pos(&self) -> (f64, f64) {
-		self.with(|t| tile_pos(t.col, t.row))
+		self.with(TacticalTileData::world_pos)
 	}
 }
 
@@ -195,7 +195,7 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			hex_distance(&g.tiles[t.id], &g.tiles[other.0.id])
 		})
 		.method("getDirectionTo", |t: &mut TileHandle, other: Native<TileHandle>| -> i64 {
-			world_query::direction6(t.pos(), other.0.pos())
+			super::direction_between(&t.grid.borrow(), t.id, other.0.id) as i64
 		})
 		.method("getDirection8To", |t: &mut TileHandle, other: Native<TileHandle>| -> i64 {
 			world_query::direction8(t.pos(), other.0.pos())
