@@ -25,12 +25,13 @@ fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	}
 }
 
-/// Run the game until a button labelled `label` is visible (or fail after `timeout`).
+/// Run the game until a button labelled `label` is visible and the page has stopped
+/// animating, as a player would wait before clicking. Fails after `timeout`.
 fn wait_for_button(session: &UiSession, label: &str, timeout: Duration) -> Result<(), String> {
 	let deadline = Instant::now() + timeout;
 	loop {
 		let buttons = session.visible_buttons()?;
-		if buttons.iter().any(|b| b == label) {
+		if buttons.iter().any(|b| b == label) && !session.animating()? {
 			return Ok(());
 		}
 		if Instant::now() > deadline {
@@ -96,6 +97,13 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	)?;
 
 	session.click_button("Cancel")?;
+	wait_for_button(&session, "New Campaign", Duration::from_secs(10))?;
+
+	// Options: the scripts fill it from the display modes and settings, and "Ok"
+	// applies every tab's settings back through them.
+	session.click_button("Options")?;
+	wait_for_button(&session, "1920 x 1080", Duration::from_secs(10))?;
+	session.click_button("Ok")?;
 	wait_for_button(&session, "New Campaign", Duration::from_secs(10))?;
 
 	// Calls run inline both ways, as in the original: an `asyncCall` returns after the

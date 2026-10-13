@@ -7,8 +7,8 @@
 //! as a player would, and reports and screenshots the result of each click
 //! (`menu-1.png`, …).
 //!
-//! `--eval CODE` (repeatable) prints the value of `CODE` evaluated in the page once
-//! the menu is up. `--devtools PORT` serves Chrome DevTools for the page on localhost
+//! `--eval CODE` (repeatable) prints the value of `CODE` evaluated in the page after
+//! the clicks. `--devtools PORT` serves Chrome DevTools for the page on localhost
 //! (combine with a long `--seconds` to inspect it).
 //!
 //! Run: `cargo run -p bb-ui --features cef --example boot_menu_ui -- [data-dir]
@@ -156,12 +156,6 @@ fn run(options: Options) -> Result<(), String> {
 	if options.bench > 0 {
 		bench(&session, options.bench)?;
 	}
-	for code in &options.evals {
-		match session.eval(code) {
-			Ok(value) => println!("eval: {}", value.to_text()),
-			Err(error) => println!("eval failed: {error}"),
-		}
-	}
 
 	let stem = options
 		.out
@@ -175,6 +169,12 @@ fn run(options: Options) -> Result<(), String> {
 			&session,
 			&options.out.with_file_name(format!("{stem}-{}.png", i + 1)),
 		)?;
+	}
+	for code in &options.evals {
+		match session.eval(code) {
+			Ok(value) => println!("eval: {}", value.to_text()),
+			Err(error) => println!("eval failed: {error}"),
+		}
 	}
 
 	drop(session);

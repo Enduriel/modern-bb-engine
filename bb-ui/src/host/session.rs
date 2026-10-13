@@ -218,6 +218,20 @@ impl UiSession {
 		Ok(())
 	}
 
+	/// Whether the page is mid-animation (jQuery or Velocity, which the UI uses to
+	/// slide and fade its screens): clicks then may land where a moving element was.
+	pub fn animating(&self) -> Result<bool, String> {
+		let busy = self.eval(
+			r#"(function () {
+				if (!window.jQuery) return false;
+				var velocity = jQuery.Velocity;
+				var calls = velocity && velocity.State ? velocity.State.calls : [];
+				return jQuery(':animated').length > 0 || calls.some(function (call) { return !!call; });
+			})()"#,
+		)?;
+		Ok(busy == Json::Bool(true))
+	}
+
 	/// The labels of every visible button, in document order.
 	pub fn visible_buttons(&self) -> Result<Vec<String>, String> {
 		let labels = self.eval(
