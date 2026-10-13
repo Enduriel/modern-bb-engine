@@ -25,6 +25,7 @@
 mod app;
 mod client;
 pub mod goldens;
+mod input;
 mod ipc;
 mod renderer;
 mod scheme;
@@ -41,6 +42,7 @@ use cef::*;
 
 use client::Shared;
 pub use client::{Event, FrameBuffer};
+pub use input::Key;
 use ipc::Arg;
 pub use scheme::{RequestKind, Responder};
 pub use session::{LogLine, UiSession};
@@ -369,6 +371,27 @@ impl UiHost {
 		host.send_mouse_move_event(Some(&event), 0);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 0, 1);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 1, 1);
+	}
+
+	/// Press and release `key` in the focused element.
+	pub fn press_key(&self, key: Key) {
+		if let Some(host) = self.browser_host() {
+			input::press_key(&host, key);
+		}
+	}
+
+	/// Type `text` into the focused element, a key press per character.
+	pub fn type_text(&self, text: &str) {
+		if let Some(host) = self.browser_host() {
+			input::type_text(&host, text);
+		}
+	}
+
+	/// Turn the mouse wheel `notches` times at `(x, y)`; positive scrolls up.
+	pub fn wheel(&self, x: i32, y: i32, notches: i32) {
+		if let Some(host) = self.browser_host() {
+			input::wheel(&host, x, y, notches);
+		}
 	}
 
 	/// A copy of the latest painted frame.

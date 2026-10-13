@@ -3,12 +3,13 @@
 //! Coherent-compatible bridge. Nothing is shown on screen; the result is a screenshot
 //! and a summary of the page.
 //!
-//! With `--click TARGET` (repeatable) it then clicks, as a player would, once the target
-//! shows up: the visible button with that label, else any element with that text, or
-//! with `css:SELECTOR` the first visible match. It reports and screenshots the result
-//! of each click (`menu-1.png`, …). `--seed SEED` sets the new-campaign map seed
-//! just before a "Start" click (as typing it would; there's no keyboard input yet).
-//! `--after SECONDS` keeps the game running after the last click (e.g. while a new
+//! With `--click STEP` (repeatable) it then acts, as a player would. A step is a click
+//! once the target shows up: the visible button with that label, else any element with
+//! that text, or with `css:SELECTOR` the first visible match. `key:NAME` presses a key
+//! (`Enter`, `Escape`, … see `Key`) and `type:TEXT` types into the focused field. It
+//! reports and screenshots the result of each step (`menu-1.png`, …). `--seed SEED`
+//! types the new-campaign map seed into its field just before a "Start" click.
+//! `--after SECONDS` keeps the game running after the last step (e.g. while a new
 //! campaign generates), then reports again (`menu-after.png`).
 //!
 //! `--eval CODE` (repeatable) prints the value of `CODE` evaluated in the page after
@@ -24,7 +25,10 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, UiSession};
+use bb_ui::host::{HostConfig, Key, UiSession};
+
+/// The new-campaign map seed's text field (the company name's takes 32 characters).
+const SEED_FIELD: &str = ".new-campaign-menu-module input[maxlength=\"10\"]";
 
 /// What the page looks like, as JSON (evaluated in the page).
 const SUMMARY_JS: &str = r#"(function () {
@@ -171,16 +175,19 @@ fn run(options: Options) -> Result<(), String> {
 		.out
 		.file_stem()
 		.map_or("menu".into(), |s| s.to_string_lossy().into_owned());
-	for (i, label) in options.clicks.iter().enumerate() {
-		println!("click {label:?}");
-		if let (Some(seed), "Start") = (&options.seed, label.as_str()) {
-			session.eval(&format!(
-				"Screens.MainMenuScreen.mNewCampaignModule.mSeed.setInputText({})",
-				bb_ui::json::Json::Str(seed.clone()).to_text()
-			))?;
+	for (i, step) in options.clicks.iter().enumerate() {
+		println!("step {step:?}");
+		if let (Some(seed), "Start") = (&options.seed, step.as_str()) {
+			session.fill_field(SEED_FIELD, seed)?;
 		}
-		// Generous: a new campaign takes a while to generate.
-		session.click_when_ready(label, Duration::from_secs(120))?;
+		if let Some(name) = step.strip_prefix("key:") {
+			session.press_key(Key::from_name(name).ok_or(format!("no key called {name:?}"))?)?;
+		} else if let Some(text) = step.strip_prefix("type:") {
+			session.type_text(text)?;
+		} else {
+			// Generous: a new campaign takes a while to generate.
+			session.click_when_ready(step, Duration::from_secs(120))?;
+		}
 		session.run_frames(1.5)?;
 		report(
 			&session,
