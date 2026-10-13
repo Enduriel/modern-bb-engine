@@ -2,7 +2,7 @@
 //!
 //! Distinct from Squirrel's stdlib math (which the VM already registers at the
 //! root as `::sin`/`::sqrt`/… returning floats). BB's `Math.ceil`/`floor`/`round`
-//! return **integers**, `Math.min`/`max` are the integer variants (with `minf`/
+//! return **floats** (callers tointeger() them at array-index sites), `Math.min`/`max` are the integer variants (with `minf`/
 //! `maxf` for floats), and `Math.abs` is polymorphic (int→int, float→float). The
 //! RNG (`rand`/`seedRandom`/`seedRandomString`) shares one [`Prng`] state, created
 //! once by the native installer and shared with `color.varyRGB`.
@@ -68,10 +68,14 @@ pub(crate) fn install(vm: &mut SQVM, prng: Prng) {
 			}),
 		),
 		("absf", vm.make_closure(|x: Number| x.0.abs())),
-		// ceil/floor/round return integers (the BB distinction from ::ceil/etc).
-		("ceil", vm.make_closure(|x: Number| x.0.ceil() as i64)),
-		("floor", vm.make_closure(|x: Number| x.0.floor() as i64)),
-		("round", vm.make_closure(|x: Number| x.0.round() as i64)),
+		// ceil/floor/round return FLOATS in BB (verified: actor.updateOverlay does an
+		// unguarded `getHitpoints() / getHitpointsMax()` where getHitpointsMax() is
+		// `Math.floor(...)`; that survives a 0 denominator only as float division
+		// (1/0.0 = inf, then clamped by minf). Squirrel array indexing tointeger()s a
+		// float key (sqvm.cpp OT_ARRAY branch), so `arr[Math.floor(x)]` still works.
+		("ceil", vm.make_closure(|x: Number| x.0.ceil())),
+		("floor", vm.make_closure(|x: Number| x.0.floor())),
+		("round", vm.make_closure(|x: Number| x.0.round())),
 		(
 			"pow",
 			vm.make_closure(|base: Number, exp: Number| base.0.powf(exp.0)),

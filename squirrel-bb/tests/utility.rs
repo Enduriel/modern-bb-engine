@@ -48,11 +48,14 @@ fn math_abs_is_polymorphic() {
 }
 
 #[test]
-fn math_rounding_returns_integers_and_pow_returns_float() {
+fn math_rounding_returns_floats_and_pow_returns_float() {
 	vm().run_script(
 		r#"
-			assert(Math.ceil(2.1) == 3 && typeof Math.ceil(2.1) == "integer");
-			assert(Math.floor(2.9) == 2 && typeof Math.floor(2.9) == "integer");
+			assert(Math.ceil(2.1) == 3 && typeof Math.ceil(2.1) == "float");
+			assert(Math.floor(2.9) == 2 && typeof Math.floor(2.9) == "float");
+				assert(typeof Math.round(2.5) == "float");
+				local _a = [10, 20, 30];
+				assert(_a[Math.floor(1.7)] == 20);
 			assert(Math.round(2.5) == 3);               // half away from zero
 			assert(Math.round(2.4) == 2);
 			assert(Math.pow(2.0, 10.0) == 1024.0);
