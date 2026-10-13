@@ -5,7 +5,8 @@
 //!
 //! With `--click LABEL` (repeatable) it then clicks the visible button with that label,
 //! as a player would, and reports and screenshots the result of each click
-//! (`menu-1.png`, …).
+//! (`menu-1.png`, …). `--after SECONDS` keeps the game running after the last click
+//! (e.g. while a new campaign generates), then reports again (`menu-after.png`).
 //!
 //! `--eval CODE` (repeatable) prints the value of `CODE` evaluated in the page after
 //! the clicks. `--devtools PORT` serves Chrome DevTools for the page on localhost
@@ -13,11 +14,11 @@
 //!
 //! Run: `cargo run -p bb-ui --features cef --example boot_menu_ui -- [data-dir]
 //!       [--seconds N] [--out menu.png] [--size 1920x1080] [--click "New Campaign"]
-//!       [--eval "document.title"] [--devtools 9222]`
+//!       [--after 10] [--eval "document.title"] [--devtools 9222]`
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{HostConfig, UiSession};
@@ -44,6 +45,7 @@ struct Options {
 	evals: Vec<String>,
 	devtools: Option<u16>,
 	bench: u32,
+	after: f64,
 }
 
 /// Time `n` script → page calls, and `n` that call back into the script (each one a
@@ -83,6 +85,7 @@ fn parse_options() -> Result<Options, String> {
 		evals: Vec::new(),
 		devtools: None,
 		bench: 0,
+		after: 0.0,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -95,6 +98,7 @@ fn parse_options() -> Result<Options, String> {
 			"--click" => options.clicks.push(value()?),
 			"--eval" => options.evals.push(value()?),
 			"--bench" => options.bench = value()?.parse().map_err(|e| format!("--bench: {e}"))?,
+			"--after" => options.after = value()?.parse().map_err(|e| format!("--after: {e}"))?,
 			"--devtools" => {
 				options.devtools = Some(value()?.parse().map_err(|e| format!("--devtools: {e}"))?)
 			}
@@ -163,11 +167,20 @@ fn run(options: Options) -> Result<(), String> {
 		.map_or("menu".into(), |s| s.to_string_lossy().into_owned());
 	for (i, label) in options.clicks.iter().enumerate() {
 		println!("click {label:?}");
-		session.click_button(label)?;
+		// A button if there is one with that label, else any element with that text,
+		// once it shows up (a new campaign takes a while to generate).
+		session.click_when_ready(label, Duration::from_secs(120))?;
 		session.run_frames(1.5)?;
 		report(
 			&session,
 			&options.out.with_file_name(format!("{stem}-{}.png", i + 1)),
+		)?;
+	}
+	if options.after > 0.0 {
+		session.run_frames(options.after)?;
+		report(
+			&session,
+			&options.out.with_file_name(format!("{stem}-after.png")),
 		)?;
 	}
 	for code in &options.evals {

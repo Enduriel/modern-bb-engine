@@ -39,7 +39,12 @@ impl UiSession {
 	pub fn start(data_dir: &Path, config: HostConfig, echo: bool) -> Result<UiSession, String> {
 		let files = UiFiles::open_install(data_dir, false).map_err(|e| format!("archives: {e}"))?;
 		let host = UiHost::start(files, config)?;
-		let engine = harness::open_install(data_dir).map_err(|e| format!("install: {e}"))?;
+		let mut engine = harness::open_install(data_dir).map_err(|e| format!("install: {e}"))?;
+		if echo {
+			// Script errors print their full call stack.
+			engine.vm_mut().set_print_handler(|s| eprint!("{s}"));
+			engine.vm_mut().install_standard_error_handlers();
+		}
 		let log: Rc<RefCell<Vec<LogLine>>> = Rc::default();
 		let sink = log.clone();
 		let protocol = UiProtocol::new(host, move |text| {
@@ -216,6 +221,86 @@ impl UiSession {
 		};
 		self.host().click(x as i32, y as i32);
 		Ok(())
+	}
+
+	/// Click the innermost visible element whose text is `text` (a list entry, a
+	/// label, a tab…), as a player would: a real mouse click at its centre.
+	pub fn click_text(&self, text: &str) -> Result<(), String> {
+		let code = format!(
+			r#"(function (text) {{
+	var all = document.querySelectorAll('body *');
+	for (var i = all.length - 1; i >= 0; --i) {{
+		var el = all[i];
+		if (el.offsetParent === null || el.textContent.trim() !== text) continue;
+		var r = el.getBoundingClientRect();
+		if (r.width === 0 || r.height === 0) continue;
+		return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+	}}
+	return null;
+}})({})"#,
+			Json::Str(text.to_string()).to_text()
+		);
+		let target = self.eval(&code)?;
+		let xy: Option<Vec<i64>> = target
+			.as_array()
+			.map(|xy| xy.iter().filter_map(Json::as_i64).collect());
+		let Some([x, y]) = xy.and_then(|xy| <[i64; 2]>::try_from(xy).ok()) else {
+			return Err(format!("no visible element with the text {text:?}"));
+		};
+		self.host().click(x as i32, y as i32);
+		Ok(())
+	}
+
+	/// Click the button labelled `label` (or else any element with that text) once it
+	/// is visible and the page has stopped animating, running the game meanwhile, as a
+	/// player waits for a screen before clicking. Fails after `timeout`.
+	pub fn click_when_ready(&self, label: &str, timeout: Duration) -> Result<(), String> {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if !self.animating()? {
+				match self.click_button(label).or_else(|_| self.click_text(label)) {
+					Ok(()) => return Ok(()),
+					Err(error) if Instant::now() >= deadline => return Err(error),
+					Err(_) => {}
+				}
+			} else if Instant::now() >= deadline {
+				return Err(format!(
+					"the page was still animating when {label:?} was due"
+				));
+			}
+			self.run_frames(0.1)?;
+		}
+	}
+
+	/// Whether some visible text on the page contains `text` (within one text node).
+	pub fn shows_text(&self, text: &str) -> Result<bool, String> {
+		let code = format!(
+			r#"(function (text) {{
+	var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+	for (var node = walker.nextNode(); node; node = walker.nextNode()) {{
+		var parent = node.parentElement;
+		if (parent && parent.offsetParent !== null && node.nodeValue.indexOf(text) >= 0) return true;
+	}}
+	return false;
+}})({})"#,
+			Json::Str(text.to_string()).to_text()
+		);
+		Ok(self.eval(&code)? == Json::Bool(true))
+	}
+
+	/// Run the game until some visible element shows `text` and the page has stopped
+	/// animating. Fails after `timeout`.
+	pub fn wait_for_text(&self, text: &str, timeout: Duration) -> Result<(), String> {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if self.shows_text(text)? && !self.animating()? {
+				return Ok(());
+			}
+			if Instant::now() >= deadline {
+				return Err(format!("{text:?} never appeared"));
+			}
+			self.run_frames(0.1)?;
+		}
 	}
 
 	/// Whether the page is mid-animation (jQuery or Velocity, which the UI uses to
