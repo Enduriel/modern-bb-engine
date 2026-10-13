@@ -9,8 +9,12 @@ use cef::*;
 
 use super::ipc::{self, Arg};
 
-/// The JS installed before any page script (see the file for the protocol).
-const BOOTSTRAP: &str = include_str!("bootstrap.js");
+/// The JS installed before any page script, in order: the bridge (see the file for the
+/// protocol), then the emulation of Coherent's layout and style differences.
+const SCRIPTS: [(&str, &str); 2] = [
+	("bb://bootstrap.js", include_str!("bootstrap.js")),
+	("bb://compat.js", include_str!("compat.js")),
+];
 
 /// Call `window.<function>(argument)` in `frame`'s context; its string result.
 fn call_page(frame: &Frame, function: &str, argument: &str) -> Option<String> {
@@ -48,12 +52,13 @@ wrap_render_process_handler! {
 				return;
 			}
 			let Some(context) = context else { return };
-			let mut retval = None;
-			let mut exception = None;
-			let url: CefString = "bb://bootstrap.js".into();
-			context.eval(Some(&BOOTSTRAP.into()), Some(&url), 1, Some(&mut retval), Some(&mut exception));
-			if let Some(exception) = exception {
-				eprintln!("bb-ui: bootstrap failed: {}", CefString::from(&exception.message()));
+			for (url, script) in SCRIPTS {
+				let mut retval = None;
+				let mut exception = None;
+				context.eval(Some(&script.into()), Some(&url.into()), 1, Some(&mut retval), Some(&mut exception));
+				if let Some(exception) = exception {
+					eprintln!("bb-ui: {url} failed: {}", CefString::from(&exception.message()));
+				}
 			}
 		}
 
