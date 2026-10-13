@@ -37,6 +37,7 @@ mod ui_bridge;
 mod vec;
 mod world;
 mod world_entities;
+pub(crate) mod world_detail;
 mod world_grid;
 mod world_layout;
 mod world_query;

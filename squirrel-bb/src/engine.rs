@@ -141,6 +141,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn sprites(&self) -> &Sprites {
 		&self.sprites
 	}
+	/// The world map as the scripts have set it up, for a renderer.
+	pub fn world_scene(&self) -> crate::scene::WorldScene {
+		crate::scene::WorldScene {
+			tiles: self.world_grid.scene_tiles(),
+			entities: self.world_entities.scene_entities(&self.vm),
+		}
+	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the
 	/// last pump (see [`crate::ui_client::UiClient::pump`]).
 	pub fn pump_ui(&self) -> Result<Vec<crate::UiCall>, String> {

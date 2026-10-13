@@ -8,7 +8,6 @@
 //! back, then runs `onDeserialize`.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef};
@@ -75,6 +74,11 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 	for b in [s.visible, s.ignore_ambient, s.fading_done] {
 		w.bool(b);
 	}
+	w.f64(s.offset.0);
+	w.f64(s.offset.1);
+	for b in [s.flipped, s.scaling, s.colorization] {
+		w.bool(b);
+	}
 }
 
 fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
@@ -85,12 +89,16 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 		visible: r.bool()?,
 		ignore_ambient: r.bool()?,
 		fading_done: r.bool()?,
+		offset: (r.f64()?, r.f64()?),
+		flipped: r.bool()?,
+		scaling: r.bool()?,
+		colorization: r.bool()?,
 	})
 }
 
 /// Sorted `(name, handle)` pairs, for a stable layout.
-fn sorted(map: &HashMap<String, SqStrongRef>) -> Vec<(String, SqStrongRef)> {
-	let mut v: Vec<(String, SqStrongRef)> = map.iter().map(|(k, h)| (k.clone(), h.clone())).collect();
+fn sorted<'a>(map: impl IntoIterator<Item = (&'a String, &'a SqStrongRef)>) -> Vec<(String, SqStrongRef)> {
+	let mut v: Vec<(String, SqStrongRef)> = map.into_iter().map(|(k, h)| (k.clone(), h.clone())).collect();
 	v.sort_by(|a, b| a.0.cmp(&b.0));
 	v
 }
@@ -132,7 +140,7 @@ impl SavePart for EntitiesPart {
 					z_offset: rec.z_offset,
 				}
 				.write(&mut w);
-				let sprites = sorted(&rec.sprites);
+				let sprites = sorted(rec.sprites.iter());
 				w.u32(sprites.len() as u32);
 				for (name, handle) in sprites {
 					w.str(&name);

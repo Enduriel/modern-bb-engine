@@ -36,11 +36,13 @@ use crate::module::Instantiator;
 mod movement;
 mod persist;
 mod render;
+mod slots;
+mod sprites;
 mod think;
 mod view;
 
-/// A render sprite handle (`entity.addSprite(name)`). Inert: fields are read/written by
-/// script (`Visible`, `Scale`, `Alpha`, …) but drive no rendering yet.
+/// A render sprite handle (`entity.addSprite(name)`): what scripts set on it, which
+/// the renderer reads through the world scene.
 #[derive(Clone)]
 struct SpriteData {
 	brush: String,
@@ -49,6 +51,15 @@ struct SpriteData {
 	visible: bool,
 	ignore_ambient: bool,
 	fading_done: bool,
+	/// From the entity's position, in world units with y up (`setOffset`,
+	/// `setSpriteOffset`).
+	offset: (f64, f64),
+	/// Mirrored left to right (`setHorizontalFlipping`).
+	flipped: bool,
+	/// `setSpriteScaling(name, false)` turns it off.
+	scaling: bool,
+	/// `setSpriteColorization(name, false)` turns it off.
+	colorization: bool,
 }
 
 impl SpriteData {
@@ -60,6 +71,10 @@ impl SpriteData {
 			visible: true,
 			ignore_ambient: false,
 			fading_done: true, // no fade in progress
+			offset: (0.0, 0.0),
+			flipped: false,
+			scaling: true,
+			colorization: true,
 		}
 	}
 }
@@ -101,7 +116,7 @@ struct EntityRecord {
 	alive: bool,
 	/// When a `fadeAndDie` lets it die (real-time ms).
 	dies_at: Option<i64>,
-	sprites: HashMap<String, SqStrongRef>,
+	sprites: slots::Slots,
 	labels: HashMap<String, SqStrongRef>,
 }
 
@@ -217,7 +232,7 @@ fn create_entity(
 			faction: 0, // Neutral until settlement.onBuild/addFaction assigns one
 			alive: true,
 			dies_at: None,
-			sprites: HashMap::new(),
+			sprites: slots::Slots::default(),
 			labels: HashMap::new(),
 		});
 		idx
@@ -364,14 +379,13 @@ fn build_sprite_class(vm: &mut SQVM) -> SqClass<SpriteData> {
 			t.set("Name", s.brush.clone());
 			t.to_strong()
 		})
-		// Render-only transforms.
-		.method("setOffset", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
+		.method("setOffset", |s: &mut SpriteData, vm: &SQVM, offset: Retained| {
+			s.offset = vec_xy(vm, &offset.0)
+		})
+		.method("setHorizontalFlipping", |s: &mut SpriteData, flipped: bool| s.flipped = flipped)
+		// Render-only fades.
 		.method("fadeIn", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
 		.method("fadeOut", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
-		.method(
-			"setHorizontalFlipping",
-			|_s: &mut SpriteData, _a: Variadic<Retained>| {},
-		)
 		.build(vm)
 }
 
@@ -605,6 +619,7 @@ impl WorldEntities {
 		methods.extend(view::entity_methods(&self.machine, vm));
 		methods.extend(think::entity_methods(&self.machine, vm));
 		methods.extend(movement::entity_methods(&self.machine, vm));
+		methods.extend(sprites::entity_methods(&self.machine, vm));
 		methods.push(("removeLabel", remove_label));
 		methods.push(("removeAllLabels", remove_all_labels));
 		methods.push(("isInitialized", vm.make_closure(|| true)));
@@ -627,9 +642,6 @@ impl WorldEntities {
 			"setAlwaysApplySpriteOffset",
 			"setSpriteRenderToTexture",
 			"setRenderCallbackEnabled",
-			"setSpriteScaling",
-			"setSpriteOffset",
-			"setSpriteColorization",
 		] {
 			methods.push((name, noop.clone()));
 		}
@@ -764,6 +776,41 @@ impl WorldEntities {
 	/// Number of spawned entities (host/test inspection).
 	pub fn count(&self) -> usize {
 		self.machine.borrow().entities.len()
+	}
+
+	/// Every live entity and its sprites as the renderer sees them.
+	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::SceneEntity> {
+		let m = self.machine.borrow();
+		let Some(class) = m.sprite_class.clone() else {
+			return Vec::new();
+		};
+		m.entities
+			.iter()
+			.filter(|rec| rec.alive)
+			.map(|rec| crate::scene::SceneEntity {
+				id: rec.id,
+				pos: rec.pos,
+				shown: rec.render.shown(),
+				sprites: rec
+					.sprites
+					.iter()
+					.filter_map(|(name, handle)| {
+						class.with_payload(vm, handle, |s| crate::scene::SceneSprite {
+							name: name.clone(),
+							brush: s.brush.clone(),
+							alpha: s.alpha,
+							scale: s.scale,
+							visible: s.visible,
+							offset: s.offset,
+							flipped: s.flipped,
+							ignore_ambient: s.ignore_ambient,
+							scaling: s.scaling,
+							colorization: s.colorization,
+						})
+					})
+					.collect(),
+			})
+			.collect()
 	}
 
 	/// Release every retained ref (instances, their sprites/labels, the stub classes,

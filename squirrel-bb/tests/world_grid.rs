@@ -130,6 +130,48 @@ fn stub_visual_methods_are_noops() {
 	grid.clear();
 }
 
+/// The details of a tile as the renderer sees them, by brush.
+fn details(grid: &WorldGrid, col: i64, row: i64) -> Vec<squirrel_bb::scene::SceneDetail> {
+	let tile = grid.scene_tiles().into_iter().find(|t| t.col == col && t.row == row).expect("tile");
+	tile.details
+}
+
+fn brushes(details: &[squirrel_bb::scene::SceneDetail]) -> Vec<&str> {
+	details.iter().map(|d| d.brush.as_str()).collect()
+}
+
+#[test]
+fn details_stay_on_their_tile_for_the_renderer() {
+	let (vm, grid) = vm_with_grid();
+	vm.run_script(
+		r#"
+		World.resizeScene(4, 4);
+		local t = World.getTileSquare(1, 2);
+		local tree = t.spawnDetail("tree", -10, 32);
+		tree.Alpha = 120;
+		tree.Scale = 0.85;
+		t.spawnDetail("hill", 30, 8, true);
+		t.spawnDetail("house", -13, 128);
+		tree.setBrush("tree_2");          // changes after spawning reach the tile
+		"#,
+		"details",
+	)
+	.expect("spawn details");
+	let d = details(&grid, 1, 2);
+	assert_eq!(brushes(&d), ["tree_2", "hill", "house"]);
+	assert_eq!((d[0].z_level, d[0].flags, d[0].alpha, d[0].scale), (-10, 32, 120, 0.85));
+	assert!(d[1].flipped && !d[0].flipped);
+	assert!(details(&grid, 0, 0).is_empty());
+
+	vm.run_script("World.getTileSquare(1, 2).clear(8);", "clear mask").expect("clear");
+	assert_eq!(brushes(&details(&grid, 1, 2)), ["tree_2", "house"]);
+	vm.run_script("World.getTileSquare(1, 2).clearAllBut(128);", "clear all but").expect("clear");
+	assert_eq!(brushes(&details(&grid, 1, 2)), ["house"]);
+	vm.run_script("World.getTileSquare(1, 2).clear();", "clear all").expect("clear");
+	assert!(details(&grid, 1, 2).is_empty());
+	grid.clear();
+}
+
 #[test]
 fn tile_brush_is_state_like_the_original() {
 	let mut vm = squirrel::SQVM::new(1024);

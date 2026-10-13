@@ -17,6 +17,7 @@ use squirrel::{
 };
 
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
+use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
 use super::world_layout;
 use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
@@ -49,6 +50,8 @@ struct TileData {
 	/// back (`tile.getBrush() != "world_highlands_03"`), so it is real state, not a
 	/// render no-op. `""` when unset, like the original (probed 2026-10-13).
 	brush: String,
+	/// The decorations spawned on the tile, in spawn order.
+	details: Vec<Detail>,
 }
 
 /// The map's share of a save: its size and every tile's gameplay state. Details
@@ -103,28 +106,6 @@ impl super::save::SavePart for GridPart {
 	}
 }
 
-/// A scene detail (decoration) minted by `tile.spawnDetail(...)`. Rendering is
-/// deferred, so this only records the fields worldgen and scripts set/read on the
-/// returned object (`Alpha`/`Torque`/… and `setBrush`/`setBrightness`/`setDirty`); it
-/// has no visual effect yet. `Color` (a settable object-valued field) is deferred — it
-/// needs a settable object property and is only used by tactical code, not worldgen.
-#[derive(Clone, Default)]
-struct DetailData {
-	brush: String,
-	// Recorded from spawnDetail for the deferred render/detail subsystem; nothing
-	// reads them yet (worldgen only sets Alpha/Torque on the returned detail).
-	#[allow(dead_code)]
-	z_level: i64,
-	#[allow(dead_code)]
-	flags: i64,
-	alpha: i64,
-	torque: i64,
-	saturation: f64,
-	scale: f64,
-	brightness: f64,
-	ignore_ambient: bool,
-}
-
 /// A navigation path returned by `World.getNavigator().findPath(...)`: the waypoint tile
 /// ids AFTER the start (callers track the start themselves), with a cursor the road
 /// phases advance via `getCurrent()`/`pop()`. Empty if unreachable.
@@ -177,7 +158,7 @@ struct GridState {
 	/// The `WorldDetail` class, used by `tile.spawnDetail` to mint detail handles.
 	/// Set during `install`; released by `clear` (same teardown contract as `class`,
 	/// so no `SqStrongRef` is captured inside a VM-owned closure).
-	detail_class: Option<SqClass<DetailData>>,
+	detail_class: Option<SqClass<DetailHandle>>,
 	/// The navigation-path class, used by `World.getNavigator().findPath` to mint
 	/// path handles. Set during `install`; released by `clear`.
 	nav_path_class: Option<SqClass<PathData>>,
@@ -264,7 +245,7 @@ impl WorldGrid {
 	pub fn install(&self, vm: &mut SQVM) {
 		// Build the detail class first so `spawnDetail` can mint instances (the tile
 		// methods fetch it from the grid at call time, capturing no `SqStrongRef`).
-		let detail_class = build_world_detail_class(vm);
+		let detail_class = world_detail::build_class(vm);
 		self.grid.borrow_mut().detail_class = Some(detail_class);
 		let nav_path_class = build_world_navigation_path_class(vm);
 		self.grid.borrow_mut().nav_path_class = Some(nav_path_class);
@@ -700,6 +681,23 @@ impl WorldGrid {
 		Rc::new(GridPart(self.grid.clone()))
 	}
 
+	/// Every tile as the renderer sees it.
+	pub fn scene_tiles(&self) -> Vec<crate::scene::SceneTile> {
+		self.grid
+			.borrow()
+			.tiles
+			.iter()
+			.map(|t| crate::scene::SceneTile {
+				col: t.col,
+				row: t.row,
+				pos: world_layout::tile_pos(t.col, t.row),
+				terrain: t.type_,
+				brush: t.brush.clone(),
+				details: t.details.iter().map(|d| d.borrow().clone()).collect(),
+			})
+			.collect()
+	}
+
 	pub fn clear(&self) {
 		let mut g = self.grid.borrow_mut();
 		g.class = None;
@@ -721,49 +719,15 @@ fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Opti
 	))
 }
 
-/// Mint a `WorldDetail` instance carrying `data`, or `None` if the detail class is
-/// not installed (it always is after `install`). Fetches the class from the grid at
-/// call time so the tile methods capture only the `Rc`, not an `SqStrongRef`.
+/// Add a detail carrying `data` to the tile and mint its `WorldDetail` object, or
+/// `None` if the detail class is not installed (it always is after `install`).
+/// Fetches the class from the grid at call time so the tile methods capture only the
+/// `Rc`, not an `SqStrongRef`.
 fn make_detail(t: &TileHandle, vm: &SQVM, data: DetailData) -> Option<SqStrongRef> {
 	let class = t.grid.borrow().detail_class.clone()?;
-	Some(class.instantiate(vm, data))
-}
-
-/// Build the `WorldDetail` native class returned by `tile.spawnDetail(...)`. Records
-/// the fields scripts set on a detail; no visual effect yet (rendering is deferred).
-fn build_world_detail_class(vm: &mut SQVM) -> SqClass<DetailData> {
-	ClassBuilder::<DetailData>::new("WorldDetail")
-		.property(
-			"Alpha",
-			|d: &DetailData| d.alpha,
-			|d: &mut DetailData, v: i64| d.alpha = v,
-		)
-		.property(
-			"Torque",
-			|d: &DetailData| d.torque,
-			|d: &mut DetailData, v: i64| d.torque = v,
-		)
-		.property(
-			"Saturation",
-			|d: &DetailData| d.saturation,
-			|d: &mut DetailData, v: f64| d.saturation = v,
-		)
-		.property(
-			"Scale",
-			|d: &DetailData| d.scale,
-			|d: &mut DetailData, v: f64| d.scale = v,
-		)
-		.property(
-			"IgnoreAmbientColor",
-			|d: &DetailData| d.ignore_ambient,
-			|d: &mut DetailData, v: bool| d.ignore_ambient = v,
-		)
-		.method("setBrush", |d: &mut DetailData, brush: &str| {
-			d.brush = brush.to_string()
-		})
-		.method("setBrightness", |d: &mut DetailData, v: f64| d.brightness = v)
-		.method("setDirty", |_d: &mut DetailData, _flag: bool| {})
-		.build(vm)
+	let detail: Detail = Rc::new(RefCell::new(data));
+	t.with_mut(|d| d.details.push(detail.clone()));
+	Some(class.instantiate(vm, DetailHandle(detail)))
 }
 
 /// `World.tileToWorld(coords)` / `tileToWorld(x, y)`: an axial tile's centre in world
@@ -1006,10 +970,10 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		);
 
 	// `spawnDetail` is a Sqrat overload (arities 1/3/4/5/6 — from verified call sites).
-	// The leaves mint a `WorldDetail`; the strict dispatcher routes by arg count and is
-	// hookable per-overload. Worldgen uses the 3-arg form (fog/decoration whose
-	// `Alpha`/`Torque` get set); other arities take their trailing args permissively
-	// (rendering is deferred, so only brush/z/flags are recorded).
+	// The leaves add a detail to the tile and mint its `WorldDetail`; the strict
+	// dispatcher routes by arg count and is hookable per-overload. Worldgen uses the
+	// 3-arg form (brush, z, type) and the 4-arg form adds a flag (always `false` at the
+	// call sites, see `world_detail`). The trailing arguments are read leniently.
 	b = b
 		.method(
 			&overload_key("spawnDetail", 1),
@@ -1044,18 +1008,11 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			|t: &mut TileHandle,
 			 vm: &SQVM,
 			 brush: &str,
-			 _a: Retained,
-			 _b: Retained,
-			 _c: Retained|
+			 z: Retained,
+			 flags: Retained,
+			 flipped: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(
-					t,
-					vm,
-					DetailData {
-						brush: brush.to_string(),
-						..DetailData::default()
-					},
-				)
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped))
 			},
 		)
 		.method(
@@ -1063,21 +1020,12 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			|t: &mut TileHandle,
 			 vm: &SQVM,
 			 brush: &str,
-			 z: i64,
-			 flags: i64,
-			 _flip: Retained,
+			 z: Retained,
+			 flags: Retained,
+			 flipped: Retained,
 			 _offset: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(
-					t,
-					vm,
-					DetailData {
-						brush: brush.to_string(),
-						z_level: z,
-						flags,
-						..DetailData::default()
-					},
-				)
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped))
 			},
 		)
 		.method(
@@ -1085,22 +1033,13 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			|t: &mut TileHandle,
 			 vm: &SQVM,
 			 brush: &str,
-			 z: i64,
-			 flags: i64,
-			 _flip: Retained,
+			 z: Retained,
+			 flags: Retained,
+			 flipped: Retained,
 			 _extra: Retained,
 			 _offset: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(
-					t,
-					vm,
-					DetailData {
-						brush: brush.to_string(),
-						z_level: z,
-						flags,
-						..DetailData::default()
-					},
-				)
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped))
 			},
 		)
 		.native_method(
@@ -1118,20 +1057,52 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		.method("resetBrush", |t: &mut TileHandle| t.with_mut(|d| d.brush.clear()))
 		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.clone()) });
 
-	// visual / detail methods — no-op stubs (the render/detail subsystem is later).
-	// `clear`/`clearAllBut`/`setColor` are themselves Sqrat overloads; they stay lenient
-	// no-op stubs until the detail subsystem lands (worldgen never reads their result).
-	for name in [
-		"clear",
-		"clearAllBut",
-		"clearAndFade",
-		"setColor",
-		"onRoadPass",
-	] {
+	// Removing details. `clear()` removes all, `clear(mask)` those with any of the
+	// type bits, `clearAllBut(mask)` those with none; `clearAndFade` removes like
+	// `clear` (the fade is visual). Arguments are read leniently.
+	b = b
+		.method("clear", |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| {
+			clear_details(t, vm, &args.0, false);
+		})
+		.method("clearAndFade", |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| {
+			clear_details(t, vm, &args.0, false);
+		})
+		.method("clearAllBut", |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| {
+			clear_details(t, vm, &args.0, true);
+		});
+
+	// `setColor` is itself a Sqrat overload; with `onRoadPass` it stays a lenient no-op
+	// (worldgen never reads their result).
+	for name in ["setColor", "onRoadPass"] {
 		b = b.method(name, |_t: &mut TileHandle, _args: Variadic<Retained>| {});
 	}
 
 	b.build(vm)
+}
+
+/// A detail from `spawnDetail`'s leniently read arguments (a missing or mistyped
+/// argument keeps the default).
+fn detail_args(vm: &SQVM, brush: &str, z: &Retained, flags: &Retained, flipped: &Retained) -> DetailData {
+	let int = |arg: &Retained| arg.0.get_value::<i64>(vm);
+	let mut data = DetailData {
+		brush: brush.to_string(),
+		..DetailData::default()
+	};
+	data.z_level = int(z).unwrap_or(data.z_level);
+	data.flags = int(flags).unwrap_or(data.flags);
+	data.flipped = flipped.0.get_value::<bool>(vm).unwrap_or(false);
+	data
+}
+
+/// `clear`/`clearAllBut`: remove the tile's details selected by the optional mask.
+fn clear_details(t: &TileHandle, vm: &SQVM, args: &[Retained], all_but: bool) {
+	let mask = args.first().and_then(|a| a.0.get_value::<i64>(vm));
+	let which = match (mask, all_but) {
+		(None, _) => Clear::All,
+		(Some(mask), false) => Clear::Matching(mask),
+		(Some(mask), true) => Clear::AllBut(mask),
+	};
+	t.with_mut(|d| world_detail::clear(&mut d.details, which));
 }
 
 /// Count the 6 hex neighbours whose tile data satisfies `pred`.

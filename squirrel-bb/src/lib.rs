@@ -20,6 +20,7 @@ mod error;
 mod hash;
 mod module;
 mod native;
+pub mod scene;
 mod source;
 mod state;
 mod state_stack;

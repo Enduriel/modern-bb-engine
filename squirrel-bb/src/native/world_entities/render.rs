@@ -35,6 +35,13 @@ pub(super) struct RenderState {
 	next_change: i64,
 }
 
+impl RenderState {
+	/// Not faded out.
+	pub(super) fn shown(&self) -> bool {
+		!self.hidden
+	}
+}
+
 impl Default for RenderState {
 	fn default() -> Self {
 		RenderState {
