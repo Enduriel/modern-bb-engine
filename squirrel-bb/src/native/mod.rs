@@ -23,6 +23,7 @@ mod prng;
 mod settings;
 mod strings;
 mod tactical;
+mod tactical_entities;
 mod time;
 mod ui_bridge;
 mod vec;
@@ -32,6 +33,7 @@ mod world_grid;
 
 pub use color::Color;
 pub use log::{LogLevel, install_logging};
+pub use tactical_entities::TacticalEntities;
 pub use time::TimeService;
 pub use ui_bridge::{UiBridge, UiCall};
 pub use vec::{Vec2f, Vec2i};

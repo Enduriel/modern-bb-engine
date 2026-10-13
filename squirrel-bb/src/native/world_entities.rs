@@ -215,6 +215,7 @@ fn build_sprite_class(vm: &mut SQVM) -> SqClass<SpriteData> {
 			|s: &SpriteData| s.fading_done,
 			|s: &mut SpriteData, v: bool| s.fading_done = v,
 		)
+		.property_noop("Color") // render tint: set by some entities, unread headless
 		.method("setBrush", |s: &mut SpriteData, brush: &str| {
 			s.brush = brush.to_string()
 		})
@@ -240,6 +241,7 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 			|l: &LabelData| l.visible,
 			|l: &mut LabelData, v: bool| l.visible = v,
 		)
+		.property_noop("Color") // render color: set by updatePlayerRelation, unread headless
 		.build(vm)
 }
 

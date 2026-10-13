@@ -4,7 +4,10 @@
 //! preload sweep. The rest of the `World` API (spawnEntity, getTile, …) belongs to
 //! the World/Campaign subsystem and lands later.
 
-use squirrel::{Retained, SQVM, SqArray, SqStrongRef, SqTable, Variadic};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use squirrel::{Retained, SQVM, SqStrongRef, SqTable, Variadic};
 
 use super::NativeConfig;
 
@@ -28,42 +31,37 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 		time.to_strong()
 	});
 
-	// A stub player roster — empty, with no-op clear/add. `main_menu_state.onShow`
-	// calls `World.getPlayerRoster().clear()`. The real entity-backed roster (and
-	// the rest of World) is the World subsystem; this is one shared empty
-	// roster returned by `getPlayerRoster`.
-	let roster = {
-		let clear = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-		let add = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-		let get_all = vm.make_closure(|vm: &SQVM| SqArray::new(vm).to_strong());
-		let get_size = vm.make_closure(|| 0i64);
-		let mut r = SqTable::new(vm);
-		r.set("clear", clear);
-		r.set("add", add);
-		r.set("getAll", get_all);
-		r.set("getSize", get_size);
-		r.to_strong()
+	// Rosters (getRoster/getPlayerRoster/createRoster/deleteRoster) are provided by the
+	// host-owned `TacticalEntities` service (real rosters whose `create` mints units),
+	// installed after this — see native/tactical_entities.rs.
+
+	// Save/load hook registration (world_state.onInit registers these). Save-compat is
+	// not a goal, so they just accept-and-ignore the callback.
+	let set_on_load = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	let set_on_before_load = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	let set_on_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	let set_on_before_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+
+	// World speed multiplier (0 = paused, 1 = normal, higher = fast-forward). A shared
+	// scalar the world clock will eventually drive; for now setPause/setNormalTime just
+	// store + read it. (Real virtual-time scaling integrates with TimeService later.)
+	let speed_mult = Rc::new(Cell::new(1.0_f64));
+	let get_speed_mult = {
+		let s = speed_mult.clone();
+		vm.make_closure(move || s.get())
 	};
-	let get_player_roster = {
-		let roster = roster.clone();
-		vm.make_closure(move || roster.clone())
-	};
-	// Faction/settlement rosters. Real entity-backed rosters are gameplay;
-	// for worldgen, `settlement.onInit` calls `World.createRoster(getID())` and
-	// `faction.getRoster()` reads `World.getRoster(id)`. Hand back the shared empty
-	// roster stub for any id; create/delete are no-ops.
-	let create_roster = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let delete_roster = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let get_roster = {
-		let roster = roster.clone();
-		vm.make_closure(move |Variadic(_a): Variadic<Retained>| roster.clone())
+	let set_speed_mult = {
+		let s = speed_mult.clone();
+		vm.make_closure(move |m: f64| s.set(m))
 	};
 
 	let mut world = SqTable::new(vm);
 	world.set("getTime", get_time);
-	world.set("getPlayerRoster", get_player_roster);
-	world.set("createRoster", create_roster);
-	world.set("deleteRoster", delete_roster);
-	world.set("getRoster", get_roster);
+	world.set("setOnLoadCallback", set_on_load);
+	world.set("setOnBeforeLoadCallback", set_on_before_load);
+	world.set("setOnSaveCallback", set_on_save);
+	world.set("setOnBeforeSaveCallback", set_on_before_save);
+	world.set("getSpeedMult", get_speed_mult);
+	world.set("setSpeedMult", set_speed_mult);
 	SqTable::root(vm).set("World", world);
 }

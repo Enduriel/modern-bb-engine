@@ -7,7 +7,7 @@
 //! enumeration, real persistence) is a later concern — fields are filled in as the
 //! menu drive surfaces them.
 
-use squirrel::{ClassBuilder, Retained, SQVM, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Retained, SQVM, SqTable, Variadic};
 
 /// Display mode — the payload behind a `VideoMode` instance.
 #[derive(Clone, Copy)]
@@ -66,10 +66,28 @@ pub(crate) fn install(vm: &mut SQVM) {
 			},
 		)
 	});
-	// Gameplay settings: a plain (empty) table for now — fields added as needed.
-	let get_gameplay = vm.make_closure(|vm: &SQVM| -> SqStrongRef { SqTable::new(vm).to_strong() });
-	let get_temp_gameplay =
-		vm.make_closure(|vm: &SQVM| -> SqStrongRef { SqTable::new(vm).to_strong() });
+	// Gameplay settings: persistent shared tables (the same one each call) so script
+	// writes like `getTempGameplaySettings().CameraLocked = false` stick and later reads
+	// see them. Pre-create the fields scripts assign with `=`; add more as needed.
+	let gameplay = {
+		let mut t = SqTable::new(vm);
+		t.set("RestoreEquipment", true);
+		t.to_strong()
+	};
+	let get_gameplay = {
+		let g = gameplay.clone();
+		vm.make_closure(move || g.clone())
+	};
+	let temp_gameplay = {
+		let mut t = SqTable::new(vm);
+		t.set("CameraLocked", false);
+		t.set("ShowTracking", true);
+		t.to_strong()
+	};
+	let get_temp_gameplay = {
+		let t = temp_gameplay.clone();
+		vm.make_closure(move || t.clone())
+	};
 	let get_sound_volume = vm.make_closure(|Variadic(_a): Variadic<Retained>| -> f64 { 1.0 });
 	let is_hardware_sound = vm.make_closure(|| false);
 	// Setters / persistence: no-ops (accept any args).

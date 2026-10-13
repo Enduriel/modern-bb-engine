@@ -92,7 +92,14 @@ pub(crate) fn install(vm: &mut SQVM) {
 		})
 	};
 
+	// setActive(bool): world_state toggles tactical mode; a no-op headless (no combat
+	// renderer/state). isActive reports false (we're never in tactical combat here).
+	let set_active = vm.make_closure(|_active: bool| {});
+	let is_active = vm.make_closure(|| false);
+
 	let mut tactical = SqTable::new(vm);
 	tactical.set("setTransitions", set_transitions);
+	tactical.set("setActive", set_active);
+	tactical.set("isActive", is_active);
 	SqTable::root(vm).set("Tactical", tactical);
 }

@@ -17,7 +17,7 @@ use squirrel::{SQVM, SqStrongRef};
 
 use crate::error::ScriptError;
 use crate::module::ModuleSystem;
-use crate::native::{NativeConfig, TimeService, UiBridge, WorldEntities, WorldGrid};
+use crate::native::{NativeConfig, TacticalEntities, TimeService, UiBridge, WorldEntities, WorldGrid};
 use crate::source::ScriptSource;
 use crate::state_stack::RootState;
 
@@ -30,6 +30,7 @@ pub struct Engine<S: ScriptSource> {
 	root_state: RootState,
 	world_grid: WorldGrid,
 	world_entities: WorldEntities,
+	tactical_entities: TacticalEntities,
 	ui: UiBridge,
 	time: TimeService,
 	modules: ModuleSystem<S>,
@@ -60,6 +61,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// After the grid natives (entity `getTile` delegates to `World.getTile`).
 		let world_entities = WorldEntities::new(modules.instantiator());
 		world_entities.install(&mut vm);
+		// After the World table exists: the roster/tactical-unit host (provides
+		// World.getRoster/getPlayerRoster/createRoster, replacing the bare stubs).
+		let tactical_entities = TacticalEntities::new(modules.instantiator());
+		tactical_entities.install(&mut vm);
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
 
@@ -67,6 +72,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			root_state,
 			world_grid,
 			world_entities,
+			tactical_entities,
 			ui,
 			time,
 			modules,
@@ -101,6 +107,9 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 	pub fn world_entities(&self) -> &WorldEntities {
 		&self.world_entities
+	}
+	pub fn tactical_entities(&self) -> &TacticalEntities {
+		&self.tactical_entities
 	}
 
 	// ---- convenience ----
@@ -137,6 +146,7 @@ impl<S: ScriptSource> Drop for Engine<S> {
 		// Release every service's SqStrongRefs while the VM is still alive; the `vm`
 		// field then drops last (clean `sq_close`).
 		self.root_state.clear();
+		self.tactical_entities.clear();
 		self.world_entities.clear();
 		self.world_grid.clear();
 		self.ui.clear();
