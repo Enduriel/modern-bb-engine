@@ -92,6 +92,25 @@ fn surrounding_tiles_of_type() {
 }
 
 #[test]
+fn direction8_between_tiles_follows_their_world_positions() {
+	let (vm, grid) = vm_with_grid();
+	vm.run_script(
+		r#"
+		World.resizeScene(10, 10);
+		local c = World.getTileSquare(5, 5);
+		assert(c.getDirection8To(c.getNextTile(0)) == 0);        // N: straight up the map
+		assert(c.getDirection8To(c.getNextTile(3)) == 4);        // S
+		assert(c.getDirection8To(World.getTileSquare(7, 5)) == 2); // E: same row parity, dy = 0
+		assert(c.getDirection8To(World.getTileSquare(3, 5)) == 6); // W
+		assert(c.getDirection8To(World.getTileSquare(7, 7)) == 1); // NE: 360 px across, 240 up
+		"#,
+		"world_grid_direction8",
+	)
+	.expect("tile directions");
+	grid.clear();
+}
+
+#[test]
 fn stub_visual_methods_are_noops() {
 	let (vm, grid) = vm_with_grid();
 	vm.run_script(

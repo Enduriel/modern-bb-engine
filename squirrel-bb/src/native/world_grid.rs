@@ -999,6 +999,10 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		.method(
 			"getDirectionTo",
 			|t: &mut TileHandle, other: Native<TileHandle>| -> i64 { direction_to(t, &other.0) },
+		)
+		.method(
+			"getDirection8To",
+			|t: &mut TileHandle, other: Native<TileHandle>| -> i64 { direction8_to(t, &other.0) },
 		);
 
 	// `spawnDetail` is a Sqrat overload (arities 1/3/4/5/6 — from verified call sites).
@@ -1147,6 +1151,14 @@ fn surrounding(t: &TileHandle, pred: impl Fn(&TileData) -> bool) -> i64 {
 		}
 	}
 	count
+}
+
+/// `tile.getDirection8To(other)`: one of 8 compass directions between the two tiles'
+/// centres. The original (`0x4fa990`) converts both tiles to world positions and uses
+/// the same angle buckets as the entity version.
+fn direction8_to(a: &TileHandle, b: &TileHandle) -> i64 {
+	let pos = |t: &TileHandle| t.with(|d| world_layout::tile_pos(d.q, d.r + d.q / 2));
+	super::world_query::direction8(pos(a), pos(b))
 }
 
 /// The hex direction (0..6) whose single step most reduces distance to `b` (the
