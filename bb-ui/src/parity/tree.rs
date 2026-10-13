@@ -218,13 +218,17 @@ pub fn normalize_style(value: &str) -> String {
 
 /// `property: value` of a `tag` element in the form both engines agree on:
 /// [`normalize_style`], plus the values the engines report differently for the same
-/// rendering: font weights by name or number, and the `overflow: clip` Chromium's
-/// built-in style gives images (replaced elements don't overflow either way).
+/// rendering: font weights by name or number, `display` values old WebKit reports with
+/// the `-webkit-` prefix the CSS used (`-webkit-flex`), and the `overflow: clip`
+/// Chromium's built-in style gives images (replaced elements don't overflow either way).
 fn normalized(tag: &str, property: &str, value: &str) -> String {
 	let value = normalize_style(value);
 	match (property, value.as_str()) {
 		("font-weight", "normal") => "400".into(),
 		("font-weight", "bold") => "700".into(),
+		("display", prefixed) if prefixed.starts_with("-webkit-") => {
+			prefixed["-webkit-".len()..].into()
+		}
 		("overflow-x" | "overflow-y", "clip") if matches!(tag, "img" | "canvas" | "video") => {
 			"visible".into()
 		}
@@ -290,9 +294,25 @@ fn close_numbers(a: &str, b: &str) -> bool {
 /// - lengths it snapped to whole pixels (e.g. `auto` margins: 422px + 423px where
 ///   Chromium computes 422.5px twice);
 /// - numbers it stored with less precision ([`close_numbers`]);
-/// - `z-index: 0` for elements that form a stacking context without one (`auto`);
+/// - `z-index: 0` for elements that form a stacking context without one (`auto`), and
+///   `auto` for static elements, where z-index does nothing (Chromium reports the
+///   declared value);
 /// - the declared border width on a side with no border style (the spec computes 0).
+///
+/// It also allows what our compatibility layer changes without changing the box:
+/// `top`, `bottom` and the vertical margins of absolutely positioned boxes centred
+/// between their insets by `auto` margins (`host/compat.js` rewrites those insets).
+/// The golden can't tell those apart from other absolutely positioned boxes with equal
+/// vertical margins, so those properties are left out for all of them; their boxes are
+/// still compared, so a box out of place still shows.
 fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
+	let golden_style = |key: &str| {
+		golden
+			.style
+			.iter()
+			.find(|(k, _)| k == key)
+			.map(|(_, v)| v.as_str())
+	};
 	if theirs == mine {
 		return true;
 	}
@@ -305,11 +325,18 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
 		return true;
 	}
 	match property {
-		"z-index" => matches!((theirs, mine), ("0", "auto") | ("auto", "0")),
-		p if p.starts_with("border-") && p.ends_with("-width") => golden
-			.style
-			.iter()
-			.any(|(k, v)| k == "border-top-style" && matches!(v.as_str(), "none" | "hidden")),
+		"z-index" => {
+			matches!((theirs, mine), ("0", "auto") | ("auto", "0"))
+				|| (theirs == "auto" && golden_style("position") == Some("static"))
+		}
+		p if p.starts_with("border-") && p.ends_with("-width") => {
+			matches!(golden_style("border-top-style"), Some("none" | "hidden"))
+		}
+		"top" | "bottom" | "margin-top" | "margin-bottom" => {
+			golden_style("position") == Some("absolute")
+				&& golden_style("margin-top").is_some()
+				&& golden_style("margin-top") == golden_style("margin-bottom")
+		}
 		_ => false,
 	}
 }
