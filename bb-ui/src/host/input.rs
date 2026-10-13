@@ -88,15 +88,47 @@ impl Key {
 	}
 }
 
-/// The virtual-key code and modifiers that type `c` on a US layout. Characters
-/// without their own key here (punctuation, other scripts) get code 0, which
-/// vanilla's text fields refuse, as they refused those keys' real codes.
+/// The US-layout keys for punctuation: the unshifted and shifted characters, and the
+/// key's virtual-key code (`VK_OEM_*`).
+const PUNCTUATION: [(char, char, i32); 11] = [
+	(';', ':', 0xBA),
+	('=', '+', 0xBB),
+	(',', '<', 0xBC),
+	('-', '_', 0xBD),
+	('.', '>', 0xBE),
+	('/', '?', 0xBF),
+	('`', '~', 0xC0),
+	('[', '{', 0xDB),
+	('\\', '|', 0xDC),
+	(']', '}', 0xDD),
+	('\'', '"', 0xDE),
+];
+
+/// The digit keys' shifted characters, from `1` to `0`.
+const SHIFTED_DIGITS: &str = "!@#$%^&*()";
+
+/// The virtual-key code and modifiers that type `c` on a US layout. Characters the
+/// layout has no key for (other scripts) get code 0. Vanilla's text fields refuse
+/// codes above `Z`, so punctuation never reached them in the original either.
 fn key_for(c: char) -> (i32, u32) {
 	match c {
 		'a'..='z' => (c.to_ascii_uppercase() as i32, 0),
 		'A'..='Z' => (c as i32, SHIFT_DOWN),
 		'0'..='9' | ' ' => (c as i32, 0),
-		_ => (0, 0),
+		_ => {
+			if let Some(i) = SHIFTED_DIGITS.find(c) {
+				return (b"1234567890"[i] as i32, SHIFT_DOWN);
+			}
+			for (plain, shifted, code) in PUNCTUATION {
+				if c == plain {
+					return (code, 0);
+				}
+				if c == shifted {
+					return (code, SHIFT_DOWN);
+				}
+			}
+			(0, 0)
+		}
 	}
 }
 
@@ -157,7 +189,12 @@ mod tests {
 		assert_eq!(key_for('B'), (66, SHIFT_DOWN));
 		assert_eq!(key_for('7'), (55, 0));
 		assert_eq!(key_for(' '), (32, 0));
-		assert_eq!(key_for('-'), (0, 0));
+		assert_eq!(key_for('-'), (0xBD, 0));
+		assert_eq!(key_for('_'), (0xBD, SHIFT_DOWN));
+		assert_eq!(key_for('!'), ('1' as i32, SHIFT_DOWN));
+		assert_eq!(key_for(')'), ('0' as i32, SHIFT_DOWN));
+		assert_eq!(key_for('"'), (0xDE, SHIFT_DOWN));
+		assert_eq!(key_for('é'), (0, 0));
 	}
 
 	#[test]
