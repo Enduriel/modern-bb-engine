@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{SQVM, SqArray, SqStrongRef, SqTable};
+use squirrel::{Retained, SQVM, SqArray, SqStrongRef, SqTable};
 
 use crate::class::{inherit, is_kind_of, new_instance, prototype};
 use crate::error::ScriptError;
@@ -112,8 +112,14 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		}
 		{
 			let state = self.state.clone();
-			vm.register("isKindOf", move |obj: SqTable, name: &str| {
-				is_kind_of(&state, obj, name)
+			// `isKindOf` must accept ANY value for the object (BB calls e.g.
+			// `isKindOf("trait.oath_of_honor", "skill")` with a plain string and
+			// expects `false`, not a type error). Take it as a `Retained` (typemask
+			// `.`), and only walk the chain when it is actually a table/instance.
+			vm.register("isKindOf", move |vm: &SQVM, obj: Retained, name: &str| {
+				obj.0
+					.as_table(vm)
+					.is_some_and(|t| is_kind_of(&state, t, name))
 			});
 		}
 		self.install_io(vm);
