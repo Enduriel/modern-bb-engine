@@ -7,6 +7,7 @@
 //! Future: `table`, `class`, `instance` (see `FUTURE_EXPANSION.md`).
 
 mod array;
+mod bind;
 mod deep;
 mod dynamic;
 mod table;

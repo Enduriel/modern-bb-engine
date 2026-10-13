@@ -23,8 +23,8 @@ use crate::{CallArgs, SQ_OK, SQVM, SqObjectType, SqStrongRef};
 /// globals.set("MyArray", SqArray::new(&vm));
 /// ```
 pub struct SqTable<'vm> {
-	vm: &'vm SQVM,
-	obj: squirrel_sys::HSQOBJECT,
+	pub(super) vm: &'vm SQVM,
+	pub(super) obj: squirrel_sys::HSQOBJECT,
 }
 
 impl<'vm> SqTable<'vm> {
@@ -92,6 +92,24 @@ impl<'vm> SqTable<'vm> {
 			self.vm.push_string(key); // [table, key]
 			if squirrel_sys::sq_get(ptr, -2) != SQ_OK {
 				squirrel_sys::sq_pop(ptr, 1); // sq_get popped the key; pop table
+				return None;
+			}
+			// [table, value]
+			let value = V::read(self.vm, -1);
+			squirrel_sys::sq_pop(ptr, 2);
+			value
+		}
+	}
+
+	/// The value at `key` in THIS table only (no delegate fallthrough, like
+	/// `t.rawget(key)`), read as `V`; `None` if absent or not a `V`.
+	pub fn get_owned<V: SqValue>(&self, key: &str) -> Option<V::Item<'vm>> {
+		let ptr = self.vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [table]
+			self.vm.push_string(key); // [table, key]
+			if squirrel_sys::sq_rawget(ptr, -2) != SQ_OK {
+				squirrel_sys::sq_pop(ptr, 1); // sq_rawget popped the key; pop table
 				return None;
 			}
 			// [table, value]
@@ -272,6 +290,17 @@ impl<'vm> SqTable<'vm> {
 			squirrel_sys::sq_pushobject(ptr, self.obj); // [self]
 			squirrel_sys::sq_pushobject(ptr, delegate.obj); // [self, delegate]
 			squirrel_sys::sq_setdelegate(ptr, -2); // sets self's delegate; pops delegate -> [self]
+			squirrel_sys::sq_pop(ptr, 1);
+		}
+	}
+
+	/// Remove this table's delegate (reads of a missing key no longer fall through).
+	pub fn clear_delegate(&mut self) {
+		let ptr = self.vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [self]
+			squirrel_sys::sq_pushnull(ptr); // [self, null]
+			squirrel_sys::sq_setdelegate(ptr, -2); // pops null -> [self]
 			squirrel_sys::sq_pop(ptr, 1);
 		}
 	}

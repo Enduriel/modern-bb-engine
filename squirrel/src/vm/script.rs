@@ -6,7 +6,7 @@ use std::ffi::{c_char, c_void};
 use squirrel_sys::SQUserPointer;
 
 use super::SQVM;
-use crate::SQ_OK;
+use crate::{SQ_OK, SqStrongRef};
 
 /// Drops the `T` stored in a userdata block when Squirrel frees it.
 unsafe extern "C" fn release_hook<T>(ptr: SQUserPointer, _size: i64) -> i64 {
@@ -56,6 +56,29 @@ impl SQVM {
 				squirrel_sys::sq_pop(ptr, 1); // pop closure
 				Err(message)
 			}
+		}
+	}
+
+	/// Compile `source` into a closure without running it (e.g. to flag it with
+	/// [`SqStrongRef::set_f32_math`] first). Run it with [`SqStrongRef::call`].
+	pub fn compile(&self, source: &str, source_name: &str) -> Result<SqStrongRef, String> {
+		let ptr = self.as_ptr();
+		let name = std::ffi::CString::new(source_name)
+			.unwrap_or_else(|_| std::ffi::CString::new("script").unwrap());
+		unsafe {
+			if squirrel_sys::sq_compilebuffer(
+				ptr,
+				source.as_ptr() as *const c_char,
+				source.len() as i64,
+				name.as_ptr(),
+				1,
+			) != SQ_OK
+			{
+				return Err(format!("failed to compile {source_name}"));
+			}
+			let closure = SqStrongRef::from_stack(self, -1);
+			squirrel_sys::sq_pop(ptr, 1);
+			Ok(closure)
 		}
 	}
 

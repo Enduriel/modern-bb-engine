@@ -188,6 +188,18 @@ impl<T> Clone for SqClass<T> {
 }
 
 impl<T: 'static> SqClass<T> {
+	/// Run `f` on the payload of `instance`, if it is a native instance carrying a `T`
+	/// (checked by typetag and `TypeId`); `None` otherwise. For host code that keeps
+	/// strong refs to its instances and needs their state back (e.g. to save it).
+	/// No script runs inside `f`, so the borrow can't be observed by script code.
+	pub fn with_payload<R>(&self, vm: &SQVM, instance: &SqStrongRef, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+		instance.push(vm); // [instance]
+		let payload = unsafe { super::payload::payload_ptr::<T>(vm, -1) };
+		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) }; // []
+		// The caller's strong ref keeps the instance (and so the payload) alive.
+		payload.map(|p| f(unsafe { &mut (*p).value }))
+	}
+
 	/// Create an instance carrying `value` as its payload, returned as an owned
 	/// strong reference (so it can be the return value of a factory native fn).
 	///

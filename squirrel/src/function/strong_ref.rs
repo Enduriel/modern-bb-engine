@@ -214,6 +214,28 @@ impl SqStrongRef {
 		}
 	}
 
+	/// Assign member `key` on this object (`obj.key = value`): the write counterpart to
+	/// [`get_member`](Self::get_member). Uses `sq_set`, so a native instance's `_set`
+	/// metamethod runs (e.g. `tile.IsOccupied = true`); like a script assignment it does
+	/// not create a missing table slot.
+	pub fn set_member<V: SqValue>(&self, vm: &SQVM, key: &str, value: V) -> Result<(), String> {
+		let ptr = vm.as_ptr();
+		unsafe {
+			self.push(vm); // [obj]
+			vm.push_string(key); // [obj, key]
+			value.push_value(vm); // [obj, key, value]
+			let ok = squirrel_sys::sq_set(ptr, -3) == SQ_OK; // pops key + value -> [obj]
+			squirrel_sys::sq_pop(ptr, 1);
+			if ok {
+				Ok(())
+			} else {
+				let message = read_last_error(vm);
+				squirrel_sys::sq_reseterror(ptr);
+				Err(format!("set '{key}': {message}"))
+			}
+		}
+	}
+
 	/// Call the referenced closure and read its return value as `R`, or `None` if
 	/// the return value is not an `R`.
 	pub fn call_ret<'a, R: SqValue, A: CallArgs>(

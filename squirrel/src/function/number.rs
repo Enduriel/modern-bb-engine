@@ -28,6 +28,20 @@ impl SqArg for Number {
 	}
 }
 
+/// As a container element ([`SqArray::to_vec`](crate::SqArray::to_vec),
+/// [`SqTable::get`](crate::SqTable::get)), `Number` reads an integer *or* a float as
+/// `f64`. A strict `f64` read skips integers, which silently shifts every index of a
+/// mixed array like `[0, 10.0, 15.38]`.
+impl crate::SqValue for Number {
+	type Item<'a> = Number;
+	fn push_value(self, vm: &SQVM) {
+		vm.push_float(self.0);
+	}
+	fn read<'a>(vm: &'a SQVM, idx: i64) -> Option<Number> {
+		<Number as SqArg>::from_sq(vm, idx).ok()
+	}
+}
+
 /// A number argument/return that *preserves* whether it was an integer or a float.
 ///
 /// Unlike [`Number`] (which always yields `f64`), `DynNumber` remembers the kind,

@@ -243,3 +243,26 @@ fn native_methods_mutate_the_payload_and_coexist_with_properties() {
 	vm.run_script(r#"makePoint(0.0, 0.0).nope;"#, "unknown_member")
 		.expect_err("an unknown member still errors");
 }
+
+#[test]
+fn host_reads_and_writes_an_instance_payload() {
+	let mut vm = SQVM::new(1024);
+	let point = ClassBuilder::<Point>::new("Point")
+		.property("X", |p| p.x, |p, x| p.x = x)
+		.property("Y", |p| p.y, |p, y| p.y = y)
+		.build(&mut vm);
+	let other = ClassBuilder::<u8>::new("Other").build(&mut vm);
+	let instance = point.instantiate(&vm, Point { x: 1.0, y: 2.0 });
+
+	// Script writes, host reads; host writes, script reads.
+	crate::SqTable::root(&vm).set("p", instance.clone());
+	vm.run_script("::p.X = 5.0;", "set").unwrap();
+	assert_eq!(point.with_payload(&vm, &instance, |p| p.x), Some(5.0));
+	point.with_payload(&vm, &instance, |p| p.y = 9.0);
+	vm.run_script("assert(::p.Y == 9.0);", "check").unwrap();
+
+	// A different payload type (or a non-instance) yields None.
+	assert_eq!(other.with_payload(&vm, &instance, |v| *v), None);
+	let table = crate::SqTable::new(&vm).to_strong();
+	assert!(point.with_payload(&vm, &table, |p| p.x).is_none());
+}
