@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against eleven kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against twenty-one kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -15,6 +15,9 @@
 //! checkpoints are left out.
 //!
 //! Pinned as in `combat_trace.rs`: the combat seed, the wall-clock reseed, idle sounds.
+//! Ghosts also redraw their jitter in `onRender` whenever a sprite animation ends
+//! (virtual time, so frame timing): with `pin_render`, draws made from `onRender` answer
+//! without drawing, in both engines.
 //! Forest maps take ~33,000 draws to generate; the fights add the rest.
 //!
 //! Skips if no Steam install. Slow in debug builds: each test runs all of worldgen first.
@@ -37,6 +40,8 @@ struct Scenario {
 	checkpoints: &'static [(i64, i64)],
 	/// `Tactical.Entities.getCombatResult()` at the end.
 	result: i64,
+	/// Draws from `onRender` don't draw (see above).
+	pin_render: bool,
 }
 
 /// The trace: counts and hashes 2-arg draws and records the checkpoints, pins what
@@ -44,15 +49,16 @@ struct Scenario {
 /// (`::__combatTrace()`). Integer arithmetic stays below 2^31 (the original's integers
 /// are 32-bit).
 const TRACE: &str = r#"
-::__rng <- { n = 0, h = 0, on = false, end = @end@, marks = [] };
+::__rng <- { n = 0, h = 0, on = false, end = @end@, marks = [], pin = @pin@ };
 local origRand = ::Math.rand;
 local origSeed = ::Math.seedRandom;
 ::Math.rand = function( ... )
 {
 	if (vargv.len() == 0) return origRand();
 	local a = vargv[0], b = vargv[1];
-	local r = origRand(a, b);
 	local t = ::__rng;
+	if (t.on && t.pin) { local caller = ::getstackinfos(2); if (caller != null && caller.func == "onRender") return a; }
+	local r = origRand(a, b);
 	t.n++;
 	t.h = (t.h * 33 + (r.tointeger() % 65521) + (a.tointeger() % 65521) * 3 + (b.tointeger() % 65521) * 5) % 1000003;
 	if (t.h < 0) t.h += 1000003;
@@ -129,6 +135,7 @@ fn fight(s: &Scenario) {
 	let end = s.checkpoints.last().expect("checkpoints").0;
 	let trace = TRACE
 		.replace("@end@", &end.to_string())
+		.replace("@pin@", if s.pin_render { "true" } else { "false" })
 		.replace("@spawn@", s.spawn)
 		.replace("@resources@", &s.resources.to_string())
 		.replace("@faction@", s.faction)
@@ -196,6 +203,7 @@ fn direwolves_in_a_forest() {
 			(34026, 277739),
 		],
 		result: 4,
+		pin_render: false,
 	});
 }
 
@@ -208,6 +216,7 @@ fn zombies_in_a_swamp() {
 		terrain: "tactical.swamp",
 		checkpoints: &[(2000, 221684), (4000, 414143), (6000, 490493), (8000, 964468), (10000, 845059), (11012, 654739)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -220,6 +229,7 @@ fn goblin_raiders_in_the_hills() {
 		terrain: "tactical.hills",
 		checkpoints: &[(2000, 816665), (4000, 403605), (6000, 4943), (8000, 79192), (8025, 319982)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -233,6 +243,7 @@ fn bandit_raiders_on_the_plains() {
 		// No 8000: the recompute breaks at draw 7833 (a bound of 318.99…).
 		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8217, 683224)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -245,6 +256,7 @@ fn orc_raiders_on_the_steppe() {
 		terrain: "tactical.steppe",
 		checkpoints: &[(4000, 233155), (7525, 620450)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -258,6 +270,7 @@ fn nomad_raiders_in_the_desert() {
 		// The original's own end hash only (the recompute breaks on a float bound).
 		checkpoints: &[(5238, 376116)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -270,6 +283,7 @@ fn alps_in_autumn_leaves() {
 		terrain: "tactical.forest_leaves",
 		checkpoints: &[(32254, 39770)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -282,6 +296,7 @@ fn a_lindwurm_in_steppe_hills() {
 		terrain: "tactical.hills_steppe",
 		checkpoints: &[(4000, 223370), (7332, 453358)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -294,6 +309,7 @@ fn an_unhold_in_tundra_hills() {
 		terrain: "tactical.hills_tundra",
 		checkpoints: &[(4000, 483870), (6646, 590551)],
 		result: 3,
+		pin_render: false,
 	});
 }
 
@@ -306,6 +322,7 @@ fn spiders_in_a_forest() {
 		terrain: "tactical.forest",
 		checkpoints: &[(16000, 109235), (34489, 96309)],
 		result: 4,
+		pin_render: false,
 	});
 }
 
@@ -318,5 +335,141 @@ fn ghouls_in_autumn() {
 		terrain: "tactical.autumn",
 		checkpoints: &[(4000, 779157), (7898, 720896)],
 		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn a_necromancer_in_the_tundra() {
+	fight(&Scenario {
+		spawn: "Necromancer",
+		resources: 100,
+		faction: "Zombies",
+		terrain: "tactical.tundra",
+		// The original's own end hash only (the recompute breaks on a float bound).
+		checkpoints: &[(7487, 839311)],
+		result: 4,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn hexen_in_a_swamp() {
+	fight(&Scenario {
+		spawn: "HexenAndMore",
+		resources: 80,
+		faction: "Beasts",
+		terrain: "tactical.swamp",
+		checkpoints: &[(4000, 414143), (8000, 964468), (10476, 18822)],
+		result: 4,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn a_schrat_in_a_snowy_forest() {
+	fight(&Scenario {
+		spawn: "Schrats",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.forest_snow",
+		checkpoints: &[(4000, 279844), (12000, 197177), (25434, 721833)],
+		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn serpents_in_the_desert() {
+	fight(&Scenario {
+		spawn: "Serpents",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.desert",
+		checkpoints: &[(4000, 329691), (4824, 57370)],
+		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn sand_golems_in_desert_hills() {
+	fight(&Scenario {
+		spawn: "SandGolems",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.hills_desert",
+		checkpoints: &[(4000, 925438), (4577, 653931)],
+		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn barbarians_in_the_snow() {
+	fight(&Scenario {
+		spawn: "Barbarians",
+		resources: 100,
+		faction: "Barbarians",
+		terrain: "tactical.snow",
+		checkpoints: &[(4000, 307276), (6046, 206481)],
+		result: 4,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn noble_troops_on_the_plains() {
+	fight(&Scenario {
+		spawn: "Noble",
+		resources: 120,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		// Fought as bandits (a noble house isn't hostile to a new company). The original's own end hash only (the recompute breaks on a float bound).
+		checkpoints: &[(8090, 852691)],
+		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn southern_troops_in_desert_hills() {
+	fight(&Scenario {
+		spawn: "Southern",
+		resources: 120,
+		faction: "OrientalBandits",
+		terrain: "tactical.hills_desert",
+		// Fought as nomads (a city state isn't hostile). The original's own end hash only (the recompute breaks on a float bound).
+		checkpoints: &[(5081, 584868)],
+		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn the_undead_army_in_the_tundra() {
+	fight(&Scenario {
+		spawn: "UndeadArmy",
+		resources: 120,
+		faction: "Undead",
+		terrain: "tactical.tundra",
+		// The original's own end hash only (the recompute breaks on a float bound).
+		checkpoints: &[(7086, 834004)],
+		result: 3,
+		pin_render: false,
+	});
+}
+
+#[test]
+fn ghosts_in_the_snow() {
+	fight(&Scenario {
+		spawn: "Ghosts",
+		resources: 60,
+		faction: "Undead",
+		terrain: "tactical.snow",
+		// The original's own end hash only (the recompute breaks on a float bound).
+		checkpoints: &[(4986, 815848)],
+		result: 3,
+		pin_render: true,
 	});
 }
