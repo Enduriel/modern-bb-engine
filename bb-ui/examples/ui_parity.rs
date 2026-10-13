@@ -3,14 +3,17 @@
 //! script, and list how it differs from the original's.
 //!
 //! Run: `cargo run -p bb-ui --features cef --example ui_parity -- [data-dir]
-//!       [--goldens DIR] [--dump DIR] [--limit N]`
+//!       [--goldens DIR] [--dump DIR] [--limit N] [--world]`
 //!
 //! `--dump DIR` also writes our snapshots there (`<screen>.json`) for a closer look.
-//! The goldens come from `bb-ui/probes/ui_goldens.js` (see `bb-ui/probes/README.md`).
+//! `--world` then starts a campaign as the world golden's probe does and compares the
+//! world screen too. The goldens come from `bb-ui/probes/ui_goldens.js` and
+//! `world_golden.js` (see `bb-ui/probes/README.md`).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{HostConfig, UiSession, goldens};
@@ -21,6 +24,7 @@ struct Options {
 	goldens: PathBuf,
 	dump: Option<PathBuf>,
 	limit: usize,
+	world: bool,
 }
 
 fn parse_options() -> Result<Options, String> {
@@ -29,6 +33,7 @@ fn parse_options() -> Result<Options, String> {
 		goldens: goldens::default_dir(),
 		dump: None,
 		limit: 40,
+		world: false,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -36,6 +41,7 @@ fn parse_options() -> Result<Options, String> {
 		match arg.as_str() {
 			"--goldens" => options.goldens = PathBuf::from(value()?),
 			"--dump" => options.dump = Some(PathBuf::from(value()?)),
+			"--world" => options.world = true,
 			"--limit" => options.limit = value()?.parse().map_err(|e| format!("--limit: {e}"))?,
 			_ if !arg.starts_with("--") => options.data_dir = PathBuf::from(arg),
 			_ => return Err(format!("unknown option {arg}")),
@@ -86,13 +92,24 @@ fn run(options: Options) -> Result<(), String> {
 	let session = UiSession::start(&options.data_dir, config, false)?;
 	session.boot_menu()?;
 
-	for (name, ours) in goldens::capture(&session)? {
-		let golden = goldens::load(&options.goldens, name)?;
+	let mut snapshots = goldens::capture(&session)?;
+	if options.world {
+		session.click_when_ready("Cancel", Duration::from_secs(30))?;
+		snapshots.extend(goldens::capture_world(&session)?);
+	}
+	for (name, ours) in snapshots {
 		if let Some(dir) = &options.dump {
 			std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 			std::fs::write(dir.join(format!("{name}.json")), ours.to_json().to_text())
 				.map_err(|e| e.to_string())?;
 		}
+		let golden = match goldens::load(&options.goldens, name) {
+			Ok(golden) => golden,
+			Err(error) => {
+				println!("\n=== {name}: no golden ({error}) ===");
+				continue;
+			}
+		};
 		let differences = compare(&golden, &ours, &goldens::tolerance(name));
 		let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
 		for difference in &differences {
