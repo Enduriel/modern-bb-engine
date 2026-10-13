@@ -1,8 +1,11 @@
-//! UI parity with the original. Two checks on one page:
+//! UI parity with the original. Three checks on one page, in order:
 //!   * `matches_the_originals_screens`: our page, driven through the main menu, the
 //!     new-campaign page and the Options screen, matches the original's snapshots
 //!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
 //!     boxes and the compared styles, within `goldens::tolerance`;
+//!   * `matches_the_originals_world`: likewise for a new campaign started as the
+//!     probe harness starts it: the intro event, the world screen, the character
+//!     screen and the nearest town (`probes/world_golden.js`);
 //!   * `follows_the_originals_layout_rules`: `probes/layout_rules.js` gets the
 //!     original's answers (`tests/goldens/layout_rules.json`) in our page.
 //!
@@ -15,11 +18,12 @@
 
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
-use bb_ui::parity::compare;
+use bb_ui::parity::{Snapshot, compare};
 
 const LAYOUT_PROBE: &str = include_str!("../probes/layout_rules.js");
 
@@ -65,16 +69,27 @@ fn report(differences: Vec<String>) -> Result<(), String> {
 	}
 }
 
-fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
+/// The differences of each snapshot from its golden.
+fn compare_all(snapshots: Vec<(&str, Snapshot)>) -> Result<(), String> {
 	let dir = goldens::default_dir();
 	let mut differences = Vec::new();
-	for (name, ours) in goldens::capture(session)? {
+	for (name, ours) in snapshots {
 		let golden = goldens::load(&dir, name)?;
 		for difference in compare(&golden, &ours, &goldens::tolerance(name)) {
 			differences.push(format!("{name}: {difference}"));
 		}
 	}
 	report(differences)
+}
+
+fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
+	compare_all(goldens::capture(session)?)
+}
+
+/// Runs after the menu screens: it leaves Options and starts a campaign.
+fn matches_the_originals_world(session: &UiSession) -> Result<(), String> {
+	session.click_when_ready("Cancel", Duration::from_secs(30))?;
+	compare_all(goldens::capture_world(session)?)
 }
 
 /// Runs after the screens: the probe leaves its font samples in the page.
@@ -118,11 +133,12 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, Check); 2] = [
+	let checks: [(&str, Check); 3] = [
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,
 		),
+		("matches_the_originals_world", matches_the_originals_world),
 		(
 			"follows_the_originals_layout_rules",
 			follows_the_originals_layout_rules,
