@@ -1,0 +1,322 @@
+//! End-to-end: scripted battles against eleven kinds of enemies are **draw-exact**
+//! against the original game, start to finish. From a new campaign (fixed seed), a battle against
+//! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
+//! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
+//! through the AI (a `military_melee_agent` per brother, as a charm would), so both
+//! sides' decisions run through the engine. The 2-arg `Math.rand` stream from the
+//! battle's start (count and running hash, as in `combat_trace.rs`) must match the one
+//! captured from the original (2026-10-13) at every checkpoint up to the last draw
+//! before the battle ends, and the battle must end with
+//! the same result.
+//!
+//! The checkpoints are the original's running hash, recomputed from its logged draws,
+//! plus the end hash it logged itself. A logged bound can hide a float just below an
+//! integer (`319` for 318.99…), which breaks the recompute from there on: such
+//! checkpoints are left out.
+//!
+//! Pinned as in `combat_trace.rs`: the combat seed, the wall-clock reseed, idle sounds.
+//! Forest maps take ~33,000 draws to generate; the fights add the rest.
+//!
+//! Skips if no Steam install. Slow in debug builds: each test runs all of worldgen first.
+
+use std::path::Path;
+
+use bb_engine::harness;
+use squirrel::{SqArray, SqTable};
+
+/// One battle: what is spawned, where, and what the original did.
+struct Scenario {
+	/// `Const.World.Spawn` list.
+	spawn: &'static str,
+	resources: i64,
+	/// `Const.FactionType` the enemies belong to.
+	faction: &'static str,
+	terrain: &'static str,
+	/// `(draw count, running hash)` in the original: every 2000 draws (where
+	/// recomputable) and at the last draw before the battle ends.
+	checkpoints: &'static [(i64, i64)],
+	/// `Tactical.Entities.getCombatResult()` at the end.
+	result: i64,
+}
+
+/// The trace: counts and hashes 2-arg draws and records the checkpoints, pins what
+/// can't match, hands the company to the AI, and sets up and offers the battle
+/// (`::__combatTrace()`). Integer arithmetic stays below 2^31 (the original's integers
+/// are 32-bit).
+const TRACE: &str = r#"
+::__rng <- { n = 0, h = 0, on = false, end = @end@, marks = [] };
+local origRand = ::Math.rand;
+local origSeed = ::Math.seedRandom;
+::Math.rand = function( ... )
+{
+	if (vargv.len() == 0) return origRand();
+	local a = vargv[0], b = vargv[1];
+	local r = origRand(a, b);
+	local t = ::__rng;
+	t.n++;
+	t.h = (t.h * 33 + (r.tointeger() % 65521) + (a.tointeger() % 65521) * 3 + (b.tointeger() % 65521) * 5) % 1000003;
+	if (t.h < 0) t.h += 1000003;
+	if (t.on && (t.n % 2000 == 0 || t.n == t.end)) t.marks.push([t.n, t.h]);
+	return r;
+};
+::Math.seedRandom = function( _s )
+{
+	if (::__rng.on && _s == ::Time.getRealTime()) _s = 999;
+	return origSeed(_s);
+};
+::__combatTrace <- function()
+{
+	::World.State.m.IsAutosaving = false;
+	::Const.Sound.IdleSoundBaseDelay = 1.0e9;
+	::Const.Sound.IdleSoundMinDelay = 1.0e9;
+	local st = ::World.State.get();
+	// The battle itself starts with startScriptedCombat() (no args).
+	local orig = st.startScriptedCombat;
+	st.startScriptedCombat <- function( ... )
+	{
+		if (vargv.len() == 0)
+		{
+			::Math.seedRandom(4242);
+			this.m.CombatSeed = 777;
+			::__rng.n = 0; ::__rng.h = 0; ::__rng.on = true;
+		}
+		local args = [this];
+		args.extend(vargv);
+		return orig.acall(args);
+	};
+	foreach (bro in ::World.getPlayerRoster().getAll())
+	{
+		local ocs = bro.onCombatStart;
+		bro.onCombatStart <- function()
+		{
+			ocs.call(this);
+			local a = ::new("scripts/ai/tactical/agents/military_melee_agent");
+			a.setActor(this);
+			this.setAIAgent(a);
+			this.m.IsControlledByPlayer = false;
+		};
+		// Back under the player's control for what checks it: death (roster removal),
+		// retreat and the battle's end.
+		foreach (name in ["kill", "retreat", "onCombatFinished"])
+		{
+			local f = bro[name];
+			bro[name] <- function( ... )
+			{
+				this.m.IsControlledByPlayer = true;
+				local args = [this];
+				args.extend(vargv);
+				return f.acall(args);
+			};
+		}
+	}
+	::Math.seedRandom(4242);
+	local p = st.getLocalCombatProperties(st.getPlayer().getPos(), true);
+	p.Entities = [];
+	p.Parties = [];
+	p.TerrainTemplate = "@terrain@";
+	p.CombatID = "Trace";
+	::Const.World.Common.addUnitsToCombat(p.Entities, ::Const.World.Spawn.@spawn@, @resources@, ::World.FactionManager.getFactionOfType(::Const.FactionType.@faction@).getID());
+	st.startScriptedCombat(p, true, true, true);
+};
+"#;
+
+fn fight(s: &Scenario) {
+	let dir = Path::new(harness::STEAM_DATA_DIR);
+	if !dir.exists() {
+		eprintln!("skipping: {} not present", dir.display());
+		return;
+	}
+	let end = s.checkpoints.last().expect("checkpoints").0;
+	let trace = TRACE
+		.replace("@end@", &end.to_string())
+		.replace("@spawn@", s.spawn)
+		.replace("@resources@", &s.resources.to_string())
+		.replace("@faction@", s.faction)
+		.replace("@terrain@", s.terrain);
+	let engine = harness::open_install(dir).expect("open install");
+	harness::boot_menu(&engine).expect("boot the menu");
+	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare the campaign");
+	harness::start_new_campaign(&engine).expect("startNewCampaign");
+	harness::install_autoplay(&engine).expect("autoplay");
+	engine.run_script(&trace, "trace").expect("trace");
+	// As in the capture: ~2 s on the paused world, then the battle is offered and
+	// engaged.
+	for frame in 0..120 {
+		harness::run_frame(&engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("world frame {frame}: {e}"));
+	}
+	engine.run_script("::__autoplayEngage = true; ::__combatTrace();", "engage").expect("engage");
+
+	// Fight until the autoplay leaves the result screen.
+	let root = || SqTable::root(engine.vm());
+	for frame in 0..100_000 {
+		harness::run_frame(&engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("battle frame {frame}: {e}"));
+		if root().get::<i64>("__lastCombatResult").is_some() {
+			break;
+		}
+	}
+	let rng = root().get::<SqTable>("__rng").expect("trace state");
+	let marks = rng.get::<SqArray>("marks").expect("marks");
+	let ours: Vec<(i64, i64)> = (0..marks.len())
+		.map(|i| {
+			let m = marks.get::<SqArray>(i).expect("mark");
+			(m.get::<i64>(0).unwrap(), m.get::<i64>(1).unwrap())
+		})
+		.collect();
+	for expected in s.checkpoints {
+		assert!(ours.contains(expected), "checkpoint {expected:?} (ours: {ours:?})");
+	}
+	assert_eq!(root().get::<i64>("__lastCombatResult"), Some(s.result), "combat result");
+}
+
+#[test]
+fn direwolves_in_a_forest() {
+	fight(&Scenario {
+		spawn: "Direwolves",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.forest",
+		checkpoints: &[
+			(2000, 893634),
+			(4000, 803576),
+			(6000, 689700),
+			(8000, 467933),
+			(10000, 841645),
+			(12000, 707946),
+			(14000, 164004),
+			(16000, 109235),
+			(18000, 326271),
+			(20000, 274510),
+			(22000, 821709),
+			(24000, 87646),
+			(26000, 493294),
+			(28000, 253438),
+			(30000, 333177),
+			(32000, 147238),
+			(34000, 365740),
+			(34026, 277739),
+		],
+		result: 4,
+	});
+}
+
+#[test]
+fn zombies_in_a_swamp() {
+	fight(&Scenario {
+		spawn: "Zombies",
+		resources: 80,
+		faction: "Zombies",
+		terrain: "tactical.swamp",
+		checkpoints: &[(2000, 221684), (4000, 414143), (6000, 490493), (8000, 964468), (10000, 845059), (11012, 654739)],
+		result: 3,
+	});
+}
+
+#[test]
+fn goblin_raiders_in_the_hills() {
+	fight(&Scenario {
+		spawn: "GoblinRaiders",
+		resources: 60,
+		faction: "Goblins",
+		terrain: "tactical.hills",
+		checkpoints: &[(2000, 816665), (4000, 403605), (6000, 4943), (8000, 79192), (8025, 319982)],
+		result: 3,
+	});
+}
+
+#[test]
+fn bandit_raiders_on_the_plains() {
+	fight(&Scenario {
+		spawn: "BanditRaiders",
+		resources: 60,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		// No 8000: the recompute breaks at draw 7833 (a bound of 318.99…).
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8217, 683224)],
+		result: 3,
+	});
+}
+
+#[test]
+fn orc_raiders_on_the_steppe() {
+	fight(&Scenario {
+		spawn: "OrcRaiders",
+		resources: 100,
+		faction: "Orcs",
+		terrain: "tactical.steppe",
+		checkpoints: &[(4000, 233155), (7525, 620450)],
+		result: 3,
+	});
+}
+
+#[test]
+fn nomad_raiders_in_the_desert() {
+	fight(&Scenario {
+		spawn: "NomadRaiders",
+		resources: 100,
+		faction: "OrientalBandits",
+		terrain: "tactical.desert",
+		// The original's own end hash only (the recompute breaks on a float bound).
+		checkpoints: &[(5238, 376116)],
+		result: 3,
+	});
+}
+
+#[test]
+fn alps_in_autumn_leaves() {
+	fight(&Scenario {
+		spawn: "Alps",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.forest_leaves",
+		checkpoints: &[(32254, 39770)],
+		result: 3,
+	});
+}
+
+#[test]
+fn a_lindwurm_in_steppe_hills() {
+	fight(&Scenario {
+		spawn: "Lindwurm",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.hills_steppe",
+		checkpoints: &[(4000, 223370), (7332, 453358)],
+		result: 3,
+	});
+}
+
+#[test]
+fn an_unhold_in_tundra_hills() {
+	fight(&Scenario {
+		spawn: "Unhold",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.hills_tundra",
+		checkpoints: &[(4000, 483870), (6646, 590551)],
+		result: 3,
+	});
+}
+
+#[test]
+fn spiders_in_a_forest() {
+	fight(&Scenario {
+		spawn: "Spiders",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.forest",
+		checkpoints: &[(16000, 109235), (34489, 96309)],
+		result: 4,
+	});
+}
+
+#[test]
+fn ghouls_in_autumn() {
+	fight(&Scenario {
+		spawn: "Ghouls",
+		resources: 60,
+		faction: "Beasts",
+		terrain: "tactical.autumn",
+		checkpoints: &[(4000, 779157), (7898, 720896)],
+		result: 3,
+	});
+}
