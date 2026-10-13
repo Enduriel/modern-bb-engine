@@ -16,3 +16,7 @@ criterion = { version = "0.8.2", default-features = false, features = ["cargo_be
 [[bench]]
 name = "archives"
 harness = false
+
+[[bench]]
+name = "script_cache"
+harness = false

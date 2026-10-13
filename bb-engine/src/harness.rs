@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use squirrel_bb::{Engine, NativeConfig, installed_dlc};
 
-use crate::DatScriptSource;
+use crate::{DatScriptSource, ScriptCache};
 
 /// The data directory of a default Linux Steam install.
 pub const STEAM_DATA_DIR: &str = "~/.local/share/Steam/steamapps/common/Battle Brothers/data";
@@ -33,9 +33,10 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 
 /// An engine over the install at `dir`, configured as the original sees a Steam install:
 /// DLC ownership is whichever DLC archives Steam installed (each ships its own
-/// `scripts/dlc/` init script).
+/// `scripts/dlc/` init script). Transcoded scripts are cached on disk as
+/// [`ScriptCache::from_env`] configures (`BB_SCRIPT_CACHE=off` disables it).
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
-	let source = DatScriptSource::open(data_archives(dir)?)?;
+	let source = DatScriptSource::open(data_archives(dir)?)?.with_cache(ScriptCache::from_env());
 	let config = NativeConfig {
 		is_steam_build: true,
 		owned_dlc: installed_dlc(&source),

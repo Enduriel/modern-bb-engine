@@ -18,7 +18,9 @@ fn bench(c: &mut Criterion) {
 		return;
 	};
 	let mut group = c.benchmark_group("archives");
-	group.sample_size(20).measurement_time(Duration::from_secs(10));
+	group
+		.sample_size(20)
+		.measurement_time(Duration::from_secs(10));
 	group.bench_function("open_all", |b| {
 		b.iter(|| {
 			for p in &paths {

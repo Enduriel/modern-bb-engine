@@ -4,6 +4,9 @@
 //! file ships source — and otherwise falls back to the vanilla `.cnut` (compiled),
 //! which is decrypted + transcoded to our VM's bytecode on the fly.
 //!
+//! With a [`ScriptCache`], a `.cnut`'s transcoded bytecode is kept on disk, keyed on
+//! the archive entry (path, CRC32, size), so a warm start skips decrypt + transcode.
+//!
 //! Archives are passed in **load order** (ascending by filename, the BB rule:
 //! `data_*` then `mod_*`, since `'d' < 'm'`), and a later archive **overrides** an
 //! earlier one — so resolution scans them in reverse and takes the first hit.
@@ -14,6 +17,7 @@ use std::path::Path;
 
 use squirrel_bb::{LoadedScript, ScriptSource};
 
+use crate::script_cache::{CacheKey, ScriptCache};
 use crate::transcode::transcode_cnut;
 use crate::vfs::DatArchive;
 
@@ -23,6 +27,7 @@ pub struct DatScriptSource {
 	// needs `&mut` (it seeks). The module system never holds a borrow across the
 	// VM calls that would re-enter, so this is single-threaded and conflict-free.
 	archives: RefCell<Vec<DatArchive>>,
+	cache: Option<ScriptCache>,
 }
 
 impl DatScriptSource {
@@ -35,7 +40,14 @@ impl DatScriptSource {
 		}
 		Ok(DatScriptSource {
 			archives: RefCell::new(archives),
+			cache: None,
 		})
+	}
+
+	/// Keep transcoded scripts in `cache` (see [`ScriptCache`]).
+	pub fn with_cache(mut self, cache: Option<ScriptCache>) -> Self {
+		self.cache = cache;
+		self
 	}
 }
 
@@ -55,8 +67,30 @@ impl ScriptSource for DatScriptSource {
 		// Otherwise the vanilla compiled `.cnut`, transcoded to our format.
 		let cnut = format!("{path}.cnut");
 		for archive in archives.iter_mut().rev() {
+			let Some(cache) = &self.cache else {
+				if let Some(encrypted) = archive.read(&cnut) {
+					return transcode_cnut(&encrypted).ok().map(LoadedScript::Bytecode);
+				}
+				continue;
+			};
+			let Some((crc32, size)) = archive.entry_meta(&cnut) else {
+				continue;
+			};
+			let archive_path = archive.path().to_path_buf();
+			let key = CacheKey {
+				kind: "cnut",
+				archive: &archive_path,
+				entry: &cnut,
+				crc32,
+				size,
+			};
+			if let Some(bytecode) = cache.get(&key) {
+				return Some(LoadedScript::Bytecode(bytecode));
+			}
 			if let Some(encrypted) = archive.read(&cnut) {
-				return transcode_cnut(&encrypted).ok().map(LoadedScript::Bytecode);
+				let bytecode = transcode_cnut(&encrypted).ok()?;
+				cache.put(&key, &bytecode);
+				return Some(LoadedScript::Bytecode(bytecode));
 			}
 		}
 		None

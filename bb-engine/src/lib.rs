@@ -8,6 +8,7 @@
 //! Current pieces:
 //!   * [`crypt`] — XXTEA, the cipher on the compiled scripts in the `.dat`s
 //!   * [`vfs`]   — reading `.dat` (ZIP) archives
+//!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
 //!   * [`harness`] — headless boot steps over a real install (menu, new campaign)
 //!
 //! Next: the 3.0.4 → current-version bytecode transcoder (the game ships Squirrel
@@ -17,9 +18,11 @@
 pub mod crypt;
 pub mod datsource;
 pub mod harness;
+pub mod script_cache;
 pub mod transcode;
 pub mod vfs;
 
 pub use datsource::DatScriptSource;
+pub use script_cache::ScriptCache;
 pub use transcode::transcode_cnut;
 pub use vfs::DatArchive;

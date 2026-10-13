@@ -8,7 +8,7 @@
 
 use std::fs::File;
 use std::io::{self, BufReader, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
@@ -18,6 +18,7 @@ pub struct DatArchive {
 	/// small reads, each a syscall on a bare `File` (opening vanilla's archives took
 	/// ~120 ms unbuffered, ~7 ms buffered).
 	archive: ZipArchive<BufReader<File>>,
+	path: PathBuf,
 }
 
 impl DatArchive {
@@ -25,9 +26,22 @@ impl DatArchive {
 	/// entries are read on demand (so a multi-GB `data_001.dat` is not loaded
 	/// whole).
 	pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-		let file = BufReader::new(File::open(path)?);
+		let path = path.as_ref().to_path_buf();
+		let file = BufReader::new(File::open(&path)?);
 		let archive = ZipArchive::new(file).map_err(zip_to_io)?;
-		Ok(DatArchive { archive })
+		Ok(DatArchive { archive, path })
+	}
+
+	/// The path the archive was opened from.
+	pub fn path(&self) -> &Path {
+		&self.path
+	}
+
+	/// The CRC32 and uncompressed size the central directory records for `name`, or
+	/// `None` if there is no such entry. Reads no entry data.
+	pub fn entry_meta(&mut self, name: &str) -> Option<(u32, u64)> {
+		let entry = self.archive.by_name(name).ok()?;
+		Some((entry.crc32(), entry.size()))
 	}
 
 	/// The full bytes of the entry at `name`, or `None` if there is no such entry.
