@@ -95,7 +95,7 @@ fn run(options: Options) -> Result<(), String> {
 	let mut snapshots = goldens::capture(&session)?;
 	if options.world {
 		session.click_when_ready("Cancel", Duration::from_secs(30))?;
-		snapshots.extend(goldens::capture_world(&session)?);
+		snapshots.extend(goldens::capture_world(&session, true)?);
 	}
 	for (name, ours) in snapshots {
 		if let Some(dir) = &options.dump {

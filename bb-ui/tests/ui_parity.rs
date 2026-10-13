@@ -89,7 +89,7 @@ fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
 /// Runs after the menu screens: it leaves Options and starts a campaign.
 fn matches_the_originals_world(session: &UiSession) -> Result<(), String> {
 	session.click_when_ready("Cancel", Duration::from_secs(30))?;
-	compare_all(goldens::capture_world(session)?)
+	compare_all(goldens::capture_world(session, false)?)
 }
 
 /// Runs after the screens: the probe leaves its font samples in the page.

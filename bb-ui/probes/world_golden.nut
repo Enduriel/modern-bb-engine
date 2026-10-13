@@ -3,9 +3,17 @@
 // reaches it with SQ.call). Our side (`host::goldens::capture_world`) runs this same
 // file and calls the method directly.
 
+// This runs right after world_state.init(), before the world's first update (the probe
+// harness's campaign mode runs it there; our side, `host::goldens::capture_world`, too).
+
 // Entering a town (and starting a battle) autosaves, which in the original would
 // overwrite the player's own "autosave" slot.
 ::World.State.m.IsAutosaving = false;
+
+// startNewCampaign() ends with `Math.seedRandom(Time.getRealTime())`, and what the world
+// rolls after it (contracts and the town situations they bring, shop stock) differs per
+// run. Pin it, so both engines roll the same.
+::Math.seedRandom(20261013);
 
 ::World.State.m.WorldScreen.probeStep <- function ( _step )
 {
@@ -45,6 +53,36 @@
 
 		::logInfo("PROBE town " + nearest.getName() + " at " + distance);
 		state.enterLocation(nearest);
+	}
+	else if (_step == "leaveTown")
+	{
+		state.town_screen_main_dialog_module_onLeaveButtonClicked();
+	}
+	else if (_step == "combat")
+	{
+		// A bandit ambush as vanilla's events start one, from a fixed generator state:
+		// the steps before may have drawn from it differently.
+		::Math.seedRandom(4242);
+		local properties = state.getLocalCombatProperties(state.getPlayer().getPos());
+		properties.CombatID = "Event";
+		properties.Music = ::Const.Music.BanditTracks;
+		properties.IsAutoAssigningBases = false;
+		properties.Entities = [];
+		::Const.World.Common.addUnitsToCombat(properties.Entities, ::Const.World.Spawn.BanditDefenders, 100, ::Const.Faction.Enemy);
+		state.startScriptedCombat(properties, false, false, true);
+	}
+	else if (_step == "playerTurn")
+	{
+		// Whether the battle waits for the player: one of theirs is up.
+		try
+		{
+			local active = ::Tactical.TurnSequenceBar.getActiveEntity();
+			return active != null && active.isPlayerControlled();
+		}
+		catch( e )
+		{
+			return false;
+		}
 	}
 
 	return null;

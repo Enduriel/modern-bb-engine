@@ -4,7 +4,9 @@
 //   golden_world_intro      the origin's intro event;
 //   golden_world            after its "Huzzah!": the world screen;
 //   golden_world_character  the character screen (the top bar's Brothers button);
-//   golden_world_town       after closing it, the nearest town's screen.
+//   golden_world_town       after closing it, the nearest town's screen;
+//   golden_world_combat     after leaving the town, a bandit ambush (from a reseeded
+//                           generator), once one of the player's men is up.
 // The steps between run through world_golden.nut (`probeStep`). Taken with BBSnapshot
 // (bb-ui/src/parity/snapshot.js, prepended to this file when running it; see
 // README.md). ES5 only.
@@ -40,6 +42,37 @@ function bbStep(step)
 	SQ.call(Screens.WorldScreen.mSQHandle, 'probeStep', step);
 }
 
+// After the 'combat' step: once one of the player's men is up, 3 s more, then the
+// battle's snapshot.
+function bbWaitForPlayerTurn()
+{
+	var waited = 0;
+	var poll = function ()
+	{
+		SQ.call(Screens.WorldScreen.mSQHandle, 'probeStep', 'playerTurn', function (isPlayers)
+		{
+			if (isPlayers === true)
+			{
+				setTimeout(function ()
+				{
+					BbProbe.send('golden_world_combat', BBSnapshot.take());
+					BbProbe.done();
+				}, 3000);
+				return;
+			}
+			waited += 500;
+			if (waited > 180000)
+			{
+				console.error('PROBE_FAIL (js) no player turn after 180 s');
+				BbProbe.done();
+				return;
+			}
+			setTimeout(poll, 500);
+		});
+	};
+	poll();
+}
+
 BbProbe.run = function ()
 {
 	var steps = [
@@ -47,7 +80,8 @@ BbProbe.run = function ()
 		function () { BbProbe.send('golden_world', BBSnapshot.take()); bbStep('character'); },
 		function () { BbProbe.send('golden_world_character', BBSnapshot.take()); bbStep('closeCharacter'); },
 		function () { bbStep('town'); },
-		function () { BbProbe.send('golden_world_town', BBSnapshot.take()); BbProbe.done(); }
+		function () { BbProbe.send('golden_world_town', BBSnapshot.take()); bbStep('leaveTown'); },
+		function () { bbStep('combat'); bbWaitForPlayerTurn(); }
 	];
 	var next = 0;
 	var step = function ()
