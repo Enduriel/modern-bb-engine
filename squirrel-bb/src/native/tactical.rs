@@ -166,6 +166,7 @@ pub(crate) fn install(vm: &mut SQVM) {
 	};
 	let get_highlighter = vm.make_closure(move || highlighter.clone());
 	// Tactical.getWeather(): visual only (see `weather`).
+	super::weather::install_consts(vm);
 	let weather = super::weather::weather(vm);
 	let get_weather = vm.make_closure(move || weather.clone());
 	let mut tactical = SqTable::new(vm);

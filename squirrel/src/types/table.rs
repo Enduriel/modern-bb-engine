@@ -53,6 +53,19 @@ impl<'vm> SqTable<'vm> {
 		}
 	}
 
+	/// The VM's const table (`getconsttable()`): engine-registered enums such as
+	/// `CloudType`, which scripts read at run time or the compiler folds into constants.
+	pub fn const_table(vm: &'vm SQVM) -> Self {
+		let ptr = vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushconsttable(ptr); // [consts]
+			let table = SqTable::from_stack(vm, -1);
+			squirrel_sys::sq_pop(ptr, 1);
+			// The const table is always a table.
+			table.expect("const table")
+		}
+	}
+
 	/// Wrap the table value at stack `idx` as an owned handle (addref'd), or
 	/// `None` if that slot is not a table. Does not change the stack.
 	pub(crate) fn from_stack(vm: &'vm SQVM, idx: i64) -> Option<Self> {
