@@ -9,8 +9,12 @@
 //! - The bridge: `coui://ui/__bb__/call` and `.../resume` are the page's blocking calls
 //!   into the game (see `bootstrap.js`). Each becomes an [`Event::Request`] for the game
 //!   thread, and the page's XHR waits until the game answers through its [`Responder`].
+//! - Procedural images (`coui://procedural/tacticalentity(...)`, `worldentity(...)`):
+//!   the engine composes portraits from entity sprites. That needs the renderer;
+//!   until then they are a transparent placeholder. The original also
+//!   answers 200 with a fallback image when composing fails, never a load error.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use cef::*;
 
@@ -19,6 +23,19 @@ use crate::coui::{UiFiles, mime_type, url_to_path};
 
 /// Where the page's bridge calls go (below the page's own origin, `coui://ui`).
 const BRIDGE_PREFIX: &str = "ui/__bb__/";
+
+/// Where procedural images live.
+const PROCEDURAL_PREFIX: &str = "procedural/";
+
+/// A 1×1 transparent PNG.
+fn blank_image() -> &'static [u8] {
+	static IMAGE: OnceLock<Vec<u8>> = OnceLock::new();
+	IMAGE.get_or_init(|| {
+		let mut png = Vec::new();
+		crate::png::write_rgba(&mut png, 1, 1, &[0, 0, 0, 0]).expect("writing to a Vec");
+		png
+	})
+}
 
 /// The scheme's registration flags.
 pub(super) fn scheme_options() -> i32 {
@@ -144,10 +161,16 @@ wrap_resource_handler! {
 			if let Some(handle) = handle_request {
 				*handle = 1;
 			}
-			match self.files.read(&path) {
-				Some(data) => {
-					*self.body.lock().unwrap_or_else(|e| e.into_inner()) =
-						Some(Body { mime: mime_type(&path), data, offset: 0 });
+			let body = if path.starts_with(PROCEDURAL_PREFIX) {
+				Some(Body { mime: "image/png", data: blank_image().to_vec(), offset: 0 })
+			} else {
+				self.files
+					.read(&path)
+					.map(|data| Body { mime: mime_type(&path), data, offset: 0 })
+			};
+			match body {
+				Some(body) => {
+					*self.body.lock().unwrap_or_else(|e| e.into_inner()) = Some(body);
 					1
 				}
 				// A failed load (the original's "Unable to open file").
