@@ -59,6 +59,13 @@ const OT_FLOAT: u32 = 0x0500_0004;
 // `[ _arg1: i32 (bytes 0..4) ][ op: u8 (byte 4) ][ _arg0, _arg2, _arg3 (bytes 5..8) ]`.
 const OP_LOAD: u8 = 0x01; // TARGET = _literals[arg1]
 const OP_LOADFLOAT: u8 = 0x03; // TARGET = *((SQFloat*)&arg1) — inline, broken under f64
+// `_OP_APPENDARRAY(array, value, kind)`: with kind `AAT_FLOAT` the f32 is inline in
+// `_arg1` just like `OP_LOADFLOAT` (float elements of array literals, e.g.
+// `Const.World.TerrainTypeSpeedMult`), so it is hoisted the same way and switched to
+// `AAT_LITERAL`.
+const OP_APPENDARRAY: u8 = 0x22;
+const AAT_LITERAL: u8 = 1;
+const AAT_FLOAT: u8 = 3;
 
 type TResult<T> = Result<T, String>;
 
@@ -159,9 +166,11 @@ fn transcode_proto(r: &mut Reader, w: &mut Writer) -> TResult<()> {
 		defaultparams.i64(le_i32(dp) as i64);
 	}
 
-	// Instruction pass: rewrite each inline `OP_LOADFLOAT(target, f32)` into an
-	// `OP_LOAD(target, idx)` against a float we append to the literal table (deduped
-	// by raw bit pattern, matching the compiler's `GetNumericConstant`).
+	// Instruction pass: rewrite each inline float immediate — `OP_LOADFLOAT(target,
+	// f32)` and `OP_APPENDARRAY(array, f32, AAT_FLOAT)` — to read a float we append to
+	// the literal table instead (deduped by raw bit pattern, matching the compiler's
+	// `GetNumericConstant`): `OP_LOAD(target, idx)` / `OP_APPENDARRAY(array, idx,
+	// AAT_LITERAL)`.
 	expect_marker(r, PART, "instructions")?;
 	let raw = r.block(ninstructions * 8)?; // SQInstruction = 8 bytes in both
 	let mut instructions = Writer::new();
@@ -169,14 +178,19 @@ fn transcode_proto(r: &mut Reader, w: &mut Writer) -> TResult<()> {
 	let mut hoisted_index: HashMap<u32, i64> = HashMap::new();
 	for ins in raw.chunks_exact(8) {
 		let mut b = [ins[0], ins[1], ins[2], ins[3], ins[4], ins[5], ins[6], ins[7]];
-		if b[4] == OP_LOADFLOAT {
+		let inline_float = b[4] == OP_LOADFLOAT || (b[4] == OP_APPENDARRAY && b[6] == AAT_FLOAT);
+		if inline_float {
 			let bits = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
 			let idx = *hoisted_index.entry(bits).or_insert_with(|| {
 				let i = (nliterals + hoisted.len()) as i64;
 				hoisted.push(f32::from_bits(bits));
 				i
 			});
-			b[4] = OP_LOAD; // op:   _OP_LOADFLOAT -> _OP_LOAD
+			if b[4] == OP_LOADFLOAT {
+				b[4] = OP_LOAD; // op: _OP_LOADFLOAT -> _OP_LOAD
+			} else {
+				b[6] = AAT_LITERAL; // _arg2: AAT_FLOAT -> AAT_LITERAL
+			}
 			b[0..4].copy_from_slice(&(idx as i32).to_le_bytes()); // _arg1: f32 bits -> literal index
 		}
 		instructions.bytes(&b);
