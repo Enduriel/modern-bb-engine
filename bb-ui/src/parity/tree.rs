@@ -14,6 +14,8 @@ pub struct Node {
 	pub rect: [i64; 4],
 	/// The recorded computed styles, in recording order.
 	pub style: Vec<(String, String)>,
+	/// An image the engine draws (`coui://procedural/…`: portraits).
+	pub procedural: bool,
 	pub children: Vec<Node>,
 }
 
@@ -53,6 +55,9 @@ fn node_json(node: &Node) -> Json {
 		("tag".to_string(), Json::Str(node.tag.clone())),
 		("cls".to_string(), Json::Str(node.cls.clone())),
 	];
+	if node.procedural {
+		entries.push(("procedural".into(), Json::Bool(true)));
+	}
 	if let Some(text) = &node.text {
 		entries.push(("text".into(), Json::Str(text.clone())));
 	}
@@ -104,6 +109,7 @@ fn node(json: &Json) -> Result<Node, String> {
 		text: text("text"),
 		rect,
 		style,
+		procedural: json.get("procedural") == Some(&Json::Bool(true)),
 		children,
 	})
 }
@@ -118,6 +124,10 @@ pub struct Tolerance {
 	/// Elements not compared, with their subtrees: those whose path contains one of
 	/// these, e.g. a list whose content depends on the machine (display modes).
 	pub ignore_paths: Vec<String>,
+	/// Whether to compare the boxes and styles of the images the engine draws
+	/// ([`Node::procedural`]: portraits), whose sizes follow what they show. Off by
+	/// default: we draw placeholders until the renderer draws them.
+	pub procedural_images: bool,
 }
 
 impl Default for Tolerance {
@@ -126,6 +136,7 @@ impl Default for Tolerance {
 			pixels: 2,
 			ignore_styles: Vec::new(),
 			ignore_paths: Vec::new(),
+			procedural_images: false,
 		}
 	}
 }
@@ -333,9 +344,28 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
 			matches!(golden_style("border-top-style"), Some("none" | "hidden"))
 		}
 		"top" | "bottom" | "margin-top" | "margin-bottom" => {
+			// Equal margins, or a half pixel apart before old WebKit snapped them (-17.5px
+			// twice reported as -17px and -18px).
+			let margin = |key: &str| golden_style(key).and_then(pixels);
 			golden_style("position") == Some("absolute")
-				&& golden_style("margin-top").is_some()
-				&& golden_style("margin-top") == golden_style("margin-bottom")
+				&& matches!((margin("margin-top"), margin("margin-bottom")), (Some(t), Some(b)) if (t - b).abs() <= 1.0)
+		}
+		// A transform's translation is in pixels: it follows the box's size, which may be
+		// a pixel off (`translateY(-50%)` of an 18px or a 19px label).
+		"transform" => {
+			let ((theirs_text, theirs_numbers), (mine_text, mine_numbers)) =
+				(numbers(theirs), numbers(mine));
+			theirs_text == mine_text
+				&& theirs_text.starts_with("matrix(")
+				&& theirs_numbers.len() == 6
+				&& mine_numbers.len() == 6
+				&& theirs_numbers
+					.iter()
+					.zip(&mine_numbers)
+					.enumerate()
+					.all(|(i, (a, b))| {
+						(a - b).abs() <= if i < 4 { 1.0 / 255.0 + 1e-9 } else { 1.0 }
+					})
 		}
 		_ => false,
 	}
@@ -389,6 +419,10 @@ fn compare_nodes(
 			golden: golden.text.clone(),
 			ours: ours.text.clone(),
 		});
+	}
+	// Either side's mark counts: goldens taken before snapshots marked these lack it.
+	if (golden.procedural || ours.procedural) && !tolerance.procedural_images {
+		return;
 	}
 	// Old WebKit reports an empty box for `<br>`; Chromium, its place in the line.
 	if golden.tag != "br"

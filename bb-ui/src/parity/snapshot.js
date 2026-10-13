@@ -4,7 +4,8 @@
 //
 // BBSnapshot.take(root) -> JSON text of the visible element tree under `root` (default
 // document.body). Each node:
-//   { tag, cls, id?, text?, rect: [x, y, w, h], style: {prop: value}, children: [...] }
+//   { tag, cls, id?, procedural?, text?, rect: [x, y, w, h], style: {prop: value}, children: [...] }
+// (`procedural`: an image the engine draws, from coui://procedural/.)
 // Elements with computed `display: none` are left out (a hidden subtree is not compared).
 // Rects are rounded to whole pixels. `style` holds only the properties in STYLE, which
 // both engines compute; absent or engine-specific properties (-coherent-*, …) are left
@@ -34,6 +35,11 @@ var BBSnapshot = (function ()
 		if (el.id)
 		{
 			node.id = el.id;
+		}
+		// Images the engine draws (portraits): their size follows what they show.
+		if (el.tagName === 'IMG' && (el.getAttribute('src') || '').indexOf('coui://procedural/') === 0)
+		{
+			node.procedural = true;
 		}
 		var text = '';
 		for (var c = el.firstChild; c !== null; c = c.nextSibling)
