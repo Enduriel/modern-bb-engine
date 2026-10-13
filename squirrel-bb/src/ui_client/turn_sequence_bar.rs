@@ -9,7 +9,11 @@
 //! removal of the entity at the front (counting entities already on their way out). It
 //! picks the first entity not being removed, so an entity added mid-turn re-selects the
 //! current one (whose turn then resumes), like the original. Headless, each step and
-//! each removal takes one pump instead of an animation.
+//! each removal takes one pump instead of an animation, and a selection waits for the
+//! pump after a removal (the gap closes first). That leaves the scripts one update in
+//! between, as the animation does: after `pushEntityBack` of the acting entity (which
+//! doesn't lock the bar) the original's next update ends the turn of whoever is now
+//! first before the bar selects it (traced in a hexen battle).
 
 use squirrel::{SQVM, SqStrongRef};
 
@@ -101,7 +105,11 @@ impl TurnSequenceBar {
 			}
 			return Ok(());
 		}
+		let removed = self.entries.iter().any(|e| e.removing);
 		self.entries.retain(|e| !e.removing);
+		if removed {
+			return Ok(());
+		}
 		if self.armed {
 			if let Some(first) = self.entries.first().map(|e| e.id) {
 				self.armed = false;
