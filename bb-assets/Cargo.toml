@@ -3,4 +3,11 @@ name = "bb-assets"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["images"]
+# PNG decoding and the background texture loader. The headless game logic only needs
+# the sprite registry, so it builds without them.
+images = ["dep:png"]
+
 [dependencies]
+png = { version = "0.18.1", optional = true }

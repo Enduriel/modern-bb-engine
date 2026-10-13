@@ -8,6 +8,7 @@
 //! Current pieces:
 //!   * [`assets`] — loading the sprite sheets (`.brush`) at startup
 //!   * [`crypt`] — XXTEA, the cipher on the compiled scripts in the `.dat`s
+//!   * [`files`] — the game's other files (textures, …), readable from any thread
 //!   * [`vfs`]   — reading `.dat` (ZIP) archives
 //!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
 //!   * [`harness`] — headless boot steps over a real install (menu, new campaign)
@@ -19,6 +20,7 @@
 pub mod assets;
 pub mod crypt;
 pub mod datsource;
+pub mod files;
 pub mod harness;
 pub mod script_cache;
 pub mod transcode;
