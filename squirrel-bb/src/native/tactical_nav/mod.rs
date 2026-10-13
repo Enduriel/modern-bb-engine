@@ -3,8 +3,9 @@
 //! ([`settings`]). All reproduced from the original's natives.
 //!
 //! The current path lives here: `findPath` replaces it, `clipPathToDistance`,
-//! `popLastWaypoint` and `clearPath` trim it, and the cost queries read it. Moving a
-//! unit along it (`travel`, `teleport`, `switchEntities`) is not implemented yet.
+//! `popLastWaypoint` and `clearPath` trim it, and the cost queries read it. Units move
+//! along it with `travel` ([`travel`]) or straight to a tile with `teleport`
+//! ([`teleport`]), and swap places with `switchEntities`.
 //!
 //! Host-owned like the other services: it holds script references, so
 //! [`clear`](TacticalNavigator::clear) it before the VM closes.
@@ -15,6 +16,7 @@ mod ground_truth;
 mod heap;
 mod pathfind;
 mod settings;
+mod teleport;
 mod travel;
 
 use std::cell::RefCell;
@@ -33,6 +35,8 @@ struct NavState {
 	units: Units,
 	/// The move in progress (`travel`), if any.
 	travel: Option<travel::Travel>,
+	/// Teleports in progress, in the order they started.
+	teleports: Vec<teleport::Teleport>,
 	settings: Rc<RefCell<NavSettings>>,
 	path: Vec<Step>,
 	settings_class: Option<SqClass<SettingsHandle>>,
@@ -90,6 +94,7 @@ impl TacticalNavigator {
 				path: Vec::new(),
 				settings_class: None,
 				instance: None,
+				teleports: Vec::new(),
 			})),
 		}
 	}
@@ -104,10 +109,12 @@ impl TacticalNavigator {
 		let instance = class.instantiate(vm, NavHandle(self.state.clone()));
 		self.state.borrow_mut().instance = Some(instance.clone());
 		let get = vm.make_closure(move || instance.clone());
-		// Tactical.update(): the original updates the navigator (moving a travelling unit
-		// along its path), the camera shaker and the weather; only the first is logic,
-		// and nothing travels yet.
-		let update = vm.make_closure(|| {});
+		// Tactical.update(): the original updates the navigator (teleports in flight), the
+		// camera shaker and the weather; only the first is logic.
+		let update = {
+			let st = self.state.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<(), String> { teleport::update(&st, vm) })
+		};
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
 			.expect("Tactical table must be installed before TacticalNavigator");
@@ -122,11 +129,8 @@ impl TacticalNavigator {
 		st.settings_class = None;
 		st.path.clear();
 		st.travel = None;
+		st.teleports.clear();
 	}
-}
-
-fn not_yet(name: &str) -> String {
-	format!("TacticalNavigator.{name}: not implemented yet (headless engine)")
 }
 
 /// `getCostForPath`'s result when there's no unit on the map or no path.
@@ -165,6 +169,9 @@ fn cost_table(vm: &SQVM, grid: &Grid, c: &cost::PathCost) -> SqStrongRef {
 
 fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 	ClassBuilder::<NavHandle>::new("TacticalNavigator")
+		// The current path's steps (probed: `findPath`, `clipPathToDistance`,
+		// `popLastWaypoint` and `clearPath` all keep it current; 0 after a failed search).
+		.property("NumPathWaypoints", |n: &NavHandle| n.0.borrow().path.len() as i64, |_n: &mut NavHandle, _v: i64| {})
 		.method("createSettings", |n: &mut NavHandle, vm: &SQVM| -> Option<SqStrongRef> {
 			let st = n.0.borrow();
 			*st.settings.borrow_mut() = NavSettings::default();
@@ -251,20 +258,35 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 				Ok(cost::turns_required(&g, &st.path, &settings, from, ap, target) as f64)
 			},
 		)
-		// isTravelling(entity): whether that unit is moving along a path.
+		// isTravelling(entity): whether any unit is moving along a path (the original asks
+		// that, whoever the entity), or that one is teleporting.
 		.method("isTravelling", |n: &mut NavHandle, vm: &SQVM, entity: Retained| -> bool {
 			let id = unit_identity(vm, &entity.0);
-			n.0.borrow().travel.as_ref().is_some_and(|t| t.identity == id)
+			let st = n.0.borrow();
+			st.travel.is_some() || st.teleports.iter().any(|t| t.identity == id)
 		})
 		.property("HasValidPath", |n: &NavHandle| !n.0.borrow().path.is_empty(), |_n: &mut NavHandle, _v: bool| {})
-		.property("IsTravelling", |n: &NavHandle| n.0.borrow().travel.is_some(), |_n: &mut NavHandle, _v: bool| {})
+		.property(
+			"IsTravelling",
+			|n: &NavHandle| {
+				let st = n.0.borrow();
+				st.travel.is_some() || !st.teleports.is_empty()
+			},
+			|_n: &mut NavHandle, _v: bool| {},
+		)
 		// travel(entity, ap, fatigue): start or continue moving along the path (see
 		// `travel`); true while the move is under way.
 		.method("travel", |n: &mut NavHandle, vm: &SQVM, entity: Retained, _ap: Number, _fatigue: Number| -> Result<bool, String> {
 			travel::travel(&n.0, vm, &entity.0)
 		})
-		.method("teleport", |_n: &mut NavHandle, _a: Variadic<Retained>| -> Result<(), String> { Err(not_yet("teleport")) })
-		.method("switchEntities", |_n: &mut NavHandle, _a: Variadic<Retained>| -> Result<(), String> { Err(not_yet("switchEntities")) })
+		// teleport(entity, tile, onDone, tag, flag[, speed]) (see `teleport`).
+		.method("teleport", |n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<bool, String> {
+			teleport::teleport(&n.0, vm, &args)
+		})
+		// switchEntities(a, b, onDone, tag, speed) (see `teleport`).
+		.method("switchEntities", |n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<bool, String> {
+			teleport::switch_entities(&n.0, vm, &args)
+		})
 		// The path overlay is visual.
 		.method("buildVisualisation", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
 		.method("clearVisualisation", |_n: &mut NavHandle| {})

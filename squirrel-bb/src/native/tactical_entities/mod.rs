@@ -460,6 +460,13 @@ impl Units {
 		placement::place(&self.0, idx, tile, is_actor)
 	}
 
+	/// Take the unit off its tile (it stays in the battle); no callbacks.
+	pub fn lift(&self, identity: i64) -> Result<(), String> {
+		let idx = *self.0.borrow().by_identity.get(&identity).ok_or("lift: not a tactical unit")?;
+		placement::unplace(&self.0, idx);
+		Ok(())
+	}
+
 	/// Discover the unit for the player; a newly discovered one runs `onDiscovered`.
 	pub fn discover(&self, vm: &SQVM, identity: i64) -> Result<(), String> {
 		let newly = {

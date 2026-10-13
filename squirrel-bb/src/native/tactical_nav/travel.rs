@@ -55,11 +55,11 @@ enum Phase {
 	Landing,
 }
 
-fn tile(g: &Grid, vm: &SQVM, id: usize) -> Result<SqStrongRef, String> {
+pub(super) fn tile(g: &Grid, vm: &SQVM, id: usize) -> Result<SqStrongRef, String> {
 	tactical_grid::tile_handle(g, vm, id).ok_or_else(|| "travel: no tile class".to_string())
 }
 
-fn seen_by_player(g: &Grid, id: usize) -> bool {
+pub(super) fn seen_by_player(g: &Grid, id: usize) -> bool {
 	g.borrow().tiles[id].vis_mask & faction_bit(PLAYER) != 0
 }
 
@@ -115,11 +115,11 @@ fn hook(method: &str, result: Result<(), String>) -> Result<(), String> {
 	}
 }
 
-fn movement_start(vm: &SQVM, mover: &SqStrongRef, t: SqStrongRef, steps: i64) -> Result<(), String> {
+pub(super) fn movement_start(vm: &SQVM, mover: &SqStrongRef, t: SqStrongRef, steps: i64) -> Result<(), String> {
 	hook("onMovementStart", mover.call_method(vm, "onMovementStart", (t, steps)))
 }
 
-fn movement_finish(vm: &SQVM, mover: &SqStrongRef, t: SqStrongRef) -> Result<(), String> {
+pub(super) fn movement_finish(vm: &SQVM, mover: &SqStrongRef, t: SqStrongRef) -> Result<(), String> {
 	hook("onMovementFinish", mover.call_method(vm, "onMovementFinish", (t,)))
 }
 
