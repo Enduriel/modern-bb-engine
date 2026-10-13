@@ -45,4 +45,12 @@ pub trait ScriptSource {
 	///   `extern "C"` boundary where unwinding is UB), so a filesystem error must
 	///   become `None`/empty, not an `unwrap`.
 	fn list_prefix(&self, prefix: &str) -> Option<Vec<String>>;
+
+	/// The bytes of a non-script game file at `path` (with its extension, e.g.
+	/// `gfx/masks/hex_mask.0`), resolved like scripts (a mod's copy wins), or `None`
+	/// if no file provides it. Engine natives read data the game ships through this
+	/// (the tile-picking masks). Must never panic, like [`list_prefix`](Self::list_prefix).
+	fn read_file(&self, _path: &str) -> Option<Vec<u8>> {
+		None
+	}
 }

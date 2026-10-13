@@ -77,6 +77,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_entities.install(&mut vm);
 		// The battle map, with units and objects placed on it by the entity host.
 		let tactical_grid = TacticalGrid::new();
+		tactical_grid.set_file_reader(modules.file_reader());
 		tactical_grid.install(&mut vm);
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());

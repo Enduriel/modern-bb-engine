@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Retained, SQVM, SqTable, Variadic};
 
 /// One tile type's transition configuration — the payload behind a
 /// `createTileTransition()` instance, and what `Tactical.setTransitions` caches.
@@ -107,44 +107,7 @@ pub(crate) fn install(vm: &mut SQVM) {
 	};
 	let is_visible = vm.make_closure(move || visible.get());
 
-	// Tactical.getCamera(): a headless camera that moves instantly. The AI waits until
-	// the camera is centred on its unit or the action is on screen
-	// (`agent.IsCameraReady`), so both always hold; it is never moving. `Level`,
-	// `Zoom` and `IsFlipped` are plain fields scripts read back.
-	let camera = {
-		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-		let yes = vm.make_closure(|Variadic(_a): Variadic<Retained>| true);
-		let no = vm.make_closure(|Variadic(_a): Variadic<Retained>| false);
-		let zero = vm.make_closure(|Variadic(_a): Variadic<Retained>| 0i64);
-		let empty = vm.make_closure(|vm: &SQVM, Variadic(_a): Variadic<Retained>| SqArray::new(vm).to_strong());
-		let get_pos = vm.make_closure(|vm: &SQVM| -> Option<SqStrongRef> {
-			SqTable::root(vm)
-				.get::<SqStrongRef>("createVec")
-				.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (0.0, 0.0)).ok().flatten())
-		});
-		let mut cam = SqTable::new(vm);
-		cam.set("Level", 0i64);
-		cam.set("Zoom", 1.0);
-		cam.set("IsFlipped", false);
-		for name in [
-			"registerCallbacks", "unregisterCallbacks", "setLevelToHighestOnMap", "quake", "zoomBy",
-			"zoomTo", "move", "moveToExactly", "climbBy", "update", "render", "updateEntityOverlays",
-			"addEntityOverlay", "removeEntityOverlay", "removeEntityOverlays", "cancelMovement",
-			"setPos", "moveTo", "jumpTo", "moveToTile", "moveToTileSlowly",
-		] {
-			cam.set(name, noop.clone());
-		}
-		cam.set("isCenteredOn", yes.clone());
-		cam.set("isCenteredOnTile", yes.clone());
-		cam.set("isInsideScreen", yes);
-		cam.set("isMoving", no.clone());
-		cam.set("isMovingToTile", no);
-		cam.set("getPos", get_pos);
-		cam.set("getBestLevelForTile", zero);
-		cam.set("queryEntityOverlays", empty);
-		cam.to_strong()
-	};
-	let get_camera = vm.make_closure(move || camera.clone());
+	// Tactical.getCamera() comes with the battle map (see `tactical_grid::camera`).
 
 	// Tactical.getShaker() (hit shakes) and getHighlighter() (tile highlights, overlay
 	// icons): visual only, and no script reads anything back from them.
@@ -170,7 +133,6 @@ pub(crate) fn install(vm: &mut SQVM) {
 	let weather = super::weather::weather(vm);
 	let get_weather = vm.make_closure(move || weather.clone());
 	let mut tactical = SqTable::new(vm);
-	tactical.set("getCamera", get_camera);
 	tactical.set("getWeather", get_weather);
 	tactical.set("getShaker", get_shaker);
 	tactical.set("getHighlighter", get_highlighter);

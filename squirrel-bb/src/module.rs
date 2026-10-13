@@ -65,6 +65,10 @@ pub(crate) fn include<S: ScriptSource>(
 /// one from [`ModuleSystem::instantiator`]; it shares the same prototype cache.
 pub type Instantiator = Rc<dyn Fn(&SQVM, &str) -> Result<SqStrongRef, String>>;
 
+/// Reads a non-script game file through the [`ScriptSource`] (see
+/// [`ScriptSource::read_file`]).
+pub type FileReader = Rc<dyn Fn(&str) -> Option<Vec<u8>>>;
+
 /// The Battle Brothers module / class system for a VM.
 ///
 /// Construct one with a [`ScriptSource`], [`install`](Self::install) its native
@@ -210,6 +214,12 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		Rc::new(move |vm: &SQVM, path: &str| {
 			new_instance(vm, &state, path).map_err(|e| e.to_string())
 		})
+	}
+
+	/// A handle that reads non-script game files from the source.
+	pub fn file_reader(&self) -> FileReader {
+		let state = self.state.clone();
+		Rc::new(move |path: &str| state.borrow().source.read_file(path))
 	}
 
 	/// Resolve (loading if needed) the class prototype for `path` as an owned

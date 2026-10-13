@@ -9,7 +9,9 @@
 //! Host-owned like the other services: tiles keep script references (their occupant,
 //! `Properties`, `Items`), so [`clear`](TacticalGrid::clear) it before the VM closes.
 
+mod camera;
 mod detail;
+mod picking;
 mod tile;
 #[cfg(test)]
 mod vis_ground_truth;
@@ -22,7 +24,9 @@ pub(crate) mod zone;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
+
+use crate::module::FileReader;
 
 use super::overload::{make_dispatcher, overload_key};
 
@@ -105,9 +109,43 @@ pub(crate) struct TacticalGridState {
 	properties_delegate: Option<SqStrongRef>,
 	object_spawner: Option<ObjectSpawner>,
 	occupant_lookup: Option<OccupantLookup>,
+	/// `Tactical.getCamera()`'s fields.
+	camera: camera::CameraState,
+	camera_class: Option<SqClass<camera::CameraHandle>>,
+	/// Game files (the picking masks come from the game data).
+	file_reader: Option<FileReader>,
+	/// The picking masks, read on first use (`None` inside if the data lacks them).
+	hex_masks: Option<Option<Rc<picking::HexMasks>>>,
 }
 
 impl TacticalGridState {
+	fn empty() -> Self {
+		TacticalGridState {
+			width: 0,
+			height: 0,
+			tiles: Vec::new(),
+			vis_stamp: 0,
+			class: None,
+			detail_class: None,
+			properties_delegate: None,
+			object_spawner: None,
+			occupant_lookup: None,
+			camera: camera::CameraState::default(),
+			camera_class: None,
+			file_reader: None,
+			hex_masks: None,
+		}
+	}
+
+	/// The picking masks, read from the game data the first time.
+	fn hex_masks(&mut self) -> Option<Rc<picking::HexMasks>> {
+		if self.hex_masks.is_none() {
+			let read = self.file_reader.clone();
+			self.hex_masks = Some(read.and_then(|r| picking::HexMasks::load(&*r)).map(Rc::new));
+		}
+		self.hex_masks.clone().flatten()
+	}
+
 	/// The flat index for square coords, or `None` if off the map.
 	pub fn idx(&self, col: i64, row: i64) -> Option<usize> {
 		(col >= 0 && col < self.width && row >= 0 && row < self.height).then(|| (row * self.width + col) as usize)
@@ -212,17 +250,7 @@ impl TacticalGridState {
 	/// A blank `w`×`h` map with no script classes (for tests).
 	#[cfg(test)]
 	pub(crate) fn for_test(w: i64, h: i64) -> Self {
-		let mut g = TacticalGridState {
-			width: 0,
-			height: 0,
-			tiles: Vec::new(),
-			vis_stamp: 0,
-			class: None,
-			detail_class: None,
-			properties_delegate: None,
-			object_spawner: None,
-			occupant_lookup: None,
-		};
+		let mut g = TacticalGridState::empty();
 		g.reset(w, h);
 		g
 	}
@@ -373,17 +401,7 @@ impl Default for TacticalGrid {
 impl TacticalGrid {
 	pub fn new() -> Self {
 		TacticalGrid {
-			grid: Rc::new(RefCell::new(TacticalGridState {
-				width: 0,
-				height: 0,
-				tiles: Vec::new(),
-				vis_stamp: 0,
-				class: None,
-				detail_class: None,
-				properties_delegate: None,
-				object_spawner: None,
-				occupant_lookup: None,
-			})),
+			grid: Rc::new(RefCell::new(TacticalGridState::empty())),
 		}
 	}
 
@@ -402,17 +420,43 @@ impl TacticalGrid {
 		self.grid.borrow_mut().occupant_lookup = Some(lookup);
 	}
 
-	/// Install the tile classes and the map natives on the `Tactical` table.
+	/// Let the map read game files (the picking masks).
+	pub fn set_file_reader(&self, reader: FileReader) {
+		let mut g = self.grid.borrow_mut();
+		g.file_reader = Some(reader);
+		g.hex_masks = None;
+	}
+
+	/// Install the tile classes, the camera and the map natives on the `Tactical` table.
 	pub fn install(&self, vm: &mut SQVM) {
 		let class = tile::build_class(vm);
 		let detail_class = detail::build_class(vm);
 		let properties_delegate = tile::properties_delegate(vm);
+		let camera_class = camera::build_class(vm);
+		let camera = camera::instance(vm, &camera_class, &self.grid);
 		{
 			let mut g = self.grid.borrow_mut();
 			g.class = Some(class);
 			g.detail_class = Some(detail_class);
 			g.properties_delegate = Some(properties_delegate);
+			g.camera_class = Some(camera_class);
 		}
+		let get_camera = vm.make_closure(move || camera.clone());
+		// Tactical.worldToTile(pos): the tile drawn at a world point (see `picking`).
+		let world_to_tile = {
+			let g = self.grid.clone();
+			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<SqStrongRef, String> {
+				let x = pos.0.get_member::<Number>(vm, "X").ok_or("worldToTile: expected a vector")?.0;
+				let y = pos.0.get_member::<Number>(vm, "Y").ok_or("worldToTile: expected a vector")?.0;
+				let mut g = g.borrow_mut();
+				let masks = g.hex_masks().ok_or("worldToTile: the game data has no gfx/masks/hex_mask.0-3")?;
+				let (q, r) = picking::world_to_tile(&g, &masks, g.camera.level, x, y);
+				let mut t = SqTable::new(vm);
+				t.set("X", q);
+				t.set("Y", r);
+				Ok(t.to_strong())
+			})
+		};
 
 		let resize = {
 			let g = self.grid.clone();
@@ -502,6 +546,8 @@ impl TacticalGrid {
 		tactical.set(&overload_key("tileToWorld", 1), tile_to_world_1);
 		tactical.set(&overload_key("tileToWorld", 2), tile_to_world_2);
 		tactical.set("tileToWorld", tile_to_world_dispatch);
+		tactical.set("worldToTile", world_to_tile);
+		tactical.set("getCamera", get_camera);
 		tactical.set("calculateTacticalValuesForTerrain", calculate_tv);
 		for (name, f) in queries {
 			tactical.set(&name, f);
@@ -521,6 +567,7 @@ impl TacticalGrid {
 		g.properties_delegate = None;
 		g.object_spawner = None;
 		g.occupant_lookup = None;
+		g.camera_class = None;
 	}
 }
 

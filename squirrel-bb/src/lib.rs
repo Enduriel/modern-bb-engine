@@ -27,7 +27,7 @@ pub mod ui_client;
 pub use engine::Engine;
 pub use error::ScriptError;
 pub use hash::{basename, class_name_hash, normalize_path};
-pub use module::{Instantiator, ModuleSystem};
+pub use module::{FileReader, Instantiator, ModuleSystem};
 pub use native::{
 	Color, DLC_SCRIPTS, LogLevel, NativeConfig, SaveSystem, TimeService, UiBridge, UiCall, Vec2f, Vec2i, WorldGrid,
 	install_logging, install_natives, installed_dlc,

@@ -62,6 +62,11 @@ impl ScriptSource for DatScriptSource {
 		None
 	}
 
+	fn read_file(&self, path: &str) -> Option<Vec<u8>> {
+		let mut archives = self.archives.borrow_mut();
+		archives.iter_mut().rev().find_map(|archive| archive.read(path))
+	}
+
 	fn list_prefix(&self, prefix: &str) -> Option<Vec<String>> {
 		let dir = if prefix.is_empty() || prefix.ends_with('/') {
 			prefix.to_string()
