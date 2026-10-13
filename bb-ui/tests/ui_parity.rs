@@ -111,11 +111,14 @@ fn follows_the_originals_layout_rules(session: &UiSession) -> Result<(), String>
 	report(differences)
 }
 
+/// One check on the shared page.
+type Check = fn(&UiSession) -> Result<(), String>;
+
 fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, fn(&UiSession) -> Result<(), String>); 2] = [
+	let checks: [(&str, Check); 2] = [
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,

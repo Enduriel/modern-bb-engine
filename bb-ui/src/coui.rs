@@ -140,12 +140,13 @@ fn percent_decode(text: &str) -> String {
 	let mut i = 0;
 	let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
 	while i < bytes.len() {
-		if bytes[i] == b'%' && i + 2 < bytes.len() {
-			if let (Some(high), Some(low)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-				out.push(high << 4 | low);
-				i += 3;
-				continue;
-			}
+		if bytes[i] == b'%'
+			&& i + 2 < bytes.len()
+			&& let (Some(high), Some(low)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+		{
+			out.push(high << 4 | low);
+			i += 3;
+			continue;
 		}
 		out.push(bytes[i]);
 		i += 1;

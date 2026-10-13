@@ -265,10 +265,8 @@ impl Parser<'_> {
 		}
 		// The slice is ASCII (digits and number punctuation only).
 		let text = std::str::from_utf8(&self.bytes[start..self.pos]).expect("ascii");
-		if integral {
-			if let Ok(n) = text.parse::<i64>() {
-				return Ok(Json::Int(n));
-			}
+		if integral && let Ok(n) = text.parse::<i64>() {
+			return Ok(Json::Int(n));
 		}
 		text.parse::<f64>()
 			.map(Json::Float)
