@@ -51,6 +51,8 @@ pub struct PlainRecv;
 pub struct VmRecv;
 #[doc(hidden)]
 pub struct VariadicRecv;
+#[doc(hidden)]
+pub struct VmVariadicRecv;
 
 /// Converts a method closure into a boxed [`SqFunction`]. `Marker` (a head marker
 /// plus the argument tuple) keeps the per-shape/arity impls from overlapping;
@@ -218,6 +220,47 @@ where
 			// SAFETY: see the fixed-arity impls.
 			let receiver: &mut T = unsafe { &mut (*payload).value };
 			match func(receiver, Variadic(rest)).push_return(vm) {
+				Ok(count) => count,
+				Err(error) => vm.throw_error(&error),
+			}
+		};
+		Box::new(MethodFn {
+			invoke: Box::new(invoke),
+			nparamscheck: -1,
+			typemask: String::from("."),
+		})
+	}
+}
+
+// -------- variadic with the VM: FnMut(&mut T, &SQVM, Variadic<V>) -> R --------
+// For a variable-arity method that also builds a return object (e.g. a tactical
+// tile's `spawnDetail(brush [, flags [, …]])`, which returns a decal handle).
+impl<T, Func, Ret, Var> IntoSqMethod<T, (VmVariadicRecv, Var)> for Func
+where
+	T: 'static,
+	Func: FnMut(&mut T, &SQVM, Variadic<Var>) -> Ret
+		+ for<'a> FnMut(&mut T, &'a SQVM, Variadic<<Var as SqArg>::Item<'a>>) -> Ret
+		+ 'static,
+	Ret: IntoSqReturn,
+	Var: SqArg + 'static,
+{
+	fn into_method_fn(self, name: String) -> Box<dyn SqFunction> {
+		let mut func = self;
+		let invoke = move |vm: &SQVM| -> squirrel_sys::SQInteger {
+			let payload = resolve_receiver!(vm, name, T);
+			let top = vm.stack_top();
+			let mut rest = Vec::new();
+			let mut idx = 2i64;
+			while idx < top {
+				match <Var as SqArg>::from_sq(vm, idx) {
+					Ok(value) => rest.push(value),
+					Err(error) => return vm.throw_error(&error),
+				}
+				idx += 1;
+			}
+			// SAFETY: see the fixed-arity impls.
+			let receiver: &mut T = unsafe { &mut (*payload).value };
+			match func(receiver, vm, Variadic(rest)).push_return(vm) {
 				Ok(count) => count,
 				Err(error) => vm.throw_error(&error),
 			}

@@ -98,6 +98,24 @@ impl<T: 'static> Property<T> {
 		}
 	}
 
+	/// A read/write **object** property: the getter returns the value to push (`None`
+	/// pushes `null`), the setter receives the assigned value (any type) as an owned
+	/// [`SqStrongRef`] and may reject it. Backs fields like a navigator setting's
+	/// `AlliedFactions = [..]` or `TileToConsiderEmpty = tile`.
+	#[allow(clippy::type_complexity)]
+	pub(crate) fn new_obj_rw(
+		get: impl Fn(&T, &SQVM) -> Option<SqStrongRef> + 'static,
+		set: impl Fn(&mut T, &SQVM, SqStrongRef) -> Result<(), String> + 'static,
+	) -> Self {
+		Property {
+			get: Box::new(move |t, vm| match get(t, vm) {
+				Some(value) => value.push(vm),
+				None => vm.push_null(),
+			}),
+			set: Box::new(move |t, vm, idx| set(t, vm, SqStrongRef::from_stack(vm, idx))),
+		}
+	}
+
 	/// A write-ignored, read-null property: assignment accepts (and discards) any value,
 	/// reading yields `null`. For object-valued fields a headless stub doesn't model —
 	/// e.g. a render `Color` a script sets but nothing logic-relevant reads back.

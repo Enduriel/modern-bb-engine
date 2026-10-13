@@ -75,6 +75,21 @@ impl<T: 'static> ClassBuilder<T> {
 		self
 	}
 
+	/// Add a read/write **object-valued** property `name`: `get` returns the value
+	/// to read (`None` reads `null`); `set` receives whatever is assigned, as an owned
+	/// [`SqStrongRef`], and may reject it with an error. For array- or
+	/// instance-valued fields a scalar [`property`](Self::property) can't express.
+	pub fn property_obj_rw(
+		mut self,
+		name: &str,
+		get: impl Fn(&T, &SQVM) -> Option<SqStrongRef> + 'static,
+		set: impl Fn(&mut T, &SQVM, SqStrongRef) -> Result<(), String> + 'static,
+	) -> Self {
+		self.properties
+			.push((name.to_string(), Property::new_obj_rw(get, set)));
+		self
+	}
+
 	/// Add a write-ignored, read-null property `name` (assignment discards any value,
 	/// reads yield `null`). For object-valued fields a headless stub doesn't model —
 	/// e.g. a render `Color` scripts assign but nothing logic-relevant reads back.

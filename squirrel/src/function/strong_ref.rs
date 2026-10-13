@@ -193,6 +193,15 @@ impl SqStrongRef {
 		}
 	}
 
+	/// Read the referenced value itself as `R` (e.g. a `Number` held in a variadic
+	/// argument). `None` if it is not an `R`.
+	pub fn get_value<'a, R: SqValue>(&self, vm: &'a SQVM) -> Option<R::Item<'a>> {
+		self.push(vm); // [value]
+		let value = R::read(vm, -1);
+		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) }; // []
+		value
+	}
+
 	/// Read member `key` off this object as `R` — the read-only counterpart to
 	/// [`call_method`](Self::call_method). Works on tables AND native instances
 	/// (`sq_get` triggers the instance's `_get` metamethod, so a native property like
