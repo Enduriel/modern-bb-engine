@@ -3,9 +3,11 @@
 //! Coherent-compatible bridge. Nothing is shown on screen; the result is a screenshot
 //! and a summary of the page.
 //!
-//! With `--click LABEL` (repeatable) it then clicks the visible button with that label,
-//! as a player would, and reports and screenshots the result of each click
-//! (`menu-1.png`, …). `--after SECONDS` keeps the game running after the last click
+//! With `--click TARGET` (repeatable) it then clicks, as a player would, once the target
+//! shows up: the visible button with that label, else any element with that text, or
+//! with `css:SELECTOR` the first visible match. It reports and screenshots the result
+//! of each click (`menu-1.png`, …). `--seed SEED` sets the new-campaign map seed
+//! just before a "Start" click (as typing it would; there's no keyboard input yet). `--after SECONDS` keeps the game running after the last click
 //! (e.g. while a new campaign generates), then reports again (`menu-after.png`).
 //!
 //! `--eval CODE` (repeatable) prints the value of `CODE` evaluated in the page after
@@ -14,7 +16,7 @@
 //!
 //! Run: `cargo run -p bb-ui --features cef --example boot_menu_ui -- [data-dir]
 //!       [--seconds N] [--out menu.png] [--size 1920x1080] [--click "New Campaign"]
-//!       [--after 10] [--eval "document.title"] [--devtools 9222]`
+//!       [--after 10] [--seed bbuitest] [--eval "document.title"] [--devtools 9222]`
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -46,6 +48,7 @@ struct Options {
 	devtools: Option<u16>,
 	bench: u32,
 	after: f64,
+	seed: Option<String>,
 }
 
 /// Time `n` script → page calls, and `n` that call back into the script (each one a
@@ -86,6 +89,7 @@ fn parse_options() -> Result<Options, String> {
 		devtools: None,
 		bench: 0,
 		after: 0.0,
+		seed: None,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -99,6 +103,7 @@ fn parse_options() -> Result<Options, String> {
 			"--eval" => options.evals.push(value()?),
 			"--bench" => options.bench = value()?.parse().map_err(|e| format!("--bench: {e}"))?,
 			"--after" => options.after = value()?.parse().map_err(|e| format!("--after: {e}"))?,
+			"--seed" => options.seed = Some(value()?),
 			"--devtools" => {
 				options.devtools = Some(value()?.parse().map_err(|e| format!("--devtools: {e}"))?)
 			}
@@ -167,8 +172,13 @@ fn run(options: Options) -> Result<(), String> {
 		.map_or("menu".into(), |s| s.to_string_lossy().into_owned());
 	for (i, label) in options.clicks.iter().enumerate() {
 		println!("click {label:?}");
-		// A button if there is one with that label, else any element with that text,
-		// once it shows up (a new campaign takes a while to generate).
+		if let (Some(seed), "Start") = (&options.seed, label.as_str()) {
+			session.eval(&format!(
+				"Screens.MainMenuScreen.mNewCampaignModule.mSeed.setInputText({})",
+				bb_ui::json::Json::Str(seed.clone()).to_text()
+			))?;
+		}
+		// Generous: a new campaign takes a while to generate.
 		session.click_when_ready(label, Duration::from_secs(120))?;
 		session.run_frames(1.5)?;
 		report(

@@ -198,10 +198,23 @@ impl UiSession {
 		})
 	}
 
-	/// Click the visible `.ui-control` (button) whose text is `label`, as a player
-	/// would: a real mouse click at its centre.
+	/// Run `find` (JS evaluating to `[x, y]` or `null`) and click there, as a player
+	/// would: a real mouse click. `what` names the target in the error.
+	fn click_found(&self, find: &str, what: &str) -> Result<(), String> {
+		let target = self.eval(find)?;
+		let xy: Option<Vec<i64>> = target
+			.as_array()
+			.map(|xy| xy.iter().filter_map(Json::as_i64).collect());
+		let Some([x, y]) = xy.and_then(|xy| <[i64; 2]>::try_from(xy).ok()) else {
+			return Err(format!("no visible {what}"));
+		};
+		self.host().click(x as i32, y as i32);
+		Ok(())
+	}
+
+	/// Click the visible `.ui-control` (button) whose text is `label`, at its centre.
 	pub fn click_button(&self, label: &str) -> Result<(), String> {
-		let code = format!(
+		let find = format!(
 			r#"(function (label) {{
 	var button = Array.prototype.find.call(document.querySelectorAll('.ui-control'), function (el) {{
 		return el.offsetParent !== null && el.textContent.trim() === label;
@@ -212,21 +225,13 @@ impl UiSession {
 }})({})"#,
 			Json::Str(label.to_string()).to_text()
 		);
-		let target = self.eval(&code)?;
-		let xy: Option<Vec<i64>> = target
-			.as_array()
-			.map(|xy| xy.iter().filter_map(Json::as_i64).collect());
-		let Some([x, y]) = xy.and_then(|xy| <[i64; 2]>::try_from(xy).ok()) else {
-			return Err(format!("no visible button labelled {label:?}"));
-		};
-		self.host().click(x as i32, y as i32);
-		Ok(())
+		self.click_found(&find, &format!("button labelled {label:?}"))
 	}
 
 	/// Click the innermost visible element whose text is `text` (a list entry, a
-	/// label, a tab…), as a player would: a real mouse click at its centre.
+	/// label, a tab…), at its centre.
 	pub fn click_text(&self, text: &str) -> Result<(), String> {
-		let code = format!(
+		let find = format!(
 			r#"(function (text) {{
 	var all = document.querySelectorAll('body *');
 	for (var i = all.length - 1; i >= 0; --i) {{
@@ -240,32 +245,49 @@ impl UiSession {
 }})({})"#,
 			Json::Str(text.to_string()).to_text()
 		);
-		let target = self.eval(&code)?;
-		let xy: Option<Vec<i64>> = target
-			.as_array()
-			.map(|xy| xy.iter().filter_map(Json::as_i64).collect());
-		let Some([x, y]) = xy.and_then(|xy| <[i64; 2]>::try_from(xy).ok()) else {
-			return Err(format!("no visible element with the text {text:?}"));
-		};
-		self.host().click(x as i32, y as i32);
-		Ok(())
+		self.click_found(&find, &format!("element with the text {text:?}"))
 	}
 
-	/// Click the button labelled `label` (or else any element with that text) once it
-	/// is visible and the page has stopped animating, running the game meanwhile, as a
-	/// player waits for a screen before clicking. Fails after `timeout`.
-	pub fn click_when_ready(&self, label: &str, timeout: Duration) -> Result<(), String> {
+	/// Click the first visible element matching the CSS `selector` (e.g. an image
+	/// button: `img[src$="icon_end_turn.png"]`), at its centre.
+	pub fn click_selector(&self, selector: &str) -> Result<(), String> {
+		let find = format!(
+			r#"(function (selector) {{
+	var found = Array.prototype.find.call(document.querySelectorAll(selector), function (el) {{
+		var r = el.getBoundingClientRect();
+		return el.offsetParent !== null && r.width > 0 && r.height > 0;
+	}});
+	if (!found) return null;
+	var r = found.getBoundingClientRect();
+	return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+}})({})"#,
+			Json::Str(selector.to_string()).to_text()
+		);
+		self.click_found(&find, &format!("element matching {selector:?}"))
+	}
+
+	/// Click `target` once it is visible and the page has stopped animating, running
+	/// the game meanwhile, as a player waits for a screen before clicking. `target` is
+	/// `css:SELECTOR`, or else a button's label or any element's text. Fails after
+	/// `timeout`.
+	pub fn click_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
 		let deadline = Instant::now() + timeout;
 		loop {
 			if !self.animating()? {
-				match self.click_button(label).or_else(|_| self.click_text(label)) {
+				let clicked = match target.strip_prefix("css:") {
+					Some(selector) => self.click_selector(selector),
+					None => self
+						.click_button(target)
+						.or_else(|_| self.click_text(target)),
+				};
+				match clicked {
 					Ok(()) => return Ok(()),
 					Err(error) if Instant::now() >= deadline => return Err(error),
 					Err(_) => {}
 				}
 			} else if Instant::now() >= deadline {
 				return Err(format!(
-					"the page was still animating when {label:?} was due"
+					"the page was still animating when {target:?} was due"
 				));
 			}
 			self.run_frames(0.1)?;
