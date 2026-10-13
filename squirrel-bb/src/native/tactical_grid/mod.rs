@@ -553,7 +553,7 @@ impl TacticalGrid {
 			tactical.set(&name, f);
 		}
 		tactical.set("queryTilesInRange", query_tiles_dispatch);
-		for name in ["createBlockedTileHighlights", "clearBlockedTileHighlights", "setBlockedTileHighlightsVisibility", "addResource", "loadResources", "setAmbientColor", "render"] {
+		for name in ["createBlockedTileHighlights", "clearBlockedTileHighlights", "setBlockedTileHighlightsVisibility", "addResource", "loadResources", "setAmbientColor"] {
 			tactical.set(name, noop.clone());
 		}
 	}

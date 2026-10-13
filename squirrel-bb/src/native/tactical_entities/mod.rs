@@ -28,6 +28,7 @@ use super::overload::{make_dispatcher, overload_key};
 mod persist;
 mod effects;
 mod placement;
+mod render;
 mod vision;
 use crate::module::Instantiator;
 
@@ -126,6 +127,8 @@ struct UnitRecord {
 	is_actor: bool,
 	/// `die()` ran: gone from the battle (`getEntityByID` no longer finds it).
 	dead: bool,
+	/// `setRenderCallbackEnabled`: its `onRender` runs when it is drawn (see `render`).
+	render_callback: bool,
 	sprites: HashMap<String, SqStrongRef>,
 }
 
@@ -215,6 +218,7 @@ fn create_unit(
 			tile: None,
 			is_actor,
 			dead: false,
+			render_callback: false,
 			sprites: HashMap::new(),
 		});
 		idx
@@ -755,7 +759,6 @@ impl TacticalEntities {
 			"fadeOut",
 			"setAlpha",
 			"moveSpriteOffset",
-			"setRenderCallbackEnabled",
 			"clearVisibility",
 			"setZ",
 			"storeSpriteColors",
@@ -771,6 +774,7 @@ impl TacticalEntities {
 			methods.push((name, noop.clone()));
 		}
 		methods.extend(vision::unit_natives(vm, &self.machine));
+		methods.extend(render::unit_natives(vm, &self.machine));
 		self.machine.borrow_mut().methods = methods;
 
 		// Roster handle class + the World roster accessors.
@@ -874,6 +878,7 @@ impl TacticalEntities {
 		};
 		let spawn_dispatch = make_dispatcher(vm, "spawnEntity");
 		let vision_natives = vision::tactical_natives(vm, &self.machine);
+		let render_natives = render::tactical_natives(vm, &self.machine);
 		let effect_natives = effects::natives(vm, &self.machine);
 
 		let mut world = SqTable::root(vm)
@@ -889,7 +894,7 @@ impl TacticalEntities {
 			.expect("Tactical table must be installed before TacticalEntities");
 		tactical.set("getEntityByID", get_entity_by_id);
 		tactical.set("addEntityToMap", add_entity_to_map);
-		for (name, f) in vision_natives.into_iter().chain(effect_natives) {
+		for (name, f) in vision_natives.into_iter().chain(effect_natives).chain(render_natives) {
 			tactical.set(name, f);
 		}
 		for (arity, f) in [(1, spawn_1), (2, spawn_2), (3, spawn_3), (4, spawn_4)] {
