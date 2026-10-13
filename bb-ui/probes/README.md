@@ -9,6 +9,7 @@ goldens.
 |---|---|
 | `bridge_order.nut` + `.js` | **Inline calls**: `asyncCall`, `call` and `UI.connect` run their JS before returning, and `SQ.call` runs its script before the next JS statement. Also: `callSQ` return values and timing, void calls never resolving, handles, the native `engine` members, `compatMode`, dynamic script order, `coui://` resolution. |
 | `bridge_values.nut` + `.js` | **Conversions**: JS→SQ numbers, holes, `undefined`, functions; SQ→JS non-string keys, closures, instances, weakrefs. Also `RootScreen`'s handles, return values, and JS exceptions. |
+| `layout_rules.js` | **Old-WebKit layout rules**: the 8px font minimum, and which boxes count toward `scrollWidth`/`scrollHeight`. The results are `tests/goldens/layout_rules.json` (the `fonts` answer is short, so the runner prints it inline). |
 | `ui_goldens.js` | **UI parity goldens**: snapshots of the main menu, the new-campaign page and Options, for `tests/goldens/`. Run it with `src/parity/snapshot.js` prepended (`cat snapshot.js ui_goldens.js > probe.js`) and a one-line `.nut` probe. The `js_*_golden_*.json` results are the goldens. |
 
 Run from the repo root (menu mode, hidden and muted; about a minute each), with

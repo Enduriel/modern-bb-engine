@@ -1,0 +1,41 @@
+{
+	"fonts": {
+		"px6": "6px h=7",
+		"px7": "7px h=8",
+		"pct50": "5px h=6",
+		"em05": "5px h=6",
+		"rem05": "5px h=6",
+		"small": "10px h=11",
+		"xxsmall": "9px h=10",
+		"pt5": "7px h=8",
+		"px1": "1px h=1",
+		"px0": "0px h=0",
+		"html": "10px",
+		"body": "8px",
+		"bodyText": "h=9 w=10",
+		"bodyEm10": 80,
+		"bodyPct50": "8px em10=80",
+		"bodyPct200": "13px em10=125"
+	},
+	"overflow": {
+		"wideZeroHeight": "100x100",
+		"wideOnePx": "150x100",
+		"tallZeroWidth": "100x150",
+		"emptyWithFloats": "100x100",
+		"emptyWithWideFloat": "150x100",
+		"zeroHeightBorder": "150x100",
+		"zeroHeightPadding": "150x100",
+		"zeroHeightHidden": "100x100",
+		"absZeroHeight": "100x100",
+		"relZeroHeightShifted": "100x100",
+		"relSizedShifted": "210x100",
+		"zeroBoth": "100x100",
+		"nowrapText": "336x100",
+		"emptyInline": "100x100",
+		"marginRight": "100x100",
+		"nestedZero": "100x100",
+		"nestedSized": "150x100",
+		"clippedChild": "100x100",
+		"transformed": "170x100"
+	}
+}

@@ -1,8 +1,12 @@
-//! UI parity with the original: our page, driven through the main menu,
-//! the new-campaign page and the Options screen, matches the original's snapshots
-//! (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text, boxes
-//! and the compared styles, apart from the known differences below. Skips if there is
-//! no Steam install.
+//! UI parity with the original. Two checks on one page:
+//!   * `matches_the_originals_screens`: our page, driven through the main menu, the
+//!     new-campaign page and the Options screen, matches the original's snapshots
+//!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
+//!     boxes and the compared styles, within `goldens::tolerance`;
+//!   * `follows_the_originals_layout_rules`: `probes/layout_rules.js` gets the
+//!     original's answers (`tests/goldens/layout_rules.json`) in our page.
+//!
+//! Skips if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test ui_parity`
 //!
@@ -14,35 +18,31 @@ use std::process::ExitCode;
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{HostConfig, UiSession, goldens};
-use bb_ui::parity::{Difference, compare};
+use bb_ui::json::Json;
+use bb_ui::parity::compare;
 
-/// Differences we understand and haven't fixed yet.
-fn known(screen: &str, difference: &Difference) -> bool {
-	match difference {
-		// The base font size: `body` is 62.5% of the root's 10px. Coherent computes 8px
-		// (a minimum), Chromium 6.25px, and elements that set no size inherit it. No box
-		// differs because of it on these screens.
-		Difference::Style {
-			property,
-			golden,
-			ours,
-			..
-		} if property == "font-size" && golden == "8px" && ours == "6.25px" => true,
-		// The origin list's horizontal scrollbar: an empty, zero-height row 10px wider
-		// than the list counts toward its scroll width in Chromium but didn't in old
-		// WebKit, so aciScrollBar adds the bar (and the list gets 32px shorter).
-		_ => {
-			screen == "new_campaign"
-				&& difference
-					.path()
-					.contains("div.l-list-container[1] > div.ui-control.list.aciScrollBar")
-		}
-	}
-}
+const LAYOUT_PROBE: &str = include_str!("../probes/layout_rules.js");
 
-fn matches_the_originals_screens(data_dir: &Path) -> Result<(), String> {
-	let dir = goldens::default_dir();
-	let (width, height) = goldens::load(&dir, goldens::SCREENS[0].0)?.viewport;
+/// The answers of `layout_rules.js` that we don't reproduce:
+/// - text extents and glyph-box heights, which depend on the font rasterizer (old
+///   WebKit also rounds font sizes to whole pixels: `5pt` is 7px there, 6.67px here);
+/// - `em` lengths under `body`: old WebKit resolves them against the clamped 8px,
+///   Blink against the specified 6.25px. Vanilla CSS has no `em` lengths.
+const LAYOUT_EXCEPTIONS: &[&str] = &[
+	"fonts.px6",
+	"fonts.pct50",
+	"fonts.em05",
+	"fonts.rem05",
+	"fonts.pt5",
+	"fonts.bodyText",
+	"fonts.bodyEm10",
+	"fonts.bodyPct50",
+	"fonts.bodyPct200",
+	"overflow.nowrapText",
+];
+
+fn start(data_dir: &Path) -> Result<UiSession, String> {
+	let (width, height) = goldens::load(&goldens::default_dir(), goldens::SCREENS[0].0)?.viewport;
 	let config = HostConfig {
 		width: width as u32,
 		height: height as u32,
@@ -50,48 +50,111 @@ fn matches_the_originals_screens(data_dir: &Path) -> Result<(), String> {
 	};
 	let session = UiSession::start(data_dir, config, false)?;
 	session.boot_menu()?;
+	Ok(session)
+}
 
-	let mut unexpected = Vec::new();
-	for (name, ours) in goldens::capture(&session)? {
-		let golden = goldens::load(&dir, name)?;
-		for difference in compare(&golden, &ours, &goldens::tolerance(name)) {
-			if !known(name, &difference) {
-				unexpected.push(format!("{name}: {difference}"));
-			}
-		}
-	}
-	if unexpected.is_empty() {
+fn report(differences: Vec<String>) -> Result<(), String> {
+	if differences.is_empty() {
 		Ok(())
 	} else {
 		Err(format!(
-			"{} unexpected differences:\n{}",
-			unexpected.len(),
-			unexpected.join("\n")
+			"{} differences from the original:\n{}",
+			differences.len(),
+			differences.join("\n")
 		))
 	}
+}
+
+fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
+	let dir = goldens::default_dir();
+	let mut differences = Vec::new();
+	for (name, ours) in goldens::capture(session)? {
+		let golden = goldens::load(&dir, name)?;
+		for difference in compare(&golden, &ours, &goldens::tolerance(name)) {
+			differences.push(format!("{name}: {difference}"));
+		}
+	}
+	report(differences)
+}
+
+/// Runs after the screens: the probe leaves its font samples in the page.
+fn follows_the_originals_layout_rules(session: &UiSession) -> Result<(), String> {
+	let ours = session.eval(&format!(
+		"(function () {{
+			var BbProbe = {{ answers: {{}}, send: function (key, json) {{ this.answers[key] = JSON.parse(json); }}, done: function () {{}} }};
+			{LAYOUT_PROBE}
+			BbProbe.run();
+			return BbProbe.answers;
+		}})()"
+	))?;
+	let path = goldens::default_dir().join("layout_rules.json");
+	let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+	let golden = Json::parse(&text)?;
+
+	let mut differences = Vec::new();
+	for group in ["fonts", "overflow"] {
+		let Some(Json::Object(answers)) = golden.get(group) else {
+			return Err(format!("layout_rules.json has no {group}"));
+		};
+		for (key, expected) in answers {
+			let name = format!("{group}.{key}");
+			if LAYOUT_EXCEPTIONS.contains(&name.as_str()) {
+				continue;
+			}
+			let actual = ours.get(group).and_then(|answers| answers.get(key));
+			if actual != Some(expected) {
+				let actual = actual.map_or("nothing".to_string(), Json::to_text);
+				differences.push(format!("{name}: {} -> {actual}", expected.to_text()));
+			}
+		}
+	}
+	report(differences)
 }
 
 fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let name = "matches_the_originals_screens";
+	let checks: [(&str, fn(&UiSession) -> Result<(), String>); 2] = [
+		(
+			"matches_the_originals_screens",
+			matches_the_originals_screens,
+		),
+		(
+			"follows_the_originals_layout_rules",
+			follows_the_originals_layout_rules,
+		),
+	];
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if !data_dir.exists() {
-		println!(
-			"test {name} ... skipped ({} not present)",
-			data_dir.display()
-		);
+		for (name, _) in checks {
+			println!(
+				"test {name} ... skipped ({} not present)",
+				data_dir.display()
+			);
+		}
 		return ExitCode::SUCCESS;
 	}
-	match matches_the_originals_screens(data_dir) {
-		Ok(()) => {
-			println!("test {name} ... ok");
-			ExitCode::SUCCESS
-		}
+	let session = match start(data_dir) {
+		Ok(session) => session,
 		Err(error) => {
-			println!("test {name} ... FAILED\n{error}");
-			ExitCode::FAILURE
+			println!("test ui_parity ... FAILED to start\n{error}");
+			return ExitCode::FAILURE;
 		}
+	};
+	let mut failed = false;
+	for (name, check) in checks {
+		match check(&session) {
+			Ok(()) => println!("test {name} ... ok"),
+			Err(error) => {
+				failed = true;
+				println!("test {name} ... FAILED\n{error}");
+			}
+		}
+	}
+	if failed {
+		ExitCode::FAILURE
+	} else {
+		ExitCode::SUCCESS
 	}
 }
