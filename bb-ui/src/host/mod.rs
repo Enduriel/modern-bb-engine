@@ -120,6 +120,8 @@ pub struct UiHost {
 	/// The page's call into the game that is being served (the page is blocked in it).
 	pending: RefCell<Option<Responder>>,
 	next_request: Cell<i32>,
+	/// Where the mouse was last sent, if anywhere.
+	pointer: Cell<Option<(i32, i32)>>,
 	cache_dir: PathBuf,
 	_args: Args,
 }
@@ -181,6 +183,7 @@ impl UiHost {
 			deferred: RefCell::new(VecDeque::new()),
 			pending: RefCell::new(None),
 			next_request: Cell::new(1),
+			pointer: Cell::new(None),
 			cache_dir: config.cache_dir,
 			_args: args,
 		};
@@ -357,9 +360,15 @@ impl UiHost {
 		browser.and_then(|b| b.host())
 	}
 
+	/// Where the mouse was last sent (view pixels), if anywhere.
+	pub fn pointer(&self) -> Option<(i32, i32)> {
+		self.pointer.get()
+	}
+
 	/// Move the mouse to `(x, y)` (view pixels).
 	pub fn mouse_move(&self, x: i32, y: i32) {
 		if let Some(host) = self.browser_host() {
+			self.pointer.set(Some((x, y)));
 			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers: 0 }), 0);
 		}
 	}
@@ -369,6 +378,7 @@ impl UiHost {
 		let Some(host) = self.browser_host() else {
 			return;
 		};
+		self.pointer.set(Some((x, y)));
 		let event = MouseEvent { x, y, modifiers: 0 };
 		host.send_mouse_move_event(Some(&event), 0);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 0, 1);
@@ -392,6 +402,7 @@ impl UiHost {
 	/// Turn the mouse wheel `notches` times at `(x, y)`; positive scrolls up.
 	pub fn wheel(&self, x: i32, y: i32, notches: i32) {
 		if let Some(host) = self.browser_host() {
+			self.pointer.set(Some((x, y)));
 			input::wheel(&host, x, y, notches);
 		}
 	}

@@ -5,8 +5,9 @@
 //!
 //! With `--click STEP` (repeatable) it then acts, as a player would. A step is a click
 //! once the target shows up: the visible button with that label, else any element with
-//! that text, or with `css:SELECTOR` the first visible match. `key:NAME` presses a key
-//! (`Enter`, `Escape`, … see `Key`) and `type:TEXT` types into the focused field. It
+//! that text, or with `css:SELECTOR` the first visible match. `hover:TARGET` moves the
+//! mouse over a target instead, `key:NAME` presses a key (`Enter`, `Escape`, … see
+//! `Key`) and `type:TEXT` types into the focused field. It
 //! reports and screenshots the result of each step (`menu-1.png`, …). `--seed SEED`
 //! types the new-campaign map seed into its field just before a "Start" click.
 //! `--after SECONDS` keeps the game running after the last step (e.g. while a new
@@ -184,6 +185,8 @@ fn run(options: Options) -> Result<(), String> {
 			session.press_key(Key::from_name(name).ok_or(format!("no key called {name:?}"))?)?;
 		} else if let Some(text) = step.strip_prefix("type:") {
 			session.type_text(text)?;
+		} else if let Some(target) = step.strip_prefix("hover:") {
+			session.hover_when_ready(target, Duration::from_secs(120))?;
 		} else {
 			// Generous: a new campaign takes a while to generate.
 			session.click_when_ready(step, Duration::from_secs(120))?;

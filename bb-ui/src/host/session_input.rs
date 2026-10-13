@@ -1,5 +1,5 @@
-//! A player's input to a [`UiSession`]: pointing at things, clicking, typing, the
-//! wheel.
+//! A player's input to a [`UiSession`]: pointing at things, clicking, hovering,
+//! typing, the wheel.
 //!
 //! Input reaches the page asynchronously, on another channel than the calls the
 //! session makes into it. So each action waits until the page has seen its events
@@ -54,6 +54,18 @@ impl UiSession {
 	pub fn click_at(&self, x: i32, y: i32) -> Result<(), String> {
 		self.input("mouseup", |host| {
 			host.click(x, y);
+			1
+		})
+	}
+
+	/// Move the mouse to `(x, y)` and leave it there.
+	pub fn move_to(&self, x: i32, y: i32) -> Result<(), String> {
+		// The page sees no move if the mouse is there already.
+		if self.host().pointer() == Some((x, y)) {
+			return Ok(());
+		}
+		self.input("mousemove", |host| {
+			host.mouse_move(x, y);
 			1
 		})
 	}
@@ -131,6 +143,13 @@ impl UiSession {
 	pub fn click_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
 		let (x, y) = self.locate_when_ready(target, timeout)?;
 		self.click_at(x, y)
+	}
+
+	/// Move the mouse over `target` (see [`UiSession::locate_when_ready`]) once it's
+	/// ready, and leave it there.
+	pub fn hover_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
+		let (x, y) = self.locate_when_ready(target, timeout)?;
+		self.move_to(x, y)
 	}
 
 	/// Turn the mouse wheel `notches` times over the first element matching the CSS
