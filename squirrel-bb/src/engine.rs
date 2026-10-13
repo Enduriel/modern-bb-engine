@@ -69,17 +69,21 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		ui.install(&mut vm);
 		// After the `World` table exists (config.install), add the grid natives.
 		let world_grid = WorldGrid::new();
+		world_grid.set_sprites(natives.sprites.clone());
 		world_grid.install(&mut vm);
 		// After the grid natives (entity `getTile` delegates to `World.getTile`).
 		let world_entities = WorldEntities::new(modules.instantiator());
+		world_entities.set_sprites(natives.sprites.clone());
 		world_entities.install(&mut vm);
 		// After the World table exists: the roster/tactical-unit host (provides
 		// World.getRoster/getPlayerRoster/createRoster, replacing the bare stubs).
 		let tactical_entities = TacticalEntities::new(modules.instantiator());
+		tactical_entities.set_sprites(natives.sprites.clone());
 		tactical_entities.install(&mut vm);
 		// The battle map, with units and objects placed on it by the entity host.
 		let tactical_grid = TacticalGrid::new();
 		tactical_grid.set_file_reader(modules.file_reader());
+		tactical_grid.set_sprites(natives.sprites.clone());
 		tactical_grid.install(&mut vm);
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());

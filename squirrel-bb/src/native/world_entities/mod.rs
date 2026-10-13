@@ -32,6 +32,7 @@ use super::overload::{make_dispatcher, overload_key};
 use super::world_layout;
 use super::world_query::{self, Candidate};
 use crate::module::Instantiator;
+use crate::native::Sprites;
 
 mod movement;
 mod persist;
@@ -133,6 +134,8 @@ struct EntityMachine {
 	methods: Vec<(&'static str, SqStrongRef)>,
 	player_view: view::PlayerView,
 	thinkers: think::Thinkers,
+	/// Resolves sprite brushes (set by the host before `install`).
+	sprites: Sprites,
 }
 
 impl EntityMachine {
@@ -340,8 +343,10 @@ fn set_tile_occupied(vm: &SQVM, q: i64, r: i64, occupied: bool) -> Result<(), St
 	tile.set_member(vm, "IsOccupied", occupied)
 }
 
-/// Build the inert sprite stub class returned by `addSprite`.
-fn build_sprite_class(vm: &mut SQVM) -> SqClass<SpriteData> {
+/// Build the sprite class returned by `addSprite`. Brushes resolve through `sprites`
+/// (see [`Sprites::resolve`]).
+fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
+	let (set_with, get_with) = (sprites.clone(), sprites.clone());
 	ClassBuilder::<SpriteData>::new("WorldEntitySprite")
 		.property(
 			"Alpha",
@@ -370,14 +375,10 @@ fn build_sprite_class(vm: &mut SQVM) -> SqClass<SpriteData> {
 		)
 		.property_noop("Color") // render tint: set by some entities, unread headless
 		.property("HasBrush", |s: &SpriteData| !s.brush.is_empty(), |_s: &mut SpriteData, _v: bool| {})
-		.method("setBrush", |s: &mut SpriteData, brush: &str| {
-			s.brush = brush.to_string()
-		})
-		// Scripts read `getBrush().Name`.
-		.method("getBrush", |s: &mut SpriteData, vm: &SQVM| -> SqStrongRef {
-			let mut t = SqTable::new(vm);
-			t.set("Name", s.brush.clone());
-			t.to_strong()
+		.method("setBrush", move |s: &mut SpriteData, brush: &str| s.brush = set_with.resolve(brush))
+		.method("resetBrush", |s: &mut SpriteData| s.brush.clear())
+		.method("getBrush", move |s: &mut SpriteData, vm: &SQVM| -> Option<SqStrongRef> {
+			get_with.brush_object(vm, &s.brush)
 		})
 		.method("setOffset", |s: &mut SpriteData, vm: &SQVM, offset: Retained| {
 			s.offset = vec_xy(vm, &offset.0)
@@ -427,15 +428,22 @@ impl WorldEntities {
 				methods: Vec::new(),
 				player_view: view::PlayerView::default(),
 				thinkers: think::Thinkers::default(),
+				sprites: Sprites::default(),
 			})),
 		}
+	}
+
+	/// Use `sprites` to resolve sprite brushes. Call before [`install`](Self::install).
+	pub fn set_sprites(&self, sprites: Sprites) {
+		self.machine.borrow_mut().sprites = sprites;
 	}
 
 	/// Build the stub classes + the shared entity methods, and register
 	/// `World.spawnLocation` (2-arg `coords` and 3-arg `x,y` overloads). Call once with
 	/// `&mut SQVM`, after the `World` table + grid natives exist.
 	pub fn install(&self, vm: &mut SQVM) {
-		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm));
+		let sprites = self.machine.borrow().sprites.clone();
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites));
 		self.machine.borrow_mut().label_class = Some(build_label_class(vm));
 
 		// --- injected entity methods (each recovers its record via this_identity) ---

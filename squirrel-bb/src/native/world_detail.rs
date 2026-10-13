@@ -19,6 +19,8 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, SQVM, SqClass};
 
+use crate::native::Sprites;
+
 /// One detail on a tile.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DetailData {
@@ -69,8 +71,10 @@ impl DetailHandle {
 	}
 }
 
-/// Build the `WorldDetail` class returned by `tile.spawnDetail(...)`.
-pub(crate) fn build_class(vm: &mut SQVM) -> SqClass<DetailHandle> {
+/// Build the `WorldDetail` class returned by `tile.spawnDetail(...)`. A brush set
+/// on a detail hints its atlas to `sprites`.
+pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHandle> {
+	let sprites = sprites.clone();
 	ClassBuilder::<DetailHandle>::new("WorldDetail")
 		.property(
 			"Alpha",
@@ -97,7 +101,10 @@ pub(crate) fn build_class(vm: &mut SQVM) -> SqClass<DetailHandle> {
 			|d: &DetailHandle| d.get(|d| d.ignore_ambient),
 			|d: &mut DetailHandle, v: bool| d.set(|d| d.ignore_ambient = v),
 		)
-		.method("setBrush", |d: &mut DetailHandle, brush: &str| d.set(|d| d.brush = brush.to_string()))
+		.method("setBrush", move |d: &mut DetailHandle, brush: &str| {
+			d.set(|d| d.brush = brush.to_string());
+			sprites.hint(&sprites.texture_of(brush));
+		})
 		.method("setBrightness", |d: &mut DetailHandle, v: f64| d.set(|d| d.brightness = v))
 		.method("setDirty", |_d: &mut DetailHandle, _flag: bool| {})
 		.build(vm)

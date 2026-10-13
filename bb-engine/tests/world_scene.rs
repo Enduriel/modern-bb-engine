@@ -50,4 +50,39 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	let selection = player.sprites.iter().find(|s| s.name == "selection").expect("selection");
 	assert_eq!(selection.offset, (-30.0, 30.0));
 	assert!(!selection.scaling);
+
+	// Worldgen's brushes queued their atlases for loading.
+	let hints = engine.sprites().take_hints();
+	for atlas in ["gfx/world_tiles.png", "gfx/world_detail.png", "gfx/world_entity_0.png", "gfx/world_settlement.png"] {
+		assert!(hints.iter().any(|h| h == atlas), "{atlas} hinted: {hints:?}");
+	}
+
+	// A sprite slot answers like the original's (probed 2026-10-13).
+	engine
+		.run_script(
+			r#"
+			local party = ::World.State.getPlayer();
+			local s = party.addSprite("probe");
+			local r = [s.HasBrush, s.getBrush() == null];
+			s.setBrush("no_such_brush");
+			r.extend([s.HasBrush, s.getBrush() == null]);
+			s.setBrush("world_birds_01");
+			r.extend([s.HasBrush, s.getBrush().Name == "world_birds_01", s.getBrush().TextureName == "gfx/world_weather.png"]);
+			s.setBrush("no_such_brush");
+			r.push(s.HasBrush);
+			s.setBrush("world_birds_01");
+			s.setBrush("");
+			r.push(s.HasBrush);
+			s.setBrush("world_birds_01");
+			s.resetBrush();
+			r.push(s.HasBrush);
+			r.push(party.getSprite("body").getBrush().TextureName == "gfx/world_entity_0.png");
+			::__slot <- r;
+			"#,
+			"slot",
+		)
+		.expect("slot");
+	let answers = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__slot").expect("answers");
+	let answers: Vec<bool> = (0..answers.len()).map(|i| answers.get::<bool>(i).expect("bool")).collect();
+	assert_eq!(answers, [false, true, false, true, true, true, true, false, false, false, true]);
 }

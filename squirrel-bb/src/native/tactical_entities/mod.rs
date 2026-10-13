@@ -31,6 +31,7 @@ mod placement;
 mod render;
 mod vision;
 use crate::module::Instantiator;
+use crate::native::Sprites;
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
 const PLAYER_ROSTER_ID: i64 = -1;
@@ -145,6 +146,8 @@ struct TacticalMachine {
 	methods: Vec<(&'static str, SqStrongRef)>,
 	/// The battle map, for placing units and objects.
 	grid: Option<crate::native::tactical_grid::Grid>,
+	/// Resolves sprite brushes (set by the host before `install`).
+	sprites: Sprites,
 }
 
 impl TacticalMachine {
@@ -254,8 +257,10 @@ fn spawn(machine: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, path: &str) -> Resul
 	Ok(entity)
 }
 
-/// Build the inert unit sprite stub class.
-fn build_sprite_class(vm: &mut SQVM) -> SqClass<UnitSpriteData> {
+/// Build the unit sprite class. Brushes resolve through `sprites` (see
+/// [`Sprites::resolve`]).
+fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteData> {
+	let (set_with, get_with) = (sprites.clone(), sprites.clone());
 	ClassBuilder::<UnitSpriteData>::new("TacticalUnitSprite")
 		.property(
 			"Alpha",
@@ -308,17 +313,11 @@ fn build_sprite_class(vm: &mut SQVM) -> SqClass<UnitSpriteData> {
 			|s: &mut UnitSpriteData, v: bool| s.lowering_shield = v,
 		)
 		.property_noop("Color")
-		.method("setBrush", |s: &mut UnitSpriteData, brush: &str| {
-			s.brush = brush.to_string()
-		})
-		// getBrush(): a minimal brush stub: `.Name` (the stored brush id), which is what
-		// setAppearance reads (`getBrush().Name + "_top"`), and an empty `.TextureName`
-		// (only ever handed to Tactical.addResource, a no-op headless).
-		.method("getBrush", |s: &mut UnitSpriteData, vm: &SQVM| -> SqStrongRef {
-			let mut t = SqTable::new(vm);
-			t.set("Name", s.brush.clone());
-			t.set("TextureName", String::new());
-			t.to_strong()
+		.method("setBrush", move |s: &mut UnitSpriteData, brush: &str| s.brush = set_with.resolve(brush))
+		// getBrush(): `null` without a brush, else `{ Name, TextureName }`; scripts read
+		// `getBrush().Name + "_top"` and hand `TextureName` to `Tactical.addResource`.
+		.method("getBrush", move |s: &mut UnitSpriteData, vm: &SQVM| -> Option<SqStrongRef> {
+			get_with.brush_object(vm, &s.brush)
 		})
 		.method("resetBrush", |s: &mut UnitSpriteData| s.brush = String::new())
 		.method(
@@ -516,15 +515,22 @@ impl TacticalEntities {
 				next_id: 1,
 				methods: Vec::new(),
 				grid: None,
+				sprites: Sprites::default(),
 			})),
 		}
+	}
+
+	/// Use `sprites` to resolve sprite brushes. Call before [`install`](Self::install).
+	pub fn set_sprites(&self, sprites: Sprites) {
+		self.machine.borrow_mut().sprites = sprites;
 	}
 
 	/// Build the roster + sprite classes and the injected unit methods, then wire
 	/// `World.getRoster`/`getPlayerRoster`/`createRoster`/`deleteRoster`. Call once with
 	/// `&mut SQVM`, after the `World` table exists.
 	pub fn install(&self, vm: &mut SQVM) {
-		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm));
+		let sprites = self.machine.borrow().sprites.clone();
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites));
 
 		// --- injected unit methods (recover the record via this_identity) ---
 		let get_id = {

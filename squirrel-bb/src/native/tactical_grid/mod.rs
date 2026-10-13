@@ -27,6 +27,7 @@ use std::rc::Rc;
 use squirrel::{Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
 
 use crate::module::FileReader;
+use crate::native::Sprites;
 
 use super::overload::{make_dispatcher, overload_key};
 
@@ -116,6 +117,8 @@ pub(crate) struct TacticalGridState {
 	file_reader: Option<FileReader>,
 	/// The picking masks, read on first use (`None` inside if the data lacks them).
 	hex_masks: Option<Option<Rc<picking::HexMasks>>>,
+	/// Where `Tactical.addResource` hints resources.
+	sprites: Sprites,
 }
 
 impl TacticalGridState {
@@ -133,6 +136,7 @@ impl TacticalGridState {
 			camera: camera::CameraState::default(),
 			camera_class: None,
 			file_reader: None,
+			sprites: Sprites::default(),
 			hex_masks: None,
 		}
 	}
@@ -427,6 +431,11 @@ impl TacticalGrid {
 		g.hex_masks = None;
 	}
 
+	/// Hint `Tactical.addResource` paths to `sprites`. Call before [`install`](Self::install).
+	pub fn set_sprites(&self, sprites: Sprites) {
+		self.grid.borrow_mut().sprites = sprites;
+	}
+
 	/// Install the tile classes, the camera and the map natives on the `Tactical` table.
 	pub fn install(&self, vm: &mut SQVM) {
 		let class = tile::build_class(vm);
@@ -530,6 +539,17 @@ impl TacticalGrid {
 		};
 		// Rendering-only map natives.
 		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+		// Tactical.addResource(path): a script's hint that an atlas or sound will be
+		// needed in the coming battle. Loading starts on the host's side; the original's
+		// Tactical.loadResources() (which then loads them all) stays a no-op.
+		let add_resource = {
+			let sprites = self.grid.borrow().sprites.clone();
+			vm.make_closure(move |vm: &SQVM, path: Retained| {
+				if let Some(path) = path.0.get_value::<String>(vm) {
+					sprites.hint(&path);
+				}
+			})
+		};
 
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
@@ -553,7 +573,8 @@ impl TacticalGrid {
 			tactical.set(&name, f);
 		}
 		tactical.set("queryTilesInRange", query_tiles_dispatch);
-		for name in ["createBlockedTileHighlights", "clearBlockedTileHighlights", "setBlockedTileHighlightsVisibility", "addResource", "loadResources", "setAmbientColor"] {
+		tactical.set("addResource", add_resource);
+		for name in ["createBlockedTileHighlights", "clearBlockedTileHighlights", "setBlockedTileHighlightsVisibility", "loadResources", "setAmbientColor"] {
 			tactical.set(name, noop.clone());
 		}
 	}

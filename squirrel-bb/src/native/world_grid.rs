@@ -18,6 +18,7 @@ use squirrel::{
 
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
 use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
+use crate::native::Sprites;
 use super::world_layout;
 use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
@@ -162,6 +163,8 @@ struct GridState {
 	/// The navigation-path class, used by `World.getNavigator().findPath` to mint
 	/// path handles. Set during `install`; released by `clear`.
 	nav_path_class: Option<SqClass<PathData>>,
+	/// Where brushes set on tiles and details hint their atlases.
+	sprites: Sprites,
 }
 
 impl GridState {
@@ -235,8 +238,15 @@ impl WorldGrid {
 				class: None,
 				detail_class: None,
 				nav_path_class: None,
+				sprites: Sprites::default(),
 			})),
 		}
+	}
+
+	/// Hint the atlases of brushes set on tiles and details to `sprites`. Call before
+	/// [`install`](Self::install).
+	pub fn set_sprites(&self, sprites: Sprites) {
+		self.grid.borrow_mut().sprites = sprites;
 	}
 
 	/// Build the `WorldTile` class and add the grid natives to the existing `World`
@@ -245,7 +255,8 @@ impl WorldGrid {
 	pub fn install(&self, vm: &mut SQVM) {
 		// Build the detail class first so `spawnDetail` can mint instances (the tile
 		// methods fetch it from the grid at call time, capturing no `SqStrongRef`).
-		let detail_class = world_detail::build_class(vm);
+		let sprites = self.grid.borrow().sprites.clone();
+		let detail_class = world_detail::build_class(vm, &sprites);
 		self.grid.borrow_mut().detail_class = Some(detail_class);
 		let nav_path_class = build_world_navigation_path_class(vm);
 		self.grid.borrow_mut().nav_path_class = Some(nav_path_class);
@@ -725,6 +736,7 @@ fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Opti
 /// `Rc`, not an `SqStrongRef`.
 fn make_detail(t: &TileHandle, vm: &SQVM, data: DetailData) -> Option<SqStrongRef> {
 	let class = t.grid.borrow().detail_class.clone()?;
+	hint_brush(t, &data.brush);
 	let detail: Detail = Rc::new(RefCell::new(data));
 	t.with_mut(|d| d.details.push(detail.clone()));
 	Some(class.instantiate(vm, DetailHandle(detail)))
@@ -1052,7 +1064,8 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	// The terrain brush is state worldgen reads back.
 	b = b
 		.method("setBrush", |t: &mut TileHandle, brush: &str| {
-			t.with_mut(|d| d.brush = brush.to_string())
+			t.with_mut(|d| d.brush = brush.to_string());
+			hint_brush(t, brush);
 		})
 		.method("resetBrush", |t: &mut TileHandle| t.with_mut(|d| d.brush.clear()))
 		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.clone()) });
@@ -1078,6 +1091,12 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	}
 
 	b.build(vm)
+}
+
+/// Hint the atlas of a brush just set on the tile or one of its details.
+fn hint_brush(t: &TileHandle, brush: &str) {
+	let sprites = t.grid.borrow().sprites.clone();
+	sprites.hint(&sprites.texture_of(brush));
 }
 
 /// A detail from `spawnDetail`'s leniently read arguments (a missing or mistyped
