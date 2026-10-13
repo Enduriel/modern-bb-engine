@@ -97,6 +97,16 @@ impl<T: 'static> Property<T> {
 			set: Box::new(|_t, _vm, _idx| Err("this property is read-only".to_string())),
 		}
 	}
+
+	/// A write-ignored, read-null property: assignment accepts (and discards) any value,
+	/// reading yields `null`. For object-valued fields a headless stub doesn't model —
+	/// e.g. a render `Color` a script sets but nothing logic-relevant reads back.
+	pub(crate) fn new_noop() -> Self {
+		Property {
+			get: Box::new(|_t, vm| vm.push_null()),
+			set: Box::new(|_t, _vm, _idx| Ok(())),
+		}
+	}
 }
 
 /// Shared, per-class property table, captured by both metamethods.

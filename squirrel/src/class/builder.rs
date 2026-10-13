@@ -75,6 +75,14 @@ impl<T: 'static> ClassBuilder<T> {
 		self
 	}
 
+	/// Add a write-ignored, read-null property `name` (assignment discards any value,
+	/// reads yield `null`). For object-valued fields a headless stub doesn't model —
+	/// e.g. a render `Color` scripts assign but nothing logic-relevant reads back.
+	pub fn property_noop(mut self, name: &str) -> Self {
+		self.properties.push((name.to_string(), Property::new_noop()));
+		self
+	}
+
 	/// Add a callable method `name` to the class.
 	///
 	/// The body is a typed closure `FnMut(&mut T, args..) -> R`: the receiver
