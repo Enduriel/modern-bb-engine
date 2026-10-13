@@ -129,7 +129,7 @@ pub struct UiHost {
 impl UiHost {
 	/// Start CEF and open the page, serving `coui://` from `files`. Returns once the
 	/// browser exists; the page itself is still loading.
-	pub fn start(files: UiFiles, config: HostConfig) -> Result<UiHost, String> {
+	pub fn start(files: Arc<UiFiles>, config: HostConfig) -> Result<UiHost, String> {
 		let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 		std::fs::create_dir_all(&config.cache_dir).map_err(|e| format!("cache dir: {e}"))?;
 		let args = Args::new();
@@ -173,7 +173,7 @@ impl UiHost {
 			width: config.width as i32,
 			height: config.height as i32,
 		});
-		let mut factory = scheme::CouiFactory::new(Arc::new(files), shared.clone());
+		let mut factory = scheme::CouiFactory::new(files, shared.clone());
 		if register_scheme_handler_factory(Some(&SCHEME.into()), None, Some(&mut factory)) != 1 {
 			return Err("could not register the coui:// scheme".into());
 		}

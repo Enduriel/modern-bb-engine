@@ -3,8 +3,9 @@
 //! [`UiProtocol`]. What the examples and integration tests drive.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::{self, GameEngine};
@@ -12,6 +13,7 @@ use bb_engine::harness::{self, GameEngine};
 use super::{Event, HostConfig, RequestKind, UiHost};
 use crate::bridge::UiProtocol;
 use crate::coui::UiFiles;
+use crate::hot_reload::FileWatcher;
 use crate::json::Json;
 
 /// One line of what the page or the bridge reported.
@@ -28,6 +30,8 @@ pub struct UiSession {
 	// before the page.
 	engine: GameEngine,
 	protocol: Rc<UiProtocol<UiHost>>,
+	/// What the page is served from (shared with the host's `coui://` handler).
+	files: Arc<UiFiles>,
 	log: Rc<RefCell<Vec<LogLine>>>,
 	echo: bool,
 }
@@ -37,8 +41,9 @@ impl UiSession {
 	/// script engine, and wait until the page has registered its screens. With `echo`,
 	/// page and bridge messages are also printed as they arrive.
 	pub fn start(data_dir: &Path, config: HostConfig, echo: bool) -> Result<UiSession, String> {
-		let files = UiFiles::open_install(data_dir, false).map_err(|e| format!("archives: {e}"))?;
-		let host = UiHost::start(files, config)?;
+		let files =
+			Arc::new(UiFiles::open_install(data_dir, false).map_err(|e| format!("archives: {e}"))?);
+		let host = UiHost::start(files.clone(), config)?;
 		let mut engine = harness::open_install(data_dir).map_err(|e| format!("install: {e}"))?;
 		if echo {
 			// Script errors print their full call stack.
@@ -60,6 +65,7 @@ impl UiSession {
 		let session = UiSession {
 			engine,
 			protocol,
+			files,
 			log,
 			echo,
 		};
@@ -227,6 +233,43 @@ impl UiSession {
 			}
 			self.run_frames(0.1)?;
 		}
+	}
+
+	/// Restyle the running page: every `<link>`ed style sheet is fetched again (a new
+	/// query defeats the cache; `coui://` ignores it), and the page's state stays as it
+	/// is. How many sheets were reloaded.
+	pub fn reload_styles(&self) -> Result<usize, String> {
+		let reloaded = self.eval(
+			r#"(function () {
+	var stamp = Date.now();
+	var links = document.querySelectorAll('link[rel=stylesheet]');
+	Array.prototype.forEach.call(links, function (link) {
+		var bare = (link.getAttribute('href') || '').split('?')[0];
+		link.setAttribute('href', bare + '?bb-reload=' + stamp);
+	});
+	return links.length;
+})()"#,
+		)?;
+		Ok(reloaded.as_i64().unwrap_or(0) as usize)
+	}
+
+	/// A watcher over the archives the page is served from, for [`UiSession::hot_reload`].
+	pub fn watch_ui(&self) -> FileWatcher {
+		FileWatcher::new(self.files.archive_paths().iter().cloned())
+	}
+
+	/// Hot reload: if `watcher` saw an archive change (a mod author rebuilt
+	/// their `mod_*.zip`), open the archives again and restyle the page with them. The
+	/// archives that changed.
+	pub fn hot_reload(&self, watcher: &mut FileWatcher) -> Result<Vec<PathBuf>, String> {
+		let changed = watcher.changed();
+		if !changed.is_empty() {
+			self.files
+				.reopen()
+				.map_err(|e| format!("reopening the archives: {e}"))?;
+			self.reload_styles()?;
+		}
+		Ok(changed)
 	}
 
 	/// The page as [`crate::parity`] compares it with the original's goldens.

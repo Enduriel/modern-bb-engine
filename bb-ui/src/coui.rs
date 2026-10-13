@@ -28,6 +28,8 @@ pub const MAIN_PAGE: &str = "coui://ui/main.html";
 
 /// The UI's file system: archives in load order, plus the game directory.
 pub struct UiFiles {
+	/// The archives' files, in load order.
+	paths: Vec<PathBuf>,
 	archives: Mutex<Vec<DatArchive>>,
 	/// The game directory (`coui://data/...` resolves below it), if known.
 	game_dir: Option<PathBuf>,
@@ -37,14 +39,24 @@ impl UiFiles {
 	/// Open `archives` (in load order: a later one overrides an earlier one). Loose
 	/// files are looked up below `game_dir`.
 	pub fn open(archives: &[PathBuf], game_dir: Option<PathBuf>) -> io::Result<Self> {
-		let archives = archives
-			.iter()
-			.map(DatArchive::open)
-			.collect::<io::Result<Vec<_>>>()?;
 		Ok(UiFiles {
-			archives: Mutex::new(archives),
+			paths: archives.to_vec(),
+			archives: Mutex::new(open_all(archives)?),
 			game_dir,
 		})
+	}
+
+	/// The archives' files, in load order (to watch them for changes).
+	pub fn archive_paths(&self) -> &[PathBuf] {
+		&self.paths
+	}
+
+	/// Open the archives again, e.g. after a mod author rebuilt theirs. On an error the
+	/// old ones stay.
+	pub fn reopen(&self) -> io::Result<()> {
+		let reopened = open_all(&self.paths)?;
+		*self.archives.lock().unwrap_or_else(|e| e.into_inner()) = reopened;
+		Ok(())
 	}
 
 	/// Open an install's `data_*.dat` archives (`data_dir` is the game's `data/`).
@@ -113,6 +125,10 @@ impl UiFiles {
 	}
 }
 
+fn open_all(paths: &[PathBuf]) -> io::Result<Vec<DatArchive>> {
+	paths.iter().map(DatArchive::open).collect()
+}
+
 /// The archive path a `coui://` URL names: scheme, query and fragment stripped,
 /// percent-escapes decoded and `.`/`..` segments resolved. `None` for another scheme.
 pub fn url_to_path(url: &str) -> Option<String> {
@@ -159,9 +175,11 @@ pub fn mime_type(path: &str) -> &'static str {
 	let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
 	match ext.as_str() {
 		"html" | "htm" => "text/html",
-		"js" => "text/javascript",
+		// `.mjs`: ES modules from mods that opt into modern tooling.
+		"js" | "mjs" => "text/javascript",
 		"css" => "text/css",
-		"json" => "application/json",
+		// `.map`: source maps, which DevTools fetches for bundled mod code.
+		"json" | "map" => "application/json",
 		"png" => "image/png",
 		"jpg" | "jpeg" => "image/jpeg",
 		"gif" => "image/gif",
@@ -204,5 +222,7 @@ mod tests {
 	fn mime_types_by_extension() {
 		assert_eq!(mime_type("ui/main.html"), "text/html");
 		assert_eq!(mime_type("gfx/fonts/x.TTF"), "font/ttf");
+		assert_eq!(mime_type("ui/mods/x/app.mjs"), "text/javascript");
+		assert_eq!(mime_type("ui/mods/x/app.js.map"), "application/json");
 	}
 }
