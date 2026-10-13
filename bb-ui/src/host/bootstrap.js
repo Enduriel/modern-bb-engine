@@ -124,6 +124,23 @@
 	};
 	window.engine = engine;
 
+	// Coherent's built-in styles for form controls, where they differ from Chromium's
+	// (from the parity goldens): controls don't get Chromium's
+	// 13.33px system font; checkboxes and radio buttons use 16px Times New Roman with no
+	// margin; range sliders keep the page's font, with `margin: 18px 0` and old WebKit's
+	// grey. `:where()` keeps these at zero specificity, below every page or mod rule, as
+	// built-in styles are.
+	var COMPAT_CSS =
+		':where(input, select, textarea, button) { font: inherit; }\n' +
+		':where(input[type=checkbox], input[type=radio]) { margin: 0; font: 16px "Times New Roman"; }\n' +
+		':where(input[type=range]) { margin: 18px 0; color: #909090; }\n';
+	document.addEventListener('DOMContentLoaded', function () {
+		var style = document.createElement('style');
+		style.setAttribute('data-bb-compat', '');
+		style.textContent = COMPAT_CSS;
+		document.head.insertBefore(style, document.head.firstChild);
+	});
+
 	// Coherent ran scripts that mods insert at runtime in insertion order (probed);
 	// Chromium runs dynamically inserted scripts as they arrive unless `async` is off.
 	var createElement = Document.prototype.createElement;
