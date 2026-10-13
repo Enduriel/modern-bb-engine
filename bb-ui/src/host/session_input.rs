@@ -70,6 +70,18 @@ impl UiSession {
 		})
 	}
 
+	/// Move the mouse out of the view, ending any hover (and its tooltip), as if the
+	/// player had no mouse over the page.
+	pub fn move_away(&self) -> Result<(), String> {
+		if self.host().pointer().is_none() {
+			return Ok(());
+		}
+		self.input("mouseout", |host| {
+			host.mouse_leave();
+			1
+		})
+	}
+
 	/// Run `find` (JS evaluating to `[x, y]` or `null`): the point it found. `what`
 	/// names the target in the error.
 	fn locate(&self, find: &str, what: &str) -> Result<(i32, i32), String> {

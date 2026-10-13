@@ -373,6 +373,13 @@ impl UiHost {
 		}
 	}
 
+	/// Move the mouse out of the view, if it's in it (hover ends).
+	pub fn mouse_leave(&self) {
+		if let (Some((x, y)), Some(host)) = (self.pointer.take(), self.browser_host()) {
+			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers: 0 }), 1);
+		}
+	}
+
 	/// Left-click at `(x, y)`: move there, press, release.
 	pub fn click(&self, x: i32, y: i32) {
 		let Some(host) = self.browser_host() else {
