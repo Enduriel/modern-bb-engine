@@ -14,6 +14,7 @@
 //! Above this crate sits the higher-level engine crate.
 
 mod class;
+mod compile_context;
 mod engine;
 mod error;
 mod hash;

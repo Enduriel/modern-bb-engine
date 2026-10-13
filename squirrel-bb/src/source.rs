@@ -53,4 +53,28 @@ pub trait ScriptSource {
 	fn read_file(&self, _path: &str) -> Option<Vec<u8>> {
 		None
 	}
+
+	/// Whether this source keeps compiled scripts (see [`load_for`](Self::load_for) and
+	/// [`compiled`](Self::compiled)). When `false` (the default), the module system skips
+	/// fingerprinting and serializing compiles.
+	fn caches_compiles(&self) -> bool {
+		false
+	}
+
+	/// [`load`](Self::load) for a VM whose compile context (its constant table and
+	/// debug-info flag, which change what a compile produces) fingerprints to
+	/// `context()`. A source with a compile cache may answer a script it would return as
+	/// source with the bytecode an identical earlier compile produced. `context` is only
+	/// computed if called.
+	fn load_for(&self, path: &str, context: &dyn Fn() -> u64) -> Option<LoadedScript> {
+		let _ = context;
+		self.load(path)
+	}
+
+	/// `path`, returned as source, compiled to `bytecode` in compile context `context`,
+	/// and the compile left that context unchanged (it declared no constants). A source
+	/// with a compile cache may keep it for [`load_for`](Self::load_for).
+	fn compiled(&self, path: &str, context: u64, bytecode: &[u8]) {
+		let _ = (path, context, bytecode);
+	}
 }

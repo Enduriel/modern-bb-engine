@@ -477,3 +477,46 @@ fn forward_member_reports_a_missing_member_and_propagates_errors() {
 	let uncaught = vm.run_script("Obj.go(1, 2, 3, 4, 5);", "forward_member_uncaught");
 	assert!(uncaught.unwrap_err().contains("no such leaf"));
 }
+
+/// What the standard error handler prints for an uncaught error in `closure`.
+fn uncaught_report(vm: &SQVM, closure: &SqStrongRef, out: &Rc<RefCell<String>>) -> String {
+	out.borrow_mut().clear();
+	assert!(closure.call(vm, ()).is_err());
+	out.borrow().clone()
+}
+
+#[test]
+fn write_closure_round_trips_with_source_names_and_lines() {
+	let mut vm = SQVM::new(1024);
+	let out = Rc::new(RefCell::new(String::new()));
+	let (sink, err_sink) = (out.clone(), out.clone());
+	vm.set_print_handler(move |s| sink.borrow_mut().push_str(s));
+	vm.set_error_handler(move |s| err_sink.borrow_mut().push_str(s));
+	vm.install_standard_error_handlers();
+
+	let ok = vm
+		.compile("local x = 40;\nreturn x + 2;", "ok.nut")
+		.unwrap();
+	let reloaded = vm.load_closure(&ok.write_closure(&vm).unwrap()).unwrap();
+	assert_eq!(reloaded.call_ret::<i64, _>(&vm, ()).unwrap(), Some(42));
+
+	let bad = vm
+		.compile(
+			"local a = 1;\nlocal f = function() {\n\treturn null.c;\n};\nreturn f();",
+			"bad.nut",
+		)
+		.unwrap();
+	let original = uncaught_report(&vm, &bad, &out);
+	let reloaded = vm.load_closure(&bad.write_closure(&vm).unwrap()).unwrap();
+	assert_eq!(uncaught_report(&vm, &reloaded, &out), original);
+	assert!(
+		original.contains("bad.nut") && original.contains("line [3]"),
+		"{original}"
+	);
+
+	let native = vm.make_closure(|| 1i64);
+	assert!(
+		native.write_closure(&vm).is_err(),
+		"a native closure cannot be serialized"
+	);
+}

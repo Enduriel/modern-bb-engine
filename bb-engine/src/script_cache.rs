@@ -25,7 +25,7 @@ const MAGIC: &[u8; 4] = b"BBSC";
 /// What an entry was derived from. Two loads with equal keys must produce identical
 /// bytes.
 pub struct CacheKey<'a> {
-	/// What was done to the input, e.g. `"cnut"` (decrypt + transcode).
+	/// What was done to the input: `"cnut"` (decrypt + transcode) or `"nut"` (compile).
 	pub kind: &'a str,
 	/// The archive the entry came from.
 	pub archive: &'a Path,
@@ -34,6 +34,9 @@ pub struct CacheKey<'a> {
 	/// The CRC32 and uncompressed size the archive's central directory records.
 	pub crc32: u32,
 	pub size: u64,
+	/// Anything else the output depends on: for a compile, the VM's compile context
+	/// (constant table and debug-info flag); `0` for a transcode.
+	pub context: u64,
 }
 
 impl CacheKey<'_> {
@@ -49,6 +52,7 @@ impl CacheKey<'_> {
 		}
 		out.extend_from_slice(&self.crc32.to_le_bytes());
 		out.extend_from_slice(&self.size.to_le_bytes());
+		out.extend_from_slice(&self.context.to_le_bytes());
 		out
 	}
 }
@@ -77,10 +81,12 @@ fn checksum(bytes: &[u8]) -> u64 {
 	h
 }
 
-/// Identifies the code whose output the cache holds: the file format plus the sources
-/// of the decryption and the transcoder, so changing either starts a new generation.
+/// Identifies the code whose output the cache holds: the file format, the sources of the
+/// decryption and the transcoder, and the VM (its bytecode format and compiler), so
+/// changing any of them starts a new generation.
 fn engine_fingerprint() -> u64 {
 	let mut parts = FORMAT_VERSION.to_le_bytes().to_vec();
+	parts.extend_from_slice(squirrel::VM_SOURCE_HASH.as_bytes());
 	parts.extend_from_slice(include_str!("crypt.rs").as_bytes());
 	parts.extend_from_slice(include_str!("transcode.rs").as_bytes());
 	fnv1a(&parts)
@@ -200,6 +206,7 @@ mod tests {
 			entry,
 			crc32,
 			size: 3,
+			context: 0,
 		}
 	}
 

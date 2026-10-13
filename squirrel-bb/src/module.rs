@@ -8,6 +8,7 @@ use std::rc::Rc;
 use squirrel::{Retained, SQVM, SqArray, SqStrongRef, SqTable};
 
 use crate::class::{inherit, is_kind_of, new_instance, prototype};
+use crate::compile_context::compile_context;
 use crate::error::ScriptError;
 use crate::hash::{class_name_hash, normalize_path};
 use crate::source::{LoadedScript, ScriptSource};
@@ -30,10 +31,11 @@ pub(crate) fn include<S: ScriptSource>(
 		return Ok(());
 	}
 
+	let caches_compiles = state.borrow().source.caches_compiles();
 	let script = state
 		.borrow()
 		.source
-		.load(&norm)
+		.load_for(&norm, &|| compile_context(vm))
 		.ok_or_else(|| ScriptError::NotFound(norm.clone()))?;
 
 	{
@@ -47,7 +49,19 @@ pub(crate) fn include<S: ScriptSource>(
 	// original 32-bit-float engine — required for seed-exact worldgen (see
 	// `SqStrongRef::set_f32_math`). No state borrow is held across the run.
 	let closure = match script {
-		LoadedScript::Source(bytes) => vm.compile(&String::from_utf8_lossy(&bytes), &norm),
+		LoadedScript::Source(bytes) => {
+			let before = caches_compiles.then(|| compile_context(vm));
+			let compiled = vm.compile(&String::from_utf8_lossy(&bytes), &norm);
+			// Offer the compile for caching, unless it declared constants: loading it
+			// from a cache would skip those declarations, which later compiles rely on.
+			if let (Ok(closure), Some(before)) = (&compiled, before)
+				&& compile_context(vm) == before
+				&& let Ok(bytecode) = closure.write_closure(vm)
+			{
+				state.borrow().source.compiled(&norm, before, &bytecode);
+			}
+			compiled
+		}
 		LoadedScript::Bytecode(bytes) => vm.load_closure(&bytes),
 	};
 	let result = closure.and_then(|closure| {

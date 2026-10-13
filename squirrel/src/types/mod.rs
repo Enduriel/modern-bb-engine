@@ -8,6 +8,7 @@
 
 mod array;
 mod bind;
+mod consts;
 mod deep;
 mod dynamic;
 mod table;

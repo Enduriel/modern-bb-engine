@@ -44,27 +44,49 @@ impl DatScriptSource {
 		})
 	}
 
-	/// Keep transcoded scripts in `cache` (see [`ScriptCache`]).
+	/// Keep scripts in `cache` (see [`ScriptCache`]): transcoded `.cnut`s, and `.nut`s
+	/// compiled by the module system.
 	pub fn with_cache(mut self, cache: Option<ScriptCache>) -> Self {
 		self.cache = cache;
 		self
 	}
-}
 
-impl ScriptSource for DatScriptSource {
-	fn load(&self, path: &str) -> Option<LoadedScript> {
-		let mut archives = self.archives.borrow_mut();
-
-		// Scan in reverse (last-loaded archive wins). A `.nut` (typically a mod's
-		// source) anywhere is preferred over any compiled `.cnut`.
+	/// The `.nut` source for `path` (the last archive providing one wins). With a cache
+	/// and a compile `context`, bytecode an identical earlier compile left there instead.
+	fn load_nut(
+		&self,
+		archives: &mut [DatArchive],
+		path: &str,
+		context: Option<&dyn Fn() -> u64>,
+	) -> Option<LoadedScript> {
 		let nut = format!("{path}.nut");
 		for archive in archives.iter_mut().rev() {
+			if let (Some(cache), Some(context)) = (&self.cache, context)
+				&& let Some((crc32, size)) = archive.entry_meta(&nut)
+			{
+				let archive_path = archive.path().to_path_buf();
+				let key = CacheKey {
+					kind: "nut",
+					archive: &archive_path,
+					entry: &nut,
+					crc32,
+					size,
+					context: context(),
+				};
+				if let Some(bytecode) = cache.get(&key) {
+					return Some(LoadedScript::Bytecode(bytecode));
+				}
+			}
 			if let Some(bytes) = archive.read(&nut) {
 				return Some(LoadedScript::Source(bytes));
 			}
 		}
+		None
+	}
 
-		// Otherwise the vanilla compiled `.cnut`, transcoded to our format.
+	/// The vanilla compiled `.cnut` for `path`, transcoded to our format (through the
+	/// cache, if any).
+	fn load_cnut(&self, archives: &mut [DatArchive], path: &str) -> Option<LoadedScript> {
 		let cnut = format!("{path}.cnut");
 		for archive in archives.iter_mut().rev() {
 			let Some(cache) = &self.cache else {
@@ -83,6 +105,7 @@ impl ScriptSource for DatScriptSource {
 				entry: &cnut,
 				crc32,
 				size,
+				context: 0,
 			};
 			if let Some(bytecode) = cache.get(&key) {
 				return Some(LoadedScript::Bytecode(bytecode));
@@ -94,6 +117,49 @@ impl ScriptSource for DatScriptSource {
 			}
 		}
 		None
+	}
+}
+
+impl ScriptSource for DatScriptSource {
+	// Scan in reverse (last-loaded archive wins). A `.nut` (typically a mod's source)
+	// anywhere is preferred over any compiled `.cnut`.
+	fn load(&self, path: &str) -> Option<LoadedScript> {
+		let mut archives = self.archives.borrow_mut();
+		self.load_nut(&mut archives, path, None)
+			.or_else(|| self.load_cnut(&mut archives, path))
+	}
+
+	fn caches_compiles(&self) -> bool {
+		self.cache.is_some()
+	}
+
+	fn load_for(&self, path: &str, context: &dyn Fn() -> u64) -> Option<LoadedScript> {
+		let mut archives = self.archives.borrow_mut();
+		self.load_nut(&mut archives, path, Some(context))
+			.or_else(|| self.load_cnut(&mut archives, path))
+	}
+
+	fn compiled(&self, path: &str, context: u64, bytecode: &[u8]) {
+		let Some(cache) = &self.cache else {
+			return;
+		};
+		let nut = format!("{path}.nut");
+		let mut archives = self.archives.borrow_mut();
+		let Some((archive, (crc32, size))) = archives.iter_mut().rev().find_map(|a| {
+			a.entry_meta(&nut)
+				.map(|meta| (a.path().to_path_buf(), meta))
+		}) else {
+			return;
+		};
+		let key = CacheKey {
+			kind: "nut",
+			archive: &archive,
+			entry: &nut,
+			crc32,
+			size,
+			context,
+		};
+		cache.put(&key, bytecode);
 	}
 
 	fn read_file(&self, path: &str) -> Option<Vec<u8>> {
