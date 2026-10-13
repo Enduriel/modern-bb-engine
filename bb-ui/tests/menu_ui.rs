@@ -107,10 +107,16 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	};
 	session.wheel_over(list, -2)?;
 	let down = scroll_top()?;
-	ensure(down > 0, format!("two notches down left the origin list at {down}"))?;
+	ensure(
+		down > 0,
+		format!("two notches down left the origin list at {down}"),
+	)?;
 	session.wheel_over(list, 2)?;
 	let up = scroll_top()?;
-	ensure(up == 0, format!("two notches back up left the origin list at {up}"))?;
+	ensure(
+		up == 0,
+		format!("two notches back up left the origin list at {up}"),
+	)?;
 
 	session.click_button("Cancel")?;
 	wait_for_button(&session, "New Campaign", Duration::from_secs(10))?;

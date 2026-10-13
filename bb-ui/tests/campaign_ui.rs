@@ -1,9 +1,9 @@
 //! End-to-end through the real UI: a new campaign started from the main menu the way
-//! a player does it ("New Campaign", pick "A New Company", "Next", "Next", type the map
-//! seed, "Start"), through worldgen and the loading screen, to the origin's intro event
-//! and, after "Huzzah!", the running world screen. The game's `ui/` runs in the
-//! Chromium host (offscreen, headless) against the real scripts. Skips if there is no
-//! Steam install.
+//! a player does it ("New Campaign", pick "A New Company", "Next", "Next", hover the
+//! map seed for its tooltip and type it, "Start"), through worldgen and the loading
+//! screen, to the origin's intro event and, after "Huzzah!", the running world screen.
+//! The game's `ui/` runs in the Chromium host (offscreen, headless) against the real
+//! scripts. Skips if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test campaign_ui`
 //!
@@ -34,16 +34,46 @@ fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	}
 }
 
+/// `result`, saying what was being done if it failed.
+fn during<T>(what: &str, result: Result<T, String>) -> Result<T, String> {
+	result.map_err(|error| format!("{what}: {error}"))
+}
+
 fn starts_a_campaign_and_reaches_the_world_screen(data_dir: &Path) -> Result<(), String> {
 	let session = UiSession::start(data_dir, HostConfig::default(), false)?;
-	session.boot_menu()?;
+	during("booting the menu", session.boot_menu())?;
+	play(&session).map_err(|error| {
+		// Enough to tell what happened: the scripts' states and the last frame.
+		let shot = std::env::temp_dir().join("campaign_ui-failure.png");
+		let saved = match session.screenshot(&shot) {
+			Ok(Some(_)) => format!("\nlast frame: {}", shot.display()),
+			_ => String::new(),
+		};
+		let states = session.engine().root_state().state_names();
+		format!("{error}\nscript states: {states:?}{saved}")
+	})
+}
 
+fn play(session: &UiSession) -> Result<(), String> {
 	for step in ["New Campaign", "A New Company", "Next", "Next"] {
-		session.click_when_ready(step, STEP)?;
+		during(
+			&format!("clicking {step:?}"),
+			session.click_when_ready(step, STEP),
+		)?;
 	}
+	// Hovering the seed field shows its tooltip, which the page asks the scripts for.
+	during(
+		"hovering the seed field",
+		session.hover_when_ready(&format!("css:{SEED_FIELD}"), STEP),
+	)?;
+	during(
+		"waiting for the seed's tooltip",
+		session.wait_for_text("A map seed is a unique string", Duration::from_secs(10)),
+	)?;
+
 	// A fixed map seed, so the run is the same every time; the menu fills the field with
 	// a random one.
-	session.fill_field(SEED_FIELD, SEED)?;
+	during("typing the seed", session.fill_field(SEED_FIELD, SEED))?;
 	let typed = session.eval("Screens.MainMenuScreen.mNewCampaignModule.mSeed.getInputText()")?;
 	ensure(
 		typed.as_str() == Some(SEED),
@@ -52,14 +82,26 @@ fn starts_a_campaign_and_reaches_the_world_screen(data_dir: &Path) -> Result<(),
 			typed.to_text()
 		),
 	)?;
-	session.click_when_ready("Start", STEP)?;
+	during(
+		"clicking \"Start\"",
+		session.click_when_ready("Start", STEP),
+	)?;
 
 	// The origin's intro event, over the generated world.
-	session.wait_for_text("Huzzah!", STEP)?;
-	session.click_when_ready("Huzzah!", STEP)?;
+	during(
+		"waiting for the intro event",
+		session.wait_for_text("Huzzah!", STEP),
+	)?;
+	during(
+		"clicking \"Huzzah!\"",
+		session.click_when_ready("Huzzah!", STEP),
+	)?;
 
 	// The world screen: the top bar shows the day and the company's crowns.
-	session.wait_for_text("Day 1", STEP)?;
+	during(
+		"waiting for the world screen",
+		session.wait_for_text("Day 1", STEP),
+	)?;
 	ensure(
 		session.shows_text("2,900")?,
 		"the top bar doesn't show 2,900 crowns",
