@@ -1,0 +1,28 @@
+[package]
+name = "bb-ui"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# The Chromium (CEF) host. Off by default: it downloads and links a CEF binary
+# distribution (hundreds of MB), which plain `cargo test --workspace` doesn't need.
+cef = ["dep:cef", "dep:cef-dll-sys"]
+
+[dependencies]
+squirrel = { path = "../squirrel" }
+squirrel-bb = { path = "../squirrel-bb" }
+bb-engine = { path = "../bb-engine" }
+cef = { version = "=154.5.0", default-features = false, optional = true }
+# Direct dependency only for its build metadata (the CEF directory, for the rpath).
+cef-dll-sys = { version = "=154.5.0", optional = true }
+
+[[example]]
+name = "boot_menu_ui"
+required-features = ["cef"]
+
+# Own `main`: Chromium re-runs the test binary for its child processes, and CEF can
+# start only once per process.
+[[test]]
+name = "menu_ui"
+harness = false
+required-features = ["cef"]

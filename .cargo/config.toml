@@ -5,3 +5,6 @@
 # project configure. Remove once squirrel-sys ships a CMakeLists with >= 3.5.
 [env]
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# Where the `cef` build script (bb-ui's `cef` feature) keeps the CEF binary
+# distribution: one download per checkout, shared by every profile.
+CEF_PATH = { value = "target/cef", relative = true }
