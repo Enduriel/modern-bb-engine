@@ -30,6 +30,8 @@ mod ipc;
 mod renderer;
 mod scheme;
 mod session;
+mod session_input;
+mod targets;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;

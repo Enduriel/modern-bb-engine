@@ -1,0 +1,188 @@
+//! A player's input to a [`UiSession`]: pointing at things, clicking, typing, the
+//! wheel.
+//!
+//! Input reaches the page asynchronously, on another channel than the calls the
+//! session makes into it. So each action waits until the page has seen its events
+//! before returning: otherwise a check that follows (is the page animating? what's
+//! selected?) can run before the input, and see the page as it was.
+
+use std::time::{Duration, Instant};
+
+use super::{Key, UiHost, UiSession, targets};
+use crate::json::Json;
+
+/// How long the page may take to see input.
+const INPUT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long [`UiSession::fill_field`] waits for its field to show up.
+const FIELD_TIMEOUT: Duration = Duration::from_secs(30);
+
+impl UiSession {
+	/// Send input with `send`, which returns how many `event`s (a DOM event type) the
+	/// page will see from it, and pump until the page has seen them.
+	fn input(&self, event: &str, send: impl FnOnce(&UiHost) -> usize) -> Result<(), String> {
+		let event_json = Json::Str(event.to_string()).to_text();
+		let before = self
+			.eval(&format!(
+				"(function (type) {{
+	var seen = window.__bbSeen || (window.__bbSeen = {{}});
+	if (!(type in seen)) {{
+		seen[type] = 0;
+		window.addEventListener(type, function () {{ seen[type]++; }}, true);
+	}}
+	return seen[type];
+}})({event_json})"
+			))?
+			.as_i64()
+			.unwrap_or(0);
+		let expected = before + send(self.host()) as i64;
+		let count = format!("window.__bbSeen[{event_json}]");
+		let seen = || {
+			self.eval(&count)
+				.ok()
+				.and_then(|n| n.as_i64())
+				.is_some_and(|n| n >= expected)
+		};
+		if self.pump_until(INPUT_TIMEOUT, |_| seen()) {
+			Ok(())
+		} else {
+			Err(format!("the page didn't get the input ({event})"))
+		}
+	}
+
+	/// Left-click at `(x, y)`, as a player would.
+	pub fn click_at(&self, x: i32, y: i32) -> Result<(), String> {
+		self.input("mouseup", |host| {
+			host.click(x, y);
+			1
+		})
+	}
+
+	/// Run `find` (JS evaluating to `[x, y]` or `null`): the point it found. `what`
+	/// names the target in the error.
+	fn locate(&self, find: &str, what: &str) -> Result<(i32, i32), String> {
+		let target = self.eval(find)?;
+		let xy: Option<Vec<i64>> = target
+			.as_array()
+			.map(|xy| xy.iter().filter_map(Json::as_i64).collect());
+		let Some([x, y]) = xy.and_then(|xy| <[i64; 2]>::try_from(xy).ok()) else {
+			return Err(format!("no visible {what}"));
+		};
+		Ok((x as i32, y as i32))
+	}
+
+	/// Click the `.ui-control` (button) whose text is `label`, at its centre.
+	pub fn click_button(&self, label: &str) -> Result<(), String> {
+		let (x, y) = self.locate(
+			&targets::button(label),
+			&format!("button labelled {label:?}"),
+		)?;
+		self.click_at(x, y)
+	}
+
+	/// Click the innermost element whose text is `text` (a list entry, a label, a
+	/// tab…), at its centre.
+	pub fn click_text(&self, text: &str) -> Result<(), String> {
+		let (x, y) = self.locate(
+			&targets::text(text),
+			&format!("element with the text {text:?}"),
+		)?;
+		self.click_at(x, y)
+	}
+
+	/// Click the first element matching the CSS `selector` (e.g. an image button:
+	/// `img[src$="icon_end_turn.png"]`), at its centre.
+	pub fn click_selector(&self, selector: &str) -> Result<(), String> {
+		let (x, y) = self.locate(
+			&targets::selector(selector),
+			&format!("element matching {selector:?}"),
+		)?;
+		self.click_at(x, y)
+	}
+
+	/// The centre of `target` once the player can see it and the page has stopped
+	/// animating, running the game meanwhile, as a player waits for a screen before
+	/// pointing at it. `target` is `css:SELECTOR`, or else a button's label or any
+	/// element's text. Fails after `timeout`.
+	pub fn locate_when_ready(&self, target: &str, timeout: Duration) -> Result<(i32, i32), String> {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if !self.animating()? {
+				let mut error = String::new();
+				for (find, what) in targets::finders(target) {
+					match self.locate(&find, &what) {
+						Ok(point) => return Ok(point),
+						Err(e) => error = e,
+					}
+				}
+				if Instant::now() >= deadline {
+					return Err(error);
+				}
+			} else if Instant::now() >= deadline {
+				return Err(format!(
+					"the page was still animating when {target:?} was due"
+				));
+			}
+			self.run_frames(0.1)?;
+		}
+	}
+
+	/// Click `target` (see [`UiSession::locate_when_ready`]) once it's ready.
+	pub fn click_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
+		let (x, y) = self.locate_when_ready(target, timeout)?;
+		self.click_at(x, y)
+	}
+
+	/// Turn the mouse wheel `notches` times over the first element matching the CSS
+	/// `selector`; positive scrolls up.
+	pub fn wheel_over(&self, selector: &str, notches: i32) -> Result<(), String> {
+		let (x, y) = self.locate(
+			&targets::selector(selector),
+			&format!("element matching {selector:?}"),
+		)?;
+		self.input("wheel", |host| {
+			host.wheel(x, y, notches);
+			1
+		})
+	}
+
+	/// Press and release `key` in the focused element.
+	pub fn press_key(&self, key: Key) -> Result<(), String> {
+		self.input("keyup", |host| {
+			host.press_key(key);
+			1
+		})
+	}
+
+	/// Type `text` into the focused element (click it first), a key press per
+	/// character. See [`Key`] for the codes the page sees.
+	pub fn type_text(&self, text: &str) -> Result<(), String> {
+		self.input("keyup", |host| {
+			host.type_text(text);
+			text.chars().count()
+		})
+	}
+
+	/// Replace the text in the first text field matching the CSS `selector`, as a
+	/// player would: click into it once it's ready, delete what's there with Backspace
+	/// and Delete (wherever the caret landed), and type `text`.
+	pub fn fill_field(&self, selector: &str, text: &str) -> Result<(), String> {
+		self.click_when_ready(&format!("css:{selector}"), FIELD_TIMEOUT)?;
+		let length = self
+			.eval(&format!(
+				"document.activeElement && document.activeElement.matches({}) ? document.activeElement.value.length : null",
+				Json::Str(selector.to_string()).to_text()
+			))?
+			.as_i64()
+			.ok_or_else(|| format!("clicking {selector:?} didn't focus it"))?;
+		self.input("keyup", |host| {
+			for key in [Key::Backspace, Key::Delete] {
+				for _ in 0..length {
+					host.press_key(key);
+				}
+			}
+			2 * length as usize
+		})?;
+		self.type_text(text)
+	}
+}

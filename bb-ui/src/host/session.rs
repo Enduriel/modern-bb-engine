@@ -9,16 +9,10 @@ use std::time::{Duration, Instant};
 
 use bb_engine::harness::{self, GameEngine};
 
-use super::{Event, HostConfig, Key, RequestKind, UiHost};
+use super::{Event, HostConfig, RequestKind, UiHost};
 use crate::bridge::UiProtocol;
 use crate::coui::UiFiles;
 use crate::json::Json;
-
-/// How long the page may take to see key presses.
-const KEY_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How long [`UiSession::fill_field`] waits for its field to show up.
-const FIELD_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// One line of what the page or the bridge reported.
 #[derive(Clone, Debug)]
@@ -204,181 +198,6 @@ impl UiSession {
 		})
 	}
 
-	/// Run `find` (JS evaluating to `[x, y]` or `null`): the point it found. `what`
-	/// names the target in the error.
-	fn locate(&self, find: &str, what: &str) -> Result<(i32, i32), String> {
-		let target = self.eval(find)?;
-		let xy: Option<Vec<i64>> = target
-			.as_array()
-			.map(|xy| xy.iter().filter_map(Json::as_i64).collect());
-		let Some([x, y]) = xy.and_then(|xy| <[i64; 2]>::try_from(xy).ok()) else {
-			return Err(format!("no visible {what}"));
-		};
-		Ok((x as i32, y as i32))
-	}
-
-	/// Run `find` (see [`UiSession::locate`]) and click there, as a player would: a
-	/// real mouse click.
-	fn click_found(&self, find: &str, what: &str) -> Result<(), String> {
-		let (x, y) = self.locate(find, what)?;
-		self.host().click(x, y);
-		Ok(())
-	}
-
-	/// Send key presses with `send`, which returns how many, then pump until the page
-	/// has seen all of them released (key events reach the page asynchronously).
-	fn keys(&self, send: impl FnOnce(&UiHost) -> usize) -> Result<(), String> {
-		let before = self
-			.eval(
-				"(function () {
-	if (!window.__bbKeyups) {
-		window.__bbKeyups = 0;
-		window.addEventListener('keyup', function () { window.__bbKeyups++; }, true);
-	}
-	return window.__bbKeyups;
-})()",
-			)?
-			.as_i64()
-			.unwrap_or(0);
-		let expected = before + send(self.host()) as i64;
-		let seen = || {
-			self.eval("window.__bbKeyups")
-				.ok()
-				.and_then(|n| n.as_i64())
-				.is_some_and(|n| n >= expected)
-		};
-		if self.pump_until(KEY_TIMEOUT, |_| seen()) {
-			Ok(())
-		} else {
-			Err("the page didn't get the key presses".into())
-		}
-	}
-
-	/// Press and release `key` in the focused element.
-	pub fn press_key(&self, key: Key) -> Result<(), String> {
-		self.keys(|host| {
-			host.press_key(key);
-			1
-		})
-	}
-
-	/// Type `text` into the focused element (click it first), a key press per
-	/// character. See [`Key`] for the codes the page sees.
-	pub fn type_text(&self, text: &str) -> Result<(), String> {
-		self.keys(|host| {
-			host.type_text(text);
-			text.chars().count()
-		})
-	}
-
-	/// Replace the text in the first visible text field matching the CSS `selector`, as
-	/// a player would: click into it once it's ready, delete what's there with
-	/// Backspace and Delete (wherever the caret landed), and type `text`.
-	pub fn fill_field(&self, selector: &str, text: &str) -> Result<(), String> {
-		self.click_when_ready(&format!("css:{selector}"), FIELD_TIMEOUT)?;
-		let length = self
-			.eval(&format!(
-				"document.activeElement && document.activeElement.matches({0}) ? document.activeElement.value.length : null",
-				Json::Str(selector.to_string()).to_text()
-			))?
-			.as_i64()
-			.ok_or_else(|| format!("clicking {selector:?} didn't focus it"))?;
-		self.keys(|host| {
-			for key in [Key::Backspace, Key::Delete] {
-				for _ in 0..length {
-					host.press_key(key);
-				}
-			}
-			2 * length as usize
-		})?;
-		self.type_text(text)
-	}
-
-	/// Turn the mouse wheel `notches` times over the first visible element matching
-	/// the CSS `selector`; positive scrolls up. Runs the game for a moment after, so
-	/// the page handles it.
-	pub fn wheel_over(&self, selector: &str, notches: i32) -> Result<(), String> {
-		let (x, y) = self.locate(
-			&selector_centre(selector),
-			&format!("element matching {selector:?}"),
-		)?;
-		self.host().wheel(x, y, notches);
-		self.run_frames(0.1)
-	}
-
-	/// Click the visible `.ui-control` (button) whose text is `label`, at its centre.
-	pub fn click_button(&self, label: &str) -> Result<(), String> {
-		let find = format!(
-			r#"(function (label) {{
-	var button = Array.prototype.find.call(document.querySelectorAll('.ui-control'), function (el) {{
-		return el.offsetParent !== null && el.textContent.trim() === label;
-	}});
-	if (!button) return null;
-	var r = button.getBoundingClientRect();
-	return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
-}})({})"#,
-			Json::Str(label.to_string()).to_text()
-		);
-		self.click_found(&find, &format!("button labelled {label:?}"))
-	}
-
-	/// Click the innermost visible element whose text is `text` (a list entry, a
-	/// label, a tab…), at its centre.
-	pub fn click_text(&self, text: &str) -> Result<(), String> {
-		let find = format!(
-			r#"(function (text) {{
-	var all = document.querySelectorAll('body *');
-	for (var i = all.length - 1; i >= 0; --i) {{
-		var el = all[i];
-		if (el.offsetParent === null || el.textContent.trim() !== text) continue;
-		var r = el.getBoundingClientRect();
-		if (r.width === 0 || r.height === 0) continue;
-		return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
-	}}
-	return null;
-}})({})"#,
-			Json::Str(text.to_string()).to_text()
-		);
-		self.click_found(&find, &format!("element with the text {text:?}"))
-	}
-
-	/// Click the first visible element matching the CSS `selector` (e.g. an image
-	/// button: `img[src$="icon_end_turn.png"]`), at its centre.
-	pub fn click_selector(&self, selector: &str) -> Result<(), String> {
-		self.click_found(
-			&selector_centre(selector),
-			&format!("element matching {selector:?}"),
-		)
-	}
-
-	/// Click `target` once it is visible and the page has stopped animating, running
-	/// the game meanwhile, as a player waits for a screen before clicking. `target` is
-	/// `css:SELECTOR`, or else a button's label or any element's text. Fails after
-	/// `timeout`.
-	pub fn click_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
-		let deadline = Instant::now() + timeout;
-		loop {
-			if !self.animating()? {
-				let clicked = match target.strip_prefix("css:") {
-					Some(selector) => self.click_selector(selector),
-					None => self
-						.click_button(target)
-						.or_else(|_| self.click_text(target)),
-				};
-				match clicked {
-					Ok(()) => return Ok(()),
-					Err(error) if Instant::now() >= deadline => return Err(error),
-					Err(_) => {}
-				}
-			} else if Instant::now() >= deadline {
-				return Err(format!(
-					"the page was still animating when {target:?} was due"
-				));
-			}
-			self.run_frames(0.1)?;
-		}
-	}
-
 	/// Whether some visible text on the page contains `text` (within one text node).
 	pub fn shows_text(&self, text: &str) -> Result<bool, String> {
 		let code = format!(
@@ -462,21 +281,4 @@ impl UiSession {
 			.map_err(|e| e.to_string())?;
 		Ok(Some((frame.width, frame.height)))
 	}
-}
-
-/// JS evaluating to the centre `[x, y]` of the first visible element matching the CSS
-/// `selector`, or `null`.
-fn selector_centre(selector: &str) -> String {
-	format!(
-		r#"(function (selector) {{
-	var found = Array.prototype.find.call(document.querySelectorAll(selector), function (el) {{
-		var r = el.getBoundingClientRect();
-		return el.offsetParent !== null && r.width > 0 && r.height > 0;
-	}});
-	if (!found) return null;
-	var r = found.getBoundingClientRect();
-	return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
-}})({})"#,
-		Json::Str(selector.to_string()).to_text()
-	)
 }
