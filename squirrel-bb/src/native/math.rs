@@ -59,14 +59,10 @@ pub(crate) fn install(vm: &mut SQVM, prng: Prng) {
 			"maxf",
 			vm.make_closure(|a: DynNumber, b: DynNumber| a.as_f64().max(b.as_f64())),
 		),
-		// Polymorphic abs (int in → int out, float in → float out).
-		(
-			"abs",
-			vm.make_closure(|x: DynNumber| match x {
-				DynNumber::Int(n) => DynNumber::Int(n.wrapping_abs()),
-				DynNumber::Float(f) => DynNumber::Float(f.abs()),
-			}),
-		),
+		// abs is an integer function like min/max: a float truncates first, so
+		// abs(0.798) == 0 (probed 2026-10-13; the AI's armor-priority term relies on it).
+		// `absf` is the float one.
+		("abs", vm.make_closure(|x: DynNumber| x.as_i64().wrapping_abs())),
 		("absf", vm.make_closure(|x: Number| x.0.abs())),
 		// ceil/floor/round return FLOATS in BB (verified: actor.updateOverlay does an
 		// unguarded `getHitpoints() / getHitpointsMax()` where getHitpointsMax() is

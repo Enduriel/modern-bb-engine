@@ -32,19 +32,24 @@ fn math_min_max_and_float_variants() {
 	.expect("Math min/max variants");
 }
 
+/// `Math.abs` truncates a float to an integer first, as the original does (probed
+/// 2026-10-13: 0.798 -> 0, -0.798 -> 0, 1.5 -> 1, -2.7 -> 2, all integers).
 #[test]
-fn math_abs_is_polymorphic() {
+fn math_abs_is_an_integer_function() {
 	vm().run_script(
 		r#"
 			assert(Math.abs(-5) == 5);
-			assert(typeof Math.abs(-5) == "integer");   // int in -> int out
-			assert(Math.abs(-2.5) == 2.5);
-			assert(typeof Math.abs(-2.5) == "float");   // float in -> float out
+			assert(typeof Math.abs(-5) == "integer");
+			assert(Math.abs(0.798) == 0);
+			assert(Math.abs(-0.798) == 0);
+			assert(Math.abs(1.5) == 1);
+			assert(Math.abs(-2.7) == 2);
+			assert(typeof Math.abs(-2.5) == "integer");
 			assert(Math.absf(-2.5) == 2.5);
 			"#,
 		"math_abs",
 	)
-	.expect("Math.abs polymorphism");
+	.expect("Math.abs truncates");
 }
 
 #[test]
