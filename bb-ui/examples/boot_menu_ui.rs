@@ -7,8 +7,9 @@
 //! shows up: the visible button with that label, else any element with that text, or
 //! with `css:SELECTOR` the first visible match. It reports and screenshots the result
 //! of each click (`menu-1.png`, …). `--seed SEED` sets the new-campaign map seed
-//! just before a "Start" click (as typing it would; there's no keyboard input yet). `--after SECONDS` keeps the game running after the last click
-//! (e.g. while a new campaign generates), then reports again (`menu-after.png`).
+//! just before a "Start" click (as typing it would; there's no keyboard input yet).
+//! `--after SECONDS` keeps the game running after the last click (e.g. while a new
+//! campaign generates), then reports again (`menu-after.png`).
 //!
 //! `--eval CODE` (repeatable) prints the value of `CODE` evaluated in the page after
 //! the clicks. `--devtools PORT` serves Chrome DevTools for the page on localhost
