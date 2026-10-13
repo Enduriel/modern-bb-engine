@@ -40,6 +40,13 @@ fn transcodes_and_runs_a_real_compiled_script() {
 		assert(typeof WeakTableRef == "class");
 		local w = WeakTableRef(null);   // constructor: null -> WeakTable stays null
 		assert(w.isNull());             // method call on the instance
+		// The constructor assigns its own member, so `this` must be the new instance
+		// (an unbound closure; see the transcoder's closure-environment rewrite).
+		local t = { A = 1 };
+		local w2 = WeakTableRef(t);
+		assert(!w2.isNull());
+		assert(w2.get().A == 1);
+		assert(w2.A == 1);              // through the class's `_get`
 		"#,
 		"weak_table_ref_check",
 	)

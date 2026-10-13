@@ -75,7 +75,8 @@ pub(crate) unsafe fn payload_ptr<T: 'static>(vm: &SQVM, idx: i64) -> Option<*mut
 	}
 	// 2. Fetch the payload pointer (no per-call typetag check; we did our own).
 	let mut up: squirrel_sys::SQUserPointer = std::ptr::null_mut();
-	if unsafe { squirrel_sys::sq_getinstanceup(ptr, idx, &mut up, std::ptr::null_mut()) } != SQ_OK {
+	// `throwerror = false`: a miss is reported as `None`, not as a VM error.
+	if unsafe { squirrel_sys::sq_getinstanceup(ptr, idx, &mut up, std::ptr::null_mut(), 0) } != SQ_OK {
 		return None;
 	}
 	if up.is_null() {

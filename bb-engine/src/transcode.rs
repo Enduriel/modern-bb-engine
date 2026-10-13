@@ -26,6 +26,15 @@
 //! instructions in the stream. (`OP_LOADINT` needs no such fix: our VM does
 //! `(SQInteger)((SQInt32)arg1)`, sign-extending the 4-byte immediate to i64.)
 //!
+//! ## Closure environment operand
+//!
+//! Squirrel 3.2 added inline `function[env]()` binding: `_OP_CLOSURE`'s `_arg2` names the
+//! stack slot to bind as the new closure's environment, and `0xFF` means none. Older
+//! VMs ignore the operand and older compilers left `0` there (`1` for lambdas), which
+//! our VM would read as "bind to slot 0" (the defining function's `this`), rebinding
+//! every function the game declares. So every `_OP_CLOSURE` gets `_arg2 = 0xFF`, which
+//! is what our compiler emits for an unbound closure.
+//!
 //! The XXTEA decryption is applied per *write chunk*: every `SafeWrite`/`WriteTag`
 //! is one chunk, and only chunks of ≥ 8 bytes are encrypted — so the small scalar
 //! writes (tags, counts, single ints/floats, the `bool`) are plaintext, and only
@@ -64,6 +73,9 @@ const OP_LOADFLOAT: u8 = 0x03; // TARGET = *((SQFloat*)&arg1) — inline, broken
 // `Const.World.TerrainTypeSpeedMult`), so it is hoisted the same way and switched to
 // `AAT_LITERAL`.
 const OP_APPENDARRAY: u8 = 0x22;
+// `_OP_CLOSURE(target, proto, bound_env)`: `bound_env` is a stack slot, or `NO_BOUND_ENV`.
+const OP_CLOSURE: u8 = 0x30;
+const NO_BOUND_ENV: u8 = 0xFF;
 const AAT_LITERAL: u8 = 1;
 const AAT_FLOAT: u8 = 3;
 
@@ -192,6 +204,9 @@ fn transcode_proto(r: &mut Reader, w: &mut Writer) -> TResult<()> {
 				b[6] = AAT_LITERAL; // _arg2: AAT_FLOAT -> AAT_LITERAL
 			}
 			b[0..4].copy_from_slice(&(idx as i32).to_le_bytes()); // _arg1: f32 bits -> literal index
+		}
+		if b[4] == OP_CLOSURE {
+			b[6] = NO_BOUND_ENV; // _arg2: unused before 3.2 -> "no bound environment"
 		}
 		instructions.bytes(&b);
 	}
