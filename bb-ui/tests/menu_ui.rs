@@ -1,6 +1,7 @@
 //! End-to-end through the real UI: the game's `ui/` runs in the Chromium host
 //! (offscreen, headless) against the real scripts, boots to the main menu, and a real
-//! mouse click on "New Campaign" opens the new-campaign menu, which "Cancel" closes;
+//! mouse click on "New Campaign" opens the new-campaign menu, whose origin list the
+//! mouse wheel scrolls and which "Cancel" closes; Options round-trips its settings;
 //! calls between scripts and page run inline both ways, as in the original. Skips if
 //! there is no Steam install.
 //!
@@ -95,6 +96,21 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		origins.to_text() == "true",
 		"the origin list is missing 'A New Company'",
 	)?;
+
+	// The wheel scrolls the origin list (aciScrollBar reads jquery.mousewheel's
+	// `wheelDelta / 120`): two notches down, then back up to the top.
+	let list = ".new-campaign-menu-module .l-list-container .aciSb_cnt";
+	let scroll_top = || {
+		session
+			.eval(&format!("document.querySelector({list:?}).scrollTop"))
+			.map(|top| top.as_i64().unwrap_or(-1))
+	};
+	session.wheel_over(list, -2)?;
+	let down = scroll_top()?;
+	ensure(down > 0, format!("two notches down left the origin list at {down}"))?;
+	session.wheel_over(list, 2)?;
+	let up = scroll_top()?;
+	ensure(up == 0, format!("two notches back up left the origin list at {up}"))?;
 
 	session.click_button("Cancel")?;
 	wait_for_button(&session, "New Campaign", Duration::from_secs(10))?;

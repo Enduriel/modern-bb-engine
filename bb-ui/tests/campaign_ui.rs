@@ -1,8 +1,9 @@
 //! End-to-end through the real UI: a new campaign started from the main menu the way
-//! a player does it ("New Campaign", pick "A New Company", "Next", "Next", "Start"),
-//! through worldgen and the loading screen, to the origin's intro event and, after
-//! "Huzzah!", the running world screen. The game's `ui/` runs in the Chromium host
-//! (offscreen, headless) against the real scripts. Skips if there is no Steam install.
+//! a player does it ("New Campaign", pick "A New Company", "Next", "Next", type the map
+//! seed, "Start"), through worldgen and the loading screen, to the origin's intro event
+//! and, after "Huzzah!", the running world screen. The game's `ui/` runs in the
+//! Chromium host (offscreen, headless) against the real scripts. Skips if there is no
+//! Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test campaign_ui`
 //!
@@ -19,8 +20,11 @@ use bb_ui::host::{HostConfig, UiSession};
 /// How long a step may take: a new campaign generates its world first.
 const STEP: Duration = Duration::from_secs(120);
 
-/// The map seed (the field takes up to 10 characters).
+/// The map seed.
 const SEED: &str = "bbuitest";
+
+/// The map seed's text field (the company name's takes 32 characters).
+const SEED_FIELD: &str = ".new-campaign-menu-module input[maxlength=\"10\"]";
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition {
@@ -37,13 +41,17 @@ fn starts_a_campaign_and_reaches_the_world_screen(data_dir: &Path) -> Result<(),
 	for step in ["New Campaign", "A New Company", "Next", "Next"] {
 		session.click_when_ready(step, STEP)?;
 	}
-	// A fixed map seed, so the run is the same every time. The menu fills the field with
-	// a random one; set it through the field itself, standing in for typing (no keyboard
-	// input yet).
-	session.eval(&format!(
-		"Screens.MainMenuScreen.mNewCampaignModule.mSeed.setInputText({:?})",
-		SEED
-	))?;
+	// A fixed map seed, so the run is the same every time; the menu fills the field with
+	// a random one.
+	session.fill_field(SEED_FIELD, SEED)?;
+	let typed = session.eval("Screens.MainMenuScreen.mNewCampaignModule.mSeed.getInputText()")?;
+	ensure(
+		typed.as_str() == Some(SEED),
+		format!(
+			"the seed field holds {} after typing {SEED:?}",
+			typed.to_text()
+		),
+	)?;
 	session.click_when_ready("Start", STEP)?;
 
 	// The origin's intro event, over the generated world.
