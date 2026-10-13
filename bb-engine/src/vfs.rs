@@ -7,14 +7,17 @@
 //! will build on top of this.
 
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self, BufReader, Read};
 use std::path::Path;
 
 use zip::ZipArchive;
 
 /// A single opened `.dat` (ZIP) archive.
 pub struct DatArchive {
-	archive: ZipArchive<File>,
+	/// Buffered: the `zip` crate parses the central directory and entry headers in many
+	/// small reads, each a syscall on a bare `File` (opening vanilla's archives took
+	/// ~120 ms unbuffered, ~7 ms buffered).
+	archive: ZipArchive<BufReader<File>>,
 }
 
 impl DatArchive {
@@ -22,7 +25,7 @@ impl DatArchive {
 	/// entries are read on demand (so a multi-GB `data_001.dat` is not loaded
 	/// whole).
 	pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
-		let file = File::open(path)?;
+		let file = BufReader::new(File::open(path)?);
 		let archive = ZipArchive::new(file).map_err(zip_to_io)?;
 		Ok(DatArchive { archive })
 	}
