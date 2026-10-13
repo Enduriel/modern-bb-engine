@@ -97,6 +97,15 @@ impl SQVM {
 	/// string object, which stays alive on the stack for the whole native call,
 	/// so the borrow is valid for as long as the `&self` borrow of the VM.
 	pub(crate) fn get_str_ref(&self, idx: i64) -> Result<&str, String> {
+		let bytes = self
+			.get_bytes_ref(idx)
+			.ok_or_else(|| format!("expected a string at parameter {}", idx - 1))?;
+		std::str::from_utf8(bytes).map_err(|_| format!("parameter {} is not valid UTF-8", idx - 1))
+	}
+
+	/// The raw bytes of the string at `idx` (no UTF-8 check), borrowed like
+	/// [`get_str_ref`](Self::get_str_ref); `None` if it is not a string.
+	pub(crate) fn get_bytes_ref(&self, idx: i64) -> Option<&[u8]> {
 		// `sq_getstringandsize` fetches pointer and length together, so they are
 		// guaranteed to describe the same string object (one FFI crossing).
 		let mut c_str_ptr: *const c_char = std::ptr::null();
@@ -104,17 +113,12 @@ impl SQVM {
 		let res = unsafe {
 			squirrel_sys::sq_getstringandsize(self.as_ptr(), idx, &mut c_str_ptr, &mut size)
 		};
-		if res != SQ_OK {
-			return Err(format!("expected a string at parameter {}", idx - 1));
-		}
 		// Defensive: a valid string never has a negative length, but guard the
 		// cast to `usize` so a malformed size can't produce an oversized slice.
-		if size < 0 || c_str_ptr.is_null() {
-			return Err(format!("parameter {} is not a valid string", idx - 1));
+		if res != SQ_OK || size < 0 || c_str_ptr.is_null() {
+			return None;
 		}
-
-		let c_str = unsafe { std::slice::from_raw_parts(c_str_ptr as *const u8, size as usize) };
-		std::str::from_utf8(c_str).map_err(|_| format!("parameter {} is not valid UTF-8", idx - 1))
+		Some(unsafe { std::slice::from_raw_parts(c_str_ptr as *const u8, size as usize) })
 	}
 
 	pub(crate) fn get_string(&self, idx: i64) -> Result<String, String> {

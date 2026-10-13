@@ -5,6 +5,7 @@
 //!   * [`ret`]      — [`IntoSqReturn`]: pushing the return value (or throwing)
 //!   * [`this`]     — [`This`]: the borrowed receiver, as a leading parameter
 //!   * [`variadic`] — [`Variadic`]: a trailing "rest" parameter
+//!   * [`forward`]  — [`StackArg`]/[`Forwarded`]: passing a call's arguments on unretained
 //!   * [`into_fn`]  — the per-arity glue that derives the param-check schema and
 //!                    wires a closure of each shape into a boxed [`SqFunction`]
 //!
@@ -13,6 +14,7 @@
 //! dispatches to it.
 
 mod arg;
+mod forward;
 mod into_fn;
 mod number;
 mod ret;
@@ -23,6 +25,7 @@ mod variadic;
 #[cfg(test)]
 mod tests;
 
+pub use forward::{Forwarded, StackArg};
 pub use number::{DynNumber, Number};
 pub use strong_ref::{Retained, SqStrongRef};
 pub use this::This;

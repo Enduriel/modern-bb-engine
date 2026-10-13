@@ -55,35 +55,43 @@ impl SqStrongRef {
 }
 
 impl SqTable<'_> {
-	/// Replace every closure slot in this table (own slots only, not the delegate's)
-	/// with a copy bound to `env`. Non-closure slots are left untouched.
+	/// Replace every closure slot in this table (own slots with string keys only, not
+	/// the delegate's) with a copy bound to `env`. Other slots are left untouched.
+	///
+	/// Runs as one native walk: each closure is bound and stored back under the key
+	/// object the iteration already holds, so no key is re-interned and no reference
+	/// is retained. Overwriting an existing key's value never rehashes the table, so
+	/// it is safe while iterating.
 	pub fn bind_closures_to(&mut self, env: &SqTable) {
-		for key in self.keys() {
-			let Some(value) = self.get_owned_strong(&key) else {
-				continue;
-			};
-			if let Some(bound) = value.bindenv(self.vm, env) {
-				self.set(&key, bound);
-			}
-		}
-	}
-
-	/// The raw value of `key` in THIS table (no delegate fallthrough) as a strong ref.
-	fn get_owned_strong(&self, key: &str) -> Option<SqStrongRef> {
 		let ptr = self.vm.as_ptr();
 		unsafe {
 			squirrel_sys::sq_pushobject(ptr, self.obj); // [t]
-			self.vm.push_string(key); // [t, key]
-			if squirrel_sys::sq_rawget(ptr, -2) == SQ_OK {
-				// [t, value]
-				let value = SqStrongRef::from_stack(self.vm, -1);
-				squirrel_sys::sq_pop(ptr, 2);
-				Some(value)
-			} else {
-				// sq_rawget popped the key on failure -> [t]
-				squirrel_sys::sq_pop(ptr, 1);
-				None
+			let table = squirrel_sys::sq_gettop(ptr);
+			squirrel_sys::sq_pushnull(ptr); // [t, iter]
+			while squirrel_sys::sq_next(ptr, table) == SQ_OK {
+				// [t, iter, key, value]
+				let closure = matches!(
+					self.vm.get_type(-1),
+					SqObjectType::Closure | SqObjectType::NativeClosure
+				);
+				if closure && self.vm.get_type(-2) == SqObjectType::String {
+					squirrel_sys::sq_pushobject(ptr, env.obj); // [.., key, value, env]
+					if squirrel_sys::sq_bindenv(ptr, -2) == SQ_OK {
+						// popped env, pushed the bound copy -> [.., key, value, bound]
+						squirrel_sys::sq_push(ptr, -3); // [.., key, value, bound, key]
+						squirrel_sys::sq_push(ptr, -2); // [.., key, value, bound, key, bound]
+						squirrel_sys::sq_rawset(ptr, table); // pops key + bound
+						squirrel_sys::sq_pop(ptr, 1); // [.., key, value]
+					} else {
+						// Only fails for a non-closure target or invalid env (both
+						// excluded); env is still on the stack.
+						squirrel_sys::sq_reseterror(ptr);
+						squirrel_sys::sq_pop(ptr, 1); // [.., key, value]
+					}
+				}
+				squirrel_sys::sq_pop(ptr, 2); // [t, iter]
 			}
+			squirrel_sys::sq_pop(ptr, 2); // []
 		}
 	}
 }

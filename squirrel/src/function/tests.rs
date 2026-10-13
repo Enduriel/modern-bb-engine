@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{This, Variadic};
+use super::{StackArg, This, Variadic};
 use crate::{SQVM, SqObjectType, SqStrongRef, SqTable};
 
 #[test]
@@ -415,4 +415,65 @@ fn register_optional_and_this_borrowed_str() {
 		"#,
 	)
 	.expect("Option<&str>, This+&str, and Variadic<&str> should work");
+}
+
+/// A dispatcher built on `forward_member`: picks `leaf_<arity>` on the receiver and
+/// forwards the call's own argument slots to it, returning the leaf's result in place.
+fn register_forwarding_dispatcher(vm: &mut SQVM) {
+	let dispatch = vm.make_closure(|vm: &SQVM, this: This, args: Variadic<StackArg>| {
+		let key = format!("leaf_{}", args.0.len());
+		match this.forward_member(vm, &key, &args.0)? {
+			Some(result) => Ok(result),
+			None => Err("no such leaf".to_string()),
+		}
+	});
+	let mut obj = SqTable::new(vm);
+	obj.set("go", dispatch);
+	SqTable::root(vm).set("Obj", obj);
+}
+
+#[test]
+fn forward_member_passes_args_through_and_returns_the_result() {
+	let mut vm = SQVM::new(1024);
+	register_forwarding_dispatcher(&mut vm);
+	vm.run_script(
+		r#"
+		Obj.leaf_0 <- function() { return this == ::Obj ? "zero" : "wrong this"; };
+		Obj.leaf_2 <- function(a, b) { return a - b; };               // order matters
+		Obj.leaf_3 <- function(t, s, f) { return t.x + s.len() + f; }; // any types
+		Obj.leaf_1 <- function(x) { return null; };
+		assert(Obj.go() == "zero");
+		assert(Obj.go(10, 3) == 7);
+		assert(Obj.go({ x = 1 }, "ab", 0.5) == 3.5);
+		assert(Obj.go(5) == null);
+		local table = {};
+		Obj.leaf_1 = function(x) { return x; };
+		assert(Obj.go(table) == table);                               // same object back
+		local n = 0;
+		for (local i = 0; i < 10000; i++) n += Obj.go(i, 1);          // stack stays balanced
+		assert(n == 49985000);
+		"#,
+		"forward_member",
+	)
+	.expect("forwarded calls behave like direct ones");
+}
+
+#[test]
+fn forward_member_reports_a_missing_member_and_propagates_errors() {
+	let mut vm = SQVM::new(1024);
+	register_forwarding_dispatcher(&mut vm);
+	vm.run_script(
+		r#"
+		Obj.leaf_1 <- function(x) { throw "leaf failed: " + x; };
+		local missing = null, raised = null;
+		try { Obj.go(1, 2, 3, 4); } catch (e) { missing = e; }
+		try { Obj.go("boom"); } catch (e) { raised = e; }
+		assert(missing == "no such leaf");
+		assert(raised.find("leaf failed: boom") != null);
+		"#,
+		"forward_member_errors",
+	)
+	.expect("a missing member and a raising member both surface as errors");
+	let uncaught = vm.run_script("Obj.go(1, 2, 3, 4, 5);", "forward_member_uncaught");
+	assert!(uncaught.unwrap_err().contains("no such leaf"));
 }

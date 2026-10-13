@@ -141,8 +141,12 @@ impl<T: 'static> ClassBuilder<T> {
 	/// Register the class in the root table and return a handle for instantiation.
 	pub fn build(self, vm: &mut SQVM) -> SqClass<T> {
 		let ptr = vm.as_ptr();
-		let table: PropertyTable<T> =
-			Rc::new(self.properties.into_iter().collect::<HashMap<_, _>>());
+		let table: PropertyTable<T> = Rc::new(
+			self.properties
+				.into_iter()
+				.map(|(name, p)| (name.into_bytes().into_boxed_slice(), p))
+				.collect::<HashMap<_, _, _>>(),
+		);
 
 		unsafe {
 			squirrel_sys::sq_newclass(ptr, 0); // [class] (no base class)

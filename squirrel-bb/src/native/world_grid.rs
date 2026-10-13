@@ -12,7 +12,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{
-	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, This, Variadic,
+	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, StackArg, This,
+	Variadic,
 };
 
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
@@ -1100,7 +1101,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		)
 		.native_method(
 			"spawnDetail",
-			|vm: &SQVM, this: This, args: Variadic<Retained>| {
+			|vm: &SQVM, this: This, args: Variadic<StackArg>| {
 				dispatch_overload(vm, this, "spawnDetail", args)
 			},
 		);

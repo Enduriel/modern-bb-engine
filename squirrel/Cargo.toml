@@ -8,3 +8,10 @@ edition = "2024"
 # BB's bytecode is 32-bit float; the transcode (bb-engine) widens f32->f64, including
 # moving OP_LOADFLOAT inline floats into the f64 literal table.
 squirrel-sys = { path = "../../squirrel-sys", features = ["double"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "glue"
+harness = false

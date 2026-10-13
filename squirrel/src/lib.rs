@@ -11,7 +11,7 @@ mod vm;
 pub use class::{ClassBuilder, Native, SqClass};
 pub(crate) use consts::{SQ_ERROR, SQ_OK};
 pub(crate) use function::CallArgs;
-pub use function::{DynNumber, Number, Retained, SqStrongRef, This, Variadic};
+pub use function::{DynNumber, Forwarded, Number, Retained, SqStrongRef, StackArg, This, Variadic};
 pub use identity::Identity;
 pub(crate) use object::SqObject;
 pub use object::SqObjectType;

@@ -7,6 +7,7 @@
 //! can all be views over one `u32`, staying consistent.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::Rc;
 
 use super::payload::payload_ptr;
@@ -127,8 +128,35 @@ impl<T: 'static> Property<T> {
 	}
 }
 
-/// Shared, per-class property table, captured by both metamethods.
-pub(crate) type PropertyTable<T> = Rc<HashMap<String, Property<T>>>;
+/// Shared, per-class property table, captured by both metamethods. Keyed by the name's
+/// bytes, so a lookup needs no UTF-8 check (a non-UTF-8 key simply matches nothing),
+/// and hashed with [`NameHasher`]: every native field access hashes its name, and these
+/// are short.
+pub(crate) type PropertyTable<T> =
+	Rc<HashMap<Box<[u8]>, Property<T>, BuildHasherDefault<NameHasher>>>;
+
+/// FNV-1a: much cheaper than the default SipHash for short property names (no
+/// HashDoS concern: the keys are the class's own field names).
+#[derive(Default)]
+pub(crate) struct NameHasher(u64);
+
+impl Hasher for NameHasher {
+	fn write(&mut self, bytes: &[u8]) {
+		let mut h = if self.0 == 0 {
+			0xcbf2_9ce4_8422_2325
+		} else {
+			self.0
+		};
+		for &b in bytes {
+			h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+		}
+		self.0 = h;
+	}
+
+	fn finish(&self) -> u64 {
+		self.0
+	}
+}
 
 /// The class's `_get(key)` metamethod: read the payload, dispatch on `key`.
 pub(crate) struct GetMeta<T> {
@@ -137,11 +165,11 @@ pub(crate) struct GetMeta<T> {
 
 impl<T: 'static> SqFunction for GetMeta<T> {
 	fn invoke(&mut self, vm: &SQVM) -> squirrel_sys::SQInteger {
-		// Stack: [this(instance)=1, key=2, ...]. Own the key string so later stack
-		// pushes can't invalidate a borrow into the stack.
-		let key = match vm.get_string(2) {
-			Ok(key) => key,
-			Err(_) => return vm.throw_error("_get: property name must be a string"),
+		// Stack: [this(instance)=1, key=2, ...]. The key borrows the interned string in
+		// slot 2, which stays put for the call; it is only used before anything is
+		// pushed.
+		let Some(key) = vm.get_bytes_ref(2) else {
+			return vm.throw_error("_get: property name must be a string");
 		};
 		let payload = match unsafe { payload_ptr::<T>(vm, 1) } {
 			Some(payload) => payload,
@@ -149,13 +177,16 @@ impl<T: 'static> SqFunction for GetMeta<T> {
 				return vm.throw_error("_get: receiver is not an instance of this native class");
 			}
 		};
-		match self.props.get(&key) {
+		match self.props.get(key) {
 			Some(property) => {
 				let value: &T = unsafe { &(*payload).value };
 				(property.get)(value, vm); // pushes exactly one value
 				1
 			}
-			None => vm.throw_error(&format!("the index '{key}' does not exist")),
+			None => vm.throw_error(&format!(
+				"the index '{}' does not exist",
+				String::from_utf8_lossy(key)
+			)),
 		}
 	}
 }
@@ -167,10 +198,9 @@ pub(crate) struct SetMeta<T> {
 
 impl<T: 'static> SqFunction for SetMeta<T> {
 	fn invoke(&mut self, vm: &SQVM) -> squirrel_sys::SQInteger {
-		// Stack: [this=1, key=2, value=3, ...].
-		let key = match vm.get_string(2) {
-			Ok(key) => key,
-			Err(_) => return vm.throw_error("_set: property name must be a string"),
+		// Stack: [this=1, key=2, value=3, ...]. The key borrows slot 2 (see `GetMeta`).
+		let Some(key) = vm.get_bytes_ref(2) else {
+			return vm.throw_error("_set: property name must be a string");
 		};
 		let payload = match unsafe { payload_ptr::<T>(vm, 1) } {
 			Some(payload) => payload,
@@ -178,7 +208,7 @@ impl<T: 'static> SqFunction for SetMeta<T> {
 				return vm.throw_error("_set: receiver is not an instance of this native class");
 			}
 		};
-		match self.props.get(&key) {
+		match self.props.get(key) {
 			Some(property) => {
 				let value: &mut T = unsafe { &mut (*payload).value };
 				match (property.set)(value, vm, 3) {
@@ -192,7 +222,10 @@ impl<T: 'static> SqFunction for SetMeta<T> {
 					Err(error) => vm.throw_error(&error),
 				}
 			}
-			None => vm.throw_error(&format!("the index '{key}' does not exist")),
+			None => vm.throw_error(&format!(
+				"the index '{}' does not exist",
+				String::from_utf8_lossy(key)
+			)),
 		}
 	}
 }
