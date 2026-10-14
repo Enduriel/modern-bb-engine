@@ -31,6 +31,10 @@ winit = "0.30.13"
 
 # Own `main`: the browser host re-runs the test binary for its child processes, and
 # starts only once per process.
+[[example]]
+name = "frame_scenes"
+required-features = ["ui"]
+
 [[test]]
 name = "ui_window"
 harness = false

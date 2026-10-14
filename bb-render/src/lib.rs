@@ -12,9 +12,11 @@
 //! - [`UiLayer`]: the UI page blended over a frame.
 //! - [`Presenter`]: copies a finished frame onto a window's surface.
 //! - [`portrait`]: an entity drawn on its own, for the UI's procedural images.
+//! - [`frame_diff`]: where a frame of ours differs from a screenshot of the original.
 
 mod cursor;
 mod fog;
+pub mod frame_diff;
 mod gpu;
 pub mod labels;
 pub mod portrait;
