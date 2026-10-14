@@ -88,8 +88,9 @@ fn world_natives_from_the_disassembly() {
 		// roster.get(i): the i-th member, null past the end.
 		local roster = ::World.getPlayerRoster();
 		if (roster.get(0) != company[0]) wrong.push("get(0)");
-		if (roster.get(company.len()) != null) wrong.push("get past the end");
-		if (roster.get(-1) != null) wrong.push("get(-1)");
+		local past = roster.get(company.len()), neg = roster.get(-1);
+		if (typeof past != "table" || past.len() != 0) wrong.push("get past the end: " + typeof past);
+		if (typeof neg != "table" || neg.len() != 0) wrong.push("get(-1): " + typeof neg);
 		"#,
 	);
 	check(
@@ -97,7 +98,9 @@ fn world_natives_from_the_disassembly() {
 		"WorldTile between",
 		r#"
 		local t = ::World.getTileSquare(20, 20);
-		if (!t.getTileBetweenThisAnd(t).isSameTileAs(t)) wrong.push("self");
+		// A tile and itself: NaN, which picks tile 0,0 (as the original).
+		local self = t.getTileBetweenThisAnd(t);
+		if (self.SquareCoords.X != 0 || self.SquareCoords.Y != 0) wrong.push("self: " + self.SquareCoords.X + "," + self.SquareCoords.Y);
 		for (local d = 0; d < 6; d++)
 		{
 			local mid = t.getNextTile(d), far = mid.getNextTile(d);

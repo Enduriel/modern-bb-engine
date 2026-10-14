@@ -31,7 +31,7 @@ mod placement;
 mod render;
 mod vision;
 use crate::module::Instantiator;
-use crate::native::Sprites;
+use crate::native::{EntityIds, Sprites};
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
 const PLAYER_ROSTER_ID: i64 = -1;
@@ -156,7 +156,8 @@ struct TacticalMachine {
 	by_identity: HashMap<i64, usize>,
 	roster_class: Option<SqClass<RosterData>>,
 	sprite_class: Option<SqClass<UnitSpriteData>>,
-	next_id: i64,
+	/// Unit ids, shared with the world's entities (see `entity_ids`).
+	ids: EntityIds,
 	methods: Vec<(&'static str, SqStrongRef)>,
 	/// The battle map, for placing units and objects.
 	grid: Option<crate::native::tactical_grid::Grid>,
@@ -258,11 +259,7 @@ pub(super) fn set_parent_id(vm: &SQVM, entity: &SqStrongRef, parent: i64) {
 
 /// Create a new unit of `path` with the next id, then run `onInit`/`onAfterInit`.
 fn spawn(machine: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, path: &str) -> Result<SqStrongRef, String> {
-	let id = {
-		let mut m = machine.borrow_mut();
-		m.next_id += 1;
-		m.next_id - 1
-	};
+	let id = machine.borrow().ids.next();
 	let (entity, record_idx) = create_unit(machine, vm, path, id)?;
 	entity.call_method(vm, "onInit", ())?;
 	ignore_missing(entity.call_method(vm, "onAfterInit", ()))?;
@@ -414,11 +411,15 @@ fn build_roster_class(
 			}
 			arr.to_strong()
 		})
-		// get(i): the i-th member, or null past the end (disassembled, 0x4b17d0).
-		.method("get", move |r: &mut RosterData, index: i64| -> Option<SqStrongRef> {
-			let m = m_get.borrow();
-			let members = m.rosters.get(&r.id)?;
-			usize::try_from(index).ok().and_then(|i| members.get(i)).cloned()
+		// get(i): the i-th member; past the end (or negative), an empty table (probed;
+		// disassembled, 0x4b17d0).
+		.method("get", move |r: &mut RosterData, vm: &SQVM, index: i64| -> SqStrongRef {
+			let member = {
+				let m = m_get.borrow();
+				let members = m.rosters.get(&r.id);
+				usize::try_from(index).ok().and_then(|i| members.and_then(|v| v.get(i))).cloned()
+			};
+			member.unwrap_or_else(|| SqTable::new(vm).to_strong())
 		})
 		.method(
 			"create",
@@ -543,7 +544,7 @@ impl TacticalEntities {
 				by_identity: HashMap::new(),
 				roster_class: None,
 				sprite_class: None,
-				next_id: 1,
+				ids: EntityIds::default(),
 				methods: Vec::new(),
 				grid: None,
 				sprites: Sprites::default(),
@@ -552,6 +553,11 @@ impl TacticalEntities {
 	}
 
 	/// Use `sprites` to resolve sprite brushes. Call before [`install`](Self::install).
+	/// Draw unit ids from `ids` (the world's counter): one id space, as the original's.
+	pub fn share_ids(&self, ids: EntityIds) {
+		self.machine.borrow_mut().ids = ids;
+	}
+
 	pub fn set_sprites(&self, sprites: Sprites) {
 		self.machine.borrow_mut().sprites = sprites;
 	}

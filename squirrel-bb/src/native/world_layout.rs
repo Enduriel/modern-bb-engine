@@ -78,8 +78,7 @@ mod tests {
 /// The point halfway between world points `a` and `b`, in f32 the way the original gets
 /// there: the direction normalized, then scaled back by the distance and halved
 /// (`WorldTile.getPosBetweenThisAnd`/`getTileBetweenThisAnd`, disassembled 0x4faab0 and
-/// 0x4fabc0). For `a == b` the original divides by zero and gets NaN; callers handle
-/// that case themselves.
+/// 0x4fabc0). For `a == b` it divides by zero and gives NaN, as the original does.
 pub(crate) fn midpoint(a: (f64, f64), b: (f64, f64)) -> (f32, f32) {
 	let (ax, ay) = (a.0 as f32, a.1 as f32);
 	let (dx, dy) = (b.0 as f32 - ax, b.1 as f32 - ay);

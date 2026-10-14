@@ -839,12 +839,9 @@ fn fog_extent(w: i64, h: i64) -> (f32, f32) {
 }
 
 /// Mint a `WorldTile` instance at square `(col,row)`, or `None` if off-grid.
-/// The world point halfway between two tiles' centres; a tile's own centre for itself.
+/// The world point halfway between two tiles' centres (NaN for a tile and itself).
 fn between(a: &TileHandle, b: &TileHandle) -> (f32, f32) {
 	let pa = a.with(|d| world_layout::tile_pos(d.col, d.row));
-	if a.id == b.id {
-		return (pa.0 as f32, pa.1 as f32);
-	}
 	let pb = b.with(|d| world_layout::tile_pos(d.col, d.row));
 	world_layout::midpoint(pa, pb)
 }
@@ -1120,7 +1117,8 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			|t: &mut TileHandle, other: Native<TileHandle>| -> bool { t.id == other.0.id },
 		)
 		// The point and the tile halfway between two tiles (see
-		// `world_layout::midpoint`); a tile and itself give that tile.
+		// `world_layout::midpoint`). A tile and itself divide by zero: NaN, which picks
+		// tile 0,0 (probed).
 		.method(
 			"getPosBetweenThisAnd",
 			|t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Option<SqStrongRef> {
@@ -1133,10 +1131,6 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		.method(
 			"getTileBetweenThisAnd",
 			|t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Option<SqStrongRef> {
-				if t.id == other.0.id {
-					let (c, r) = t.with(|d| (d.col, d.row));
-					return tile_at(&t.grid, vm, c, r);
-				}
 				let (x, y) = between(t, &other.0);
 				let (w, h) = {
 					let g = t.grid.borrow();
