@@ -37,9 +37,5 @@
 		"nestedSized": "150x100",
 		"clippedChild": "100x100",
 		"transformed": "170x100"
-	},
-	"centring": {
-		"even": "4 4",
-		"odd": "5 5"
 	}
 }

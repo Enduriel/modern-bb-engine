@@ -1,4 +1,4 @@
-//! UI parity with the original. Six checks on one page, in order:
+//! UI parity with the original. Seven checks on one page, in order:
 //!   * `matches_the_originals_screens`: our page, driven through the main menu, the
 //!     new-campaign page and the Options screen, matches the original's snapshots
 //!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
@@ -10,9 +10,11 @@
 //!     screen, the nearest town and a seeded bandit ambush (`probes/world_golden.js`);
 //!   * `follows_the_originals_layout_rules`: `probes/layout_rules.js` gets the
 //!     original's answers (`tests/goldens/layout_rules.json`) in our page;
-//!   * `follows_the_originals_text_rules` and `follows_the_originals_border_rules`:
-//!     likewise for `probes/text_rules.js` (whole-pixel glyph advances, no kerning) and
-//!     `probes/border_rules.js` (border widths under border images).
+//!   * `follows_the_originals_text_rules`, `follows_the_originals_border_rules` and
+//!     `follows_the_originals_centring_rules`: likewise for `probes/text_rules.js`
+//!     (whole-pixel glyph advances, no kerning), `probes/border_rules.js` (border widths
+//!     under border images) and `probes/centring_rules.js` (the half pixel of centring
+//!     by `auto` margins).
 //!
 //! Skips if there is no Steam install.
 //!
@@ -33,6 +35,7 @@ use bb_ui::parity::{Snapshot, compare};
 const LAYOUT_PROBE: &str = include_str!("../probes/layout_rules.js");
 const TEXT_PROBE: &str = include_str!("../probes/text_rules.js");
 const BORDER_PROBE: &str = include_str!("../probes/border_rules.js");
+const CENTRING_PROBE: &str = include_str!("../probes/centring_rules.js");
 
 /// The answers of `layout_rules.js` that we don't reproduce:
 /// - text extents and glyph-box heights, which depend on the font rasterizer (old
@@ -50,9 +53,6 @@ const LAYOUT_EXCEPTIONS: &[&str] = &[
 	"fonts.bodyPct50",
 	"fonts.bodyPct200",
 	"overflow.nowrapText",
-	// A box centred by `auto` margins with half a pixel left over: old WebKit gives the
-	// top margin the floor (4px of 9), Chromium half (4.5px).
-	"centring.even",
 ];
 
 /// The answers of `text_rules.js` that we don't reproduce:
@@ -61,6 +61,19 @@ const LAYOUT_EXCEPTIONS: &[&str] = &[
 /// - kerning asked for with `font-kerning: normal`: the original ignores it, and our
 ///   built-in `none` gives way to it (no page asks).
 const TEXT_EXCEPTIONS: &[&str] = &["text.free18line", "text.cinzelNew", "text.cinzelAVkerning"];
+
+/// The answers of `centring_rules.js` that we don't reproduce: with half a pixel of room
+/// left over, old WebKit (whole pixels) gives the start margin the half rounded toward
+/// zero, Chromium the half (drawn a pixel further on). A quarter pixel back would match
+/// at UI scale 1, but at other scales the page is laid out at the screen size divided by
+/// the scale and drawn scaled, where the original zooms, so its pixels aren't the
+/// original's (the UI scale's golden then moves out of tolerance).
+const CENTRING_EXCEPTIONS: &[&str] = &[
+	"centring.even",
+	"centring.insetHalf",
+	"centring.horizontalHalf",
+	"centring.horizontalInsetHalf",
+];
 
 fn start(data_dir: &Path) -> Result<UiSession, String> {
 	let (width, height) = goldens::load(&goldens::default_dir(), goldens::SCREENS[0].0)?.viewport;
@@ -165,7 +178,7 @@ fn follows_the_originals_layout_rules(session: &UiSession) -> Result<(), String>
 	compare_answers(
 		&ours,
 		"layout_rules",
-		&["fonts", "overflow", "centring"],
+		&["fonts", "overflow"],
 		LAYOUT_EXCEPTIONS,
 	)
 }
@@ -202,6 +215,11 @@ fn follows_the_originals_border_rules(session: &UiSession) -> Result<(), String>
 	compare_answers(&ours, "border_rules", &["borders"], &[])
 }
 
+fn follows_the_originals_centring_rules(session: &UiSession) -> Result<(), String> {
+	let ours = later_answers(session, CENTRING_PROBE)?;
+	compare_answers(&ours, "centring_rules", &["centring"], CENTRING_EXCEPTIONS)
+}
+
 /// One check on the shared page.
 type Check = fn(&UiSession) -> Result<(), String>;
 
@@ -209,7 +227,7 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, Check); 6] = [
+	let checks: [(&str, Check); 7] = [
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,
@@ -230,6 +248,10 @@ fn main() -> ExitCode {
 		(
 			"follows_the_originals_border_rules",
 			follows_the_originals_border_rules,
+		),
+		(
+			"follows_the_originals_centring_rules",
+			follows_the_originals_centring_rules,
 		),
 	];
 	let data_dir = Path::new(STEAM_DATA_DIR);

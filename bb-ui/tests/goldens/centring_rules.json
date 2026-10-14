@@ -1,0 +1,14 @@
+{
+	"centring": {
+		"even": "4",
+		"odd": "5",
+		"negativeHalf": "-5",
+		"negativeWhole": "-5",
+		"insetHalf": "6",
+		"insetNegativeHalf": "27",
+		"horizontalHalf": "4",
+		"horizontalWhole": "5",
+		"horizontalInsetHalf": "6",
+		"horizontalNegativeHalf": "0"
+	}
+}

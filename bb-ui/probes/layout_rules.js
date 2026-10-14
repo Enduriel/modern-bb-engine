@@ -1,8 +1,8 @@
 // Old-WebKit layout rules that the parity goldens hinted at. ES5 only.
 //  1. Small font sizes: which are clamped to 8px, and does layout (em, text height) use the clamp?
 //  2. Scrollable overflow: do empty (zero-width or zero-height) boxes count toward scrollWidth/Height?
-//  3. `auto` margins centring a box with half a pixel left over: which side gets it?
-// (Text widths: `text_rules.js`; border images: `border_rules.js`.)
+// (Text widths: `text_rules.js`; border images: `border_rules.js`; centring by `auto`
+// margins: `centring_rules.js`.)
 //
 // The original's answers are `tests/goldens/layout_rules.json`. The `ui_parity` test
 // runs this file in our page, with a stand-in `BbProbe`, and compares.
@@ -78,21 +78,5 @@ BbProbe.run = function ()
 	}
 	BbProbe.send('overflow', JSON.stringify(overflow));
 
-	// A 91px box centred by `auto` margins between `top: 0` and `bottom: 0`, in parents
-	// with an even and an odd amount of room left (the loot screen's take-all button).
-	var centring = {};
-	var parents = [['even', 100], ['odd', 101]];
-	for (var c = 0; c < parents.length; c++)
-	{
-		var parent = document.createElement('div');
-		parent.setAttribute('style', 'position:absolute;left:0;top:0;width:50px;height:' + parents[c][1] + 'px');
-		var child = document.createElement('div');
-		child.setAttribute('style', 'position:absolute;left:0;top:0;bottom:0;width:10px;height:91px;margin:auto');
-		parent.appendChild(child);
-		document.body.appendChild(parent);
-		centring[parents[c][0]] = child.offsetTop + ' ' + (child.getBoundingClientRect().top - parent.getBoundingClientRect().top);
-		document.body.removeChild(parent);
-	}
-	BbProbe.send('centring', JSON.stringify(centring));
 	BbProbe.done();
 };
