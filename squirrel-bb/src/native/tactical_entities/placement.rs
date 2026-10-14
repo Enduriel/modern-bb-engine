@@ -62,6 +62,48 @@ pub(super) fn unplace(m: &Machine, idx: usize) {
 	}
 }
 
+/// `Tactical.clearScene()`'s share: every unit off the map, without its
+/// `onRemovedFromMap` (probed 2026-10-14: the brothers who come back from a battle are
+/// no longer placed once the battle's state has cleared the scene, and the callback
+/// doesn't run; the original's clearScene, `0x4d3240`, empties the scene's entity list).
+pub(super) fn unplace_all(m: &Machine) {
+	let count = m.borrow().units.len();
+	for idx in 0..count {
+		unplace(m, idx);
+	}
+}
+
+/// `Tactical.clearScene()`'s other share: the records of the units no roster holds (the
+/// battle's enemies, its dead, its map objects) go, with their script objects, sprites
+/// and labels; the rosters' (the company, guests, the towns' recruits) stay. Without it
+/// every battle left ~50 records alive until a load or a quit to the menu. Call with
+/// no shake running (`shaker::clear` ends them).
+pub(super) fn release_unrostered(m: &Machine) {
+	let mut machine = m.borrow_mut();
+	let rostered: std::collections::HashSet<i64> = machine.rosters.values().flatten().map(SqStrongRef::identity).collect();
+	let keep: Vec<bool> = machine.units.iter().map(|r| rostered.contains(&r.entity.identity())).collect();
+	if keep.iter().all(|&k| k) {
+		return;
+	}
+	let mut new_index = vec![usize::MAX; keep.len()];
+	let mut next = 0;
+	for (i, &k) in keep.iter().enumerate() {
+		if k {
+			new_index[i] = next;
+			next += 1;
+		}
+	}
+	machine.by_identity.retain(|_, idx| keep[*idx]);
+	for idx in machine.by_identity.values_mut() {
+		*idx = new_index[*idx];
+	}
+	let mut i = 0;
+	machine.units.retain(|_| {
+		i += 1;
+		keep[i - 1]
+	});
+}
+
 /// `entity.removeFromMap()`: run its `onRemovedFromMap` while still placed (it reads
 /// its tile to lift its zones), then take it off. A no-op when not placed.
 pub(super) fn remove_from_map(m: &Machine, vm: &SQVM, idx: usize) -> Result<(), String> {

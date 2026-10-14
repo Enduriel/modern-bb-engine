@@ -276,7 +276,8 @@ pub fn install_autoplay(engine: &GameEngine) -> Result<(), String> {
 /// probe runs did. With `::__autoplayDieAsPlayers` set too, a handed-over unit is the
 /// player's again as it dies, so its death is a brother's (off the roster, items
 /// released), as when a player plays the battle: set it for any battle that goes back
-/// to the world. With `::__autoplayPlayer` set to a function, that function
+/// to the world. Once the battle is over, the handed-over brothers are the player's
+/// again (a player's agent), so a next battle hands them over anew. With `::__autoplayPlayer` set to a function, that function
 /// plays the player's turns instead (it is called every frame of the battle).
 const AUTOPLAY: &str = r#"
 ::__autoplayEngage <- false;
@@ -299,6 +300,7 @@ const AUTOPLAY: &str = r#"
 				agent.setActor(bro);
 				bro.setAIAgent(agent);
 				bro.m.IsControlledByPlayer = false;
+				bro.m.__autoplayHanded <- true;
 				if (::__autoplayDieAsPlayers)
 				{
 					local kill = bro.kill;
@@ -329,6 +331,18 @@ const AUTOPLAY: &str = r#"
 		}
 		else
 		{
+			// The battle is over: the handed-over brothers are the player's again, with
+			// a player's agent, as the next battle needs them.
+			foreach (bro in ::World.getPlayerRoster().getAll())
+			{
+				if (!("__autoplayHanded" in bro.m)) continue;
+				delete bro.m.__autoplayHanded;
+				bro.m.IsControlledByPlayer = true;
+				local agent = ::new("scripts/ai/tactical/player_agent");
+				agent.setActor(bro);
+				bro.setAIAgent(agent);
+				if (bro.rawin("kill")) delete bro.kill;
+			}
 			// Leave once, as a player clicks once (the screen stays up a while after).
 			local results = st.m.TacticalCombatResultScreen;
 			if (!("__autoplayLeft" in st.m) && results != null && results.isVisible() && !results.isAnimating())

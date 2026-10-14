@@ -358,7 +358,8 @@ fn end(m: &mut TacticalMachine, vm: &SQVM, s: &Shake) {
 }
 
 /// Set `Tactical.getShaker()`, and move the shakes in `Tactical.update()` (after what it
-/// does already: the navigator's update) and end them in `Tactical.clearScene()`.
+/// does already: the navigator's update) and end them in `Tactical.clearScene()`, which
+/// also takes every unit off the map.
 pub(super) fn install(m: &Machine, vm: &mut SQVM) {
 	let class = build_class(vm);
 	let shaker = class.instantiate(vm, ShakerHandle(m.clone()));
@@ -381,10 +382,14 @@ pub(super) fn install(m: &Machine, vm: &mut SQVM) {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 			clear(&m, vm);
-			match &inner_clear {
-				Some(inner) => inner.call(vm, ()),
-				None => Ok(()),
+			if let Some(inner) = &inner_clear {
+				inner.call(vm, ())?;
 			}
+			// Then every unit is off the map, and the ones no roster holds are let go (see
+			// `placement`).
+			super::placement::unplace_all(&m);
+			super::placement::release_unrostered(&m);
+			Ok(())
 		})
 	};
 	if let Some(mut t) = tactical(vm) {
