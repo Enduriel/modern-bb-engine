@@ -9,10 +9,12 @@
 //! - [`brush_load_order`]: which brush files load at startup, in the original's
 //!   order.
 //! - [`name_hash`]: the original's 64-bit string hash that keys sprites.
+//! - [`BitmapFont`]: the engine's `.fnt` bitmap fonts (world labels).
 //! - With the `images` feature: [`decode_png`] and on-demand loading on worker
 //!   threads ([`TextureCache`]), which replaces vanilla's preload lists.
 
 pub mod brush;
+mod font;
 mod hash;
 #[cfg(feature = "images")]
 mod image;
@@ -23,6 +25,7 @@ mod reader;
 mod registry;
 
 pub use brush::{BrushFrame, BrushSheet, BrushSprite, SheetHeader};
+pub use font::{BitmapFont, GlyphUv};
 pub use hash::name_hash;
 #[cfg(feature = "images")]
 pub use image::{Image, decode_png};
