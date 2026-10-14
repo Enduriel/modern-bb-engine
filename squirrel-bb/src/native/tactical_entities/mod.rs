@@ -1133,7 +1133,8 @@ impl TacticalEntities {
 		let now = real_time(vm);
 		let shown = overlay::Shown {
 			always: crate::native::temp_gameplay_flag(vm, "ShowOverlayStats"),
-			after_change: crate::native::gameplay_flag(vm, "ShowOverlayStats"),
+			// Gameplay byte 3, which scripts can't see (see `overlay`): on.
+			after_change: true,
 		};
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return Vec::new() };

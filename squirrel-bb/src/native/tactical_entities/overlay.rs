@@ -9,10 +9,11 @@
 //! - the status icons, brush names in order.
 //!
 //! With the battle's stats toggle (`ShowOverlayStats`, temporary) on, the overlay
-//! always shows. Off, with the options' `ShowOverlayStats` on, it shows for 1.35 s of
-//! real time after a bar changes, fading in and out over 125 ms (`0x4b39d0`,
-//! `0x4c3520`); the lost-value twins keep their own fade. With both off it never
-//! shows.
+//! always shows. Off, it shows for 1.35 s of real time after a bar changes, fading in
+//! and out over 125 ms (`0x4b39d0`, `0x4c3520`); the lost-value twins keep their own
+//! fade. That flash is gated by gameplay setting byte 3 (`0x65f857`; the gameplay
+//! bytes start at `0x65f854`, `AdjustCameraLevel` being byte 1), which no script can
+//! read or set: taken as on.
 
 use crate::native::sprite_color::SpriteColor;
 use crate::scene::tactical::SceneOverlay;
@@ -42,8 +43,8 @@ pub(super) struct Overlay {
 	shown_at: f32,
 }
 
-/// Which settings show the overlay: the battle's toggle, and the options' choice to
-/// show it after a change.
+/// Which settings show the overlay: the battle's toggle, and the hidden setting that
+/// flashes it after a change.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Shown {
 	pub always: bool,

@@ -262,15 +262,6 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 }
 
 /// A field of `Settings.getTempGameplaySettings()` (e.g. `HideTrees`), false if missing.
-pub(crate) fn gameplay_flag(vm: &SQVM, name: &str) -> bool {
-	SqTable::root(vm)
-		.get::<SqTable>("Settings")
-		.and_then(|s| s.get::<SqStrongRef>("getGameplaySettings"))
-		.and_then(|f| f.call_ret::<SqStrongRef, _>(vm, ()).ok().flatten())
-		.and_then(|t| t.get_member::<bool>(vm, name))
-		.unwrap_or(false)
-}
-
 pub(crate) fn temp_gameplay_flag(vm: &SQVM, name: &str) -> bool {
 	SqTable::root(vm)
 		.get::<SqTable>("Settings")
