@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Bump to invalidate every cache generation (e.g. when the file format changes).
-const FORMAT_VERSION: u32 = 1;
+/// 2: compiled sources are named `<path>.nut`, as the original names them.
+const FORMAT_VERSION: u32 = 2;
 const MAGIC: &[u8; 4] = b"BBSC";
 
 /// What an entry was derived from. Two loads with equal keys must produce identical

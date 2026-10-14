@@ -57,7 +57,9 @@ pub(crate) fn include<S: ScriptSource>(
 	let closure = match script {
 		LoadedScript::Source(bytes) => {
 			let before = caches_compiles.then(|| compile_context(vm));
-			let compiled = vm.compile(&String::from_utf8_lossy(&bytes), &norm);
+			// Named like the original names a source file: its path with `.nut` (hook
+			// frameworks read it back from the stack and cut the extension off).
+			let compiled = vm.compile(&String::from_utf8_lossy(&bytes), &format!("{norm}.nut"));
 			// Offer the compile for caching, unless it declared constants: loading it
 			// from a cache would skip those declarations, which later compiles rely on.
 			if let (Ok(closure), Some(before)) = (&compiled, before)
