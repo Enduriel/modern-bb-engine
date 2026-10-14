@@ -11,6 +11,12 @@
 //! too: the draws and casualties when the world's `onCombatFinished` has run (after the
 //! result screen's Leave, pressed once, and the loading screen's tip).
 //!
+//! In the player battles the company is played by a scripted player instead
+//! (`testdata/scripted_player.nut`, the same script the captures ran in the original):
+//! its waits, skill clicks on targets, moves, inventory and End Turn go in through the
+//! states' mouse and key input and the screens' callbacks, so those battles are
+//! draw-exact through a player's input too.
+//!
 //! The checkpoints are the original's running hash, recomputed from its logged draws,
 //! plus the end hash it logged itself. A logged bound can hide a float just below an
 //! integer (`319` for 318.99…), which breaks the recompute from there on: such
@@ -49,6 +55,11 @@ struct Scenario {
 	pin_render: bool,
 	/// `(draw count, running hash, casualties)` once back on the world map, if captured.
 	after: Option<(i64, i64, i64)>,
+	/// The company is played by the scripted player (`testdata/scripted_player.nut`)
+	/// instead of the AI.
+	player: bool,
+	/// Squirrel run on the world map before the battle (gear, the player's settings).
+	setup: &'static str,
 }
 
 /// The trace: counts and hashes 2-arg draws and records the checkpoints, pins what
@@ -57,6 +68,7 @@ struct Scenario {
 /// are 32-bit).
 const TRACE: &str = r#"
 ::__rng <- { n = 0, h = 0, on = false, end = @end@, marks = [], pin = @pin@ };
+::__playerMode <- @player@;
 local origRand = ::Math.rand;
 local origSeed = ::Math.seedRandom;
 ::Math.rand = function( ... )
@@ -96,6 +108,15 @@ local origSeed = ::Math.seedRandom;
 ::__combatTrace <- function()
 {
 	::World.State.m.IsAutosaving = false;
+	@setup@
+	if (::__playerMode)
+	{
+		// A real mouse has always told the cursor where it is (the capture's headless
+		// game had not), and the scripted player plays the company.
+		local vm = ::Settings.getVideoMode();
+		::Cursor.setPosition(vm.Width / 2, vm.Height / 2);
+		::__autoplayPlayer = ::__botTick;
+	}
 	::Const.Sound.IdleSoundBaseDelay = 1.0e9;
 	::Const.Sound.IdleSoundMinDelay = 1.0e9;
 	local st = ::World.State.get();
@@ -123,7 +144,7 @@ local origSeed = ::Math.seedRandom;
 		::__rng.after <- [::__rng.n, ::__rng.h, ::Tactical.getCasualtyRoster().getSize()];
 		return r;
 	};
-	foreach (bro in ::World.getPlayerRoster().getAll())
+	foreach (bro in (::__playerMode ? [] : ::World.getPlayerRoster().getAll()))
 	{
 		local ocs = bro.onCombatStart;
 		bro.onCombatStart <- function()
@@ -159,6 +180,9 @@ local origSeed = ::Math.seedRandom;
 };
 "#;
 
+/// The scripted player of the player battles.
+const SCRIPTED_PLAYER: &str = include_str!("testdata/scripted_player.nut");
+
 fn fight(s: &Scenario) {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
@@ -169,6 +193,8 @@ fn fight(s: &Scenario) {
 	let trace = TRACE
 		.replace("@end@", &end.to_string())
 		.replace("@pin@", if s.pin_render { "true" } else { "false" })
+		.replace("@player@", if s.player { "true" } else { "false" })
+		.replace("@setup@", s.setup)
 		.replace("@spawn@", s.spawn)
 		.replace("@resources@", &s.resources.to_string())
 		.replace("@faction@", s.faction)
@@ -178,6 +204,9 @@ fn fight(s: &Scenario) {
 	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare the campaign");
 	harness::start_new_campaign(&engine).expect("startNewCampaign");
 	harness::install_autoplay(&engine).expect("autoplay");
+	if s.player {
+		engine.run_script(SCRIPTED_PLAYER, "scripted player").expect("scripted player");
+	}
 	engine.run_script(&trace, "trace").expect("trace");
 	// As in the capture: ~2 s on the paused world, then the battle is offered and
 	// engaged.
@@ -250,6 +279,8 @@ fn direwolves_in_a_forest() {
 		result: 4,
 		pin_render: false,
 		after: Some((34035, 928315, 3)),
+		player: false,
+		setup: "",
 	});
 }
 
@@ -264,6 +295,8 @@ fn zombies_in_a_swamp() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -278,6 +311,8 @@ fn goblin_raiders_in_the_hills() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -293,6 +328,8 @@ fn bandit_raiders_on_the_plains() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -307,6 +344,8 @@ fn orc_raiders_on_the_steppe() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -322,6 +361,8 @@ fn nomad_raiders_in_the_desert() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -336,6 +377,8 @@ fn alps_in_autumn_leaves() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -350,6 +393,8 @@ fn a_lindwurm_in_steppe_hills() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -364,6 +409,8 @@ fn an_unhold_in_tundra_hills() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -378,6 +425,8 @@ fn spiders_in_a_forest() {
 		result: 4,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -392,6 +441,8 @@ fn ghouls_in_autumn() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -407,6 +458,8 @@ fn a_necromancer_in_the_tundra() {
 		result: 4,
 		pin_render: false,
 		after: Some((7492, 208038, 1)),
+		player: false,
+		setup: "",
 	});
 }
 
@@ -421,6 +474,8 @@ fn hexen_in_a_swamp() {
 		result: 4,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -435,6 +490,8 @@ fn a_schrat_in_a_snowy_forest() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -449,6 +506,8 @@ fn serpents_in_the_desert() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -463,6 +522,8 @@ fn sand_golems_in_desert_hills() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -477,6 +538,8 @@ fn barbarians_in_the_snow() {
 		result: 4,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -492,6 +555,8 @@ fn noble_troops_on_the_plains() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -507,6 +572,8 @@ fn southern_troops_in_desert_hills() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -522,6 +589,8 @@ fn the_undead_army_in_the_tundra() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -537,6 +606,8 @@ fn ghosts_in_the_snow() {
 		result: 3,
 		pin_render: true,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -551,6 +622,8 @@ fn hyenas_in_the_steppe() {
 		result: 4,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -583,6 +656,8 @@ fn goblin_scouts_in_autumn_leaves() {
 		result: 3,
 		pin_render: false,
 		after: None,
+		player: false,
+		setup: "",
 	});
 }
 
@@ -597,5 +672,25 @@ fn a_goblin_boss_in_the_hills() {
 		result: 3,
 		pin_render: false,
 		after: Some((8824, 941342, 1)),
+		player: false,
+		setup: "",
+	});
+}
+
+/// Played by the scripted player: waits, clicks its skills on targets, walks up
+/// to the enemy, ends its turns. The company falls.
+#[test]
+fn the_player_against_bandit_raiders_on_the_plains() {
+	fight(&Scenario {
+		spawn: "BanditRaiders",
+		resources: 60,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8000, 386271), (8603, 339247)],
+		result: 4,
+		pin_render: false,
+		after: Some((8614, 587076, 3)),
+		player: true,
+		setup: "",
 	});
 }
