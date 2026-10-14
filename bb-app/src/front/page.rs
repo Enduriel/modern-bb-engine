@@ -30,6 +30,8 @@ impl Front {
 			// A live clock behind Time.getExactTime, as the original's: the AI's
 			// background work then spreads over frames.
 			exact_clock: squirrel_bb::ExactClock::Live,
+			// The battle camera glides, as the original's; the AI waits for it.
+			battle_camera: squirrel_bb::BattleCamera::Glides,
 			..HostConfig::default()
 		};
 		let session = UiSession::start(data_dir, config, false)?;

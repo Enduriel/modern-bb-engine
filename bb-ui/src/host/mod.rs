@@ -103,6 +103,10 @@ pub struct HostConfig {
 	/// windowed game passes [`ExactClock::Live`], as the original's clock is (tests keep
 	/// the default frame time).
 	pub exact_clock: squirrel_bb::ExactClock,
+	/// How the battle camera moves for those scripts: the windowed game passes
+	/// [`BattleCamera::Glides`](squirrel_bb::BattleCamera), as the original's camera
+	/// does (tests keep the default instant camera).
+	pub battle_camera: squirrel_bb::BattleCamera,
 }
 
 impl Default for HostConfig {
@@ -115,6 +119,7 @@ impl Default for HostConfig {
 			cache_dir: std::env::temp_dir().join(format!("bb-ui-{}", std::process::id())),
 			devtools_port: None,
 			exact_clock: squirrel_bb::ExactClock::Frame,
+			battle_camera: squirrel_bb::BattleCamera::Instant,
 		}
 	}
 }
