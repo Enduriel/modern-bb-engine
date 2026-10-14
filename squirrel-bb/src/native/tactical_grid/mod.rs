@@ -9,7 +9,7 @@
 //! Host-owned like the other services: tiles keep script references (their occupant,
 //! `Properties`, `Items`), so [`clear`](TacticalGrid::clear) it before the VM closes.
 
-mod camera;
+pub(crate) mod camera;
 pub(crate) mod detail;
 mod heat;
 mod picking;
@@ -272,6 +272,9 @@ impl TacticalGridState {
 		self.tiles = (0..self.width * self.height)
 			.map(|i| TacticalTileData::new(i % self.width, i / self.width))
 			.collect();
+		if self.width > 0 && self.height > 0 {
+			self.camera.bound_to_map(self.width, self.height);
+		}
 	}
 }
 
@@ -487,8 +490,8 @@ impl TacticalGrid {
 			tiles,
 			transitions: Default::default(),
 			camera: crate::scene::tactical::SceneCamera {
-				pos: c.pos,
-				zoom: c.zoom,
+				pos: c.pos(),
+				zoom: c.zoom(),
 				level: c.level,
 				flipped: c.flipped,
 			},
@@ -497,6 +500,21 @@ impl TacticalGrid {
 			clouds: Vec::new(),
 			hide_trees: false,
 			particles: Vec::new(),
+		}
+	}
+
+	/// How the battle camera moves (see [`camera::BattleCamera`]).
+	pub fn set_battle_camera(&self, mode: camera::BattleCamera) {
+		self.grid.borrow_mut().camera.set_mode(mode);
+	}
+
+	/// A gliding battle camera's frame: `dt` seconds of real time on a
+	/// `screen`-sized screen, zooming in no closer than `zoom_min`.
+	pub(crate) fn move_camera(&self, screen: (i32, i32), zoom_min: f32, dt: f32) {
+		if let Some(c) = self.grid.borrow_mut().camera.glide.as_mut() {
+			c.set_screen(screen);
+			c.set_zoom_min(zoom_min);
+			c.update(dt);
 		}
 	}
 

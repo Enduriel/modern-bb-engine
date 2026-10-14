@@ -71,6 +71,7 @@ pub use tactical_entities::TacticalEntities;
 pub use tactical_grid::TacticalGrid;
 pub use tactical_nav::TacticalNavigator;
 pub use time::{ExactClock, TimeService};
+pub use tactical_grid::camera::BattleCamera;
 pub use ui_bridge::{UiBridge, UiCall, UiFrontend};
 pub use vec::{Vec2f, Vec2i};
 pub use world_entities::WorldEntities;
@@ -110,6 +111,9 @@ pub struct NativeConfig {
 	/// The clock behind `Time.getExactTime()`: frame time (the default, deterministic)
 	/// or live, as the original's (the windowed game).
 	pub exact_clock: ExactClock,
+	/// How the battle camera moves: at once (the default, deterministic) or gliding,
+	/// as the original's (the windowed game).
+	pub battle_camera: BattleCamera,
 }
 
 /// Each paid DLC's init script and its Steam app ID (the argument the script passes
@@ -156,6 +160,7 @@ impl Default for NativeConfig {
 			company: "(c) Overhype Studios GmbH".to_string(),
 			engine_seed: None,
 			exact_clock: ExactClock::Frame,
+			battle_camera: BattleCamera::Instant,
 		}
 	}
 }

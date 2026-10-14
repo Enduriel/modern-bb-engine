@@ -181,6 +181,27 @@ impl Camera {
 		self.target
 	}
 
+	/// A glide is under way.
+	pub fn is_moving(&self) -> bool {
+		self.moving
+	}
+
+	/// The camera is within `tolerance` of `p` on each axis, or of where the bounds let
+	/// it get to `p` (`0x52e990`).
+	pub fn is_centered_on(&self, p: (f32, f32), tolerance: f32) -> bool {
+		let near = |p: (f32, f32)| (self.pos.0 - p.0).abs() <= tolerance && (self.pos.1 - p.1).abs() <= tolerance;
+		if near(p) {
+			return true;
+		}
+		let Some([x0, y0, x1, y1]) = self.bounds else { return false };
+		let (hw, hh) = (self.extent.0 * 0.5, self.extent.1 * 0.5);
+		let inside = |v: f32, half: f32, lo: f32, hi: f32| {
+			let v = if v + half > hi { hi - half } else { v };
+			if lo > v - half { lo + half } else { v }
+		};
+		near((inside(p.0, hw, x0, x1), inside(p.1, hh, y0, y1)))
+	}
+
 	/// One frame, `dt` seconds of real time (`0x52dfd0`).
 	pub fn update(&mut self, dt: f32) {
 		if self.zoom_target != self.zoom {
@@ -290,13 +311,13 @@ mod tests {
 		c.update(1.0);
 		let close = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
 		assert!(close(c.pos, (60.0, 80.0)), "100 units along (3, 4): {:?}", c.pos);
-		assert!(c.moving);
+		assert!(c.is_moving());
 		for _ in 0..4 {
 			c.update(1.0);
 		}
 		assert_eq!(c.pos, (300.0, 400.0), "never past the target");
 		c.update(0.0);
-		assert!(!c.moving, "within a unit, it lands");
+		assert!(!c.is_moving(), "within a unit, it lands");
 	}
 
 	#[test]
@@ -320,7 +341,7 @@ mod tests {
 		c.update(0.0);
 		assert_eq!(c.pos, (95.0, 0.0));
 		assert_eq!(c.target(), (95.0, 0.0));
-		assert!(!c.moving);
+		assert!(!c.is_moving());
 	}
 
 	#[test]
@@ -328,7 +349,7 @@ mod tests {
 		let mut c = camera();
 		c.glide((50.0, 60.0), 0.0, false, 0.0);
 		assert_eq!(c.pos, (50.0, 60.0));
-		assert!(!c.moving);
+		assert!(!c.is_moving());
 	}
 
 	#[test]
@@ -343,6 +364,17 @@ mod tests {
 		assert_eq!(c.zoom, 12.0);
 		c.set_zoom(0.1);
 		assert_eq!(c.zoom, 1.0);
+	}
+
+	#[test]
+	fn centred_within_a_tolerance_or_as_close_as_the_bounds_allow() {
+		let mut c = camera();
+		c.set_pos((100.0, 100.0));
+		assert!(c.is_centered_on((102.0, 97.0), 3.0));
+		assert!(!c.is_centered_on((104.0, 100.0), 3.0));
+		c.set_bounds((0.0, 0.0), (4000.0, 3000.0));
+		c.set_pos((0.0, 0.0));
+		assert!(c.is_centered_on((0.0, 0.0), 3.0), "the corner is as close as it gets");
 	}
 
 	#[test]

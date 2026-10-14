@@ -104,6 +104,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_grid.set_file_reader(modules.file_reader());
 		tactical_grid.set_sprites(natives.sprites.clone());
 		tactical_grid.set_engine_rng(natives.engine_rng.clone());
+		tactical_grid.set_battle_camera(config.battle_camera);
 		tactical_grid.install(&mut vm);
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
@@ -301,11 +302,18 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// zooms in no closer than 1 / `SceneScale` (`0x4ee9cd`).
 	fn move_cameras(&self, real_delta_ms: f64) {
 		let (width, height, _) = self.video.screen();
-		let mut camera = self.world_camera.borrow_mut();
-		camera.set_screen((width as i32, height as i32));
+		let screen = (width as i32, height as i32);
 		let scale = self.video.scene_scale() as f32;
-		camera.set_zoom_min(if scale != 0.0 { 1.0 / scale } else { 1.0 });
-		camera.update((real_delta_ms / 1000.0) as f32);
+		let zoom_min = if scale != 0.0 { 1.0 / scale } else { 1.0 };
+		let dt = (real_delta_ms / 1000.0) as f32;
+		{
+			let mut camera = self.world_camera.borrow_mut();
+			camera.set_screen(screen);
+			camera.set_zoom_min(zoom_min);
+			camera.update(dt);
+		}
+		// The battle camera, when it glides.
+		self.tactical_grid.move_camera(screen, zoom_min, dt);
 	}
 
 	/// Turn every sprite with a torque to the virtual clock (see `native::spin`).
