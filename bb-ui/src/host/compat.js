@@ -15,12 +15,37 @@
 		':where(input, select, textarea, button) { font: inherit; }\n' +
 		':where(input[type=checkbox], input[type=radio]) { margin: 0; font: 16px "Times New Roman"; }\n' +
 		':where(input[type=range]) { margin: 18px 0; color: #909090; }\n';
+
+	// Images with nothing to show paint nothing, as in Coherent: no `src` (the
+	// character screen's talent stars), an empty one (every empty stash slot's
+	// overlay), or one that failed to load. Where such an image has a size, Chromium
+	// paints a broken-image icon in a grey box instead. A mask hides that and leaves
+	// the image's box and what the mouse hits as they were. Failed loads are marked
+	// below, as the image's error arrives.
+	var BROKEN = 'data-bb-broken';
+	var NOTHING_TO_SHOW_CSS =
+		':where(img:not([src]), img[src=""], img[' + BROKEN + ']) ' +
+		'{ mask-image: linear-gradient(transparent, transparent) !important; }\n';
 	document.addEventListener('DOMContentLoaded', function () {
 		var style = document.createElement('style');
 		style.setAttribute('data-bb-compat', '');
-		style.textContent = BUILT_IN_CSS;
+		style.textContent = BUILT_IN_CSS + NOTHING_TO_SHOW_CSS;
 		document.head.insertBefore(style, document.head.firstChild);
 	});
+	// Image loads don't bubble, but the document sees them on their way down to an image
+	// in the page. The game's UI adds its images to the page before they load. An error
+	// can arrive after the image has moved on to a file that loaded.
+	document.addEventListener('error', function (e) {
+		var image = e.target;
+		if (image instanceof HTMLImageElement && image.complete && image.naturalWidth === 0) {
+			image.setAttribute(BROKEN, '');
+		}
+	}, true);
+	document.addEventListener('load', function (e) {
+		if (e.target instanceof HTMLImageElement && e.target.hasAttribute(BROKEN)) {
+			e.target.removeAttribute(BROKEN);
+		}
+	}, true);
 
 	// Absolutely positioned boxes centred between their top and bottom insets by `auto`
 	// margins. When the insets leave less room than the box (the world top bar's time

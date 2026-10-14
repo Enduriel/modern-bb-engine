@@ -2,8 +2,9 @@
 //! (offscreen, headless) against the real scripts, boots to the main menu, and a real
 //! mouse click on "New Campaign" opens the new-campaign menu, whose origin list the
 //! mouse wheel scrolls and which "Cancel" closes; Options round-trips its settings;
-//! calls between scripts and page run inline both ways, as in the original. Skips if
-//! there is no Steam install.
+//! calls between scripts and page run inline both ways, as in the original. Images with
+//! nothing to show paint nothing and right clicks open no menu, as in Coherent. Skips
+//! if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -16,7 +17,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, UiSession};
+use bb_ui::host::{HostConfig, MouseButton, UiSession};
 use bb_ui::json::Json;
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
@@ -203,6 +204,9 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		"the game's procedural image didn't reach the page",
 	)?;
 
+	images_with_nothing_to_show_paint_nothing(&session)?;
+	right_clicks_reach_the_page(&session)?;
+
 	let problems: Vec<String> = session
 		.log()
 		.into_iter()
@@ -212,6 +216,161 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	ensure(
 		problems.is_empty(),
 		format!("page or bridge errors:\n{}", problems.join("\n")),
+	)
+}
+
+/// Test images over the page, each named by `data-name`: an empty stash slot as the
+/// game makes it (its overlay's `src` is empty), an image with no `src` (like the
+/// character screen's talent stars), one whose file is missing, and one whose file is
+/// missing until it gets one that loads.
+const NOTHING_TO_SHOW: &str = r#"(function () {
+	var page = $('<div id="bb-nothing"/>').css({ position: 'fixed', left: 0, top: 0, width: '460px', height: '120px', background: '#204060', 'z-index': 2147483647 });
+	$('body').append(page);
+	function cell(x) {
+		var c = $('<div/>').css({ position: 'absolute', left: x + 'px', top: '10px', width: '100px', height: '100px' });
+		page.append(c);
+		return c;
+	}
+	cell(10).createListItem(false).data('item').overlay.attr('data-name', 'an empty stash slot');
+	function image(x, name, src) {
+		var image = $('<img/>').attr('data-name', name).css({ width: '60px', height: '60px' });
+		if (src !== null) {
+			image.attr('src', src);
+		}
+		cell(x).append(image);
+	}
+	image(120, 'no src', null);
+	image(230, 'a missing file', Path.GFX + 'ui/bb_no_such_image.png');
+	image(340, 'a file once loaded', Path.GFX + 'ui/bb_no_such_image.png');
+	return true;
+})()"#;
+
+/// Images with nothing to show paint nothing, as in Coherent, where Chromium would
+/// paint a broken-image icon in a box. One that failed and then loads shows.
+fn images_with_nothing_to_show_paint_nothing(session: &UiSession) -> Result<(), String> {
+	session.eval(NOTHING_TO_SHOW)?;
+	let recovering = r#"document.querySelector('#bb-nothing img[data-name="a file once loaded"]')"#;
+	ensure(
+		load_complete(session, recovering)? == 0,
+		"the missing file loaded",
+	)?;
+	session.eval(&format!(
+		"{recovering}.src = Path.GFX + Asset.ICON_REPAIR_ITEM"
+	))?;
+	ensure(
+		load_complete(session, recovering)? > 0,
+		"the image's second file didn't load",
+	)?;
+
+	let painting = images_painting(session, "#bb-nothing img[data-name]")?;
+	session.eval("$('#bb-nothing').remove(); true")?;
+	let expected = [
+		("an empty stash slot", false),
+		("no src", false),
+		("a missing file", false),
+		("a file once loaded", true),
+	];
+	ensure(
+		painting.len() == expected.len()
+			&& expected
+				.iter()
+				.all(|(name, paints)| painting.iter().any(|(n, p)| n == name && p == paints)),
+		format!("which images paint: {painting:?}, expected {expected:?}"),
+	)
+}
+
+/// The natural width of `image` (a JS expression) once it has loaded or failed.
+fn load_complete(session: &UiSession, image: &str) -> Result<i64, String> {
+	let deadline = Instant::now() + Duration::from_secs(10);
+	loop {
+		if session.eval(&format!("{image}.complete"))? == Json::Bool(true) {
+			return Ok(session
+				.eval(&format!("{image}.naturalWidth"))?
+				.as_i64()
+				.unwrap_or(0));
+		}
+		ensure(
+			Instant::now() < deadline,
+			"the image never finished loading",
+		)?;
+		session.run_frames(0.1)?;
+	}
+}
+
+/// Whether each image `selector` matches paints anything: the page's pixels in its
+/// box, compared with those where every match is hidden. By `data-name`.
+fn images_painting(session: &UiSession, selector: &str) -> Result<Vec<(String, bool)>, String> {
+	let selector = Json::Str(selector.into()).to_text();
+	let found = session.eval(&format!(
+		"Array.prototype.map.call(document.querySelectorAll({selector}), function (image) {{
+			var r = image.getBoundingClientRect();
+			return [image.getAttribute('data-name'), Math.floor(r.left), Math.floor(r.top), Math.ceil(r.right), Math.ceil(r.bottom)];
+		}})"
+	))?;
+	let Json::Array(found) = found else {
+		return Err(format!("no images: {}", found.to_text()));
+	};
+	let pixels = |session: &UiSession| {
+		session.run_frames(0.3)?;
+		session
+			.host()
+			.frame()
+			.ok_or_else(|| "nothing painted".to_string())
+	};
+	let shown = pixels(session)?;
+	let visibility = |value: &str| {
+		session.eval(&format!(
+			"Array.prototype.forEach.call(document.querySelectorAll({selector}), function (image) {{ image.style.visibility = '{value}'; }}); true"
+		))
+	};
+	visibility("hidden")?;
+	let hidden = pixels(session);
+	visibility("")?;
+	let hidden = hidden?;
+
+	let mut painting = Vec::new();
+	for image in &found {
+		let Json::Array(fields) = image else {
+			return Err(format!("not an image: {}", image.to_text()));
+		};
+		let name = fields
+			.first()
+			.and_then(Json::as_str)
+			.unwrap_or("?")
+			.to_string();
+		let edge = |i: usize, limit: u32| {
+			let value = fields.get(i).and_then(Json::as_i64).unwrap_or(0);
+			value.clamp(0, i64::from(limit)) as u32
+		};
+		let (left, top) = (edge(1, shown.width), edge(2, shown.height));
+		let (right, bottom) = (edge(3, shown.width), edge(4, shown.height));
+		let differs = (top..bottom).any(|y| {
+			let row =
+				((y * shown.width + left) * 4) as usize..((y * shown.width + right) * 4) as usize;
+			shown.bgra[row.clone()] != hidden.bgra[row]
+		});
+		painting.push((name, differs));
+	}
+	Ok(painting)
+}
+
+/// The right mouse button reaches the page, and Chromium shows no menu of its own
+/// (Coherent has none; an offscreen Chromium logs errors trying).
+fn right_clicks_reach_the_page(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		"window.__bbRight = [];
+		['mousedown', 'mouseup', 'contextmenu'].forEach(function (type) {
+			document.addEventListener(type, function (e) { if (e.button === 2) window.__bbRight.push(e.type); }, true);
+		});
+		true",
+	)?;
+	session.host().mouse_button(5, 5, MouseButton::Right, true);
+	session.host().mouse_button(5, 5, MouseButton::Right, false);
+	session.run_frames(0.3)?;
+	let seen = session.eval("window.__bbRight.sort().join(' ')")?;
+	ensure(
+		seen.as_str() == Some("contextmenu mousedown mouseup"),
+		format!("the page saw the right click as {}", seen.to_text()),
 	)
 }
 

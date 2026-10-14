@@ -271,6 +271,28 @@ wrap_request_handler! {
 	}
 }
 
+wrap_context_menu_handler! {
+	struct NoContextMenu;
+
+	impl ContextMenuHandler {
+		fn run_context_menu(
+			&self,
+			_browser: Option<&mut Browser>,
+			_frame: Option<&mut Frame>,
+			_params: Option<&mut ContextMenuParams>,
+			_model: Option<&mut MenuModel>,
+			callback: Option<&mut RunContextMenuCallback>,
+		) -> ::std::os::raw::c_int {
+			// Coherent has no context menu (and an offscreen view can't show Chromium's).
+			// The page has had the right-click by now.
+			if let Some(callback) = callback {
+				callback.cancel();
+			}
+			1
+		}
+	}
+}
+
 wrap_client! {
 	pub(super) struct PageClient {
 		shared: Arc<Shared>,
@@ -279,6 +301,7 @@ wrap_client! {
 		load: LoadHandler,
 		lifetime: LifeSpanHandler,
 		requests: RequestHandler,
+		menu: ContextMenuHandler,
 	}
 
 	impl Client {
@@ -300,6 +323,10 @@ wrap_client! {
 
 		fn request_handler(&self) -> Option<RequestHandler> {
 			Some(self.requests.clone())
+		}
+
+		fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+			Some(self.menu.clone())
 		}
 
 		fn on_process_message_received(
@@ -332,5 +359,6 @@ pub(super) fn page_client(shared: Arc<Shared>) -> Client {
 		LoadRelay::new(shared.clone()),
 		Lifetime::new(shared.clone()),
 		CrashRelay::new(shared),
+		NoContextMenu::new(),
 	)
 }
