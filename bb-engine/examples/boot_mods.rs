@@ -92,9 +92,16 @@ fn start_campaign(engine: &harness::GameEngine) {
 		return;
 	}
 	let started = "(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
+	// MSU asks for its new-campaign settings first: keep the defaults (Save).
+	let msu_settings = "(\"MSU\" in ::getroottable()) && ::MSU.SettingsScreen.isVisible()";
 	for _ in 0..600 {
 		if tactical_player::eval_i64(engine, &format!("({started}) ? 1 : 0")).ok().flatten() == Some(1) {
 			break;
+		}
+		if tactical_player::eval_i64(engine, &format!("({msu_settings}) ? 1 : 0")).ok().flatten() == Some(1)
+			&& !step("MSU settings: save", "::MSU.SettingsScreen.onSaveButtonPressed({});")
+		{
+			return;
 		}
 		if !frames(1) {
 			return;
