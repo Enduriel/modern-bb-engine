@@ -2,22 +2,84 @@
 //!
 //! All of it is visual, and building it draws nothing from the script RNG (probed for
 //! the world), so headless the builders are no-ops, except the world's
-//! `buildCloudCover`, whose clouds are kept for the renderer (`world_clouds`). The settings objects only
-//! receive field writes from scripts, so each is a table pre-filled with every field
-//! vanilla writes (an absent key can't be assigned); rain settings also carry their
-//! drop-brush methods. `IsRaining` stays false: it only gates particle effects.
+//! `buildCloudCover`, whose clouds are kept for the renderer (`world_clouds`). The settings
+//! objects only receive field writes from scripts, so each is a table pre-filled with
+//! every field the original's has, at the value a fresh one reads there (probed;
+//! an absent key can't be assigned); rain settings also carry their
+//! drop-brush methods. The original's are class instances. `IsRaining` stays false: it
+//! only gates particle effects.
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
-const CLOUD: &[&str] = &[
-	"Color", "Direction", "MaxAlpha", "MaxClouds", "MaxScale", "MaxVelocity", "MinAlpha", "MinClouds", "MinScale",
-	"MinVelocity", "RandomizeDirection", "RandomizeRotation", "Sprite", "Type",
+/// A settings field's starting value.
+#[derive(Clone, Copy)]
+enum Field {
+	Float(f64),
+	Int(i64),
+	Bool(bool),
+	Text(&'static str),
+	/// ARGB.
+	Color(u32),
+	Vector(f64, f64),
+}
+
+use Field::*;
+
+const CLOUD: &[(&str, Field)] = &[
+	("Color", Color(0xffff_ffff)),
+	("Direction", Vector(0.430968, 0.902367)),
+	("MaxAlpha", Float(1.0)),
+	("MaxClouds", Int(1)),
+	("MaxScale", Float(1.0)),
+	("MaxVelocity", Float(0.0)),
+	("MinAlpha", Float(1.0)),
+	("MinClouds", Int(1)),
+	("MinScale", Float(1.0)),
+	("MinVelocity", Float(0.0)),
+	("RandomizeDirection", Bool(true)),
+	("RandomizeRotation", Bool(true)),
+	("Sprite", Text("")),
+	("Type", Int(0)),
 ];
-const BIRD: &[&str] = &["MaxBirds", "MaxVelocity", "MinBirds", "MinVelocity"];
-const RAIN: &[&str] = &[
-	"Direction", "DropLifetime", "MaxAlpha", "MaxDrops", "MaxScale", "MaxVelocity", "MinAlpha", "MinDrops", "MinScale",
-	"MinVelocity", "NumSplats", "ScaleDropsWithTime", "SplatAlpha",
+const BIRD: &[(&str, Field)] =
+	&[("MaxBirds", Int(1)), ("MaxVelocity", Float(0.0)), ("MinBirds", Int(1)), ("MinVelocity", Float(0.0))];
+const RAIN: &[(&str, Field)] = &[
+	("Direction", Vector(-0.3, -0.7)),
+	("DropLifetime", Int(600)),
+	("MaxAlpha", Float(1.0)),
+	("MaxDrops", Int(1)),
+	("MaxScale", Float(1.0)),
+	("MaxVelocity", Float(1.0)),
+	("MinAlpha", Float(1.0)),
+	("MinDrops", Int(1)),
+	("MinScale", Float(1.0)),
+	("MinVelocity", Float(1.0)),
+	("NumSplats", Int(0)),
+	("ScaleDropsWithTime", Bool(false)),
+	("SplatAlpha", Float(1.0)),
+	("SplatBrush", Text("rainsplat_01")),
 ];
+
+/// Set field `name` of `t` to its starting value.
+fn set_field(vm: &SQVM, t: &mut SqTable, name: &str, field: Field) {
+	match field {
+		Float(v) => t.set(name, v),
+		Int(v) => t.set(name, v),
+		Bool(v) => t.set(name, v),
+		Text(v) => t.set(name, v.to_string()),
+		Color(argb) => {
+			if let Some(c) = super::color::color_object(vm, argb) {
+				t.set(name, c);
+			}
+		}
+		Vector(x, y) => {
+			let v = SqTable::root(vm).get::<SqStrongRef>("createVec").and_then(|f| f.call_ret::<SqStrongRef, _>(vm, (x, y)).ok().flatten());
+			if let Some(v) = v {
+				t.set(name, v);
+			}
+		}
+	}
+}
 const RAIN_METHODS: &[&str] = &["clearDropBrushes", "addDropBrush"];
 const BUILDERS: &[&str] = &[
 	"buildCloudCover",
@@ -70,8 +132,8 @@ pub(crate) fn weather(vm: &mut SQVM, scope: &str) -> SqStrongRef {
 			.collect();
 		let create = vm.make_closure(move |vm: &SQVM| {
 			let mut t = SqTable::new(vm);
-			for f in fields {
-				t.set(f, 0.0);
+			for (name, field) in fields {
+				set_field(vm, &mut t, name, *field);
 			}
 			for (m, stub) in &stubs {
 				t.set(*m, stub.clone());

@@ -177,6 +177,11 @@ impl SavePart for EntitiesPart {
 							w.u32(l.color);
 							w.f64(l.offset.0);
 							w.f64(l.offset.1);
+							w.u32(l.background_color);
+							w.bool(l.background_visible);
+							for v in [l.h_align, l.v_align, l.size, l.z] {
+								w.f64(v);
+							}
 						})
 						.ok_or("save: not a label")?;
 				}
@@ -272,6 +277,12 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 				visible: rd.bool()?,
 				color: rd.u32()?,
 				offset: (rd.f64()?, rd.f64()?),
+				background_color: rd.u32()?,
+				background_visible: rd.bool()?,
+				h_align: rd.f64()?,
+				v_align: rd.f64()?,
+				size: rd.f64()?,
+				z: rd.f64()?,
 			};
 			name
 		};

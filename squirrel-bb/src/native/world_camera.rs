@@ -54,7 +54,9 @@ const ZOOM_LIMIT: f32 = 12.0;
 /// Where the world camera starts (`0x4ee9c8`).
 const START: (f32, f32) = (2800.0, 2000.0);
 
-struct CameraHandle(WorldCamera);
+/// The camera, and its `Level` (the camera class's, shared with the battle's: the world
+/// map has no levels, so nothing reads it; 0 at first, probed 2026-10-14).
+struct CameraHandle(WorldCamera, i64);
 
 /// `createVec(x, y)`.
 fn vec(vm: &SQVM, (x, y): (f32, f32)) -> Result<SqStrongRef, String> {
@@ -110,6 +112,9 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 		}
 	};
 	let mut b = ClassBuilder::<CameraHandle>::new("WorldCamera")
+		.property("Level", |c: &CameraHandle| c.1, |c: &mut CameraHandle, v: i64| c.1 = v)
+		// Never mirrored on the world map; read only, as the class's.
+		.property_ro("IsFlipped", |_c: &CameraHandle| false)
 		.property(
 			"Zoom",
 			|c: &CameraHandle| f64::from(c.0.borrow().zoom),
@@ -185,7 +190,7 @@ pub(crate) fn instance(vm: &mut SQVM) -> (SqStrongRef, WorldCamera) {
 	let mut start = Camera::new((1920, 1080), ZOOM_LIMIT);
 	start.shift(START);
 	let camera = Rc::new(RefCell::new(start));
-	(class.instantiate(vm, CameraHandle(camera.clone())), camera)
+	(class.instantiate(vm, CameraHandle(camera.clone(), 0)), camera)
 }
 
 /// `World.screenToTile(x, y)`: the tile under a pixel, as `World.worldToTile` of the

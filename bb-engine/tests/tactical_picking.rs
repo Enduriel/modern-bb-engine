@@ -124,7 +124,8 @@ fn tile_between_matches_the_original() {
 	let engine = harness::open_install(dir).expect("open install");
 	let camera = DATA.lines().find_map(|l| l.strip_prefix("C ")).expect("camera line");
 	let (level, flipped) = camera.split_once(' ').expect("level flipped");
-	let mut script = format!("::Tactical.resizeScene(32, 32); ::Tactical.getCamera().Level = {level}; ::Tactical.getCamera().IsFlipped = {flipped};\n");
+	engine.set_battle_camera_flipped(flipped == "true");
+	let mut script = format!("::Tactical.resizeScene(32, 32); ::Tactical.getCamera().Level = {level};\n");
 	for line in DATA.lines().filter(|l| l.starts_with("L ")) {
 		let mut f = line.split(' ').skip(1);
 		let x = f.next().unwrap();

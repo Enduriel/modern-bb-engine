@@ -230,9 +230,8 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 				None => camera.zoom = v,
 			}
 		})
-		.property("IsFlipped", |c: &CameraHandle| c.0.borrow().camera.flipped, |c: &mut CameraHandle, v: bool| {
-			c.0.borrow_mut().camera.flipped = v;
-		})
+		// Read only: the engine flips it (see `TacticalGrid::set_camera_flipped`).
+		.property_ro("IsFlipped", |c: &CameraHandle| c.0.borrow().camera.flipped)
 		.method("setLevelToHighestOnMap", |c: &mut CameraHandle| {
 			let level = highest_level(&c.0.borrow());
 			c.0.borrow_mut().camera.level = level;

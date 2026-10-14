@@ -33,6 +33,9 @@ pub(crate) struct NavSettings {
 	pub heat_cost: i32,
 	/// `Faction`: stored, not read by the search.
 	pub faction: i32,
+	/// `IgnoreEntitiesOfFaction` (the original's `+0xc0`, 0 by default): stored; the
+	/// search doesn't apply it yet (vanilla never sets it).
+	pub ignore_faction: i32,
 	/// `AlliedFactions` once assigned: every other faction is hostile. `None` after a
 	/// reset: none is. (The original keeps the hostile ones as a 64-bit mask, so a
 	/// faction id of 64 or more is never hostile there; see
@@ -60,6 +63,7 @@ impl Default for NavSettings {
 			avoid_max_distance: 0,
 			heat_cost: 0,
 			faction: 0,
+			ignore_faction: 0,
 			allied: None,
 			consider_empty: None,
 			avoid_tile: None,
@@ -99,6 +103,9 @@ impl SettingsHandle {
 
 /// Read a cost array into `dst` (as many entries as given, up to 16; numbers truncate).
 fn read_costs(vm: &SQVM, value: &SqStrongRef, dst: &mut [i32; 16]) -> Result<(), String> {
+	if is_null(vm, value) {
+		return Ok(());
+	}
 	let array = value.get_value::<SqArray>(vm).ok_or("expected an array of costs")?;
 	for (slot, n) in dst.iter_mut().zip(array.to_vec::<Number>()) {
 		*slot = n.0 as i32;
@@ -106,9 +113,14 @@ fn read_costs(vm: &SQVM, value: &SqStrongRef, dst: &mut [i32; 16]) -> Result<(),
 	Ok(())
 }
 
+/// Whether `value` is `null`.
+fn is_null(vm: &SQVM, value: &SqStrongRef) -> bool {
+	value.get_value::<Option<i64>>(vm).is_some_and(|v| v.is_none())
+}
+
 /// The tile a setting refers to (`null` clears it).
 fn read_tile(vm: &SQVM, grid: &Grid, value: &SqStrongRef) -> Result<Option<usize>, String> {
-	if value.get_value::<Option<i64>>(vm).is_some_and(|v| v.is_none()) {
+	if is_null(vm, value) {
 		return Ok(None);
 	}
 	tactical_grid::tile_id_of(grid, vm, value).map(Some).ok_or_else(|| "expected a tile".to_string())
@@ -146,6 +158,7 @@ pub(super) fn build_class(vm: &mut SQVM, grid: Grid) -> SqClass<SettingsHandle> 
 	b = int_field!(b, "AvoidMaxDistance", avoid_max_distance);
 	b = int_field!(b, "HeatCost", heat_cost);
 	b = int_field!(b, "Faction", faction);
+	b = int_field!(b, "IgnoreEntitiesOfFaction", ignore_faction);
 	b = b.property(
 		"FatigueCostFactor",
 		|s: &SettingsHandle| s.with(|d| d.fatigue_weight as f64),
@@ -153,7 +166,8 @@ pub(super) fn build_class(vm: &mut SQVM, grid: Grid) -> SqClass<SettingsHandle> 
 	);
 	b = bool_field!(b, "AllowZoneOfControlPassing", allow_zoc_passing);
 	b = bool_field!(b, "IsPlayer", is_player);
-	// Write-only in the original (no getters); reads give null here.
+	// They read back null in the original, even once set, and null is taken without an
+	// error (probed): here it changes nothing.
 	b = b
 		.property_obj_rw(
 			"ActionPointCosts",
@@ -169,6 +183,9 @@ pub(super) fn build_class(vm: &mut SQVM, grid: Grid) -> SqClass<SettingsHandle> 
 			"AlliedFactions",
 			|_s, _vm| None,
 			|s, vm, v| {
+				if is_null(vm, &v) {
+					return Ok(());
+				}
 				let array = v.get_value::<SqArray>(vm).ok_or("AlliedFactions: expected an array")?;
 				let allied: Vec<i64> = array.to_vec::<Number>().into_iter().map(|n| n.0 as i64).collect();
 				s.with_mut(|d| d.allied = Some(zone::faction_mask(&allied)));

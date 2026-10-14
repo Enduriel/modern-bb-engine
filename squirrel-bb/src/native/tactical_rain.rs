@@ -264,6 +264,9 @@ fn read_settings(vm: &SQVM, t: &SqStrongRef, s: &mut Settings) {
 	if let Some(b) = t.get_member::<bool>(vm, "ScaleDropsWithTime") {
 		s.scale_with_time = b;
 	}
+	if let Some(brush) = t.get_member::<String>(vm, "SplatBrush") {
+		s.splat_brush = brush;
+	}
 	if let Some(d) = t.get_member::<SqStrongRef>(vm, "Direction") {
 		let axis = |a: &str| d.get_member::<Number>(vm, a).map(|n| n.0 as f32);
 		if let (Some(x), Some(y)) = (axis("X"), axis("Y")) {
@@ -332,6 +335,7 @@ impl TacticalRain {
 					t.set(k, v);
 				}
 				t.set("ScaleDropsWithTime", d.scale_with_time);
+				t.set("SplatBrush", d.splat_brush.clone());
 				let dir = SqTable::root(vm)
 					.get::<SqStrongRef>("createVec")
 					.and_then(|f| f.call_ret::<SqStrongRef, _>(vm, (f64::from(d.direction.0), f64::from(d.direction.1))).ok().flatten())

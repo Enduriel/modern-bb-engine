@@ -220,24 +220,17 @@ pub(crate) fn world_entries(
 ) -> Vec<(&'static str, SqStrongRef)> {
 	// The object `World.getTime()` returns: one live view of the clock, read-only except
 	// `IsPaused`.
-	let ignore_f = |_: &mut Clock, _: f64| {};
-	let ignore_i = |_: &mut Clock, _: i64| {};
-	let ignore_b = |_: &mut Clock, _: bool| {};
 	let class = ClassBuilder::<Clock>::new("WorldTime")
-		.property("Time", |c: &Clock| f64::from(c.borrow().time), ignore_f)
-		.property("SecondsPerDay", |c: &Clock| f64::from(c.borrow().seconds_per_day), ignore_f)
-		.property("SecondsPerHour", |c: &Clock| f64::from(c.borrow().seconds_per_hour()), ignore_f)
-		.property(
-			"SecondsPerMinute",
-			|c: &Clock| f64::from(c.borrow().seconds_per_hour() / 60.0),
-			ignore_f,
-		)
-		.property("SecondsOfDay", |c: &Clock| f64::from(c.borrow().seconds_of_day()), ignore_f)
-		.property("Days", |c: &Clock| c.borrow().days(), ignore_i)
-		.property("Hours", |c: &Clock| c.borrow().hours(), ignore_i)
-		.property("Minutes", |c: &Clock| c.borrow().minutes(), ignore_i)
-		.property("TimeOfDay", |c: &Clock| PHASES[c.borrow().phase].time_of_day, ignore_i)
-		.property("IsDaytime", |c: &Clock| PHASES[c.borrow().phase].is_daytime, ignore_b)
+		.property_ro("Time", |c: &Clock| f64::from(c.borrow().time))
+		.property_ro("SecondsPerDay", |c: &Clock| f64::from(c.borrow().seconds_per_day))
+		.property_ro("SecondsPerHour", |c: &Clock| f64::from(c.borrow().seconds_per_hour()))
+		.property_ro("SecondsPerMinute", |c: &Clock| f64::from(c.borrow().seconds_per_hour() / 60.0))
+		.property_ro("SecondsOfDay", |c: &Clock| f64::from(c.borrow().seconds_of_day()))
+		.property_ro("Days", |c: &Clock| c.borrow().days())
+		.property_ro("Hours", |c: &Clock| c.borrow().hours())
+		.property_ro("Minutes", |c: &Clock| c.borrow().minutes())
+		.property_ro("TimeOfDay", |c: &Clock| PHASES[c.borrow().phase].time_of_day)
+		.property_ro("IsDaytime", |c: &Clock| PHASES[c.borrow().phase].is_daytime)
 		.property(
 			"IsPaused",
 			|c: &Clock| c.borrow().paused,

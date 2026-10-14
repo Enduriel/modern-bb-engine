@@ -60,6 +60,14 @@ impl<T: 'static> ClassBuilder<T> {
 		self
 	}
 
+	/// Add a read-only property `name` backed by a typed getter over the payload: it has
+	/// no setter (no slot in `__setTable`), so writing it raises "the index '…' does not
+	/// exist", as a Sqrat property without one does.
+	pub fn property_ro<G: FieldValue + 'static>(mut self, name: &str, get: impl Fn(&T) -> G + 'static) -> Self {
+		self.properties.push((name.to_string(), Property::new_ro(get)));
+		self
+	}
+
 	/// Add a read-only **object-valued** property `name`: the getter returns an
 	/// owned [`SqStrongRef`](crate::SqStrongRef) (e.g. a `vec2i` instance or a plain
 	/// `{X,Y}` table) which is pushed for `inst.name`. Use this for field-style reads

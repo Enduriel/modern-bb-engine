@@ -108,6 +108,16 @@ impl<T: 'static> Property<T> {
 		}
 	}
 
+	/// A read-only property of field type `G`: only a getter, in `__getTable`, so
+	/// writing it raises "the index '…' does not exist", as Sqrat's do.
+	pub(crate) fn new_ro<G: FieldValue + 'static>(get: impl Fn(&T) -> G + 'static) -> Self {
+		Property {
+			get: Box::new(move |t, vm| get(t).push_field(vm)),
+			set: Box::new(|_t, _vm, _idx| Err("this property is read-only".to_string())),
+			writable: false,
+		}
+	}
+
 	/// A read-only **object** property: the getter builds and returns an
 	/// [`SqStrongRef`] (e.g. a `vec2i` or a plain `{X,Y}` table), which `_get`
 	/// pushes. Writing it raises an error. Backs field-style object reads like
@@ -325,10 +335,9 @@ impl<T: 'static> SqFunction for SetMeta<T> {
 			return vm.throw_error("_set: property name must be a string");
 		};
 		let ptr = vm.as_ptr();
+		// No setter, a read-only property's included: a miss, as Sqrat's (verified in the
+		// original: writing a sprite's `Finished` raises "the index 'Finished' does not exist").
 		if !push_accessor(vm, &self.table) {
-			if self.props.get(key).is_some() {
-				return vm.throw_error("this property is read-only");
-			}
 			return not_found(vm);
 		}
 		if let Some(slot) = self.props.get(key)

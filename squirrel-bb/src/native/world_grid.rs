@@ -1156,11 +1156,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	}
 	macro_rules! ro_scalar {
 		($b:expr, $name:literal, |$t:ident| $get:expr, $ty:ty) => {
-			$b.property(
-				$name,
-				|$t: &TileHandle| $get,
-				|_t: &mut TileHandle, _v: $ty| {},
-			)
+			$b.property_ro::<$ty>($name, |$t: &TileHandle| $get)
 		};
 	}
 
@@ -1182,7 +1178,13 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = ro_scalar!(b, "ID", |t| t.with(|d| d.id as i64), i64);
 	b = ro_scalar!(b, "X", |t| t.with(|d| d.q), i64);
 	b = ro_scalar!(b, "Y", |t| t.with(|d| d.r), i64);
-	b = ro_scalar!(b, "HasRoad", |t| t.with(|d| d.road_directions != 0), bool);
+	// The road byte (`+0x1e`) isn't 0 (`0x4fa5b0`); writing it sets or clears its bit
+	// 0x40 (`0x4fa630`), so a tile with road directions keeps its road.
+	b = b.property(
+		"HasRoad",
+		|t: &TileHandle| t.with(|d| d.road_directions != 0),
+		|t: &mut TileHandle, v: bool| t.with_mut(|d| d.road_directions = if v { d.road_directions | 0x40 } else { d.road_directions & !0x40 }),
+	);
 	// object coord fields
 	b = b
 		.property_obj("Coords", |t, vm| {

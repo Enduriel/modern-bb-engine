@@ -780,6 +780,12 @@ impl TacticalGrid {
 		}
 	}
 
+	/// Mirror the battle camera's view, or not (its `IsFlipped`, which scripts only read:
+	/// in the original the engine flips it).
+	pub(crate) fn set_camera_flipped(&self, flipped: bool) {
+		self.grid.borrow_mut().camera.flipped = flipped;
+	}
+
 	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
 	/// and step their animations to virtual millisecond `now_ms` (see `sprite_anim`).
 	/// Those on tiles the player sees are drawn at real time `real`: a draw finishes a

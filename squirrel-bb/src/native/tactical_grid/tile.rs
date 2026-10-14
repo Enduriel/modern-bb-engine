@@ -108,7 +108,7 @@ macro_rules! rw {
 
 macro_rules! ro {
 	($b:expr, $name:literal, $get:expr, $ty:ty) => {
-		$b.property($name, $get, |_t: &mut TileHandle, _v: $ty| {})
+		$b.property_ro::<$ty>($name, $get)
 	};
 }
 
@@ -188,7 +188,7 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = rw!(b, "IsHidingEntity", is_hiding_entity, bool);
 	// Read-only: it follows `Properties` (see `properties_delegate`).
 	b = ro!(b, "IsCorpseSpawned", |t: &TileHandle| t.with(|d| d.is_corpse_spawned), bool);
-	b = rw!(b, "IsDiscovered", is_discovered, bool);
+	b = ro!(b, "IsDiscovered", |t: &TileHandle| t.with(|d| d.is_discovered), bool);
 	b = rw!(b, "IsContainingItemsFlipped", is_containing_items_flipped, bool);
 	b = ro!(b, "ID", |t: &TileHandle| t.id as i64, i64);
 	// The axial coords (`Coords.X`/`Coords.Y`) as plain fields.

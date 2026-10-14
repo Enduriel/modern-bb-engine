@@ -20,7 +20,7 @@ use super::stream::{Meta, SaveReader, SaveWriter};
 
 const MAGIC: &[u8; 8] = b"BBMESAVE";
 /// Bumped whenever the engine-side layout changes.
-pub(crate) const FORMAT_VERSION: u32 = 6;
+pub(crate) const FORMAT_VERSION: u32 = 7;
 
 /// The save store.
 pub(crate) enum Storage {

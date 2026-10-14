@@ -25,98 +25,86 @@ menu/natives | native WorldWeather.* | not a root global here
 # Plain natives we don't have.
 
 # The native objects scripts get hold of (campaign/natives_objects, captured 2026-10-14):
-# natives, and properties (`get`/`set`: the keys of a class's __getTable/__setTable).
+# natives, and properties (`get`/`set`: the keys of a class's __getTable/__setTable;
+# `readonly`: readable, not writable).
 campaign/natives_objects | native *.constructor | Sqrat class member
 campaign/natives_objects | native *.weakref | Sqrat class member
-campaign/natives_objects | get world_tile.Properties | missing member
-campaign/natives_objects | get world_tile.Subtype | missing member
-campaign/natives_objects | set world_tile.Subtype | missing member
-campaign/natives_objects | get world_navigator_settings.* | a plain table here, a class instance in the original
-campaign/natives_objects | set world_navigator_settings.* | a plain table here, a class instance in the original
-campaign/natives_objects | get world_brush.* | a plain table here, a class instance in the original
-campaign/natives_objects | get world_label.BackgroundColor | missing member
-campaign/natives_objects | get world_label.BackgroundVisible | missing member
-campaign/natives_objects | get world_label.HAlign | missing member
-campaign/natives_objects | get world_label.Size | missing member
-campaign/natives_objects | get world_label.VAlign | missing member
-campaign/natives_objects | get world_label.Z | missing member
-campaign/natives_objects | set world_label.BackgroundColor | missing member
-campaign/natives_objects | set world_label.BackgroundVisible | missing member
-campaign/natives_objects | set world_label.HAlign | missing member
-campaign/natives_objects | set world_label.Size | missing member
-campaign/natives_objects | set world_label.VAlign | missing member
-campaign/natives_objects | set world_label.Z | missing member
-campaign/natives_objects | native world_camera.__sqrat_ol_ isInsideScreen_1 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ isInsideScreen_2 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_1 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_2 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_3 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ move_1 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ move_2 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ screenToWorld_1 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ screenToWorld_2 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ setPos_1 | camera: overload slots and members
-campaign/natives_objects | native world_camera.__sqrat_ol_ setPos_2 | camera: overload slots and members
-campaign/natives_objects | native world_camera.addEntityOverlay | camera: overload slots and members
-campaign/natives_objects | native world_camera.isCenteredOnPos | camera: overload slots and members
-campaign/natives_objects | native world_camera.queryEntityOverlays | camera: overload slots and members
-campaign/natives_objects | native world_camera.registerCallbacks | camera: overload slots and members
-campaign/natives_objects | native world_camera.removeEntityOverlay | camera: overload slots and members
-campaign/natives_objects | native world_camera.removeEntityOverlays | camera: overload slots and members
-campaign/natives_objects | native world_camera.render | camera: overload slots and members
-campaign/natives_objects | native world_camera.unregisterCallbacks | camera: overload slots and members
-campaign/natives_objects | native world_camera.updateEntityOverlays | camera: overload slots and members
-campaign/natives_objects | get world_camera.IsFlipped | camera: overload slots and members
-campaign/natives_objects | get world_camera.Level | camera: overload slots and members
-campaign/natives_objects | set world_camera.Level | camera: overload slots and members
-campaign/natives_objects | get world_clouds.* | a plain table here, a class instance in the original
-campaign/natives_objects | set world_clouds.* | a plain table here, a class instance in the original
-campaign/natives_objects | get world_birds.* | a plain table here, a class instance in the original
-campaign/natives_objects | set world_birds.* | a plain table here, a class instance in the original
-campaign/natives_objects | native js_handle.disconnect | UI handle
-campaign/natives_objects | get gameplay_settings.* | a plain table here, a class instance in the original
-campaign/natives_objects | set gameplay_settings.* | a plain table here, a class instance in the original
-campaign/natives_objects | get temp_gameplay_settings.* | a plain table here, a class instance in the original
-campaign/natives_objects | set temp_gameplay_settings.* | a plain table here, a class instance in the original
-campaign/natives_objects | native save_stream.beginRead | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.endRead | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.getFileName | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readBool | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readF32 | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readI16 | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readI32 | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readI8 | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readString | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readU16 | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readU32 | one stream class reads and writes in the original
-campaign/natives_objects | native save_stream.readU8 | one stream class reads and writes in the original
-campaign/natives_objects | get actor_brush.* | a plain table here, a class instance in the original
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ isInsideScreen_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ isInsideScreen_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ jumpTo_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_3 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToTile_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToTile_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveTo_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveTo_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ move_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ move_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ quake_4 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ quake_5 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ screenToWorld_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ screenToWorld_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ setPos_1 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.__sqrat_ol_ setPos_2 | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.isCenteredOnPos | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.moveToPos | camera: overload slots and members
-campaign/natives_objects | native tactical_camera.worldToScreen | camera: overload slots and members
-campaign/natives_objects | get tactical_navigator_settings.IgnoreEntitiesOfFaction | missing member
-campaign/natives_objects | set tactical_navigator_settings.IgnoreEntitiesOfFaction | missing member
-campaign/natives_objects | get tactical_weather.* | missing member
-campaign/natives_objects | get tactical_clouds.* | a plain table here, a class instance in the original
-campaign/natives_objects | set tactical_clouds.* | a plain table here, a class instance in the original
-campaign/natives_objects | get tactical_rain.* | missing member
-campaign/natives_objects | set tactical_rain.* | missing member
-campaign/natives_objects | native tactical_js_handle.disconnect | UI handle
+campaign/natives_objects | get world_tile.Properties | the battle tile's, whose class the world tile shares: reading Properties on a world tile crashes the original (probed), Subtype untested
+campaign/natives_objects | get world_tile.Subtype | the battle tile's, whose class the world tile shares: reading Properties on a world tile crashes the original (probed), Subtype untested
+campaign/natives_objects | set world_tile.Subtype | the battle tile's, whose class the world tile shares: reading Properties on a world tile crashes the original (probed), Subtype untested
+campaign/natives_objects | readonly world_tile.Properties | the battle tile's, whose class the world tile shares: reading Properties on a world tile crashes the original (probed), Subtype untested
+campaign/natives_objects | get world_navigator_settings.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set world_navigator_settings.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | get world_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
+campaign/natives_objects | readonly world_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
+campaign/natives_objects | native world_camera.__sqrat_ol_ isInsideScreen_1 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ isInsideScreen_2 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_1 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_2 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_3 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ move_1 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ move_2 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ screenToWorld_1 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ screenToWorld_2 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ setPos_1 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.__sqrat_ol_ setPos_2 | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.addEntityOverlay | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.isCenteredOnPos | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.queryEntityOverlays | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.registerCallbacks | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.removeEntityOverlay | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.removeEntityOverlays | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.render | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.unregisterCallbacks | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | native world_camera.updateEntityOverlays | camera: Sqrat's per-arity overload slots and the camera class's members (worklist)
+campaign/natives_objects | get world_clouds.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set world_clouds.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | get world_birds.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set world_birds.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | native js_handle.disconnect | the UI handle's disconnect (worklist)
+campaign/natives_objects | get gameplay_settings.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set gameplay_settings.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | get temp_gameplay_settings.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set temp_gameplay_settings.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | native save_stream.beginRead | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.endRead | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.getFileName | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readBool | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readF32 | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readI16 | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readI32 | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readI8 | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readString | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readU16 | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readU32 | the original's one stream class also reads (worklist)
+campaign/natives_objects | native save_stream.readU8 | the original's one stream class also reads (worklist)
+campaign/natives_objects | get actor_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
+campaign/natives_objects | readonly actor_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ isInsideScreen_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ isInsideScreen_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ jumpTo_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_3 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToTile_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToTile_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveTo_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveTo_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ move_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ move_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ quake_4 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ quake_5 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ screenToWorld_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ screenToWorld_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ setPos_1 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ setPos_2 | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.isCenteredOnPos | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.moveToPos | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | native tactical_camera.worldToScreen | camera: Sqrat's per-arity overload slots and members (worklist)
+campaign/natives_objects | get tactical_weather.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | readonly tactical_weather.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | get tactical_clouds.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set tactical_clouds.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | get tactical_rain.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | set tactical_rain.* | a plain table here, with the original's fields; a class instance there
+campaign/natives_objects | native tactical_js_handle.disconnect | the UI handle's disconnect (worklist)

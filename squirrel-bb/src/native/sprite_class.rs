@@ -7,8 +7,8 @@
 //! - read and write: `Alpha`, `Color`, `Highlight`, `HighlightFactor`, `Scale`,
 //!   `Saturation`, `Rotation`, `Torque`, `Visible`, `IgnoreAmbientColor`,
 //!   `IgnoreCameraFlip`;
-//! - read only (the sprite's flags, `+0x98`; bound at `0x507555`…): `HasBrush` (a brush
-//!   is set), `Finished` (see [`Anim::finished`]), `Fading` (see
+//! - read only (writing one raises "the index '…' does not exist"; the sprite's flags,
+//!   `+0x98`; bound at `0x507555`…): `HasBrush` (a brush is set), `Finished` (see [`Anim::finished`]), `Fading` (see
 //!   [`SpriteColor::is_fading`]) and `IsFadingDone` (no fade is left: a draw after one
 //!   ends clears it, `0x504a80`);
 //! - `setBrush`, `resetBrush`, `getBrush`, `setOffset`, `setHorizontalFlipping`,
@@ -137,15 +137,11 @@ pub(crate) fn members<H: SpriteHandle>(b: ClassBuilder<H>, kind: Kind<H>) -> Cla
 			moved_torque(h);
 		},
 	)
-	// Read only.
-	.property("HasBrush", |h: &H| h.with(|s| !s.brush().is_empty()), |_h: &mut H, _v: bool| {})
-	.property("Finished", |h: &H| h.with(|s| s.anim().finished()), |_h: &mut H, _v: bool| {})
-	.property_obj_rw(
-		"Fading",
-		|h: &H, vm: &SQVM| Some(SqStrongRef::bool(vm, h.with(|s| s.color().is_fading(real_time(vm))))),
-		|_h: &mut H, _vm: &SQVM, _v: SqStrongRef| Ok(()),
-	)
-	.property("IsFadingDone", |h: &H| h.with(|s| s.color().is_fading_done()), |_h: &mut H, _v: bool| {})
+	// Read only: writing one raises "the index '…' does not exist", as the original's.
+	.property_ro("HasBrush", |h: &H| h.with(|s| !s.brush().is_empty()))
+	.property_ro("Finished", |h: &H| h.with(|s| s.anim().finished()))
+	.property_obj("Fading", |h: &H, vm: &SQVM| SqStrongRef::bool(vm, h.with(|s| s.color().is_fading(real_time(vm)))))
+	.property_ro("IsFadingDone", |h: &H| h.with(|s| s.color().is_fading_done()))
 	.method("setBrush", move |h: &mut H, vm: &SQVM, brush: &str| {
 		let brush = if battle { set_with.resolve_battle(brush) } else { set_with.resolve(brush) };
 		let now = virtual_ms(vm);

@@ -76,7 +76,8 @@ local function report( _label, _f )
 
 
 // Properties: the keys of the class's `__getTable` (readable) and `__setTable` (writable),
-// where Sqrat keeps their accessors, up the class chain.
+// where Sqrat keeps their accessors, up the class chain; and the read-only ones (readable,
+// not writable) on lines of their own, so one writable here fails too.
 ::__propReport <- function ( _label, _obj )
 {
 	if (typeof _obj != "instance") return;
@@ -89,6 +90,14 @@ local function report( _label, _f )
 			foreach( k, _ in c[slot] ) keys.push(k);
 			keys.sort();
 			foreach( k in keys ) ::logInfo("PROBE " + kind + " " + _label + "." + k + " = property");
+		}
+		if (("__getTable" in c) && typeof c.__getTable == "table")
+		{
+			local writable = ("__setTable" in c) && typeof c.__setTable == "table" ? c.__setTable : {};
+			local keys = [];
+			foreach( k, _ in c.__getTable ) if (!(k in writable)) keys.push(k);
+			keys.sort();
+			foreach( k in keys ) ::logInfo("PROBE readonly " + _label + "." + k + " = property");
 		}
 	}
 };

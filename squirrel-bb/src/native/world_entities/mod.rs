@@ -123,6 +123,15 @@ struct LabelData {
 	color: u32,
 	/// From the entity's position, in world units with y up (`Offset`).
 	offset: (f64, f64),
+	/// `BackgroundColor` (ARGB) and `BackgroundVisible`: the box behind its text.
+	background_color: u32,
+	background_visible: bool,
+	/// `HAlign`, `VAlign`, `Size` and `Z`, kept as written: reading one crashes the
+	/// original (`HAlign` probed 2026-10-14), so no script does.
+	h_align: f64,
+	v_align: f64,
+	size: f64,
+	z: f64,
 }
 
 impl Default for LabelData {
@@ -132,6 +141,13 @@ impl Default for LabelData {
 			visible: false,
 			color: 0xffff_ffff,
 			offset: (0.0, 0.0),
+			// A fresh one's, probed 2026-10-14.
+			background_color: 0x6600_0000,
+			background_visible: true,
+			h_align: 0.0,
+			v_align: 0.0,
+			size: 0.0,
+			z: 0.0,
 		}
 	}
 }
@@ -599,6 +615,21 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 				Ok(())
 			},
 		)
+		.property_obj_rw(
+			"BackgroundColor",
+			|l: &LabelData, vm: &SQVM| super::color::color_object(vm, l.background_color),
+			|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
+				l.background_color = super::color::color_argb(vm, &v).ok_or("BackgroundColor: not a color")?;
+				Ok(())
+			},
+		)
+		.property("BackgroundVisible", |l: &LabelData| l.background_visible, |l: &mut LabelData, v: bool| {
+			l.background_visible = v
+		})
+		.property("HAlign", |l: &LabelData| l.h_align, |l: &mut LabelData, v: f64| l.h_align = v)
+		.property("VAlign", |l: &LabelData| l.v_align, |l: &mut LabelData, v: f64| l.v_align = v)
+		.property("Size", |l: &LabelData| l.size, |l: &mut LabelData, v: f64| l.size = v)
+		.property("Z", |l: &LabelData| l.z, |l: &mut LabelData, v: f64| l.z = v)
 		.build(vm)
 }
 

@@ -338,6 +338,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 
 	/// The battle map as the scripts have set it up, for a renderer.
+	/// Mirror the battle camera's view, or not: its `IsFlipped`, which scripts can only
+	/// read (the original's engine flips it).
+	pub fn set_battle_camera_flipped(&self, flipped: bool) {
+		self.tactical_grid.set_camera_flipped(flipped);
+	}
+
 	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
 		let (effects, pools) = self
 			.battle_effects

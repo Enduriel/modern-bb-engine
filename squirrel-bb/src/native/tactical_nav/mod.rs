@@ -191,7 +191,7 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 	ClassBuilder::<NavHandle>::new("TacticalNavigator")
 		// The current path's steps (probed: `findPath`, `clipPathToDistance`,
 		// `popLastWaypoint` and `clearPath` all keep it current; 0 after a failed search).
-		.property("NumPathWaypoints", |n: &NavHandle| n.0.borrow().path.len() as i64, |_n: &mut NavHandle, _v: i64| {})
+		.property_ro("NumPathWaypoints", |n: &NavHandle| n.0.borrow().path.len() as i64)
 		.method("createSettings", |n: &mut NavHandle, vm: &SQVM| -> Option<SqStrongRef> {
 			let st = n.0.borrow();
 			*st.settings.borrow_mut() = NavSettings::default();
@@ -280,15 +280,11 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 			let st = n.0.borrow();
 			st.travel.is_some() || st.teleports.iter().any(|t| t.identity == id)
 		})
-		.property("HasValidPath", |n: &NavHandle| !n.0.borrow().path.is_empty(), |_n: &mut NavHandle, _v: bool| {})
-		.property(
-			"IsTravelling",
-			|n: &NavHandle| {
-				let st = n.0.borrow();
-				st.travel.is_some() || !st.teleports.is_empty()
-			},
-			|_n: &mut NavHandle, _v: bool| {},
-		)
+		.property_ro("HasValidPath", |n: &NavHandle| !n.0.borrow().path.is_empty())
+		.property_ro("IsTravelling", |n: &NavHandle| {
+			let st = n.0.borrow();
+			st.travel.is_some() || !st.teleports.is_empty()
+		})
 		// travel(entity, ap, fatigue): start or continue moving along the path (see
 		// `travel`); true while the move is under way.
 		.method("travel", |n: &mut NavHandle, vm: &SQVM, entity: Retained, _ap: Number, _fatigue: Number| -> Result<bool, String> {
