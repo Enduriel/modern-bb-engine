@@ -11,10 +11,15 @@
 	// 16px Times New Roman with no margin; range sliders keep the page's font, with
 	// `margin: 18px 0` and old WebKit's grey. `:where()` keeps these at zero specificity,
 	// below every page or mod rule, as built-in styles are.
+	// Coherent also never fakes a bold or an italic face: text asked to be bold or italic
+	// in a family that has only a regular face (the game's fonts each have one: the
+	// resource numbers are bold, dialog subtitles italic) draws in that face as it is,
+	// where Chromium would embolden or slant it.
 	var BUILT_IN_CSS =
 		':where(input, select, textarea, button) { font: inherit; }\n' +
 		':where(input[type=checkbox], input[type=radio]) { margin: 0; font: 16px "Times New Roman"; }\n' +
-		':where(input[type=range]) { margin: 18px 0; color: #909090; }\n';
+		':where(input[type=range]) { margin: 18px 0; color: #909090; }\n' +
+		':where(:root) { font-synthesis-weight: none; font-synthesis-style: none; }\n';
 
 	// Images with nothing to show paint nothing, as in Coherent: no `src` (the
 	// character screen's talent stars), an empty one (every empty stash slot's

@@ -4,8 +4,9 @@
 //! mouse wheel scrolls and which "Cancel" closes; Options round-trips its settings;
 //! calls between scripts and page run inline both ways, as in the original, and the
 //! page's own tasks run between the scripts, never inside one. Images with nothing to
-//! show paint nothing and right clicks open no menu, as in Coherent. Skips if there is
-//! no Steam install.
+//! show paint nothing, bold or italic text in a face without either draws in it as it
+//! is, and right clicks open no menu, as in Coherent. Skips if there is no Steam
+//! install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -238,6 +239,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	)?;
 
 	images_with_nothing_to_show_paint_nothing(&session)?;
+	faces_are_never_faked(&session)?;
 	right_clicks_reach_the_page(&session)?;
 	page_tasks_run_between_scripts(&session)?;
 
@@ -435,6 +437,57 @@ fn images_painting(session: &UiSession, selector: &str) -> Result<Vec<(String, b
 		painting.push((name, differs));
 	}
 	Ok(painting)
+}
+
+/// Bold or italic text in a family with only a regular face (as all of the game's are)
+/// draws in that face as it is, as in Coherent (the original's frames: the resource
+/// numbers are bold, dialog subtitles italic), where Chromium would embolden or slant
+/// it: asking for both paints the same pixels.
+fn faces_are_never_faked(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		"$('<div id=\"bb-faces\">2,400 A large city and trading hub</div>').css({
+			position: 'fixed', left: '100px', top: '100px', zIndex: 10000, padding: '4px',
+			background: 'black', color: 'white', fontFamily: 'FreeUniversal-Regular', fontSize: '24px'
+		}).appendTo(document.body); true",
+	)?;
+	let paint = |session: &UiSession| -> Result<Vec<u8>, String> {
+		session.run_frames(0.3)?;
+		let frame = session.host().frame().ok_or("nothing painted")?;
+		let rect = session.eval(
+			"(function () { var r = document.getElementById('bb-faces').getBoundingClientRect();
+			return [Math.floor(r.left), Math.floor(r.top), Math.ceil(r.right), Math.ceil(r.bottom)]; })()",
+		)?;
+		let edge = |i: usize, limit: u32| match &rect {
+			Json::Array(r) => r
+				.get(i)
+				.and_then(Json::as_i64)
+				.unwrap_or(0)
+				.clamp(0, i64::from(limit)) as u32,
+			_ => 0,
+		};
+		let (left, top) = (edge(0, frame.width), edge(1, frame.height));
+		let (right, bottom) = (edge(2, frame.width), edge(3, frame.height));
+		Ok((top..bottom)
+			.flat_map(|y| {
+				frame.bgra[((y * frame.width + left) * 4) as usize
+					..((y * frame.width + right) * 4) as usize]
+					.to_vec()
+			})
+			.collect())
+	};
+	let plain = paint(session)?;
+	session.eval("$('#bb-faces').css({ fontWeight: 'bold', fontStyle: 'italic' }); true")?;
+	let asked = paint(session);
+	session.eval("$('#bb-faces').remove(); true")?;
+	let asked = asked?;
+	ensure(
+		!plain.is_empty() && plain.iter().any(|&b| b != 0 && b != 255),
+		"the text didn't paint",
+	)?;
+	ensure(
+		plain == asked,
+		"bold italic text in a regular-only face painted differently (faked)",
+	)
 }
 
 /// The right mouse button reaches the page, and Chromium shows no menu of its own
