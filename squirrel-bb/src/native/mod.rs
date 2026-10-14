@@ -32,6 +32,7 @@ pub(crate) mod tactical_grid;
 mod tactical_entities;
 mod tactical_nav;
 pub(crate) mod hex_range;
+mod tile_of_type;
 mod weather;
 mod time;
 mod ui_bridge;

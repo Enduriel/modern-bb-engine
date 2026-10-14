@@ -151,32 +151,9 @@ pub(crate) fn flood_last<T>(
 	found
 }
 
-/// `World.findNextTileOfType`'s candidates, in the order it prefers them: only tiles
-/// whose axial offset from the centre is even in both components (the centre first),
-/// nearest ring first, each ring walked clockwise from its N corner.
-pub(crate) fn even_lattice_rings(center: (i64, i64), dist: i64) -> Vec<(i64, i64)> {
-	// Ring walk in lattice units (one unit = 2 tiles): start at k*N, then k steps each
-	// of SE, S, SW, NW, N, NE.
-	const WALK: [(i64, i64); 6] = [(1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1), (1, 0)];
-	let mut out = vec![center];
-	let mut k = 1;
-	while 2 * k <= dist {
-		let (mut a, mut b) = (0, k);
-		for (da, db) in WALK {
-			for _ in 0..k {
-				out.push((center.0 + 2 * a, center.1 + 2 * b));
-				a += da;
-				b += db;
-			}
-		}
-		k += 1;
-	}
-	out
-}
-
 #[cfg(test)]
 mod tests {
-	use super::{even_lattice_rings, flood_last};
+	use super::flood_last;
 
 	fn ax(x: i64, y: i64) -> (i64, i64) {
 		(x, y - x / 2)
@@ -203,17 +180,5 @@ mod tests {
 			has_region.remove(&(q, r));
 		}
 		assert_eq!(got.join(" "), want);
-	}
-
-	#[test]
-	fn lattice_rings_match_the_original_preference() {
-		let got: Vec<String> = even_lattice_rings(ax(60, 60), 4)
-			.into_iter()
-			.map(|(q, r)| format!("{},{}", q, r + q / 2))
-			.collect();
-		assert_eq!(
-			got.join(" "),
-			"60,60 60,62 62,61 62,59 60,58 58,59 58,61 60,64 62,63 64,62 64,60 64,58 62,57 60,56 58,57 56,58 56,60 56,62 58,63"
-		);
 	}
 }

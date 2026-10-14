@@ -530,8 +530,7 @@ impl WorldGrid {
 			})
 		};
 		// World.findNextTileOfType(tile, dist, type, result): set result.Result to the
-		// first tile of `type` in the original's candidate order (see world_search);
-		// return whether one was found.
+		// nearest interior tile of `type` (see tile_of_type); return whether one was found.
 		let find_next_tile_of_type = {
 			let g = self.grid.clone();
 			vm.make_closure(
@@ -545,10 +544,15 @@ impl WorldGrid {
 						.ok_or("findNextTileOfType: could not resolve tile")?;
 					let found = {
 						let grid = g.borrow();
-						world_search::even_lattice_rings((q, r), dist)
-							.into_iter()
-							.filter_map(|(q, r)| grid.idx(q, r + q / 2))
-							.find(|&id| grid.tiles[id].type_ == ty)
+						super::tile_of_type::next_tile_of_type(
+							(q, r),
+							dist,
+							ty,
+							grid.tiles.len(),
+							|q, r| grid.idx(q, r + q / 2),
+							|id| (grid.tiles[id].q, grid.tiles[id].r),
+							|id| grid.tiles[id].type_,
+						)
 					};
 					match found.and_then(|id| {
 						let (c, row) = {
@@ -1185,23 +1189,18 @@ fn direction8_to(a: &TileHandle, b: &TileHandle) -> i64 {
 	super::world_query::direction8(pos(a), pos(b))
 }
 
-/// The hex direction (0..6) whose single step most reduces distance to `b` (the
-/// movement direction); `0` if already on `b`.
+/// `WorldTile.getDirectionTo` as the original computes it (disassembled at `0x4daef0`;
+/// matches 372 probed tile pairs): only the signs of the axial deltas count. N if the
+/// columns match and `dr > 0`, else S (so a tile's direction to itself is S); NE or SE
+/// to the east and NW or SW to the west, by the sign of `dr`. It is not the step that
+/// gets closest to `b`.
 fn direction_to(a: &TileHandle, b: &TileHandle) -> i64 {
-	if hex_distance(a, b) == 0 {
-		return 0;
-	}
 	let (q, r) = a.with(|d| (d.q, d.r));
 	let (bq, br) = b.with(|d| (d.q, d.r));
-	let mut best = 0i64;
-	let mut best_dist = i64::MAX;
-	for (i, (dq, dr)) in DIRECTION_STEP.iter().enumerate() {
-		let (ddq, ddr) = (q + dq - bq, r + dr - br);
-		let dist = (ddq.abs() + ddr.abs() + (ddq + ddr).abs()) / 2;
-		if dist < best_dist {
-			best_dist = dist;
-			best = i as i64;
-		}
+	let (dq, dr) = (bq - q, br - r);
+	match dq.signum() {
+		0 => if dr > 0 { 0 } else { 3 },
+		1 => if dr < 0 { 2 } else { 1 },
+		_ => if dr > 0 { 5 } else { 4 },
 	}
-	best
 }
