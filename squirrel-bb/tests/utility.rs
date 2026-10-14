@@ -53,15 +53,17 @@ fn math_abs_is_an_integer_function() {
 }
 
 #[test]
-fn math_rounding_returns_floats_and_pow_returns_float() {
+fn math_floor_ceil_return_floats_round_returns_integer() {
+	// Probed in the original: ceil/floor return floats, round an integer.
 	vm().run_script(
 		r#"
 			assert(Math.ceil(2.1) == 3 && typeof Math.ceil(2.1) == "float");
 			assert(Math.floor(2.9) == 2 && typeof Math.floor(2.9) == "float");
-				assert(typeof Math.round(2.5) == "float");
-				local _a = [10, 20, 30];
-				assert(_a[Math.floor(1.7)] == 20);
+			assert(typeof Math.round(2.5) == "integer");
+			local _a = [10, 20, 30];
+			assert(_a[Math.floor(1.7)] == 20);
 			assert(Math.round(2.5) == 3);               // half away from zero
+			assert(Math.round(-2.5) == -3);
 			assert(Math.round(2.4) == 2);
 			assert(Math.pow(2.0, 10.0) == 1024.0);
 			assert(typeof Math.pow(2.0, 3.0) == "float");
@@ -72,21 +74,21 @@ fn math_rounding_returns_floats_and_pow_returns_float() {
 }
 
 #[test]
-fn math_get_angle_to_is_atan2_in_degrees() {
+fn math_get_angle_to_is_the_negated_bearing() {
+	// The original: the compass bearing (north 0, east 90) in [0, 360), negated
+	// (values probed; disassembled at 0x537100).
 	vm().run_script(
 		r#"
 			local o = createVec(0, 0);
-			// angle of the direction from o to each axis point, CCW from +X.
-			assert(Math.getAngleTo(o, createVec(1, 0)) == 0.0);     // east
-			assert(Math.getAngleTo(o, createVec(0, 1)) == 90.0);    // +Y
-			assert(Math.getAngleTo(o, createVec(-1, 0)) == 180.0);  // west
-			assert(Math.getAngleTo(o, createVec(0, -1)) == -90.0);  // -Y
-			// not from the origin: direction (1,1) from (2,2) is 45 degrees.
-			assert(Math.getAngleTo(createVec(2, 2), createVec(3, 3)) == 45.0);
+			assert(Math.getAngleTo(o, createVec(1, 0)) == -90.0);   // east
+			assert(Math.getAngleTo(o, createVec(0, 1)) == 0.0);     // north (-0)
+			assert(Math.getAngleTo(o, createVec(-1, 0)) == -270.0); // west
+			assert(Math.getAngleTo(o, createVec(0, -1)) == -180.0); // south
+			assert(Math.getAngleTo(createVec(2, 2), createVec(3, 3)) == -45.0);
 			"#,
 		"get_angle_to",
 	)
-	.expect("getAngleTo = atan2(dy, dx) in degrees");
+	.expect("getAngleTo is the negated bearing");
 }
 
 #[test]
