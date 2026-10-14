@@ -125,6 +125,32 @@ fn hits(g: &TacticalGridState, masks: &HexMasks, camera_level: i64, q: i64, r: i
 	masks.pixel(level, lx, ly) == Pixel::Tile
 }
 
+/// The point halfway between tiles `a` and `b` (their world positions, height
+/// included), in f32 the way the original gets there: the direction normalized, then
+/// scaled back by the distance and halved (disassembled, `getPosBetweenThisAnd`
+/// 0x4db080 and `getTileBetweenThisAnd` 0x4db190).
+pub(crate) fn midpoint(g: &TacticalGridState, a: usize, b: usize) -> (f32, f32) {
+	let (ax, ay) = g.tiles[a].world_pos();
+	let (bx, by) = g.tiles[b].world_pos();
+	let (ax, ay) = (ax as f32, ay as f32);
+	let (dx, dy) = (bx as f32 - ax, by as f32 - ay);
+	let len = ((dx * dx + dy * dy) as f64).sqrt() as f32;
+	let inv = 1.0f32 / len;
+	(inv * dx * len * 0.5 + ax, inv * dy * len * 0.5 + ay)
+}
+
+/// `tile.getTileBetweenThisAnd(other)`: the tile picked ([`world_to_tile`]) at the
+/// [`midpoint`] of the two; the tile itself if `other` is the same tile. The AI frames
+/// its camera on it, and the kraken's tentacles check it.
+pub(crate) fn tile_between(g: &TacticalGridState, masks: &HexMasks, camera_level: i64, a: usize, b: usize) -> usize {
+	if a == b {
+		return a;
+	}
+	let (x, y) = midpoint(g, a, b);
+	let (q, r) = world_to_tile(g, masks, camera_level, x as f64, y as f64);
+	g.idx_axial(q, r).expect("world_to_tile clamps onto the map")
+}
+
 /// `Tactical.worldToTile(pos)`: the axial coords of the tile at world point `(x, y)`,
 /// clamped onto the map.
 pub(crate) fn world_to_tile(g: &TacticalGridState, masks: &HexMasks, camera_level: i64, x: f64, y: f64) -> (i64, i64) {

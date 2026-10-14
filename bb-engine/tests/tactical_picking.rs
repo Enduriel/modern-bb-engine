@@ -67,3 +67,38 @@ fn world_to_tile_matches_the_original() {
 	}
 	assert_eq!(points, 22_164);
 }
+
+/// `tile.getTileBetweenThisAnd(other)` picks the tile at the midpoint of the two (the
+/// original's, disassembled): two steps in any direction on flat ground give the tile
+/// in between, and a tile and itself give that tile.
+#[test]
+fn the_tile_between_two_tiles_is_picked_at_their_midpoint() {
+	let dir = Path::new(harness::STEAM_DATA_DIR);
+	if !dir.exists() {
+		eprintln!("skipping: {} not present", dir.display());
+		return;
+	}
+	let engine = harness::open_install(dir).expect("open install");
+	engine
+		.run_script(
+			r#"
+			::Tactical.resizeScene(32, 32);
+			::Tactical.getCamera().Level = 0;
+			local t = ::Tactical.getTileSquare(12, 12);
+			local wrong = [];
+			if (!t.getTileBetweenThisAnd(t).isSameTileAs(t)) wrong.push("self");
+			for (local d = 0; d < 6; d++)
+			{
+				local mid = t.getNextTile(d), far = mid.getNextTile(d);
+				if (!t.getTileBetweenThisAnd(far).isSameTileAs(mid)) wrong.push("dir " + d);
+				local p = t.getPosBetweenThisAnd(far);
+				if (p.X != mid.Pos.X || p.Y != mid.Pos.Y) wrong.push("pos " + d);
+			}
+			::__wrong <- wrong.len() == 0 ? "" : wrong.reduce(@(a, b) a + ", " + b);
+			"#,
+			"between",
+		)
+		.expect("between");
+	let wrong = SqTable::root(engine.vm()).get::<String>("__wrong").expect("result");
+	assert_eq!(wrong, "", "wrong tiles between");
+}

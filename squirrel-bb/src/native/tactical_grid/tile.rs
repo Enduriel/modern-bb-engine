@@ -2,7 +2,7 @@
 
 use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
-use super::{Grid, TacticalTileData, detail, hex_distance, tile_handle, vec};
+use super::{Grid, TacticalTileData, detail, hex_distance, picking, tile_handle, vec};
 use crate::native::world_query;
 
 /// A script handle to one tile (a shared map + the tile's index).
@@ -207,6 +207,21 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			tile_handle(&t.grid, vm, id).ok_or_else(|| "getNextTile: no tile class".to_string())
 		})
 		.method("isSameTileAs", |t: &mut TileHandle, other: Native<TileHandle>| -> bool { t.id == other.0.id })
+		.method("getPosBetweenThisAnd", |t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Result<Option<SqStrongRef>, String> {
+			let (x, y) = picking::midpoint(&t.grid.borrow(), t.id, other.0.id);
+			vec(vm, (x as f64, y as f64))
+		})
+		.method("getTileBetweenThisAnd", |t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Result<SqStrongRef, String> {
+			let id = if t.id == other.0.id {
+				t.id
+			} else {
+				let mut g = t.grid.borrow_mut();
+				let masks = g.hex_masks().ok_or("getTileBetweenThisAnd: the game data has no gfx/masks/hex_mask.0-3")?;
+				let level = g.camera.level;
+				picking::tile_between(&g, &masks, level, t.id, other.0.id)
+			};
+			tile_handle(&t.grid, vm, id).ok_or_else(|| "getTileBetweenThisAnd: no tile class".to_string())
+		})
 		.method("getDistanceTo", |t: &mut TileHandle, other: Native<TileHandle>| -> i64 {
 			let g = t.grid.borrow();
 			hex_distance(&g.tiles[t.id], &g.tiles[other.0.id])
