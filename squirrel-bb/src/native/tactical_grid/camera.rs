@@ -45,8 +45,9 @@ fn entity_id(vm: &SQVM, entity: &SqStrongRef) -> Option<i64> {
 
 /// `queryEntityOverlays()`: what the orientation overlays show, in the UI's fields
 /// (`TacticalScreenIdentifier.OrientationOverlay`). Headless, every unit is on screen,
-/// so no arrow is visible; the original places those at (0, 0) (the UI golden of a
-/// battle, `bb-ui/tests/goldens/world_combat.json`).
+/// so no arrow is visible; the original places those at (0, 0), not offscreen and with
+/// no vertical offset (the UI golden of a battle, `bb-ui/tests/goldens/world_combat.json`,
+/// and the payload golden `parity/goldens/ui_payloads/world.txt`).
 fn overlay_states(vm: &SQVM, overlays: &[i64]) -> SqStrongRef {
 	let mut list = SqArray::new(vm);
 	for &id in overlays {
@@ -55,6 +56,8 @@ fn overlay_states(vm: &SQVM, overlays: &[i64]) -> SqStrongRef {
 		overlay.set("x", 0i64);
 		overlay.set("y", 0i64);
 		overlay.set("visible", false);
+		overlay.set("isOffscreen", false);
+		overlay.set("yOffset", 0i64);
 		list.push(overlay.to_strong());
 	}
 	list.to_strong()
