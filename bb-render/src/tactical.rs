@@ -162,6 +162,13 @@ impl Builder<'_> {
 		});
 	}
 
+	/// A brush's own offset (`[0, 0]` for an unknown brush).
+	fn brush_offset(&self, brush: &str) -> [f32; 2] {
+		self.sprites
+			.get(brush)
+			.map_or([0.0; 2], |(_, s)| [f32::from(s.offset_x), f32::from(s.offset_y)])
+	}
+
 	/// A detail or an entity's sprite: placed by the brush's offset and frame.
 	fn placed(&mut self, brush: &str, anchor: [f32; 2], look: Look, saturation: f32, level: u32) {
 		let Some((sheet, sprite)) = self.sprites.get(brush) else {
@@ -319,8 +326,16 @@ impl Fade {
 	}
 }
 
-/// A tile's details and what stands on it.
-fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTacticalEntity], fade: Fade) {
+/// A tile's details and what stands on it, each entity followed by its overlay (the
+/// original draws a unit's bars with it, `0x4c3547`, so a unit in front covers the
+/// bars of one behind), the overlay at `overlay_level`.
+fn draw_dressing(
+	b: &mut Builder,
+	tile: &SceneTacticalTile,
+	standing: &[&SceneTacticalEntity],
+	fade: Fade,
+	overlay_level: u32,
+) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
 	let hidden = if tile.fogged { FOGGED_SATURATION } else { 1.0 };
@@ -356,6 +371,9 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 			let at = [anchor[0] + sprite.offset.0 * sprite.scale, anchor[1] + sprite.offset.1 * sprite.scale];
 			b.placed(&sprite.brush, at, look, sprite.saturation * hidden, level);
 		}
+		if let Some(overlay) = &entity.overlay {
+			draw_overlay(b, entity, overlay, overlay_level);
+		}
 	}
 }
 
@@ -366,7 +384,9 @@ const OVERLAY_OFFSET: [f32; 2] = [-1.0, 55.0];
 const OVERLAY_BARS: [(f32, u32); 3] = [(0.0, 0xff70_8090), (-7.0, 0xff70_8090), (-14.0, 0xffb3_1f1f)];
 
 /// Where the first status icon sits from the bars, and the step to the next: four to
-/// a row, rows stacking upwards (`0x4b42f0`).
+/// a row, rows stacking upwards (`0x4b42f0`). Unlike the bars, the icons sit there
+/// without their brushes' offset (the original's screenshot: 35 units lower than
+/// with it, the `ui.brush` offset).
 const OVERLAY_ICONS: [f32; 2] = [-30.0, 57.0];
 const OVERLAY_ICON_STEP: f32 = 20.0;
 
@@ -406,9 +426,10 @@ fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, overlay: &SceneOv
 	sprite(b, "entityoverlay_top", anchor, shown(0xffff_ffff));
 	for (i, icon) in overlay.icons.iter().enumerate() {
 		let (column, row) = ((i % 4) as f32, (i / 4) as f32);
+		let offset = b.brush_offset(icon);
 		let at = [
-			anchor[0] + OVERLAY_ICONS[0] + column * OVERLAY_ICON_STEP,
-			anchor[1] + OVERLAY_ICONS[1] + row * OVERLAY_ICON_STEP,
+			anchor[0] + OVERLAY_ICONS[0] + column * OVERLAY_ICON_STEP - offset[0],
+			anchor[1] + OVERLAY_ICONS[1] + row * OVERLAY_ICON_STEP - offset[1],
 		];
 		sprite(b, icon, at, shown(0xffff_ffff));
 	}
@@ -489,12 +510,14 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	for tile in &order {
 		draw_tile(&mut b, scene, tile);
 	}
+	// Overlays draw sharp, at the camera's level.
+	let overlay_level = scene.camera.level.clamp(0, 3) as u32;
 	for tile in &order {
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
-		draw_dressing(&mut b, tile, on_it, Fade::of(scene, tile, &unit_tiles));
+		draw_dressing(&mut b, tile, on_it, Fade::of(scene, tile, &unit_tiles), overlay_level);
 	}
-	// Particle effects, the units' bars, then the weather over everything.
+	// Particle effects, then the weather over everything.
 	for particle in &scene.particles {
 		let [a, r, g, b_] = particle.color.to_be_bytes();
 		let look = Look {
@@ -506,12 +529,6 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		};
 		let level = scene.camera.level.clamp(0, 3) as u32;
 		b.placed(&particle.brush, [particle.pos.0, particle.pos.1], look, particle.saturation, level);
-	}
-	let level = scene.camera.level.clamp(0, 3) as u32;
-	for entity in &scene.entities {
-		if let Some(overlay) = &entity.overlay {
-			draw_overlay(&mut b, entity, overlay, level);
-		}
 	}
 	draw_clouds(&mut b, scene, view);
 	let labels_from = b.quads.len();
