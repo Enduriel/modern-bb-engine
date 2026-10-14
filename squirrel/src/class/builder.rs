@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use super::method::IntoSqMethod;
 use super::payload::{NativePayload, instance_release_hook, native_payload_tag};
-use super::property::{FieldValue, GetMeta, Property, PropertyTable, SetMeta};
+use super::property::{FieldValue, GetMeta, Getter, Property, PropertyTable, SetMeta, Setter, Slot};
 use crate::function::{IntoSqFunction, SqFunction};
 use crate::{SQ_OK, SQVM, SqStrongRef, SqTable};
 
@@ -141,10 +141,30 @@ impl<T: 'static> ClassBuilder<T> {
 	/// Register the class in the root table and return a handle for instantiation.
 	pub fn build(self, vm: &mut SQVM) -> SqClass<T> {
 		let ptr = vm.as_ptr();
+		// Sqrat's layout (see `property`): a native accessor closure per property, in the
+		// class's `__getTable` and (if it has a setter) `__setTable`.
+		let mut slots = Vec::new();
+		for (name, prop) in self.properties {
+			let prop = Rc::new(prop);
+			let getter = closure_ref(vm, Box::new(Getter { prop: prop.clone() }));
+			let setter = prop.writable.then(|| closure_ref(vm, Box::new(Setter { prop: prop.clone() })));
+			slots.push((name, Slot::new(prop, getter, setter)));
+		}
+		let (get_table, set_table) = {
+			let mut get_table = SqTable::new(vm);
+			let mut set_table = SqTable::new(vm);
+			for (name, slot) in &slots {
+				get_table.set(name, slot.getter.clone());
+				if let Some(setter) = &slot.setter {
+					set_table.set(name, setter.clone());
+				}
+			}
+			(get_table.to_strong(), set_table.to_strong())
+		};
 		let table: PropertyTable<T> = Rc::new(
-			self.properties
+			slots
 				.into_iter()
-				.map(|(name, p)| (name.into_bytes().into_boxed_slice(), p))
+				.map(|(name, slot)| (name.into_bytes().into_boxed_slice(), slot))
 				.collect::<HashMap<_, _, _>>(),
 		);
 
@@ -159,12 +179,22 @@ impl<T: 'static> ClassBuilder<T> {
 		vm.push_string("_get"); // [class, "_get"]
 		vm.push_closure(Box::new(GetMeta {
 			props: table.clone(),
+			table: get_table.clone(),
 		})); // [class, "_get", closure]
 		unsafe { squirrel_sys::sq_newslot(ptr, -3, 0) }; // [class]
 
 		vm.push_string("_set"); // [class, "_set"]
-		vm.push_closure(Box::new(SetMeta { props: table })); // [class, "_set", closure]
+		vm.push_closure(Box::new(SetMeta {
+			props: table,
+			table: set_table.clone(),
+		})); // [class, "_set", closure]
 		unsafe { squirrel_sys::sq_newslot(ptr, -3, 0) }; // [class]
+
+		for (name, accessors) in [("__getTable", get_table), ("__setTable", set_table)] {
+			vm.push_string(name); // [class, name]
+			accessors.push(vm); // [class, name, table]
+			unsafe { squirrel_sys::sq_newslot(ptr, -3, 0) }; // [class]
+		}
 
 		// Slot each method as a real class member, so `inst.method(...)` resolves
 		// by normal lookup ahead of the `_get` fallback.
@@ -248,4 +278,12 @@ impl<T: 'static> SqClass<T> {
 			instance
 		}
 	}
+}
+
+/// A native closure for `func`, as an owned reference.
+fn closure_ref(vm: &mut SQVM, func: Box<dyn SqFunction>) -> SqStrongRef {
+	vm.push_closure(func);
+	let closure = SqStrongRef::from_stack(vm, -1);
+	unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
+	closure
 }

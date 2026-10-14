@@ -266,3 +266,79 @@ fn host_reads_and_writes_an_instance_payload() {
 	let table = crate::SqTable::new(&vm).to_strong();
 	assert!(point.with_payload(&vm, &table, |p| p.x).is_none());
 }
+
+/// Sqrat's layout, which mods rely on: the class's `__getTable`/`__setTable` hold the
+/// property accessors, and replacing one (as Reforged wraps `TacticalTile.IsEmpty`)
+/// changes every access; a class method can be replaced with `<-` before instances
+/// exist.
+#[test]
+fn mods_can_wrap_properties_and_methods_like_sqrat() {
+	let mut vm = SQVM::new(1024);
+	let point = ClassBuilder::<Point>::new("Point")
+		.property("X", |p| p.x, |p, x| p.x = x)
+		.property_obj("Pair", |p, vm| {
+			let mut t = crate::SqTable::new(vm);
+			t.set("x", p.x);
+			t.to_strong()
+		})
+		.method("sum", |p: &mut Point| p.x + p.y)
+		.build(&mut vm);
+	vm.register("makePoint", move |vm: &SQVM, x: f64, y: f64| point.instantiate(vm, Point { x, y }));
+	vm.run_script(
+		r#"
+		assert(typeof ::Point.__getTable.X == "function" || typeof ::Point.__getTable.X == "native function");
+		assert("X" in ::Point.__setTable);
+		assert(!("Pair" in ::Point.__setTable)); // read-only: no setter
+
+		// A method replaced on the class before any instance exists.
+		local sum = ::Point.sum;
+		::Point.sum <- function() { return sum() * 10; };
+
+		// Wrap a getter and a setter the way mods do.
+		local getX = ::Point.__getTable.X;
+		::Point.__getTable.X <- function() { return getX() + 100; };
+		local setX = ::Point.__setTable.X;
+		::Point.__setTable.X <- function( _v ) { setX(_v * 2); };
+		// Add a property.
+		::Point.__getTable.Double <- function() { return this.X * 2; };
+
+		local p = makePoint(3.0, 4.0);
+		assert(p.X == 103.0);
+		p.X = 5.0;               // stored as 10
+		assert(p.X == 110.0);
+		assert(p.Double == 220.0);
+		assert(p.sum() == 140.0); // (10 + 4) * 10
+		assert(p.Pair.x == 10.0);
+		local threw = false;
+		try { p.Pair = 1; } catch (e) { threw = true; }
+		assert(threw);
+		threw = false;
+		try { local v = p.Missing; } catch (e) { threw = true; }
+		assert(threw);
+		"#,
+		"sqrat_layout",
+	)
+	.expect("properties and methods are hookable like Sqrat's");
+}
+
+/// A missing property is a clean miss, so the instance's default delegate still answers
+/// (`weakref`, `getclass`), and anything else is Squirrel's own "does not exist".
+#[test]
+fn missing_properties_fall_back_to_the_default_delegate() {
+	let mut vm = SQVM::new(1024);
+	let point = ClassBuilder::<Point>::new("Point").property("X", |p| p.x, |p, x| p.x = x).build(&mut vm);
+	vm.register("makePoint", move |vm: &SQVM, x: f64, y: f64| point.instantiate(vm, Point { x, y }));
+	vm.run_script(
+		r#"
+		local p = makePoint(1.0, 2.0);
+		local w = p.weakref();
+		assert(w.ref() == p);
+		assert(p.getclass() == ::Point);
+		local msg = null;
+		try { local v = p.Missing; } catch (e) { msg = e; }
+		assert(msg == "the index 'Missing' does not exist");
+		"#,
+		"default_delegate",
+	)
+	.expect("missing keys reach the default delegate");
+}
