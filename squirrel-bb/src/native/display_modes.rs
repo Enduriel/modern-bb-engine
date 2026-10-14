@@ -9,6 +9,9 @@
 //!
 //! The game's current size is listed too when the monitor has no such mode (a window
 //! the player sized, which the original can't have), so the Options screen shows it.
+//! A monitor that lists only its own mode (as on Wayland, where a game can't switch
+//! modes) gets the common sizes that fit in it too: windows of those sizes, or
+//! fullscreen scaled to the monitor.
 
 /// One display mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,7 +51,11 @@ pub(crate) struct Source<'a> {
 /// The modes at least `min_width` × `min_height` with at least `min_bits` color bits,
 /// as `Settings.queryResolutions(min_width, min_height, min_bits)` lists them.
 pub(crate) fn query(source: Source, min_width: i64, min_height: i64, min_bits: i64) -> Vec<DisplayMode> {
-	let mut sizes: Vec<(i64, i64)> = source.monitor.unwrap_or(MODES).to_vec();
+	let mut sizes: Vec<(i64, i64)> = match source.monitor {
+		None => MODES.to_vec(),
+		Some(&[only]) => MODES.iter().copied().filter(|&(w, h)| w <= only.0 && h <= only.1).chain([only]).collect(),
+		Some(modes) => modes.to_vec(),
+	};
 	if !sizes.contains(&source.current) {
 		sizes.push(source.current);
 	}
@@ -107,6 +114,17 @@ mod tests {
 			color_bits: 32,
 		};
 		assert_eq!(index_of(source, current, 1024, 768, 32), 2);
+	}
+
+	#[test]
+	fn a_monitor_of_one_mode_gets_the_common_sizes_in_it() {
+		let monitor = [(1700, 1000)];
+		let source = Source {
+			monitor: Some(&monitor),
+			current: (1700, 1000),
+		};
+		let sizes: Vec<(i64, i64)> = query(source, 1280, 720, 32).iter().map(|m| (m.width, m.height)).collect();
+		assert_eq!(sizes, [(1700, 1000), (1600, 900), (1440, 900), (1366, 768), (1280, 960), (1280, 800), (1280, 720)]);
 	}
 
 	#[test]

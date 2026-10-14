@@ -2,8 +2,11 @@
 //! ([`game::Game`]), with their UI ([`front`]) and the player's keys ([`keys`]). The `bb`
 //! binary puts it in a window.
 
+pub mod display;
 pub mod front;
 pub mod game;
 pub mod keys;
+pub mod platform;
+pub mod settings;
 pub mod stats;
 pub mod wheel;

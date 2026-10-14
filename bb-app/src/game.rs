@@ -12,7 +12,7 @@ use bb_render::portrait::PortraitRequest;
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer, write_png};
 use squirrel::{SqStrongRef, SqTable};
-use squirrel_bb::MouseInput;
+use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
 use crate::front::{Front, Key};
 
@@ -22,35 +22,32 @@ const MAX_FRAME_MS: f64 = 250.0;
 pub struct Game {
 	front: Front,
 	renderer: WorldRenderer,
-	/// The screen the scripts think in (the video mode); window pixels scale to it.
-	screen: (u32, u32),
 	cursor: (i64, i64),
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
 }
 
 impl Game {
-	/// Boot the engine from the install at `data_dir` into a new campaign on `seed`,
-	/// playing its sound on the device if `sound` (silent otherwise, as for tests), with
-	/// DevTools for the page at port `devtools` (the page's front only).
+	/// Boot the engine from the install at `data_dir` into a new campaign on `seed`, in
+	/// video `mode`, playing its sound on the device if `sound` (silent otherwise, as for
+	/// tests), with DevTools for the page at port `devtools` (the page's front only).
 	pub fn boot(
 		gpu: &Gpu,
 		data_dir: &Path,
 		seed: &str,
 		sound: bool,
 		world_size: Option<(i64, i64)>,
+		mode: VideoMode,
 		devtools: Option<u16>,
 	) -> Result<Game, String> {
 		let io = |e: std::io::Error| e.to_string();
-		let front = Front::boot(gpu, data_dir, seed, sound, world_size, devtools)?;
+		let front = Front::boot(gpu, data_dir, seed, sound, world_size, mode, devtools)?;
 		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
 		let renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
-		let mode = video_mode(front.engine()).unwrap_or((1920, 1080));
 		Ok(Game {
 			front,
 			renderer,
-			screen: mode,
 			cursor: (0, 0),
 			modifier: 0,
 		})
@@ -65,9 +62,20 @@ impl Game {
 		self.front.engine()
 	}
 
-	/// The size the game's screen is (its video mode).
+	/// The video mode the game runs in, shared with the scripts.
+	pub fn video(&self) -> &VideoSettings {
+		self.engine().video()
+	}
+
+	/// The size the game's screen is (its video mode's), which window pixels scale to.
 	pub fn screen(&self) -> (u32, u32) {
-		self.screen
+		let (width, height, _) = self.video().screen();
+		(width.max(1) as u32, height.max(1) as u32)
+	}
+
+	/// Run the Squirrel `code`.
+	pub fn run_script(&self, code: &str) -> Result<(), String> {
+		self.engine().run_script(code, "script")
 	}
 
 	/// Advance the game by `ms` of real time.
@@ -158,8 +166,8 @@ impl Game {
 			virtual_time: engine.time().virtual_seconds() as f32,
 		});
 		let (width, height) = (target.width, target.height);
-		// The screen the scripts think in maps onto the window.
-		let fit = width as f32 / self.screen.0 as f32;
+		// The screen the scripts think in maps onto the frame.
+		let fit = width as f32 / self.screen().0 as f32;
 		if tactical_visible(engine) {
 			let scene = engine.tactical_scene();
 			let view = WorldView {
@@ -242,15 +250,6 @@ fn procedural_png(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, 
 	let mut png = Vec::new();
 	write_png(&mut png, &image).ok()?;
 	Some(png)
-}
-
-/// `Settings.getVideoMode()`.
-fn video_mode(engine: &GameEngine) -> Option<(u32, u32)> {
-	let vm = engine.vm();
-	let settings = SqTable::root(vm).get::<SqTable>("Settings")?;
-	let mode = settings.get::<SqStrongRef>("getVideoMode")?.call_ret::<SqStrongRef, _>(vm, ()).ok()??;
-	let dim = |k: &str| mode.get_member::<squirrel::Number>(vm, k).map(|n| n.0 as u32);
-	Some((dim("Width")?, dim("Height")?))
 }
 
 /// `World.isVisible()`: the world map is showing (it isn't at the main menu).

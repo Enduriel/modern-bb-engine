@@ -1,7 +1,8 @@
 //! [`Presenter`]: a finished frame onto a window. The frame is an offscreen
-//! [`RenderTarget`] the size of the window; one screen-covering triangle copies it onto
-//! the surface's texture, whatever the surface's format. The window is opaque: the
-//! frame's alpha (what blending left in it) is not shown through.
+//! [`RenderTarget`], drawn into a rectangle of the window (all of it, or a part with
+//! black around it); one triangle over that rectangle copies it onto the surface's
+//! texture, whatever the surface's format. The window is opaque: the frame's alpha
+//! (what blending left in it) is not shown through.
 
 use crate::gpu::Gpu;
 use crate::target::RenderTarget;
@@ -108,8 +109,9 @@ impl Presenter {
 		}
 	}
 
-	/// Copy `frame` onto `surface_view`.
-	pub fn draw(&self, gpu: &Gpu, frame: &RenderTarget, surface_view: &wgpu::TextureView) {
+	/// Copy `frame` onto `surface_view`, into the rectangle `(x, y, width, height)` of
+	/// it, black around it.
+	pub fn draw(&self, gpu: &Gpu, frame: &RenderTarget, surface_view: &wgpu::TextureView, rect: (u32, u32, u32, u32)) {
 		let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			label: Some("present"),
 			layout: &self.layout,
@@ -144,6 +146,8 @@ impl Presenter {
 				occlusion_query_set: None,
 				multiview_mask: None,
 			});
+			let (x, y, w, h) = rect;
+			pass.set_viewport(x as f32, y as f32, w.max(1) as f32, h.max(1) as f32, 0.0, 1.0);
 			pass.set_pipeline(&self.pipeline);
 			pass.set_bind_group(0, &group, &[]);
 			pass.draw(0..3, 0..1);

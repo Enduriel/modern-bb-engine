@@ -22,6 +22,7 @@ use bb_render::portrait::{PortraitRequest, portrait_size};
 use bb_render::{Gpu, RenderTarget, save_png};
 use bb_ui::json::Json;
 use squirrel::SqTable;
+use squirrel_bb::VideoMode;
 
 /// The campaign's map seed (the UI goldens').
 const SEED: &str = "bbuitest";
@@ -143,7 +144,7 @@ fn cursor_is_drawn_at_the_mouse(game: &mut Game, gpu: &Gpu, target: &RenderTarge
 
 fn check(gpu: &Gpu) -> Result<(), String> {
 	// Silent: tests never play on the device.
-	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false, None, None)?;
+	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false, None, VideoMode::DEFAULT, None)?;
 	let session = game.front().session();
 	// The opening event, over the world. The page is at UI scale 1: its pixels are
 	// the screen's.

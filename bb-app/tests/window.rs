@@ -1,0 +1,127 @@
+//! `bb`'s window, run in a headless gamescope (muted, so nothing shows or sounds): it
+//! exits cleanly, and the scripts' video mode is put on it as they set it. Skips
+//! cleanly without gamescope or the Steam install.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use bb_engine::harness::STEAM_DATA_DIR;
+
+/// One gamescope at a time.
+static GAMESCOPE: Mutex<()> = Mutex::new(());
+
+/// What a run left: its exit status and what it printed.
+struct Run {
+	status: String,
+	stderr: String,
+}
+
+/// A folder of its own for the run called `name`, emptied.
+fn run_dir(name: &str) -> PathBuf {
+	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bb_window").join(name);
+	let _ = std::fs::remove_dir_all(&dir);
+	std::fs::create_dir_all(&dir).expect("a folder for the run");
+	dir
+}
+
+/// Run `bb` with `args` (and `--mute`) in a headless gamescope of `width` × `height`,
+/// or `None` to skip.
+fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run> {
+	if !Path::new(STEAM_DATA_DIR).exists() {
+		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		return None;
+	}
+	let gamescope = Command::new("gamescope").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status();
+	if gamescope.is_err() {
+		eprintln!("skipping: no gamescope");
+		return None;
+	}
+	let _one = GAMESCOPE.lock().unwrap_or_else(|e| e.into_inner());
+	let (status, stderr) = (dir.join("status"), dir.join("stderr"));
+	// gamescope doesn't pass its child's status on: the shell writes it. Its own Wayland
+	// display (`--expose-wayland`) stands in for the desktop's, so the window opens there.
+	let mut child = Command::new("gamescope")
+		.args(["--backend", "headless", "--expose-wayland"])
+		.args(["-W", &width.to_string(), "-H", &height.to_string(), "--"])
+		.args(["sh", "-c", r#""$0" "$@" 2>"$BB_TEST_STDERR"; echo $? > "$BB_TEST_STATUS""#])
+		.arg(env!("CARGO_BIN_EXE_bb"))
+		.arg("--mute")
+		.args(args)
+		.env("BB_TEST_STATUS", &status)
+		.env("BB_TEST_STDERR", &stderr)
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
+		.spawn()
+		.expect("run gamescope");
+	let deadline = Instant::now() + Duration::from_secs(300);
+	while child.try_wait().expect("gamescope's status").is_none() {
+		if Instant::now() > deadline {
+			let _ = child.kill();
+			let _ = child.wait();
+			panic!("bb didn't exit within 5 minutes");
+		}
+		std::thread::sleep(Duration::from_millis(200));
+	}
+	Some(Run {
+		status: std::fs::read_to_string(&status).expect("bb's exit status").trim().to_string(),
+		stderr: std::fs::read_to_string(&stderr).unwrap_or_default(),
+	})
+}
+
+/// A PNG's width and height.
+fn png_size(path: &Path) -> (u32, u32) {
+	let bytes = std::fs::read(path).expect("the shot");
+	let word = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+	(word(16), word(20))
+}
+
+/// The window's teardown once crashed in libwayland under gamescope's Vulkan layer,
+/// after the surface drawn to it was destroyed (see `Running::close`).
+#[test]
+fn bb_exits_cleanly() {
+	let dir = run_dir("exit");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let args = ["--settings", settings.to_str().unwrap(), "--shot", "3", shot.to_str().unwrap()];
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "bb's exit status (139: the crash at exit)\n{}", run.stderr);
+	assert!(shot.exists(), "the shot taken before the exit");
+}
+
+/// The scripts' video mode, set as the Options screen sets it, goes on the window at
+/// once: a window resized, then borderless over the monitor; and the mode they keep is
+/// kept in the settings file.
+#[test]
+fn the_video_mode_applies_live() {
+	let dir = run_dir("live");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let start = "video.width = 1280\nvideo.height = 720\nvideo.fullscreen = false\nvideo.borderless = false\n";
+	std::fs::write(&settings, start).expect("the settings");
+	let resize = "local m = ::Settings.getVideoMode(); m.Width = 1024; m.Height = 640; \
+		::Settings.setVideoMode(m); ::Settings.saveWithCustomVideoMode(m);";
+	let borderless = "local m = ::Settings.getVideoMode(); m.Borderless = true; m.Width = 1600; m.Height = 900; \
+		::Settings.setVideoMode(m);";
+	let args = [
+		"--settings",
+		settings.to_str().unwrap(),
+		"--at",
+		"10",
+		resize,
+		"--at",
+		"20",
+		borderless,
+		"--shot",
+		"30",
+		shot.to_str().unwrap(),
+	];
+	let Some(run) = run_bb(&dir, (1600, 900), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let placements: Vec<&str> = run.stderr.lines().filter(|l| l.starts_with("video: ")).collect();
+	assert!(placements[0].starts_with("video: 1280x720 Window { decorated: true, width: 1280, height: 720 }"), "{placements:?}");
+	assert_eq!(placements[1..], ["video: 1024x640 Window { decorated: true, width: 1024, height: 640 }", "video: 1600x900 Borderless"]);
+	assert_eq!(png_size(&shot), (1600, 900), "borderless over the monitor");
+	let kept = std::fs::read_to_string(&settings).expect("the settings");
+	assert!(kept.contains("video.width = 1024\n") && kept.contains("video.height = 640\n"), "the mode kept:\n{kept}");
+	assert!(kept.contains("video.borderless = false\n"), "the borderless mode wasn't kept:\n{kept}");
+}

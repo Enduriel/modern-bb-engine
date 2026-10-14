@@ -5,6 +5,7 @@ use std::path::Path;
 use bb_engine::harness::GameEngine;
 use bb_render::{Gpu, RenderTarget, UiLayer};
 use bb_ui::host::{HostConfig, Modifiers, MouseButton, UiSession};
+use squirrel_bb::VideoMode;
 
 use super::Key;
 
@@ -23,17 +24,20 @@ pub struct Front {
 impl Front {
 	/// Start the page and the scripts for the install at `data_dir`, and from the main
 	/// menu start a new campaign on `seed`, as its Start button does, on a world map of
-	/// `world_size` (columns, rows) if given. The campaign's opening event shows once the
-	/// world is up.
+	/// `world_size` (columns, rows) if given, in video `mode`. The campaign's opening
+	/// event shows once the world is up.
 	pub fn boot(
 		gpu: &Gpu,
 		data_dir: &Path,
 		seed: &str,
 		sound: bool,
 		world_size: Option<(i64, i64)>,
+		mode: VideoMode,
 		devtools: Option<u16>,
 	) -> Result<Front, String> {
 		let config = HostConfig {
+			width: mode.width.max(1) as u32,
+			height: mode.height.max(1) as u32,
 			devtools_port: devtools,
 			frame_rate: PAGE_FRAME_RATE,
 			// A live clock behind Time.getExactTime, as the original's: the AI's
@@ -46,6 +50,7 @@ impl Front {
 			..HostConfig::default()
 		};
 		let session = UiSession::start(data_dir, config, false)?;
+		session.engine().video().set_mode(mode);
 		if let Some(port) = devtools {
 			super::devtools::announce(port);
 		}

@@ -95,8 +95,8 @@ impl VideoMode {
 		}
 	}
 
-	/// What `setVideoMode` sets from VSync (`0x5008e7`).
-	fn cap_frame_rate(&mut self) {
+	/// Set the frame-rate cap from VSync, as `setVideoMode` does (`0x5008e7`).
+	pub fn cap_frame_rate(&mut self) {
 		self.limit_frame_rate = !self.vsync;
 		self.frame_cap = if self.vsync { 0 } else { FRAME_CAP_WITHOUT_VSYNC };
 	}

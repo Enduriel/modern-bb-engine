@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bb_render::{Gpu, Presenter, RenderTarget, save_png};
 use winit::application::ApplicationHandler;
@@ -14,10 +14,15 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::PhysicalKey;
 use winit::window::{CustomCursor, Window, WindowId};
 
+use bb_app::display::{self, Placement};
 use bb_app::front::Key;
 use bb_app::game::Game;
-use bb_app::keys;
+use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
+use bb_app::{keys, platform};
+use squirrel_bb::VideoMode;
+
+use crate::window_mode::{self, Monitor};
 
 /// What to start, from the command line.
 pub struct Options {
@@ -32,6 +37,10 @@ pub struct Options {
 	/// Serve Chrome DevTools for the page on localhost at this port (`--devtools PORT`,
 	/// with the `ui` feature).
 	pub devtools: Option<u16>,
+	/// The settings file (`--settings PATH`); the system's place for it otherwise.
+	pub settings: Option<PathBuf>,
+	/// Squirrel to run after so many frames (`--at FRAMES CODE`).
+	pub at: Vec<(u64, String)>,
 }
 
 /// Everything that exists once the window does.
@@ -41,7 +50,17 @@ struct Running {
 	config: wgpu::SurfaceConfiguration,
 	gpu: Gpu,
 	presenter: Presenter,
+	/// The present modes the surface offers.
+	present_modes: Vec<wgpu::PresentMode>,
+	/// The frame, drawn at the size it shows at, and where in the window it shows.
 	target: RenderTarget,
+	frame_rect: (u32, u32, u32, u32),
+	/// Where the game's screen goes (see `display`), and whether the system has
+	/// exclusive fullscreen.
+	placement: Placement,
+	exclusive: bool,
+	/// The scripts' video mode changes (`setVideoMode`) put on the window so far.
+	applied: u64,
 	game: Game,
 	last_frame: Instant,
 	frames: u64,
@@ -82,6 +101,7 @@ pub struct App {
 	options: Options,
 	instance: wgpu::Instance,
 	running: Option<Running>,
+	settings: Settings,
 	/// The first error, which ends the loop.
 	pub error: Option<String>,
 }
@@ -97,16 +117,31 @@ impl Drop for App {
 
 impl App {
 	pub fn new(options: Options, instance: wgpu::Instance) -> Self {
+		let settings = match &options.settings {
+			Some(path) => Settings::load(Some(path.clone())),
+			None => Settings::load_default(),
+		};
 		App {
 			options,
 			instance,
 			running: None,
+			settings,
 			error: None,
 		}
 	}
 
 	fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running, String> {
-		let attributes = Window::default_attributes().with_title("Battle Brothers");
+		// The mode the settings keep, or the original's first start: fullscreen at the
+		// monitor's size.
+		let monitor = Monitor::primary(event_loop);
+		let (width, height) = monitor.size;
+		let mode = self
+			.settings
+			.video_mode(VideoMode::first_start(i64::from(width), i64::from(height), 32));
+		let exclusive = platform::exclusive_fullscreen(event_loop);
+		let placement = Placement::of(&mode, monitor.size, &monitor.modes, exclusive);
+		let screen = (mode.width.max(1) as u32, mode.height.max(1) as u32);
+		let attributes = window_mode::attributes(placement, &monitor, screen);
 		let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
 		let surface = self
 			.instance
@@ -115,10 +150,21 @@ impl App {
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
 		let options = &self.options;
-		let game = Game::boot(&gpu, &options.data_dir, &options.seed, !options.mute, options.world_size, options.devtools)?;
-		// The window opens at the game's screen size.
-		let (w, h) = game.screen();
-		let size = window.request_inner_size(PhysicalSize::new(w, h)).unwrap_or(window.inner_size());
+		let game = Game::boot(
+			&gpu,
+			&options.data_dir,
+			&options.seed,
+			!options.mute,
+			options.world_size,
+			mode,
+			options.devtools,
+		)?;
+		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
+		let size = window.inner_size();
+		eprintln!(
+			"video: {}x{} {placement:?} on a {}x{} monitor, the window {}x{} (scale {})",
+			mode.width, mode.height, monitor.size.0, monitor.size.1, size.width, size.height, window.scale_factor()
+		);
 		let capabilities = gpu.surface_capabilities(&surface).ok_or("no surface capabilities")?;
 		let format = capabilities
 			.formats
@@ -132,7 +178,7 @@ impl App {
 			format,
 			width: size.width.max(1),
 			height: size.height.max(1),
-			present_mode: wgpu::PresentMode::Fifo,
+			present_mode: display::present_mode(mode.vsync, &capabilities.present_modes),
 			desired_maximum_frame_latency: 2,
 			// An opaque window where the compositor allows it (the frame's alpha is
 			// written as 1 anyway).
@@ -146,21 +192,29 @@ impl App {
 		};
 		surface.configure(&gpu.device, &config);
 		let presenter = Presenter::new(&gpu, format);
-		let target = RenderTarget::new(&gpu, config.width, config.height);
-		Ok(Running {
+		let frame_rect = display::frame_rect((config.width, config.height), game.screen());
+		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
+		let mut running = Running {
 			window,
 			surface,
 			config,
 			gpu,
 			presenter,
+			present_modes: capabilities.present_modes.clone(),
 			target,
+			frame_rect,
+			placement,
+			exclusive,
+			applied: 0,
 			game,
 			last_frame: Instant::now(),
 			frames: 0,
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
-		})
+		};
+		running.resize(size);
+		Ok(running)
 	}
 
 	/// Stop with `error`.
@@ -196,11 +250,13 @@ impl Running {
 	/// Window pixels to the game's screen pixels.
 	fn to_screen(&self, x: f64, y: f64) -> (i64, i64) {
 		let (w, h) = self.game.screen();
-		let sx = f64::from(w) / f64::from(self.config.width);
-		let sy = f64::from(h) / f64::from(self.config.height);
-		((x * sx) as i64, (y * sy) as i64)
+		let (left, top, width, height) = self.frame_rect;
+		let sx = f64::from(w) / f64::from(width.max(1));
+		let sy = f64::from(h) / f64::from(height.max(1));
+		(((x - f64::from(left)) * sx) as i64, ((y - f64::from(top)) * sy) as i64)
 	}
 
+	/// The window is `size` now; in a window, the game's screen is too.
 	fn resize(&mut self, size: PhysicalSize<u32>) {
 		if size.width == 0 || size.height == 0 {
 			return;
@@ -208,7 +264,49 @@ impl Running {
 		self.config.width = size.width;
 		self.config.height = size.height;
 		self.surface.configure(&self.gpu.device, &self.config);
-		self.target = RenderTarget::new(&self.gpu, size.width, size.height);
+		if self.placement.follows_window() {
+			self.game.video().set_screen_size(i64::from(size.width), i64::from(size.height));
+		}
+	}
+
+	/// Put the scripts' video mode on the window when they set one (`setVideoMode`), and
+	/// keep the mode they ask to keep (`Settings.save`) in `settings`.
+	fn follow_video(&mut self, settings: &mut Settings) {
+		let video = self.game.video();
+		if let Some(mode) = video.take_save() {
+			if let Err(e) = settings.save_video_mode(&mode) {
+				eprintln!("settings: {e}");
+			}
+		}
+		let changes = video.changes();
+		if changes == self.applied {
+			return;
+		}
+		self.applied = changes;
+		let mode = video.mode();
+		let monitor = Monitor::of_window(&self.window);
+		let placement = Placement::of(&mode, monitor.size, &monitor.modes, self.exclusive);
+		if placement != self.placement {
+			eprintln!("video: {}x{} {placement:?}", mode.width, mode.height);
+			self.placement = placement;
+			let screen = (mode.width.max(1) as u32, mode.height.max(1) as u32);
+			if let Some(size) = window_mode::apply(&self.window, placement, &monitor, screen) {
+				self.resize(size);
+			}
+		}
+		let present_mode = display::present_mode(mode.vsync, &self.present_modes);
+		if present_mode != self.config.present_mode {
+			self.config.present_mode = present_mode;
+			self.surface.configure(&self.gpu.device, &self.config);
+		}
+	}
+
+	/// When the next frame may start: with the frame rate limited (VSync off), a frame
+	/// cap's interval after the last.
+	fn next_frame_at(&self) -> Option<Instant> {
+		let mode = self.game.video().mode();
+		(mode.limit_frame_rate && mode.frame_cap > 0)
+			.then(|| self.last_frame + Duration::from_secs_f64(1.0 / mode.frame_cap as f64))
 	}
 
 	/// One frame: step the game by the real time since the last, draw, present.
@@ -232,6 +330,12 @@ impl Running {
 			self.window.set_cursor_visible(*hardware);
 			self.system_cursor = Some(choice);
 		}
+		// The frame at the size it shows at in the window.
+		self.frame_rect = display::frame_rect((self.config.width, self.config.height), self.game.screen());
+		let (_, _, width, height) = self.frame_rect;
+		if (self.target.width, self.target.height) != (width, height) {
+			self.target = RenderTarget::new(&self.gpu, width, height);
+		}
 		self.game.draw(&self.gpu, &self.target);
 		let texture = match self.surface.get_current_texture() {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -242,7 +346,7 @@ impl Running {
 			_ => return Ok(self.frames),
 		};
 		let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-		self.presenter.draw(&self.gpu, &self.target, &view);
+		self.presenter.draw(&self.gpu, &self.target, &view, self.frame_rect);
 		self.window.pre_present_notify();
 		self.gpu.queue.present(texture);
 		self.frames += 1;
@@ -323,7 +427,14 @@ impl ApplicationHandler for App {
 				running.resize(*size);
 				Ok(false)
 			}
-			WindowEvent::RedrawRequested => running.frame().and_then(|frames| match &self.options.shot {
+			WindowEvent::RedrawRequested => running.frame().and_then(|frames| {
+				for (_, code) in self.options.at.iter().filter(|(at, _)| *at == frames) {
+					running.game.run_script(code)?;
+				}
+				running.follow_video(&mut self.settings);
+				Ok(frames)
+			})
+			.and_then(|frames| match &self.options.shot {
 				Some((after, path)) if frames >= *after => {
 					let image = running.target.read(&running.gpu)?;
 					save_png(path.to_string_lossy().as_ref(), &image)?;
@@ -341,9 +452,14 @@ impl ApplicationHandler for App {
 		}
 	}
 
-	fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-		if let Some(running) = &self.running {
-			running.window.request_redraw();
+	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+		let Some(running) = &self.running else { return };
+		match running.next_frame_at() {
+			Some(at) if Instant::now() < at => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+			_ => {
+				event_loop.set_control_flow(ControlFlow::Wait);
+				running.window.request_redraw();
+			}
 		}
 	}
 }
