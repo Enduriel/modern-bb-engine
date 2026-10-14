@@ -5,13 +5,11 @@
 //! that path — `ClassNameHash` — onto every object the module system builds, and
 //! exposes a bidirectional path↔hash registry through `IO`.
 //!
-//! The original engine's hash algorithm is unknown: values captured from the
-//! original (e.g. `scripts/skills/skill` → -315995513) match no common 32-bit hash
-//! (FNV, CRC32, djb2, murmur3, xxh32, …) on any obvious path variant. Save-file
-//! compatibility isn't an MVP goal, so this uses its own stable hash (FNV-1a), kept
-//! behind this one function so a later save importer can swap in the original
-//! algorithm or a captured hash→path table. The same function stamps objects and
-//! answers `IO` queries, so it round-trips with itself.
+//! The hash is the original's (disassembled at `0x5474c2`): `h = h * 37 + byte` over
+//! the path without its extension, the bytes taken as signed chars, in wrapping 32-bit
+//! arithmetic. Original saves store these values (`ClassNameHash` of items and skills,
+//! `IO.scriptHashByFilename` of troop scripts), so importing them depends on it. The
+//! same function stamps objects and answers `IO` queries.
 
 /// Normalize a script path for use as a cache key and hash input: backslashes to
 /// forward slashes, a trailing `.nut` removed, surrounding whitespace trimmed.
@@ -34,21 +32,13 @@ pub fn basename(path: &str) -> &str {
 	}
 }
 
-/// FNV-1a (32-bit) hash of the normalized path, widened to the `i64` that
-/// Squirrel integers use. Stable for a given path string; used both to stamp
-/// `ClassNameHash` and to populate the `IO` registry.
+/// The original's hash of the normalized path, as the `i32` it is, widened to the `i64`
+/// that Squirrel integers use. Stamps `ClassNameHash` and populates the `IO` registry.
 pub fn class_name_hash(path: &str) -> i64 {
-	const OFFSET_BASIS: u32 = 0x811c_9dc5;
-	const PRIME: u32 = 0x0100_0193;
-
-	let mut hash = OFFSET_BASIS;
-	for byte in normalize_path(path).as_bytes() {
-		hash ^= u32::from(*byte);
-		hash = hash.wrapping_mul(PRIME);
-	}
-	// Reinterpret as a signed 32-bit value (the engine stores ClassNameHash via
-	// writeI32), then widen — keeps the value in i32 range like the original.
-	i64::from(hash as i32)
+	let hash = normalize_path(path)
+		.bytes()
+		.fold(0i32, |h, b| h.wrapping_mul(37).wrapping_add(i32::from(b as i8)));
+	i64::from(hash)
 }
 
 #[cfg(test)]
@@ -90,5 +80,8 @@ mod tests {
 		assert_eq!(h, class_name_hash("scripts\\skills\\skill"));
 		// Distinct paths hash differently.
 		assert_ne!(h, class_name_hash("scripts/skills/actives/bash"));
+		// Values the original gives (a probe, and the hashes in its save files).
+		assert_eq!(h, -315995513);
+		assert_eq!(class_name_hash("scripts/entity/tactical/player"), 0xe9a7_c4d4_u32 as i32 as i64);
 	}
 }
