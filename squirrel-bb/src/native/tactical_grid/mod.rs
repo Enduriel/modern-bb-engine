@@ -490,6 +490,7 @@ impl TacticalGrid {
 			entities: Vec::new(),
 			light: Default::default(),
 			clouds: Vec::new(),
+			hide_trees: false,
 		}
 	}
 

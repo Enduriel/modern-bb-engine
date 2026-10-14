@@ -31,6 +31,7 @@ mod mt64;
 mod prng;
 mod screen;
 mod settings;
+pub(crate) use settings::temp_gameplay_flag;
 pub(crate) mod sprite_color;
 pub(crate) mod sprite_slots;
 mod strings;

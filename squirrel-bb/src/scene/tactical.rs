@@ -22,6 +22,9 @@ pub struct TacticalScene {
 	pub light: crate::scene::SceneLight,
 	/// The clouds or fog drifting over the battle (`Tactical.getWeather().buildCloudCover`).
 	pub clouds: Vec<crate::scene::SceneCloud>,
+	/// Tree tops are hidden (`Settings.getTempGameplaySettings().HideTrees`, the `T` key;
+	/// a battle starts with `AlwaysHideTrees`).
+	pub hide_trees: bool,
 }
 
 /// A unit or map object on the battle map.
@@ -57,6 +60,8 @@ pub struct SceneTacticalSprite {
 	/// From the entity's position, in world units with y up.
 	pub offset: (f32, f32),
 	pub ignore_ambient: bool,
+	/// `setSpriteOcclusion`'s three values, for a tree's or boulder's top.
+	pub occlusion: Option<(i64, i64, i64)>,
 }
 
 /// One battle tile.

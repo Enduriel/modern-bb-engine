@@ -10,7 +10,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqStrongRef, SqTable, Variadic};
 
 use super::display_modes::{self, DisplayMode};
 
@@ -254,4 +254,14 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 	settings.set("queryResolutionByIndex", query_by_index);
 	SqTable::root(vm).set("Settings", settings);
 	current
+}
+
+/// A field of `Settings.getTempGameplaySettings()` (e.g. `HideTrees`), false if missing.
+pub(crate) fn temp_gameplay_flag(vm: &SQVM, name: &str) -> bool {
+	SqTable::root(vm)
+		.get::<SqTable>("Settings")
+		.and_then(|s| s.get::<SqStrongRef>("getTempGameplaySettings"))
+		.and_then(|f| f.call_ret::<SqStrongRef, _>(vm, ()).ok().flatten())
+		.and_then(|t| t.get_member::<bool>(vm, name))
+		.unwrap_or(false)
 }

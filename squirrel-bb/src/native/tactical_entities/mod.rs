@@ -80,6 +80,9 @@ struct UnitSpriteData {
 	torque: f64,
 	ignore_ambient: bool,
 	ignore_camera_flip: bool,
+	/// `setSpriteOcclusion(name, a, b, c)`, kept on the sprite's slot (`0x4a8950`):
+	/// trees' and boulders' tops, which `HideTrees` fades.
+	occlusion: Option<(i64, i64, i64)>,
 }
 
 impl UnitSpriteData {
@@ -107,6 +110,7 @@ impl UnitSpriteData {
 			torque: 0.0,
 			ignore_ambient: false,
 			ignore_camera_flip: false,
+			occlusion: None,
 		}
 	}
 }
@@ -739,6 +743,19 @@ impl TacticalEntities {
 				create_vec.call_ret::<SqStrongRef, _>(vm, offset)
 			})
 		};
+		// setSpriteOcclusion(name, a, b, c): see `UnitSpriteData::occlusion`.
+		let set_sprite_occlusion = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String, a: i64, b: i64, c: i64| {
+				let (handle, class) = {
+					let m = m.borrow();
+					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
+				};
+				if let (Some(h), Some(class)) = (handle, class) {
+					class.with_payload(vm, &h, |s| s.occlusion = Some((a, b, c)));
+				}
+			})
+		};
 		let set_sprite_offset = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String, offset: Retained| {
@@ -799,6 +816,7 @@ impl TacticalEntities {
 			("hasSprite", has_sprite),
 			("getSpriteOffset", get_sprite_offset),
 			("setSpriteOffset", set_sprite_offset),
+			("setSpriteOcclusion", set_sprite_occlusion),
 			("createOverlay", create_overlay),
 			("setOverlayValues", set_overlay_values),
 			("isInitialized", is_initialized),
@@ -838,7 +856,6 @@ impl TacticalEntities {
 			"restoreSpriteColors",
 			"fadeTo",
 			"fadeToStoredColors",
-			"setSpriteOcclusion",
 			"moveSpriteScale",
 			"setAlwaysApplySpriteOffset",
 			"setSpriteRenderToTexture",
@@ -1049,6 +1066,7 @@ impl TacticalEntities {
 							flipped: s.flipped,
 							offset: (s.offset.0 as f32, s.offset.1 as f32),
 							ignore_ambient: s.ignore_ambient,
+							occlusion: s.occlusion,
 						})
 					})
 					.collect(),

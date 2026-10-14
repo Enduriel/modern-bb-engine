@@ -210,6 +210,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				crate::scene::SceneLight { color, saturation }
 			},
 			clouds: self.tactical_clouds.borrow().clouds().to_vec(),
+			hide_trees: crate::native::temp_gameplay_flag(&self.vm, "HideTrees"),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}

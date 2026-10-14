@@ -259,8 +259,66 @@ fn draw_tile(b: &mut Builder, scene: &TacticalScene, tile: &SceneTacticalTile) {
 	}
 }
 
+/// The alpha a faded sprite is drawn with (the original sets its colour's alpha to 60).
+const FADED_ALPHA: f32 = 60.0 / 255.0;
+
+/// What fades an object's sprites so that units behind it show (the object draw,
+/// `0x4c30c0`, disassembled 2026-10-14). Each sprite with `setSpriteOcclusion(a, b, c)`
+/// fades when:
+/// - `HideTrees` is on and `c <= 0 <= b` (crowns and boulder tops, not trunks);
+/// - otherwise a unit stands one row behind and the level it stands above the object
+///   is within `c..=b`;
+/// - or, with no unit there, a unit stands two rows behind (sprites with `a > 1`) or
+///   three (`a > 2`), at most two levels above.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fade {
+	None,
+	/// Level difference of a unit one row behind.
+	BehindOne(i64),
+	BehindTwo,
+	BehindThree,
+	HideTrees,
+}
+
+impl Fade {
+	fn of(scene: &TacticalScene, tile: &SceneTacticalTile, units: &std::collections::HashSet<usize>) -> Fade {
+		if scene.hide_trees {
+			return Fade::HideTrees;
+		}
+		let (q, r) = axial(tile);
+		// "Behind" is up the map; with the camera flipped, down it.
+		let step = if scene.camera.flipped { -1 } else { 1 };
+		let unit_at = |rows: i64| {
+			tile_at(scene, q, r + rows * step).filter(|t| units.contains(&((t.row * scene.width + t.col) as usize)))
+		};
+		if let Some(t) = unit_at(1) {
+			return Fade::BehindOne(t.level - tile.level);
+		}
+		if unit_at(2).is_some_and(|t| t.level - tile.level <= 2) {
+			return Fade::BehindTwo;
+		}
+		if unit_at(3).is_some_and(|t| t.level - tile.level <= 2) {
+			return Fade::BehindThree;
+		}
+		Fade::None
+	}
+
+	/// The alpha factor for a sprite with occlusion `(a, b, c)`.
+	fn alpha(self, (a, b, c): (i64, i64, i64)) -> f32 {
+		let faded = a != 0
+			&& match self {
+				Fade::HideTrees => c <= 0 && 0 <= b,
+				Fade::BehindOne(rise) => c <= rise && rise <= b,
+				Fade::BehindTwo => a > 1,
+				Fade::BehindThree => a > 2,
+				Fade::None => false,
+			};
+		if faded { FADED_ALPHA } else { 1.0 }
+	}
+}
+
 /// A tile's details and what stands on it.
-fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTacticalEntity]) {
+fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTacticalEntity], fade: Fade) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
 	for detail in &tile.details {
@@ -279,10 +337,16 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
 		for sprite in entity.sprites.iter().filter(|s| s.visible && !s.brush.is_empty()) {
 			let [a, r, g, b_] = sprite.color.to_be_bytes();
+			// The original writes the alpha of every sprite with occlusion each frame:
+			// 60 faded, else 255.
+			let alpha = match sprite.occlusion {
+				Some(o) if o.0 != 0 => fade.alpha(o) * 255.0,
+				_ => f32::from(a),
+			};
 			let look = Look {
 				scale: sprite.scale,
 				flipped: sprite.flipped,
-				alpha: f32::from(a),
+				alpha,
 				rotation: sprite.rotation,
 				tint: [r, g, b_],
 			};
@@ -389,6 +453,9 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		}
 	}
 
+	// The tiles units stand on, for what fades in front of them.
+	let unit_tiles: std::collections::HashSet<usize> =
+		scene.entities.iter().filter(|e| e.is_actor).filter_map(|e| e.tile).collect();
 	let mut b = Builder {
 		sprites,
 		atlases: AtlasList::default(),
@@ -400,7 +467,7 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	for tile in &order {
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
-		draw_dressing(&mut b, tile, on_it);
+		draw_dressing(&mut b, tile, on_it, Fade::of(scene, tile, &unit_tiles));
 	}
 	// The units' bars, then the weather over everything.
 	let level = scene.camera.level.clamp(0, 3) as u32;
@@ -426,6 +493,23 @@ mod tests {
 	fn shading_keeps_alpha_and_truncates() {
 		assert_eq!(shade(0x80ff_8040, 1.0), [255, 128, 64, 128]);
 		assert_eq!(shade(0xffff_ffff, 0.7), [178, 178, 178, 255]);
+	}
+
+	#[test]
+	fn hide_trees_fades_tops_not_trunks() {
+		let top = (3, 2, -3);
+		let trunk = (1, -1, -2);
+		assert_eq!(Fade::HideTrees.alpha(top), FADED_ALPHA);
+		assert_eq!(Fade::HideTrees.alpha(trunk), 1.0);
+		// A unit behind on the same level fades the top only; two rows behind, sprites
+		// with a > 1; three rows, a > 2.
+		assert_eq!(Fade::BehindOne(0).alpha(top), FADED_ALPHA);
+		assert_eq!(Fade::BehindOne(0).alpha(trunk), 1.0);
+		assert_eq!(Fade::BehindTwo.alpha((1, 2, -3)), 1.0);
+		assert_eq!(Fade::BehindTwo.alpha((2, 2, -3)), FADED_ALPHA);
+		assert_eq!(Fade::BehindThree.alpha((2, 2, -3)), 1.0);
+		assert_eq!(Fade::BehindThree.alpha(top), FADED_ALPHA);
+		assert_eq!(Fade::None.alpha(top), 1.0);
 	}
 
 	#[test]
