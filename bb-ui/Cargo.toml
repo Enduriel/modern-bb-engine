@@ -37,6 +37,11 @@ harness = false
 required-features = ["cef"]
 
 [[test]]
+name = "play_session_ui"
+harness = false
+required-features = ["cef"]
+
+[[test]]
 name = "mods_ui"
 harness = false
 required-features = ["cef"]
