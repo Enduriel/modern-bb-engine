@@ -16,10 +16,12 @@ impl Front {
 	/// device or silent.
 	pub fn boot(_gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool) -> Result<Front, String> {
 		// A live clock behind Time.getExactTime, as the original's: the AI's background
-		// work then spreads over frames. The battle camera glides, as the original's.
+		// work then spreads over frames. The battle camera glides and units hop over
+		// time, as the original's.
 		let engine = harness::open_install_with(data_dir, |c| {
 			c.exact_clock = squirrel_bb::ExactClock::Live;
 			c.battle_camera = squirrel_bb::BattleCamera::Glides;
+			c.battle_motion = squirrel_bb::BattleMotion::Timed;
 		})
 		.map_err(|e| e.to_string())?;
 		if sound {

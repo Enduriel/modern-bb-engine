@@ -14,6 +14,8 @@ mod cost;
 #[cfg(test)]
 mod ground_truth;
 mod heap;
+mod hop;
+pub use hop::BattleMotion;
 mod pathfind;
 mod settings;
 mod teleport;
@@ -43,6 +45,8 @@ struct NavState {
 	settings_class: Option<SqClass<SettingsHandle>>,
 	/// The one `Tactical.getNavigator()` instance.
 	instance: Option<SqStrongRef>,
+	/// How moves are paced (the host's choice).
+	motion: BattleMotion,
 }
 
 impl NavState {
@@ -96,8 +100,14 @@ impl TacticalNavigator {
 				settings_class: None,
 				instance: None,
 				teleports: Vec::new(),
+				motion: BattleMotion::default(),
 			})),
 		}
+	}
+
+	/// How units' moves are paced (see [`BattleMotion`]).
+	pub fn set_motion(&self, motion: BattleMotion) {
+		self.state.borrow_mut().motion = motion;
 	}
 
 	/// Build the navigator and settings classes and set `Tactical.getNavigator`. Call

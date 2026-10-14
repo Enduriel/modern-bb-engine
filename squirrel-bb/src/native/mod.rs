@@ -74,7 +74,7 @@ pub use settings::VideoSettings;
 pub use log::{LogLevel, install_logging};
 pub use tactical_entities::TacticalEntities;
 pub use tactical_grid::TacticalGrid;
-pub use tactical_nav::TacticalNavigator;
+pub use tactical_nav::{BattleMotion, TacticalNavigator};
 pub use time::{ExactClock, TimeService};
 pub use tactical_grid::camera::BattleCamera;
 pub use ui_bridge::{UiBridge, UiCall, UiFrontend};
@@ -120,6 +120,9 @@ pub struct NativeConfig {
 	/// How the battle camera moves: at once (the default, deterministic) or gliding,
 	/// as the original's (the windowed game).
 	pub battle_camera: BattleCamera,
+	/// How units move in a battle: a phase of their hop a call (the default,
+	/// deterministic) or over time, as the original's (the windowed game).
+	pub battle_motion: BattleMotion,
 }
 
 /// Mixed into `NativeConfig::engine_seed` for the texts' own stream
@@ -171,6 +174,7 @@ impl Default for NativeConfig {
 			engine_seed: None,
 			exact_clock: ExactClock::Frame,
 			battle_camera: BattleCamera::Instant,
+			battle_motion: BattleMotion::Stepped,
 		}
 	}
 }

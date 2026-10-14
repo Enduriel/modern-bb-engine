@@ -46,12 +46,13 @@ impl UiSession {
 	pub fn start(data_dir: &Path, config: HostConfig, echo: bool) -> Result<UiSession, String> {
 		let files = Arc::new(UiFiles::open_install(data_dir, config.mods).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
-		let (exact_clock, battle_camera) = (config.exact_clock, config.battle_camera);
+		let (exact_clock, battle_camera, battle_motion) = (config.exact_clock, config.battle_camera, config.battle_motion);
 		let mods = config.mods;
 		let host = UiHost::start(files.clone(), config)?;
 		let configure = |c: &mut squirrel_bb::NativeConfig| {
 			c.exact_clock = exact_clock;
 			c.battle_camera = battle_camera;
+			c.battle_motion = battle_motion;
 		};
 		let mut engine = if mods {
 			let mut archives = harness::data_archives(data_dir).map_err(|e| format!("install: {e}"))?;

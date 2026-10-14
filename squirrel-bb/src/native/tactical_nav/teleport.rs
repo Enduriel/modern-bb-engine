@@ -3,15 +3,14 @@
 //! teleport), as the original does it (disassembled).
 //!
 //! It refuses (answers false) while a unit travels or switches places, onto the unit's
-//! own tile or an occupied one, and for a unit already teleporting. Otherwise
-//! `onMovementStart(tile, 0)` runs at once. At speed 0, or when the player sees
-//! neither end, the unit lands at once: it takes the tile, then `onMovementFinish(tile)`
-//! and `onDone(unit, tag)` run. Otherwise it animates over the next frames, driven by
-//! `Tactical.update()`: it lifts off and takes the tile, flies, and lands, which can
-//! discover it for the player, then the same two calls. Headless each phase takes one
-//! update; the original times them (0.14 s to lift off at speed 1, then by distance),
-//! so only frame timing differs. The unit counts as travelling (`isTravelling`) until
-//! both calls are done.
+//! own tile or an occupied one, and for a unit already teleporting. Otherwise it ends
+//! the unit's shake and `onMovementStart(tile, 0)` runs at once. At speed 0, or when the
+//! player sees neither end, the unit lands at once: it takes the tile, then
+//! `onMovementFinish(tile)` and `onDone(unit, tag)` run. Otherwise it hops there (see
+//! `hop`, its times divided by the speed), driven by `Tactical.update()`: it lifts off
+//! and takes the tile (fading out or in, with `flag`, if it leaves or enters the
+//! player's view), flies, and lands, which can discover it for the player, then the same
+//! two calls. The unit counts as travelling (`isTravelling`) until both calls are done.
 //!
 //! `switchEntities(a, b, onDone, tag, speed)` swaps two units the same way: both start
 //! moving, and if the player sees neither tile they swap at once and `onDone(tag)` runs;
@@ -23,6 +22,7 @@ use std::rc::Rc;
 use squirrel::{Number, Retained, SQVM, SqStrongRef};
 
 use super::NavState;
+use super::hop::{self, Hop, Phase};
 use super::travel::{movement_finish, movement_start, seen_by_player, tile};
 use crate::native::tactical_entities::unit_identity;
 use crate::native::tactical_grid;
@@ -31,20 +31,36 @@ use crate::native::tactical_grid;
 pub(crate) struct Teleport {
 	pub identity: i64,
 	entity: SqStrongRef,
+	start: usize,
 	dest: usize,
 	/// `onDone`, if not null.
 	callback: Option<SqStrongRef>,
 	tag: SqStrongRef,
-	phase: Phase,
+	hop: Hop,
+	speed: f32,
+	/// The script's `flag`: fade at the edge of the player's view.
+	fades: bool,
+	/// Landed; its calls are running (it still counts as travelling).
+	done: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-	LiftOff,
-	Flying,
-	Landing,
-	/// Landed; its calls are running (it still counts as travelling).
-	Done,
+impl Teleport {
+	#[allow(clippy::too_many_arguments)]
+	fn new(grid: &tactical_grid::Grid, identity: i64, entity: SqStrongRef, start: usize, dest: usize, callback: Option<SqStrongRef>, tag: SqStrongRef, speed: f32, fades: bool, now: f32) -> Self {
+		let at = |id: usize| grid.borrow().tiles[id].world_pos();
+		Teleport {
+			identity,
+			entity,
+			start,
+			dest,
+			callback,
+			tag,
+			hop: Hop::new(at(start), at(dest), 1.0 / speed, now),
+			speed,
+			fades,
+			done: false,
+		}
+	}
 }
 
 fn is_null(vm: &SQVM, value: &SqStrongRef) -> bool {
@@ -80,17 +96,13 @@ pub(super) fn teleport(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Retained]
 	}
 	let callback = (!is_null(vm, &args[2].0)).then(|| args[2].0.clone());
 	let tag = args[3].0.clone();
+	let fades = args[4].0.get_value::<bool>(vm).unwrap_or(false);
 
+	units.cancel_shake(vm, identity);
 	movement_start(vm, &mover, tile(&grid, vm, start)?, 0)?;
 	if speed != 0.0 && (seen_by_player(&grid, start) || seen_by_player(&grid, dest)) {
-		nav.borrow_mut().teleports.push(Teleport {
-			identity,
-			entity: mover,
-			dest,
-			callback,
-			tag,
-			phase: Phase::LiftOff,
-		});
+		let t = Teleport::new(&grid, identity, mover, start, dest, callback, tag, speed, fades, hop::virtual_now(vm));
+		nav.borrow_mut().teleports.push(t);
 		return Ok(true);
 	}
 	units.move_to(identity, dest)?;
@@ -120,6 +132,7 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 	};
 	let callback = (!is_null(vm, &args[2].0)).then(|| args[2].0.clone());
 	let tag = args[3].0.clone();
+	let speed = args[4].0.get_value::<Number>(vm).map_or(1.0, |n| n.0 as f32);
 
 	movement_start(vm, &ea, tile(&grid, vm, ta)?, 0)?;
 	movement_start(vm, &eb, tile(&grid, vm, tb)?, 0)?;
@@ -136,16 +149,11 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 	}
 	units.lift(a)?;
 	units.lift(b)?;
+	let now = hop::virtual_now(vm);
+	let speed = if speed > 0.0 { speed } else { 1.0 };
 	let mut st = nav.borrow_mut();
-	for (identity, entity, dest) in [(a, ea, tb), (b, eb, ta)] {
-		st.teleports.push(Teleport {
-			identity,
-			entity,
-			dest,
-			callback: callback.clone(),
-			tag: tag.clone(),
-			phase: Phase::LiftOff,
-		});
+	for (identity, entity, start, dest) in [(a, ea, ta, tb), (b, eb, tb, ta)] {
+		st.teleports.push(Teleport::new(&grid, identity, entity, start, dest, callback.clone(), tag.clone(), speed, false, now));
 	}
 	Ok(true)
 }
@@ -177,41 +185,71 @@ pub(super) fn update(nav: &Rc<RefCell<NavState>>, vm: &SQVM) -> Result<(), Strin
 }
 
 fn advance(nav: &Rc<RefCell<NavState>>, vm: &SQVM, identity: i64) -> Result<(), String> {
-	let (grid, units) = {
+	let (grid, units, motion) = {
 		let st = nav.borrow();
-		(st.grid.clone(), st.units.clone())
+		(st.grid.clone(), st.units.clone(), st.motion)
 	};
-	let phase_of = |nav: &Rc<RefCell<NavState>>| nav.borrow().teleports.iter().find(|t| t.identity == identity).map(|t| (t.phase, t.dest));
-	let Some((phase, dest)) = phase_of(nav) else { return Ok(()) };
-	let set_phase = |p: Phase| {
+	let now = hop::virtual_now(vm);
+	let state = |nav: &Rc<RefCell<NavState>>| {
+		nav.borrow().teleports.iter().find(|t| t.identity == identity).map(|t| (t.hop.phase, t.hop.progress(motion, now), t.done, t.start, t.dest, t.speed, t.fades))
+	};
+	let Some((phase, p, done, start, dest, speed, fades)) = state(nav) else { return Ok(()) };
+	if done {
+		return Ok(());
+	}
+	let with = |f: &mut dyn FnMut(&mut Teleport)| {
 		if let Some(t) = nav.borrow_mut().teleports.iter_mut().find(|t| t.identity == identity) {
-			t.phase = p;
+			f(t);
 		}
 	};
+	let pose = |p: f32| {
+		let mut at = (0.0, 0.0);
+		with(&mut |t| at = t.hop.pose(p));
+		at
+	};
+	if p < 1.0 {
+		units.set_pos(identity, pose(p));
+		return Ok(());
+	}
 	match phase {
 		Phase::LiftOff => {
 			units.move_to(identity, dest)?;
-			set_phase(Phase::Flying);
+			units.set_flying(identity, true);
+			units.set_pos(identity, pose(1.0));
+			if fades {
+				let ms = (speed * 500.0) as i64;
+				match (seen_by_player(&grid, start), seen_by_player(&grid, dest)) {
+					(true, false) => units.fade(vm, identity, ms, true),
+					(false, true) => units.fade(vm, identity, ms, false),
+					_ => {}
+				}
+			}
+			with(&mut |t| t.hop.next(now));
 		}
-		Phase::Flying => {
+		Phase::Flight => {
+			units.set_flying(identity, false);
+			with(&mut |t| t.hop.next(now));
+			units.set_pos(identity, pose(0.0));
 			if seen_by_player(&grid, dest) {
 				units.discover(vm, identity)?;
 			}
-			set_phase(Phase::Landing);
 		}
 		Phase::Landing => {
-			set_phase(Phase::Done);
+			with(&mut |t| t.done = true);
+			if fades && !seen_by_player(&grid, dest) {
+				units.opaque(vm, identity);
+			}
 			let (entity, callback, tag) = {
 				let st = nav.borrow();
 				let t = st.teleports.iter().find(|t| t.identity == identity).expect("teleporting");
 				(t.entity.clone(), t.callback.clone(), t.tag.clone())
 			};
 			let here = units.info(identity).and_then(|u| u.tile).unwrap_or(dest);
+			units.set_pos(identity, grid.borrow().tiles[here].world_pos());
 			let landed = land(vm, &grid, &entity, here, callback.as_ref(), &tag);
 			nav.borrow_mut().teleports.retain(|t| t.identity != identity);
 			landed?;
 		}
-		Phase::Done => {}
 	}
 	Ok(())
 }

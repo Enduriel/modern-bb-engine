@@ -181,6 +181,8 @@ struct UnitRecord {
 	sprites: super::sprite_slots::Slots,
 	/// A shake keeps some of its sprites' colours (`entity+0x50`; see `shaker`).
 	colors_stored: bool,
+	/// In the air between two tiles (the original's flight layer, flag `0x800000`).
+	flying: bool,
 }
 
 /// Shared host state: the rosters, the unit registry, the `this.new` capability, the stub
@@ -281,6 +283,7 @@ fn create_unit(
 			render_callback: false,
 			sprites: super::sprite_slots::Slots::default(),
 			colors_stored: false,
+			flying: false,
 		});
 		idx
 	};
@@ -574,6 +577,45 @@ impl Units {
 			(idx, m.units[idx].is_actor)
 		};
 		placement::place(&self.0, idx, tile, is_actor)
+	}
+
+	/// Show the unit at `pos` (world units, y up), where a move has it now.
+	pub fn set_pos(&self, identity: i64, pos: (f64, f64)) {
+		if let Some(r) = self.0.borrow_mut().record_mut(identity) {
+			r.pos = pos;
+		}
+	}
+
+	/// The unit is in the air between two tiles, or back on one.
+	pub fn set_flying(&self, identity: i64, flying: bool) {
+		if let Some(r) = self.0.borrow_mut().record_mut(identity) {
+			r.flying = flying;
+		}
+	}
+
+	/// End the unit's shake (`Tactical.getShaker().cancel(unit)`).
+	pub fn cancel_shake(&self, vm: &SQVM, identity: i64) {
+		shaker::cancel(&self.0, vm, identity);
+	}
+
+	/// Fade all the unit's sprites in, or out, over `ms` of real time (the entity's
+	/// `0x4a9930`, `0x4a99c0`).
+	pub fn fade(&self, vm: &SQVM, identity: i64, ms: i64, out: bool) {
+		let now = real_time(vm);
+		self.each_sprite(vm, identity, |s| if out { s.color.fade_out(ms, now, false) } else { s.color.fade_in(ms, now) });
+	}
+
+	/// All the unit's sprites fully opaque, their fades dropped (`0x4a9a50`).
+	pub fn opaque(&self, vm: &SQVM, identity: i64) {
+		self.each_sprite(vm, identity, |s| s.color.snap_alpha(255));
+	}
+
+	fn each_sprite(&self, vm: &SQVM, identity: i64, mut f: impl FnMut(&mut UnitSpriteData)) {
+		let m = self.0.borrow();
+		let (Some(class), Some(r)) = (m.sprite_class.clone(), m.record(identity)) else { return };
+		for (_, h) in r.sprites.iter() {
+			class.with_payload(vm, h, &mut f);
+		}
 	}
 
 	/// Take the unit off its tile (it stays in the battle); no callbacks.
@@ -1205,6 +1247,7 @@ impl TacticalEntities {
 				id: u.id,
 				pos: u.pos,
 				tile: u.tile,
+				flying: u.flying,
 				is_actor: u.is_actor,
 				overlay: u.overlay.as_ref().and_then(|o| o.scene(now, shown)),
 				sprites: u

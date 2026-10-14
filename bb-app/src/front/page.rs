@@ -32,6 +32,8 @@ impl Front {
 			exact_clock: squirrel_bb::ExactClock::Live,
 			// The battle camera glides, as the original's; the AI waits for it.
 			battle_camera: squirrel_bb::BattleCamera::Glides,
+			// Units hop over time, as the original's; the scripts wait for them.
+			battle_motion: squirrel_bb::BattleMotion::Timed,
 			..HostConfig::default()
 		};
 		let session = UiSession::start(data_dir, config, false)?;
