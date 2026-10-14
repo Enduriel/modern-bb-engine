@@ -17,13 +17,16 @@
 //! priority at the same level, or the neighbour's wall rising behind a tile below the
 //! camera), the tile's own border piece for that edge is drawn on the neighbour. Where
 //! the neighbour's terrain blends over the tile's, the neighbour's piece is drawn on the
-//! tile. Either way it lands on whichever of the two was drawn first.
+//! tile. Either way it lands on whichever of the two was drawn first. Last comes the
+//! highlighter's mark, if the tile has one (`0x55ac88`).
 //!
 //! The details and the units and objects on the map are scene nodes of their own, drawn
 //! after all the tiles.
 
 use bb_assets::SpriteRegistry;
-use squirrel_bb::scene::tactical::{SceneEffect, SceneOverlay, ScenePool, SceneTacticalEntity, SceneTacticalTile, TacticalScene};
+use squirrel_bb::scene::tactical::{
+	SceneEffect, SceneOverlay, ScenePathStep, ScenePool, SceneTacticalEntity, SceneTacticalTile, TacticalScene,
+};
 
 use crate::sprite::Quad;
 use crate::world::{
@@ -53,6 +56,9 @@ pub const DOF_STRENGTH: f32 = 0.25;
 /// details and what stands there (the original's tile, detail and entity draws,
 /// `0x4b94bf`, `0x4bc8df`, `0x4c3379`, by the tile's player visibility bit).
 const FOGGED_SATURATION: f32 = 0.33;
+/// The layer the highlighter's mark is drawn at: above any camera level, so never
+/// blurred (`0x55ad76`).
+const HIGHLIGHT_LEVEL: u32 = 3;
 /// The cap where the camera cuts a taller tile off, and the wall without a socket.
 const TILE_INSIDE: &str = "tile_inside";
 const DEFAULT_SOCKET: &str = "socket_earth";
@@ -266,6 +272,13 @@ fn draw_tile(b: &mut Builder, scene: &TacticalScene, tile: &SceneTacticalTile) {
 			}
 		}
 	}
+	// The highlighter's mark (a zone of control, a skill's range, a target): the top's
+	// rectangle again, in the mark's own colour, never shaded, desaturated or blurred.
+	if let Some((brush, color)) = &tile.highlight {
+		let bottom = base + LEVEL_H * level.min(camera_level) as f32 - TILE_DROP;
+		let rect = [px - TILE_W / 2.0, px + TILE_W / 2.0, bottom, bottom + TILE_H];
+		b.rect(brush, rect, Paint::flat(shade(*color, 1.0), 1.0, HIGHLIGHT_LEVEL));
+	}
 }
 
 /// The alpha a faded sprite is drawn with (the original sets its colour's alpha to 60).
@@ -330,12 +343,13 @@ impl Fade {
 /// original draws a unit's bars with it, `0x4c3547`, so a unit in front covers the
 /// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
 /// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
-/// desaturated.
+/// desaturated. Then the path's footsteps on the tile.
 fn draw_dressing(
 	b: &mut Builder,
 	tile: &SceneTacticalTile,
 	pools: &[&ScenePool],
 	standing: &[&SceneTacticalEntity],
+	steps: &[&ScenePathStep],
 	fade: Fade,
 	overlay_level: u32,
 ) {
@@ -371,6 +385,19 @@ fn draw_dressing(
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
 		}
+	}
+	// A footstep sorts after what stands on its tile: the tile's list goes by key,
+	// larger first (`0x55d170`), and a footstep's key is its brush's depth bias (-64)
+	// where a unit's or an object's is 0. It draws on any tile at full colour, unlike a
+	// unit (`0x4ba2f0`).
+	for step in steps {
+		let [a, r, g, b_] = step.color.to_be_bytes();
+		let look = Look {
+			alpha: f32::from(a),
+			tint: [r, g, b_],
+			..Look::PLAIN
+		};
+		b.placed(&step.brush, [step.pos.0 as f32, step.pos.1 as f32], look, 1.0, level);
 	}
 }
 
@@ -543,6 +570,10 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	for pool in &scene.pools {
 		pools.entry(pool.tile).or_default().push(pool);
 	}
+	let mut steps: std::collections::HashMap<usize, Vec<&ScenePathStep>> = Default::default();
+	for step in &scene.path {
+		steps.entry(step.tile).or_default().push(step);
+	}
 	// Flying units aren't on a tile: they draw after the tiles (see below).
 	let mut standing: std::collections::HashMap<usize, Vec<&SceneTacticalEntity>> = Default::default();
 	for entity in scene.entities.iter().filter(|e| !e.flying) {
@@ -568,7 +599,9 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
 		let pooled = pools.get(&index).map_or(&[][..], |v| &v[..]);
-		draw_dressing(&mut b, tile, pooled, on_it, Fade::of(scene, tile, &unit_tiles), overlay_level);
+		let stepped = steps.get(&index).map_or(&[][..], |v| &v[..]);
+		let fade = Fade::of(scene, tile, &unit_tiles);
+		draw_dressing(&mut b, tile, pooled, on_it, stepped, fade, overlay_level);
 	}
 	// A unit in the air is in the original's effects layer, drawn after the tiles and
 	// first in that layer (its box always stays in the layer's root): over everything
@@ -593,6 +626,18 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	// Icons, attacks, sprite effects and projectiles, sharp at the camera's level.
 	for effect in &scene.effects {
 		draw_effect(&mut b, effect, overlay_level);
+	}
+	// The highlighter's icons (an area attack's, a blocked shot's), also in the effects
+	// layer: at their position with the brush's offset, sharp, their colour's alpha
+	// carrying the fade after a clear.
+	for icon in &scene.overlay_icons {
+		let [a, r, g, b_] = icon.color.to_be_bytes();
+		let look = Look {
+			alpha: f32::from(a),
+			tint: [r, g, b_],
+			..Look::PLAIN
+		};
+		b.placed(&icon.brush, [icon.pos.0, icon.pos.1], look, 1.0, overlay_level);
 	}
 	draw_clouds(&mut b, scene, view);
 	let labels_from = b.quads.len();
@@ -631,13 +676,21 @@ mod tests {
 	}
 
 	use bb_assets::{BrushFrame, BrushSheet, BrushSprite, SheetHeader, name_hash};
-	use squirrel_bb::scene::tactical::{SceneTacticalSprite, SceneTacticalTile};
+	use squirrel_bb::scene::tactical::{SceneOverlayIcon, SceneTacticalSprite, SceneTacticalTile};
 
-	/// A registry with sprites `tile`, `unit` and `rock`, each a 2×2 picture.
+	/// The test sprites, each a 2×2 picture in its own column of the sheet (see `name_of`).
+	const NAMES: [&str; 6] = ["tile", "unit", "rock", "mark", "step", "icon"];
+
+	/// Which test sprite a quad shows.
+	fn name_of(quad: &Quad) -> &'static str {
+		let u = quad.uv.iter().map(|uv| uv[0]).fold(f32::MAX, f32::min);
+		NAMES[(u * 10.0).round() as usize]
+	}
+
 	fn registry() -> SpriteRegistry {
-		let sprite = |name: &str| BrushSprite {
-			hash: name_hash(name.as_bytes()),
-			name: name.into(),
+		let sprite = |i: usize| BrushSprite {
+			hash: name_hash(NAMES[i].as_bytes()),
+			name: NAMES[i].into(),
 			material: 0,
 			width: 2,
 			height: 2,
@@ -653,7 +706,7 @@ mod tests {
 			unknown_scale: 1.0,
 			frames: vec![BrushFrame {
 				name: String::new(),
-				uv: [0.0, 1.0, 0.0, 1.0],
+				uv: [i as f32 * 0.1, i as f32 * 0.1 + 0.05, 0.0, 1.0],
 				rect: [-1.0, 1.0, -1.0, 1.0],
 			}],
 			trailer: [0; 3],
@@ -667,11 +720,11 @@ mod tests {
 					width: 2,
 					height: 2,
 					flags: [0; 12],
-					sprite_count: 3,
+					sprite_count: NAMES.len() as u32,
 					reserved: [0; 2],
 					max_level: 1000,
 				},
-				sprites: vec![sprite("tile"), sprite("unit"), sprite("rock")],
+				sprites: (0..NAMES.len()).map(sprite).collect(),
 			},
 		);
 		registry
@@ -762,6 +815,55 @@ mod tests {
 		let last = quads.last().expect("quads");
 		assert_eq!(last.corners[0][0] < 50.0, true, "the flying unit is drawn last, over the rock");
 		assert_eq!(last.saturation, 1.0, "not desaturated by the unseen tile it's over");
+	}
+
+	fn step(tile: usize, color: u32) -> ScenePathStep {
+		ScenePathStep {
+			tile,
+			pos: (tile as f64 * 120.0, 0.0),
+			brush: "step".into(),
+			color,
+		}
+	}
+
+	#[test]
+	fn marks_footsteps_and_icons_draw_where_the_original_puts_them() {
+		let mut marked = tile(0, false);
+		marked.highlight = Some(("mark".into(), 0xc0ff_ffff));
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![marked, tile(1, true)],
+			entities: vec![entity(1, 1, "unit", false, false)],
+			path: vec![step(0, 0xffe0_e5a2), step(1, 0xff77_7777)],
+			overlay_icons: vec![SceneOverlayIcon {
+				brush: "icon".into(),
+				pos: (120.0, 0.0),
+				color: 0x80ff_ffff,
+			}],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let names: Vec<&str> = quads.iter().map(name_of).collect();
+		let on_tile_0 = |q: &Quad| q.corners[0][0] < 60.0;
+		// The mark comes right after its tile's top, at full colour on a tile out of sight,
+		// at its own alpha, never blurred.
+		let mark = names.iter().position(|&n| n == "mark").expect("the mark");
+		assert_eq!(names[mark - 1], "tile", "{names:?}");
+		assert!(quads[mark - 1].saturation < 0.5, "the tile is out of sight");
+		let q = &quads[mark];
+		assert_eq!((q.color, q.saturation, q.level), ([255, 255, 255, 0xc0], 1.0, HIGHLIGHT_LEVEL));
+		// Footsteps: on the tile out of sight at full colour; on the unit's, after the unit.
+		let steps: Vec<usize> = (0..quads.len()).filter(|&i| names[i] == "step").collect();
+		assert_eq!(steps.len(), 2, "{names:?}");
+		let (here, there) = if on_tile_0(&quads[steps[0]]) { (steps[0], steps[1]) } else { (steps[1], steps[0]) };
+		assert_eq!((quads[here].color, quads[here].saturation), ([0xe0, 0xe5, 0xa2, 0xff], 1.0));
+		assert_eq!(quads[there].color, [0x77, 0x77, 0x77, 0xff]);
+		let unit = names.iter().position(|&n| n == "unit").expect("the unit");
+		assert!(there > unit, "the footstep over the unit: {names:?}");
+		// The icon is in the effects layer, after the map, at its colour's alpha.
+		assert_eq!(names.last(), Some(&"icon"), "{names:?}");
+		assert_eq!(quads.last().map(|q| q.color[3]), Some(0x80));
 	}
 
 	#[test]
