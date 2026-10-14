@@ -83,7 +83,6 @@ menu/natives | native World.getAllRosters | missing
 menu/natives | native World.getAllTilesOfRegion | missing
 menu/natives | native World.getEntityAtPos | missing
 menu/natives | native World.getPlayerPos | missing
-menu/natives | native World.getTemporaryRoster | missing; vanilla calls it 148 times (events, contracts), ours has only Tactical.getTemporaryRoster
 menu/natives | native World.move | missing
 menu/natives | native World.presave | missing
 menu/natives | native WorldTile.getPosBetweenThisAnd | missing

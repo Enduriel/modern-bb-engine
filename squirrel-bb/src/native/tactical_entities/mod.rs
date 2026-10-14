@@ -42,6 +42,10 @@ const CASUALTY_ROSTER_ID: i64 = -3;
 const SURVIVOR_ROSTER_ID: i64 = -4;
 const RETREAT_ROSTER_ID: i64 = -5;
 const TEMPORARY_ROSTER_ID: i64 = -6;
+/// The world's own temporary roster (`World.getTemporaryRoster`), where events and
+/// contracts put the people they offer; a different roster from the battle's
+/// (disassembled: `World+0x26c` vs `Tactical+0x2cc`).
+const WORLD_TEMPORARY_ROSTER_ID: i64 = -7;
 
 /// A render sprite handle for a tactical unit. Richer than the world sprite (units read
 /// more back): also `Rotation`, `Color`, `HasBrush`, `getBrush` and
@@ -843,6 +847,7 @@ impl TacticalEntities {
 		let get_survivor_roster = fixed_roster(vm, SURVIVOR_ROSTER_ID);
 		let get_retreat_roster = fixed_roster(vm, RETREAT_ROSTER_ID);
 		let get_temporary_roster = fixed_roster(vm, TEMPORARY_ROSTER_ID);
+		let get_world_temporary_roster = fixed_roster(vm, WORLD_TEMPORARY_ROSTER_ID);
 		let create_roster = {
 			let m = self.machine.clone();
 			vm.make_closure(move |id: i64| {
@@ -926,6 +931,7 @@ impl TacticalEntities {
 		world.set("createRoster", create_roster);
 		world.set("deleteRoster", delete_roster);
 		world.set("getGuestRoster", get_guest_roster);
+		world.set("getTemporaryRoster", get_world_temporary_roster);
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
 			.expect("Tactical table must be installed before TacticalEntities");
