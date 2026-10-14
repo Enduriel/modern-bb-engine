@@ -1,10 +1,7 @@
 //! The game behind the window: the engine, booted into a new campaign, stepped by the
 //! frame's real time, fed the player's input, and drawn by the renderer into a frame
-//! the window presents.
-//!
-//! The UI isn't drawn yet (it needs the browser host composited in), so its screens run
-//! headless and the cursor is never over the UI. That is also why the campaign's
-//! opening event is closed at the start: nothing could click it away.
+//! the window presents. The scripts' UI is the [`Front`]'s: headless, or with the `ui`
+//! feature the real page drawn over the frame.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -16,17 +13,17 @@ use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer};
 use squirrel::{SqStrongRef, SqTable};
 use squirrel_bb::{KeyInput, MouseInput};
 
+use crate::front::{Front, Key};
+
 /// The longest real time one frame advances the game by.
 const MAX_FRAME_MS: f64 = 250.0;
 
 pub struct Game {
-	engine: GameEngine,
+	front: Front,
 	renderer: WorldRenderer,
 	/// The screen the scripts think in (the video mode); window pixels scale to it.
 	screen: (u32, u32),
 	cursor: (i64, i64),
-	/// Mouse buttons held, for "moved with a button down".
-	buttons_down: u32,
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
 }
@@ -35,23 +32,27 @@ impl Game {
 	/// Boot the engine from the install at `data_dir` into a new campaign on `seed`.
 	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str) -> Result<Game, String> {
 		let io = |e: std::io::Error| e.to_string();
-		let engine = harness::open_install(data_dir).map_err(io)?;
-		harness::boot_menu(&engine)?;
-		harness::prepare_new_campaign(&engine, seed)?;
-		harness::start_new_campaign(&engine)?;
-		engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;
+		let front = Front::boot(gpu, data_dir, seed)?;
 		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
 		let renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
-		let mode = video_mode(&engine).unwrap_or((1920, 1080));
+		let mode = video_mode(front.engine()).unwrap_or((1920, 1080));
 		Ok(Game {
-			engine,
+			front,
 			renderer,
 			screen: mode,
 			cursor: (0, 0),
-			buttons_down: 0,
 			modifier: 0,
 		})
+	}
+
+	/// The scripts and their UI.
+	pub fn front(&self) -> &Front {
+		&self.front
+	}
+
+	fn engine(&self) -> &GameEngine {
+		self.front.engine()
 	}
 
 	/// The size the game's screen is (its video mode).
@@ -61,15 +62,14 @@ impl Game {
 
 	/// Advance the game by `ms` of real time.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
-		self.engine.frame(ms.clamp(0.0, MAX_FRAME_MS))?;
-		self.engine.pump_ui()?;
-		Ok(())
+		self.front.step(ms.clamp(0.0, MAX_FRAME_MS))
 	}
 
-	/// The cursor moved to `(x, y)` in the game's screen pixels.
+	/// The cursor moved to `(x, y)` in the game's screen pixels. The states see every
+	/// move (see [`crate::front`]).
 	pub fn mouse_moved(&mut self, x: i64, y: i64) -> Result<(), String> {
 		self.cursor = (x, y);
-		self.engine.ui().set_cursor(x, y, false);
+		self.front.cursor(x, y);
 		// Every pointer move is `MouseState.Moved`, button held or not (disassembled).
 		self.mouse(MouseInput {
 			id: 6,
@@ -80,15 +80,13 @@ impl Game {
 		})
 	}
 
-	/// Button `id` (1 left, 2 right, 3 middle, 4 back, 5 forward) went down or up.
+	/// Button `id` (1 left, 2 right, 3 middle, 4 back, 5 forward) went down or up: to
+	/// the UI, or to the states.
 	pub fn mouse_button(&mut self, id: i64, down: bool) -> Result<(), String> {
-		let bit = 1 << id;
-		if down {
-			self.buttons_down |= bit;
-		} else {
-			self.buttons_down &= !bit;
-		}
 		let (x, y) = self.cursor;
+		if self.front.button(x, y, id, down) {
+			return Ok(());
+		}
 		self.mouse(MouseInput {
 			id,
 			state: if down { 0 } else { 1 },
@@ -98,9 +96,12 @@ impl Game {
 		})
 	}
 
-	/// The wheel turned a notch, `up` or down.
+	/// The wheel turned a notch, `up` or down: for the UI, or the states.
 	pub fn wheel(&mut self, up: bool) -> Result<(), String> {
 		let (x, y) = self.cursor;
+		if self.front.wheel(x, y, up) {
+			return Ok(());
+		}
 		self.mouse(MouseInput {
 			id: 7,
 			state: if up { 3 } else { 4 },
@@ -115,25 +116,29 @@ impl Game {
 		self.modifier = modifier;
 	}
 
-	/// Key `key` (an engine code, see `keys`) went down or up; `repeat` for a held key's
-	/// repeats.
-	pub fn key(&mut self, key: i64, down: bool, repeat: bool) -> Result<(), String> {
+	/// A key went down or up: to the UI, and to the states unless the UI keeps it. A
+	/// held key's repeats reach the states with `getFire()` 1 (`KeyFire` Repeated).
+	pub fn key(&mut self, key: &Key) -> Result<(), String> {
+		if !self.front.key(key, self.modifier) {
+			return Ok(());
+		}
+		let Some(code) = key.engine else { return Ok(()) };
 		let input = KeyInput {
-			key,
-			state: i64::from(down),
+			key: code,
+			state: i64::from(key.down),
 			modifier: self.modifier,
-			fire: i64::from(repeat),
+			fire: i64::from(key.repeat),
 		};
-		self.engine.root_state().key_input(self.engine.vm(), input).map(|_| ())
+		self.engine().root_state().key_input(self.engine().vm(), input).map(|_| ())
 	}
 
 	fn mouse(&mut self, input: MouseInput) -> Result<(), String> {
-		self.engine.root_state().mouse_input(self.engine.vm(), input).map(|_| ())
+		self.engine().root_state().mouse_input(self.engine().vm(), input).map(|_| ())
 	}
 
 	/// Draw what the player sees now into `target`.
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
-		let engine = &self.engine;
+		let engine = self.front.engine();
 		self.renderer.prefetch(engine.sprites().take_hints());
 		self.renderer.set_clock(Clock {
 			real: engine.time().real_seconds() as f32,
@@ -168,6 +173,8 @@ impl Game {
 				self.renderer.draw(gpu, target, &scene, registry, &view, Atlases::DrawReady)
 			});
 		}
+		// The UI over everything.
+		self.front.draw(gpu, target);
 	}
 }
 

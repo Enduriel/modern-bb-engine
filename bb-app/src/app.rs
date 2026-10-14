@@ -13,8 +13,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
-use crate::game::Game;
-use crate::keys;
+use bb_app::front::Key;
+use bb_app::game::Game;
+use bb_app::keys;
 
 /// What to start, from the command line.
 pub struct Options {
@@ -189,9 +190,14 @@ impl Running {
 			}
 			WindowEvent::KeyboardInput { event, .. } => {
 				let PhysicalKey::Code(code) = event.physical_key else { return Ok(()) };
-				let Some(key) = keys::code(code) else { return Ok(()) };
 				let down = event.state == ElementState::Pressed;
-				self.game.key(key, down, event.repeat)
+				self.game.key(&Key {
+					engine: keys::code(code),
+					windows: keys::windows_code(code),
+					text: if down { event.text.as_ref().map(|t| t.to_string()) } else { None },
+					down,
+					repeat: event.repeat,
+				})
 			}
 			_ => Ok(()),
 		}

@@ -8,10 +8,29 @@ edition = "2024"
 name = "bb"
 path = "src/main.rs"
 
+[features]
+# The game's real UI: its page in the browser host (bb-ui with CEF), drawn over the
+# frame and taking the player's input. Off by default, like bb-ui's `cef`: it downloads
+# and links a CEF distribution, which the workspace's tests don't need.
+ui = ["dep:bb-ui", "bb-ui/cef", "dep:cef-dll-sys"]
+
 [dependencies]
 bb-engine = { path = "../bb-engine" }
+bb-ui = { path = "../bb-ui", optional = true }
+# Direct dependency only for its build metadata (the CEF directory, for the rpath).
+cef-dll-sys = { version = "=154.5.0", optional = true }
 bb-render = { path = "../bb-render" }
 squirrel = { path = "../squirrel" }
 squirrel-bb = { path = "../squirrel-bb" }
 wgpu = "30.0.1"
 winit = "0.30.13"
+
+[dev-dependencies]
+bb-assets = { path = "../bb-assets" }
+
+# Own `main`: the browser host re-runs the test binary for its child processes, and
+# starts only once per process.
+[[test]]
+name = "ui_window"
+harness = false
+required-features = ["ui"]

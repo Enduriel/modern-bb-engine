@@ -6,11 +6,10 @@
 //!
 //! Boots the install's game files (the Steam install by default) into a new campaign
 //! and plays it: the world map or the battle, the mouse and keys going to the game.
-//! `--shot` saves the frame after that many frames and quits.
+//! `--shot` saves the frame after that many frames and quits. Built with `--features
+//! ui`, the game's real UI is drawn over it and takes the input it's under.
 
 mod app;
-mod game;
-mod keys;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -41,6 +40,11 @@ fn options() -> Result<app::Options, String> {
 }
 
 fn main() -> ExitCode {
+	// The browser host re-runs this binary for its child processes.
+	#[cfg(feature = "ui")]
+	if let Some(code) = bb_ui::host::run_subprocess() {
+		return ExitCode::from(code.clamp(0, 255) as u8);
+	}
 	let run = || -> Result<(), String> {
 		let options = options()?;
 		let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
