@@ -52,6 +52,7 @@ mod world_search;
 pub use brushes::Sprites;
 pub use color::Color;
 pub use engine_rng::EngineRng;
+pub use settings::VideoSettings;
 pub use log::{LogLevel, install_logging};
 pub use tactical_entities::TacticalEntities;
 pub use tactical_grid::TacticalGrid;
@@ -169,11 +170,11 @@ impl NativeConfig {
 		tactical::install(vm);
 		let sprites = brushes::install(vm);
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
-		settings::install(vm);
+		let video = settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, sprites, engine_rng }
+		InstalledNatives { world_clock, sprites, engine_rng, video }
 	}
 }
 
@@ -182,6 +183,7 @@ pub struct InstalledNatives {
 	pub(crate) world_clock: world_time::Clock,
 	pub(crate) sprites: Sprites,
 	pub(crate) engine_rng: EngineRng,
+	pub(crate) video: VideoSettings,
 }
 
 /// Install all native globals with the [default](NativeConfig::default) config.

@@ -1,10 +1,14 @@
 //! The `Settings` engine table + the `VideoMode` / `ControlSettings` value classes.
 //!
-//! Headless stub: the value classes carry sensible defaults (1920×1080 borderless,
-//! software cursor) and the setters / persistence are no-ops. `main_menu_state.onShow`
+//! Headless: the value classes carry sensible defaults (1920×1080 borderless, software
+//! cursor). The video mode is kept ([`VideoSettings`], shared with the host); the other
+//! setters and persistence are no-ops. `main_menu_state.onShow`
 //! reads `Settings.getVideoMode().Width/Height`; `cursor` reads
 //! `getControlSettings().UseHardwareCursor`; the Options screen reads every field and
 //! the display modes ([`super::display_modes`]). Real persistence is a later concern.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqTable, Variadic};
 
@@ -60,6 +64,37 @@ impl VideoMode {
 	}
 }
 
+/// The current video mode, shared by `Settings.getVideoMode`/`setVideoMode` and the
+/// host. The host tells it the screen size, and shows the UI at the mode's size divided
+/// by its UI scale, as the original does (probed: at UIScale 1.5 on a 2560×1440 screen
+/// the page's viewport is 1706×960, at device pixel ratio 1).
+#[derive(Clone)]
+pub struct VideoSettings(Rc<Cell<VideoMode>>);
+
+impl VideoSettings {
+	/// The screen's width and height, and the UI scale.
+	pub fn screen(&self) -> (i64, i64, f64) {
+		let mode = self.0.get();
+		(mode.width, mode.height, mode.ui_scale)
+	}
+
+	/// The size the UI is laid out at: the screen divided by the UI scale, in whole
+	/// pixels (cut down, as the original's 1706 for 2560 / 1.5).
+	pub fn ui_size(&self) -> (i64, i64) {
+		let (width, height, scale) = self.screen();
+		let scale = if scale > 0.0 { scale } else { 1.0 };
+		((width as f64 / scale) as i64, (height as f64 / scale) as i64)
+	}
+
+	/// Set the screen size, as the host's window has it.
+	pub fn set_screen_size(&self, width: i64, height: i64) {
+		let mut mode = self.0.get();
+		mode.width = width;
+		mode.height = height;
+		self.0.set(mode);
+	}
+}
+
 /// Input/control settings — the payload behind a `ControlSettings` instance.
 #[derive(Clone, Copy)]
 struct ControlSettings {
@@ -67,8 +102,10 @@ struct ControlSettings {
 	use_drag_style_scrolling: bool,
 }
 
-/// Register the `Settings` table and its value classes into the root.
-pub(crate) fn install(vm: &mut SQVM) {
+/// Register the `Settings` table and its value classes into the root; the video mode
+/// they share with the host.
+pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
+	let current = VideoSettings(Rc::new(Cell::new(VideoMode::DEFAULT)));
 	let video = ClassBuilder::<VideoMode>::new("VideoMode")
 		.property("Width", |v| v.width, |v, x| v.width = x)
 		.property("Height", |v| v.height, |v, x| v.height = x)
@@ -94,9 +131,15 @@ pub(crate) fn install(vm: &mut SQVM) {
 		)
 		.build(vm);
 
+	// A fresh instance each call, of the mode last set.
 	let get_video_mode = {
-		let video = video.clone();
-		vm.make_closure(move |vm: &SQVM| video.instantiate(vm, VideoMode::DEFAULT))
+		let (video, current) = (video.clone(), current.clone());
+		vm.make_closure(move |vm: &SQVM| video.instantiate(vm, current.0.get()))
+	};
+	// What the Options screen applies (the original also resizes and rescales then).
+	let set_video_mode = {
+		let current = current.clone();
+		vm.make_closure(move |mode: Native<VideoMode>| current.0.set(mode.0))
 	};
 	// The display modes (minimum width, height and color bits); see `display_modes`.
 	let query_resolutions = {
@@ -189,7 +232,6 @@ pub(crate) fn install(vm: &mut SQVM) {
 	}
 	let set_sound_volume = noop!();
 	let set_hardware_sound = noop!();
-	let set_video_mode = noop!();
 	let save = noop!();
 	let save_with_custom = noop!();
 	let load = noop!();
@@ -211,4 +253,5 @@ pub(crate) fn install(vm: &mut SQVM) {
 	settings.set("queryResolutionIndexByVideoMode", query_index_by_video_mode);
 	settings.set("queryResolutionByIndex", query_by_index);
 	SqTable::root(vm).set("Settings", settings);
+	current
 }

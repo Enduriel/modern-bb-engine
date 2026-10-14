@@ -22,7 +22,7 @@ use crate::error::ScriptError;
 use crate::module::ModuleSystem;
 use crate::native::save::SaveSystem;
 use crate::native::world_time::ClockPart;
-use crate::native::{NativeConfig, Sprites, TacticalEntities, TacticalGrid, TacticalNavigator, TimeService, UiBridge, WorldEntities, WorldGrid};
+use crate::native::{NativeConfig, Sprites, TacticalEntities, TacticalGrid, TacticalNavigator, TimeService, UiBridge, VideoSettings, WorldEntities, WorldGrid};
 use crate::source::ScriptSource;
 use crate::state_stack::RootState;
 
@@ -44,6 +44,8 @@ pub struct Engine<S: ScriptSource> {
 	ui_client: RefCell<crate::ui_client::UiClient>,
 	/// Every loaded sprite (no VM handles, so no teardown).
 	sprites: Sprites,
+	/// The video mode the scripts set (no VM handles).
+	video: VideoSettings,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -116,6 +118,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			ui,
 			ui_client: RefCell::new(crate::ui_client::UiClient::new()),
 			sprites: natives.sprites,
+			video: natives.video,
 			time,
 			modules,
 			vm,
@@ -141,6 +144,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 	pub fn time(&self) -> &TimeService {
 		&self.time
+	}
+	/// The video mode, shared with `Settings.getVideoMode`/`setVideoMode`.
+	pub fn video(&self) -> &VideoSettings {
+		&self.video
 	}
 	/// The sprite registry behind `doesBrushExist`; the host fills it at startup.
 	pub fn sprites(&self) -> &Sprites {
