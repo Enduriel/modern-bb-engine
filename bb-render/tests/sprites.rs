@@ -1,6 +1,7 @@
 //! The sprite program on a real GPU: a 2 x 2 test atlas drawn through a frame quad
 //! lands right side up (atlases are stored upside down, as bbrusher packs them), and
-//! alpha blends over the background. Skips when no GPU adapter is available.
+//! alpha blends over the background, onto transparency as the original's does. Skips
+//! when no GPU adapter is available.
 
 use bb_assets::{BrushFrame, Image};
 use bb_render::sprite::{SceneUniforms, SpriteRenderer};
@@ -69,4 +70,35 @@ fn atlases_draw_right_side_up_and_blend() {
 		&[0, 0, 0],
 		"top right shows the background"
 	);
+}
+
+#[test]
+fn onto_transparency_alpha_is_kept_and_colour_premultiplied() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	let atlas = Image {
+		width: 1,
+		height: 1,
+		rgba: vec![255, 0, 0, 128],
+	};
+	let texture = GpuTexture::upload(&gpu, "test atlas", &atlas);
+	let frame = BrushFrame {
+		name: String::new(),
+		uv: [0.0, 1.0, 0.0, 1.0],
+		rect: [-1.0, 1.0, -1.0, 1.0],
+	};
+	let quad = frame_quad(&frame, [0.0, 0.0], Look::PLAIN);
+	let renderer = SpriteRenderer::new(&gpu);
+	let target = RenderTarget::new(&gpu, 2, 2);
+	let scene = SceneUniforms::centered([0.0, 0.0], 2.0, 2.0);
+	renderer.draw(&gpu, &target, &scene, Some([0.0; 4]), &[quad], &[&texture]);
+	let image = target.read(&gpu).expect("read back");
+	// glBlendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA), as
+	// the original draws portraits: alpha 128, not 128 x 128 / 255.
+	assert_eq!(pixel(&image, 0, 0), [128, 0, 0, 128]);
 }

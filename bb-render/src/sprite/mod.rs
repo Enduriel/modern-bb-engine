@@ -179,9 +179,17 @@ impl SpriteRenderer {
 			7 => Uint32,
 			8 => Uint32,
 		];
-		// glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA), applied to alpha as well.
+		// The original's sprite blend mode (1 of its switch at 0x52fd40):
+		// glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE,
+		// GL_ONE_MINUS_SRC_ALPHA). Only images read back see the alpha: a portrait
+		// drawn onto transparency keeps each texel's alpha, its colour premultiplied.
 		let blend = wgpu::BlendComponent {
 			src_factor: wgpu::BlendFactor::SrcAlpha,
+			dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+			operation: wgpu::BlendOperation::Add,
+		};
+		let blend_alpha = wgpu::BlendComponent {
+			src_factor: wgpu::BlendFactor::One,
 			dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
 			operation: wgpu::BlendOperation::Add,
 		};
@@ -209,7 +217,7 @@ impl SpriteRenderer {
 					format: TARGET_FORMAT,
 					blend: Some(wgpu::BlendState {
 						color: blend,
-						alpha: blend,
+						alpha: blend_alpha,
 					}),
 					write_mask: wgpu::ColorWrites::ALL,
 				})],
