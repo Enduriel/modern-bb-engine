@@ -498,6 +498,7 @@ impl TacticalGrid {
 				details: t
 					.details
 					.iter()
+					.filter(|d| d.borrow().visible)
 					.map(|d| {
 						let d = d.borrow();
 						crate::scene::tactical::SceneTacticalDetail {
@@ -781,15 +782,21 @@ impl TacticalGrid {
 
 	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
 	/// and step their animations to virtual millisecond `now_ms` (see `sprite_anim`).
-	pub(crate) fn turn(&self, now: f32, now_ms: u32) {
+	/// Those on tiles the player sees are drawn at real time `real`: a draw finishes a
+	/// fade (see `SpriteColor`), which may hide the detail.
+	pub(crate) fn turn(&self, now: f32, now_ms: u32, real: f32) {
 		let g = self.grid.borrow();
 		for t in &g.tiles {
+			let seen = t.vis_mask.contains(visibility::PLAYER);
 			for d in &t.details {
 				let mut d = d.borrow_mut();
 				let d = &mut *d;
 				d.rotation = d.spin.turn(d.rotation, now);
 				if let Some(scale) = d.anim.step_on(&g.sprites, &d.brush, now_ms) {
 					d.scale = scale;
+				}
+				if seen && d.visible && d.color.draw(real).hide {
+					d.visible = false;
 				}
 			}
 		}

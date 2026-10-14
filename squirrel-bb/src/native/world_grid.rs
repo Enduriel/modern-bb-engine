@@ -200,6 +200,8 @@ struct GridState {
 	ids: EntityIds,
 	/// The details that may turn (see `world_detail::Spinning`).
 	spinning: world_detail::Spinning,
+	/// The real time (seconds) the map last turned at, which its details are drawn at.
+	drawn_at: f32,
 	/// The camera the map keeps in view (see [`bound_camera`]).
 	camera: Option<super::world_camera::WorldCamera>,
 	/// Fog of war is on (`setFogOfWar`).
@@ -291,6 +293,7 @@ impl WorldGrid {
 				engine_rng: EngineRng::unseeded(),
 				ids: EntityIds::default(),
 				spinning: Rc::default(),
+				drawn_at: 0.0,
 				camera: None,
 				fog_on: true,
 				fog: FogMask::default(),
@@ -835,9 +838,8 @@ impl WorldGrid {
 
 	/// The tiles whose centre `keep` accepts (in world units), as the renderer sees them.
 	pub fn scene_tiles_where(&self, keep: impl Fn((f64, f64)) -> bool) -> Vec<crate::scene::SceneTile> {
-		self.grid
-			.borrow()
-			.tiles
+		let g = self.grid.borrow();
+		g.tiles
 			.iter()
 			.map(|t| (t, world_layout::tile_pos(t.col, t.row)))
 			.filter(|(_, pos)| keep(*pos))
@@ -849,7 +851,7 @@ impl WorldGrid {
 				discovered: t.is_discovered,
 				brush: t.brush.clone(),
 				flipped: t.is_flipped,
-				details: t.details.iter().map(|d| d.borrow().clone()).collect(),
+				details: t.details.iter().filter(|d| d.borrow().visible).map(|d| d.borrow().scene(g.drawn_at)).collect(),
 			})
 			.collect()
 	}
@@ -902,12 +904,13 @@ impl WorldGrid {
 
 	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
 	/// and step the animated ones to virtual millisecond `now_ms` (see `sprite_anim`).
-	pub(crate) fn turn(&self, now: f32, now_ms: u32) {
+	pub(crate) fn turn(&self, now: f32, now_ms: u32, real: f32) {
 		let (spinning, sprites) = {
-			let g = self.grid.borrow();
+			let mut g = self.grid.borrow_mut();
+			g.drawn_at = real;
 			(g.spinning.clone(), g.sprites.clone())
 		};
-		world_detail::turn_all(&spinning, &sprites, now, now_ms);
+		world_detail::turn_all(&spinning, &sprites, now, now_ms, real);
 	}
 }
 
@@ -984,6 +987,7 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 	let (col, row, r) = t.with(|d| (d.col, d.row, d.r));
 	let (cx, cy) = world_layout::tile_pos(col, row);
 	data.pos = (cx as f32 + offset.0, offset.1 + cy as f32);
+	data.offset = offset;
 	let depth_bias = sprites.with(|r| r.get(&data.brush).map_or(0, |(_, s)| i32::from(s.depth_bias)));
 	data.z = (data.pos.1 as i32) + depth_bias + data.z_level as i32 - (r & 1) as i32;
 	data.brush_bits = sprites.brush_bits(&data.brush, 0);

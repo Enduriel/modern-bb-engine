@@ -83,6 +83,10 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 	w.f32(s.rotation);
 	w.f32(s.spin.torque);
 	w.u32(s.brush_bits);
+	w.f64(s.saturation);
+	w.u32(s.highlight);
+	w.f64(s.highlight_factor);
+	w.bool(s.ignore_camera_flip);
 }
 
 fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
@@ -101,6 +105,10 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 		spin: crate::native::spin::Spin::new(r.f32()?),
 		anim: Default::default(),
 		brush_bits: r.u32()?,
+		saturation: r.f64()?,
+		highlight: r.u32()?,
+		highlight_factor: r.f64()?,
+		ignore_camera_flip: r.bool()?,
 	})
 }
 

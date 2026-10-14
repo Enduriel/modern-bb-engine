@@ -36,9 +36,9 @@ mod shaker;
 mod vision;
 use crate::module::Instantiator;
 use crate::native::spin::Spin;
-use crate::native::sprite_anim::{Anim, virtual_ms};
-use crate::native::prng::Prng;
-use crate::native::sprite_color::{self, SpriteColor, real_time};
+use crate::native::sprite_anim::Anim;
+use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
+use crate::native::sprite_color::{SpriteColor, real_time};
 use crate::native::{EntityIds, Sprites};
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
@@ -97,8 +97,6 @@ struct UnitSpriteData {
 	/// now.
 	stored: shaker::Stored,
 	is_stored: bool,
-	finished: bool,
-	fading: bool,
 	/// Its `Torque` (see `spin`).
 	spin: Spin,
 	/// The frame of its brush it shows (see `sprite_anim`).
@@ -139,8 +137,6 @@ impl UnitSpriteData {
 			highlight_factor: 0.0,
 			stored: shaker::Stored::default(),
 			is_stored: false,
-			finished: false,
-			fading: false,
 			spin: Spin::default(),
 			anim: Anim::default(),
 			ignore_ambient: false,
@@ -335,37 +331,89 @@ fn spawn(machine: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, path: &str) -> Resul
 	Ok(entity)
 }
 
-/// Build the unit sprite class. Brushes resolve through `sprites` (see
-/// [`Sprites::resolve`]); `vary…` draw from the C runtime's `rand()`, `crt`.
-fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<UnitSpriteData> {
-	let (set_with, get_with, reset_with) = (sprites.clone(), sprites.clone(), sprites.clone());
-	let (crt_color, crt_brightness, crt_saturation) = (crt.clone(), crt.clone(), crt);
-	ClassBuilder::<UnitSpriteData>::new("TacticalUnitSprite")
-		.property(
-			"Alpha",
-			|s: &UnitSpriteData| s.color.alpha(),
-			|s: &mut UnitSpriteData, v: i64| s.color.set_alpha(v),
-		)
-		.property(
-			"Scale",
-			|s: &UnitSpriteData| s.scale,
-			|s: &mut UnitSpriteData, v: f64| s.scale = v,
-		)
-		.property(
-			"Rotation",
-			|s: &UnitSpriteData| s.rotation,
-			|s: &mut UnitSpriteData, v: f64| s.rotation = v,
-		)
-		.property(
-			"Visible",
-			|s: &UnitSpriteData| s.visible,
-			|s: &mut UnitSpriteData, v: bool| s.visible = v,
-		)
-		.property(
-			"Saturation",
-			|s: &UnitSpriteData| s.saturation,
-			|s: &mut UnitSpriteData, v: f64| s.saturation = v,
-		)
+impl SpriteState for UnitSpriteData {
+	fn color(&self) -> &SpriteColor {
+		&self.color
+	}
+	fn color_mut(&mut self) -> &mut SpriteColor {
+		&mut self.color
+	}
+	fn anim(&self) -> &Anim {
+		&self.anim
+	}
+	fn anim_mut(&mut self) -> &mut Anim {
+		&mut self.anim
+	}
+	fn spin(&self) -> &Spin {
+		&self.spin
+	}
+	fn spin_mut(&mut self) -> &mut Spin {
+		&mut self.spin
+	}
+	fn brush(&self) -> &str {
+		&self.brush
+	}
+	fn store_brush(&mut self, sprites: &Sprites, brush: String) {
+		self.brush_bits = sprites.brush_bits(&brush, self.brush_bits);
+		self.brush = brush;
+	}
+	fn set_offset(&mut self, x: f64, y: f64) {
+		self.offset = (x, y);
+	}
+	fn num(&self, n: Num) -> f64 {
+		match n {
+			Num::Scale => self.scale,
+			Num::Rotation => self.rotation,
+			Num::Saturation => self.saturation,
+			Num::HighlightFactor => self.highlight_factor,
+		}
+	}
+	fn set_num(&mut self, n: Num, v: f64) {
+		match n {
+			Num::Scale => self.scale = v,
+			Num::Rotation => self.rotation = v,
+			Num::Saturation => self.saturation = v,
+			Num::HighlightFactor => self.highlight_factor = v,
+		}
+	}
+	fn flag(&self, f: Flag) -> bool {
+		match f {
+			Flag::Visible => self.visible,
+			Flag::Flipped => self.flipped,
+			Flag::IgnoreAmbientColor => self.ignore_ambient,
+			Flag::IgnoreCameraFlip => self.ignore_camera_flip,
+		}
+	}
+	fn set_flag(&mut self, f: Flag, on: bool) {
+		match f {
+			Flag::Visible => self.visible = on,
+			Flag::Flipped => self.flipped = on,
+			Flag::IgnoreAmbientColor => self.ignore_ambient = on,
+			Flag::IgnoreCameraFlip => self.ignore_camera_flip = on,
+		}
+	}
+	fn highlight(&self) -> u32 {
+		self.highlight
+	}
+	fn set_highlight(&mut self, argb: u32) {
+		self.highlight = argb;
+	}
+}
+
+impl SpriteHandle for UnitSpriteData {
+	fn with<R>(&self, f: impl FnOnce(&dyn SpriteState) -> R) -> R {
+		f(self)
+	}
+	fn with_mut<R>(&mut self, f: impl FnOnce(&mut dyn SpriteState) -> R) -> R {
+		f(self)
+	}
+}
+
+/// Build the unit sprite class: the sprite class (see `sprite_class`), and the weapon
+/// and shield animation switches.
+fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteData> {
+	let b = ClassBuilder::<UnitSpriteData>::new("TacticalUnitSprite");
+	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: true, moving: None })
 		.property(
 			"RenderAnimationStartTime",
 			|s: &UnitSpriteData| s.render_anim_start,
@@ -391,92 +439,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 			|s: &UnitSpriteData| s.lowering_shield,
 			|s: &mut UnitSpriteData, v: bool| s.lowering_shield = v,
 		)
-		.property_obj_rw(
-			"Color",
-			|s: &UnitSpriteData, vm: &SQVM| super::color::color_object(vm, s.color.color),
-			|s: &mut UnitSpriteData, vm: &SQVM, v: SqStrongRef| {
-				s.color.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
-				Ok(())
-			},
-		)
-		.method("setBrush", move |s: &mut UnitSpriteData, vm: &SQVM, brush: &str| {
-			let brush = set_with.resolve_battle(brush);
-			s.spin.rebrush(&set_with, &s.brush, &brush);
-			s.anim.rebrush(&set_with, &s.brush, &brush, virtual_ms(vm));
-			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);
-			s.brush = brush;
-		})
-		// getBrush(): `null` without a brush, else `{ Name, TextureName }`; scripts read
-		// `getBrush().Name + "_top"` and hand `TextureName` to `Tactical.addResource`.
-		.method("getBrush", move |s: &mut UnitSpriteData, vm: &SQVM| -> Option<SqStrongRef> {
-			get_with.brush_object(vm, &s.brush)
-		})
-		.method("resetBrush", move |s: &mut UnitSpriteData| {
-			s.brush = String::new();
-			s.brush_bits = reset_with.brush_bits("", s.brush_bits);
-		})
 		.method(
 			"setRenderCallbackEnabled",
 			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| crate::native::stubs::note("Battle unit sprite.setRenderCallbackEnabled"),
 		)
-		.method("setHorizontalFlipping", |s: &mut UnitSpriteData, f: bool| s.flipped = f)
-		.method("isFlippedHorizontally", |s: &mut UnitSpriteData| s.flipped)
-		.property("HasBrush", |s: &UnitSpriteData| !s.brush.is_empty(), |_s: &mut UnitSpriteData, _v: bool| {})
-		.property_obj_rw(
-			"Highlight",
-			|s: &UnitSpriteData, vm: &SQVM| super::color::color_object(vm, s.highlight),
-			|s: &mut UnitSpriteData, vm: &SQVM, v: SqStrongRef| {
-				s.highlight = super::color::color_argb(vm, &v).ok_or("Highlight: not a color")?;
-				Ok(())
-			},
-		)
-		.property("HighlightFactor", |s: &UnitSpriteData| s.highlight_factor, |s: &mut UnitSpriteData, v: f64| s.highlight_factor = v)
-		.property("Finished", |s: &UnitSpriteData| s.finished, |s: &mut UnitSpriteData, v: bool| s.finished = v)
-		.property("Fading", |s: &UnitSpriteData| s.fading, |s: &mut UnitSpriteData, v: bool| s.fading = v)
-		.property("IsFadingDone", |s: &UnitSpriteData| s.color.is_fading_done(), |_s: &mut UnitSpriteData, _v: bool| {})
-		.property(
-			"Torque",
-			|s: &UnitSpriteData| f64::from(s.spin.torque),
-			|s: &mut UnitSpriteData, v: f64| s.spin.torque = v as f32,
-		)
-		.property("IgnoreAmbientColor", |s: &UnitSpriteData| s.ignore_ambient, |s: &mut UnitSpriteData, v: bool| s.ignore_ambient = v)
-		.property("IgnoreCameraFlip", |s: &UnitSpriteData| s.ignore_camera_flip, |s: &mut UnitSpriteData, v: bool| s.ignore_camera_flip = v)
-		// Fades run on real time and finish when the sprite is drawn (see `SpriteColor`).
-		.method("fadeIn", |s: &mut UnitSpriteData, vm: &SQVM, ms: i64| s.color.fade_in(ms, real_time(vm)))
-		.method("fadeOut", |s: &mut UnitSpriteData, vm: &SQVM, ms: i64| {
-			s.color.fade_out(ms, real_time(vm), false)
-		})
-		.method("fadeOutAndHide", |s: &mut UnitSpriteData, vm: &SQVM, ms: i64| {
-			s.color.fade_out(ms, real_time(vm), true)
-		})
-		.method("fadeToAlpha", |s: &mut UnitSpriteData, vm: &SQVM, alpha: i64, ms: i64| {
-			s.color.fade_to_alpha(alpha, ms, real_time(vm))
-		})
-		.method("fade", |s: &mut UnitSpriteData, vm: &SQVM, color: SqStrongRef, ms: i64| -> Result<(), String> {
-			let target = super::color::color_argb(vm, &color).ok_or("fade: not a color")?;
-			s.color.fade_to(target, ms, real_time(vm), false);
-			Ok(())
-		})
-		// Its brush's frames (see `sprite_anim`).
-		.method("play", |s: &mut UnitSpriteData, vm: &SQVM, _a: Variadic<Retained>| s.anim.play(virtual_ms(vm)))
-		.method("stop", |s: &mut UnitSpriteData, _a: Variadic<Retained>| s.anim.stop())
-		.method("finish", |s: &mut UnitSpriteData, _a: Variadic<Retained>| s.anim.finish())
-		.method("setOffset", |s: &mut UnitSpriteData, vm: &SQVM, offset: Retained| {
-			let c = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
-			s.offset = (c("X"), c("Y"));
-		})
-		// The colour changes once (see `sprite_color`): nothing is kept to draw with.
-		.method("varyColor", move |s: &mut UnitSpriteData, r: f64, g: f64, b: f64| {
-			let rand = [crt_color.rand_default(), crt_color.rand_default(), crt_color.rand_default()];
-			s.color.color = sprite_color::vary_color(s.color.color, [r as f32, g as f32, b as f32], rand);
-		})
-		.method("varySaturation", move |s: &mut UnitSpriteData, v: f64| {
-			s.saturation = f64::from(sprite_color::vary_saturation(s.saturation as f32, v as f32, crt_saturation.rand_default()));
-		})
-		.method("varyBrightness", move |s: &mut UnitSpriteData, v: f64| {
-			s.color.color = sprite_color::vary_brightness(s.color.color, v as f32, crt_brightness.rand_default());
-		})
-		.method("setBrightness", |s: &mut UnitSpriteData, b: f64| s.color.color = sprite_color::brighten(s.color.color, b as f32))
 		.build(vm)
 }
 
@@ -713,9 +679,7 @@ impl TacticalEntities {
 	/// `&mut SQVM`, after the `World` table exists.
 	pub fn install(&self, vm: &mut SQVM) {
 		let sprites = self.machine.borrow().sprites.clone();
-		// The C runtime's rand(), which the battle's pools also draw.
-		let crt = self.machine.borrow().effects.as_ref().map_or_else(Prng::new, |e| e.borrow().crt());
-		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites, crt));
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites));
 
 		// --- injected unit methods (recover the record via this_identity) ---
 		let get_id = {

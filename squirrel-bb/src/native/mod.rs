@@ -39,6 +39,7 @@ pub(crate) mod video_mode;
 pub(crate) mod spin;
 pub(crate) use settings::temp_gameplay_flag;
 pub(crate) mod sprite_anim;
+pub(crate) mod sprite_class;
 pub(crate) mod sprite_color;
 pub(crate) mod sprite_slots;
 mod strings;
@@ -217,7 +218,7 @@ impl NativeConfig {
 		strings::install(vm, self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ TEXT_SEED)));
 		platform::install(vm, self);
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
-		let sprites = brushes::install(vm);
+		let sprites = brushes::install(vm, crt.clone());
 		let bird_rng = self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ BIRD_SEED));
 		let (world_clock, clouds, birds, waves, world_camera, world_particles) = world::install(vm, &engine_rng, &bird_rng, &sprites);
 		let tactical = tactical::install(vm, &engine_rng, &crt);

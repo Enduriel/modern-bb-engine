@@ -37,8 +37,10 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 		s.raising_shield,
 		s.lowering_shield,
 		s.flipped,
-		s.finished,
-		s.fading,
+		// `Finished` and `Fading`: what the frames and the fade say (read back by
+		// neither; the format keeps their place).
+		s.anim.finished(),
+		!s.color.is_fading_done(),
 		s.color.is_fading_done(),
 		s.ignore_ambient,
 		s.ignore_camera_flip,
@@ -81,10 +83,12 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		raising_shield: r.bool()?,
 		lowering_shield: r.bool()?,
 		flipped: r.bool()?,
-		finished: r.bool()?,
-		fading: r.bool()?,
 		ignore_ambient: {
-			r.bool()?; // IsFadingDone, which follows the colour
+			// `Finished`, `Fading` and `IsFadingDone`, which follow the frames and the
+			// colour.
+			r.bool()?;
+			r.bool()?;
+			r.bool()?;
 			r.bool()?
 		},
 		ignore_camera_flip: r.bool()?,

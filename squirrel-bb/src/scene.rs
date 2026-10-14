@@ -10,7 +10,6 @@ pub use crate::native::world_camera::CameraView as SceneWorldCamera;
 pub use crate::native::particles::SceneParticle;
 pub use crate::native::world_clouds::SceneCloud;
 pub use crate::native::world_waves::SceneWave;
-pub use crate::native::world_detail::DetailData as SceneDetail;
 
 /// The world map as last set by the scripts.
 #[derive(Clone, Debug, Default)]
@@ -135,6 +134,52 @@ pub struct SceneTile {
 	pub flipped: bool,
 	/// Its decorations, in spawn order.
 	pub details: Vec<SceneDetail>,
+}
+
+/// A tile's detail as drawn (see `world_detail`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneDetail {
+	pub brush: String,
+	/// Draw layer, a `Const.World.ZLevel`: higher is further back.
+	pub z_level: i64,
+	/// `Const.World.DetailType` bits.
+	pub flags: i64,
+	pub flipped: bool,
+	/// The colour drawn, any fade applied: its alpha (0–255), and its red, green and
+	/// blue (RGB).
+	pub alpha: i64,
+	pub tint: u32,
+	/// The frame of its brush it shows.
+	pub frame: u32,
+	/// Degrees.
+	pub rotation: f64,
+	pub saturation: f64,
+	pub scale: f64,
+	pub ignore_ambient: bool,
+	/// Where it is: its tile's centre plus its offset, in world units.
+	pub pos: (f32, f32),
+	/// Its draw order key (the original's Z).
+	pub z: i32,
+}
+
+impl Default for SceneDetail {
+	fn default() -> Self {
+		SceneDetail {
+			brush: String::new(),
+			z_level: 0,
+			flags: 0,
+			flipped: false,
+			alpha: 255,
+			tint: 0x00ff_ffff,
+			frame: 0,
+			rotation: 0.0,
+			saturation: 1.0,
+			scale: 1.0,
+			ignore_ambient: false,
+			pos: (0.0, 0.0),
+			z: 0,
+		}
+	}
 }
 
 /// One world entity (a party, location, …).

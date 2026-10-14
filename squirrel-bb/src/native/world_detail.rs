@@ -2,8 +2,9 @@
 //! on the tile for the renderer.
 //!
 //! A detail's data is shared between its tile and the `WorldDetail` object scripts
-//! get back, so script changes (`Alpha`, `Torque`, `setBrush`, …) reach the renderer
-//! and no VM handle is stored.
+//! get back, of the sprite class (see `sprite_class`), so script changes reach the
+//! renderer and no VM handle is stored. The scene gets each as it's drawn
+//! ([`SceneDetail`]): its colour with any fade at the time the map last turned.
 //!
 //! The arguments, from every call site in the scripts: `spawnDetail(brush)`,
 //! `(brush, z, type)`, `(brush, z, type, flipped)` and longer forms with an offset.
@@ -21,7 +22,10 @@ use squirrel::{ClassBuilder, SQVM, SqClass};
 
 use crate::native::Sprites;
 use crate::native::spin::Spin;
-use crate::native::sprite_anim::{Anim, virtual_ms};
+use crate::native::sprite_anim::Anim;
+use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
+use crate::native::sprite_color::SpriteColor;
+use crate::scene::SceneDetail;
 
 /// One detail on a tile.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,7 +36,14 @@ pub struct DetailData {
 	/// `Const.World.DetailType` bits.
 	pub flags: i64,
 	pub flipped: bool,
-	pub alpha: i64,
+	/// `Color` and `Alpha`, with any fade in progress.
+	pub(crate) color: SpriteColor,
+	/// `Visible`; `fadeOutAndHide` clears it as its fade ends.
+	pub visible: bool,
+	/// `Highlight` (ARGB), blended over it by `HighlightFactor`.
+	pub highlight: u32,
+	pub highlight_factor: f64,
+	pub ignore_camera_flip: bool,
 	/// Its `Torque` (see `spin`).
 	pub(crate) spin: Spin,
 	/// Its brush's frames (see `sprite_anim`); it starts at its first step.
@@ -43,15 +54,14 @@ pub struct DetailData {
 	pub rotation: f64,
 	pub saturation: f64,
 	pub scale: f64,
-	/// Red, green and blue (RGB), which `setBrightness` darkens; `alpha` is the rest of
-	/// the original's colour.
-	pub tint: u32,
 	pub ignore_ambient: bool,
 	/// Its entity id: a detail takes one from the counter every entity shares, as the
 	/// original's decals do (worldgen spawns some 18,000).
 	pub id: i64,
-	/// Where it is: its spawn tile's centre plus the spawn's offset, in world units.
+	/// Where it is: its spawn tile's centre plus its offset, in world units.
 	pub pos: (f32, f32),
+	/// Its offset from the tile's centre: the spawn's, or `setOffset`'s since.
+	pub offset: (f32, f32),
 	/// Its draw order key (the original's Z): `trunc(y)` + the brush's depth bias + the
 	/// z level − the spawn tile's axial-r parity.
 	pub z: i32,
@@ -66,19 +76,45 @@ impl Default for DetailData {
 			z_level: 0,
 			flags: 0,
 			flipped: false,
-			alpha: 255,
+			color: SpriteColor::default(),
+			visible: true,
+			highlight: 0,
+			highlight_factor: 0.0,
+			ignore_camera_flip: false,
 			spin: Spin::default(),
 			anim: Anim::default(),
 			frame: 0,
 			rotation: 0.0,
 			saturation: 1.0,
 			scale: 1.0,
-			tint: 0x00ff_ffff,
 			ignore_ambient: false,
 			id: 0,
 			pos: (0.0, 0.0),
+			offset: (0.0, 0.0),
 			z: 0,
 			brush_bits: 0,
+		}
+	}
+}
+
+impl DetailData {
+	/// It as the scene draws it at real time `now` (seconds).
+	pub(crate) fn scene(&self, now: f32) -> SceneDetail {
+		let shown = self.color.shown(now);
+		SceneDetail {
+			brush: self.brush.clone(),
+			z_level: self.z_level,
+			flags: self.flags,
+			flipped: self.flipped,
+			alpha: i64::from(shown >> 24),
+			tint: shown & 0x00ff_ffff,
+			frame: self.frame,
+			rotation: self.rotation,
+			saturation: self.saturation,
+			scale: self.scale,
+			ignore_ambient: self.ignore_ambient,
+			pos: self.pos,
+			z: self.z,
 		}
 	}
 }
@@ -86,12 +122,12 @@ impl Default for DetailData {
 /// A detail as shared by its tile and its script object.
 pub(crate) type Detail = Rc<RefCell<DetailData>>;
 
-/// The details that may turn (those given a torque) or animate, so a frame needn't
-/// visit every detail on the map.
+/// The details that may turn (those given a torque), animate or fade, so a frame
+/// needn't visit every detail on the map.
 pub(crate) type Spinning = Rc<RefCell<Vec<Weak<RefCell<DetailData>>>>>;
 
-/// Keep `detail` turning if it has a torque, and stepping while its animation may
-/// (one not started yet included: its first step drops a still brush).
+/// Keep `detail` turning if it has a torque, stepping while its animation may (one not
+/// started yet included: its first step drops a still brush), and drawn while it fades.
 pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
 	if !moves(&detail.borrow()) {
 		return;
@@ -103,14 +139,16 @@ pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
 	}
 }
 
-/// Whether a frame may change `d`: a torque, or an animation still running.
+/// Whether a frame may change `d`: a torque, an animation still running, or a fade.
 fn moves(d: &DetailData) -> bool {
-	d.spin.torque != 0.0 || d.anim.running()
+	d.spin.torque != 0.0 || d.anim.running() || !d.color.is_fading_done()
 }
 
-/// Turn the spinning details to virtual time `now` (seconds) and step the animated
-/// ones to virtual millisecond `now_ms`, and forget those gone or still.
-pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, now: f32, now_ms: u32) {
+/// Turn the spinning details to virtual time `now` (seconds), step the animated ones
+/// to virtual millisecond `now_ms`, draw the fading ones at real time `real` (a draw
+/// finishes a fade, see `SpriteColor`, which may hide the detail), and forget those
+/// gone or still.
+pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, now: f32, now_ms: u32, real: f32) {
 	spinning.borrow_mut().retain(|d| {
 		let Some(d) = d.upgrade() else { return false };
 		let mut d = d.borrow_mut();
@@ -120,79 +158,105 @@ pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, now: f32, now_ms:
 			d.scale = f64::from(scale);
 		}
 		d.frame = d.anim.frame();
+		if d.visible && d.color.draw(real).hide {
+			d.visible = false;
+		}
 		moves(d)
 	});
+}
+
+impl SpriteState for DetailData {
+	fn color(&self) -> &SpriteColor {
+		&self.color
+	}
+	fn color_mut(&mut self) -> &mut SpriteColor {
+		&mut self.color
+	}
+	fn anim(&self) -> &Anim {
+		&self.anim
+	}
+	fn anim_mut(&mut self) -> &mut Anim {
+		&mut self.anim
+	}
+	fn spin(&self) -> &Spin {
+		&self.spin
+	}
+	fn spin_mut(&mut self) -> &mut Spin {
+		&mut self.spin
+	}
+	fn brush(&self) -> &str {
+		&self.brush
+	}
+	fn store_brush(&mut self, sprites: &Sprites, brush: String) {
+		self.brush_bits = sprites.brush_bits(&brush, self.brush_bits);
+		self.brush = brush;
+	}
+	// It moves with its offset; its draw order stays the spawn's.
+	fn set_offset(&mut self, x: f64, y: f64) {
+		let (x, y) = (x as f32, y as f32);
+		self.pos = (self.pos.0 - self.offset.0 + x, self.pos.1 - self.offset.1 + y);
+		self.offset = (x, y);
+	}
+	fn num(&self, n: Num) -> f64 {
+		match n {
+			Num::Scale => self.scale,
+			Num::Rotation => self.rotation,
+			Num::Saturation => self.saturation,
+			Num::HighlightFactor => self.highlight_factor,
+		}
+	}
+	fn set_num(&mut self, n: Num, v: f64) {
+		match n {
+			Num::Scale => self.scale = v,
+			Num::Rotation => self.rotation = v,
+			Num::Saturation => self.saturation = v,
+			Num::HighlightFactor => self.highlight_factor = v,
+		}
+	}
+	fn flag(&self, f: Flag) -> bool {
+		match f {
+			Flag::Visible => self.visible,
+			Flag::Flipped => self.flipped,
+			Flag::IgnoreAmbientColor => self.ignore_ambient,
+			Flag::IgnoreCameraFlip => self.ignore_camera_flip,
+		}
+	}
+	fn set_flag(&mut self, f: Flag, on: bool) {
+		match f {
+			Flag::Visible => self.visible = on,
+			Flag::Flipped => self.flipped = on,
+			Flag::IgnoreAmbientColor => self.ignore_ambient = on,
+			Flag::IgnoreCameraFlip => self.ignore_camera_flip = on,
+		}
+	}
+	fn highlight(&self) -> u32 {
+		self.highlight
+	}
+	fn set_highlight(&mut self, argb: u32) {
+		self.highlight = argb;
+	}
 }
 
 /// The payload of a `WorldDetail` instance.
 #[derive(Clone)]
 pub(crate) struct DetailHandle(pub(crate) Detail);
 
-impl DetailHandle {
-	fn get<R>(&self, f: impl FnOnce(&DetailData) -> R) -> R {
-		f(&self.0.borrow())
+impl SpriteHandle for DetailHandle {
+	fn with<R>(&self, f: impl FnOnce(&dyn SpriteState) -> R) -> R {
+		f(&*self.0.borrow())
 	}
-	fn set(&self, f: impl FnOnce(&mut DetailData)) {
-		f(&mut self.0.borrow_mut())
+	fn with_mut<R>(&mut self, f: impl FnOnce(&mut dyn SpriteState) -> R) -> R {
+		f(&mut *self.0.borrow_mut())
 	}
 }
 
-/// Build the `WorldDetail` class returned by `tile.spawnDetail(...)`. A brush set
-/// on a detail hints its atlas to `sprites`; a detail given a torque goes on
-/// `spinning`.
+/// Build the `WorldDetail` class returned by `tile.spawnDetail(...)`: the sprite class,
+/// whose details go on `spinning` once they may change on their own.
 pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites, spinning: &Spinning) -> SqClass<DetailHandle> {
-	let sprites = sprites.clone();
-	let (spin_torque, spin_brush) = (spinning.clone(), spinning.clone());
-	ClassBuilder::<DetailHandle>::new("WorldDetail")
-		.property(
-			"Alpha",
-			|d: &DetailHandle| d.get(|d| d.alpha),
-			|d: &mut DetailHandle, v: i64| d.set(|d| d.alpha = v),
-		)
-		// A float, like the original's (`0x4bcd00`).
-		.property(
-			"Torque",
-			|d: &DetailHandle| f64::from(d.get(|d| d.spin.torque)),
-			move |d: &mut DetailHandle, v: f64| {
-				d.set(|d| d.spin.torque = v as f32);
-				note_spin(&spin_torque, &d.0);
-			},
-		)
-		.property(
-			"Saturation",
-			|d: &DetailHandle| d.get(|d| d.saturation),
-			|d: &mut DetailHandle, v: f64| d.set(|d| d.saturation = v),
-		)
-		.property(
-			"Scale",
-			|d: &DetailHandle| d.get(|d| d.scale),
-			|d: &mut DetailHandle, v: f64| d.set(|d| d.scale = v),
-		)
-		.property(
-			"IgnoreAmbientColor",
-			|d: &DetailHandle| d.get(|d| d.ignore_ambient),
-			|d: &mut DetailHandle, v: bool| d.set(|d| d.ignore_ambient = v),
-		)
-		// A new brush brings its own rotation speed as the torque.
-		.method("setBrush", move |d: &mut DetailHandle, vm: &SQVM, brush: &str| {
-			let now = virtual_ms(vm);
-			d.set(|d| {
-				d.spin.rebrush(&sprites, &d.brush, brush);
-				d.anim.rebrush(&sprites, &d.brush, brush, now);
-				d.brush_bits = sprites.brush_bits(brush, d.brush_bits);
-				d.brush = brush.to_string();
-			});
-			note_spin(&spin_brush, &d.0);
-			sprites.hint(&sprites.texture_of(brush));
-		})
-		// A one-time change to its colour (see `sprite_color::brighten`).
-		.method("setBrightness", |d: &mut DetailHandle, v: f64| {
-			d.set(|d| {
-				let c = crate::native::sprite_color::brighten(d.tint | ((d.alpha as u32 & 0xff) << 24), v as f32);
-				d.tint = c & 0x00ff_ffff;
-				d.alpha = i64::from(c >> 24);
-			})
-		})
+	let spinning = spinning.clone();
+	let moving: Rc<dyn Fn(&DetailHandle)> = Rc::new(move |d: &DetailHandle| note_spin(&spinning, &d.0));
+	let b = ClassBuilder::<DetailHandle>::new("WorldDetail");
+	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: false, moving: Some(moving) })
 		.method("setDirty", |_d: &mut DetailHandle, _flag: bool| {})
 		.build(vm)
 }
@@ -235,6 +299,33 @@ mod tests {
 
 	fn flags(details: &[Detail]) -> Vec<i64> {
 		details.iter().map(|d| d.borrow().flags).collect()
+	}
+
+	#[test]
+	fn a_fade_out_and_hide_hides_it_when_drawn_after_it_ends() {
+		let (spinning, sprites): (Spinning, Sprites) = (Rc::default(), Sprites::default());
+		let d = detail(0);
+		d.borrow_mut().color.fade_out(100, 1.0, true);
+		note_spin(&spinning, &d);
+		assert!(d.borrow().color.is_fading(1.05));
+		turn_all(&spinning, &sprites, 0.0, 0, 1.05);
+		assert!(d.borrow().visible, "still fading");
+		turn_all(&spinning, &sprites, 0.0, 0, 1.2);
+		let done = d.borrow();
+		assert!(!done.visible && done.color.is_fading_done() && !done.color.is_fading(1.2));
+		assert!(spinning.borrow().is_empty(), "nothing left to step");
+		assert_eq!(done.scene(1.2).alpha, 0);
+	}
+
+	#[test]
+	fn an_offset_moves_it_from_its_tiles_centre() {
+		let d = detail(0);
+		{
+			let mut d = d.borrow_mut();
+			(d.pos, d.offset) = ((105.0, 210.0), (5.0, 10.0));
+			d.set_offset(-3.0, 0.0);
+		}
+		assert_eq!((d.borrow().pos, d.borrow().offset), ((97.0, 200.0), (-3.0, 0.0)));
 	}
 
 	#[test]

@@ -494,9 +494,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	fn turn_sprites(&self) {
 		let secs = self.time.virtual_seconds();
 		let (now, now_ms) = (secs as f32, (secs * 1000.0) as u32);
-		self.world_grid.turn(now, now_ms);
+		let real = self.time.real_seconds() as f32;
+		self.world_grid.turn(now, now_ms, real);
 		self.world_entities.turn(&self.vm, now, now_ms);
-		self.tactical_grid.turn(now, now_ms);
+		self.tactical_grid.turn(now, now_ms, real);
 		self.tactical_entities.turn(&self.vm, now, now_ms);
 	}
 

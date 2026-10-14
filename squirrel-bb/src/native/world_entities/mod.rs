@@ -34,7 +34,8 @@ use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
 use crate::native::{EntityIds, Sprites};
 use crate::native::spin::Spin;
-use crate::native::sprite_anim::{Anim, virtual_ms};
+use crate::native::sprite_anim::Anim;
+use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
 use crate::native::sprite_color::{SpriteColor, real_time};
 
 mod footprints;
@@ -72,6 +73,11 @@ struct SpriteData {
 	in_portrait: bool,
 	/// Degrees, counter-clockwise (`Rotation`).
 	rotation: f32,
+	saturation: f64,
+	/// `Highlight` (ARGB), blended over the sprite by `HighlightFactor`.
+	highlight: u32,
+	highlight_factor: f64,
+	ignore_camera_flip: bool,
 	/// Its `Torque` (see `spin`).
 	spin: Spin,
 	/// The frame of its brush it shows (see `sprite_anim`).
@@ -95,6 +101,10 @@ impl SpriteData {
 			colorization: true,
 			in_portrait: true,
 			rotation: 0.0,
+			saturation: 1.0,
+			highlight: 0,
+			highlight_factor: 0.0,
+			ignore_camera_flip: false,
 			spin: Spin::default(),
 			anim: Anim::default(),
 			brush_bits: 0,
@@ -473,90 +483,88 @@ fn set_tile_occupied(vm: &SQVM, q: i64, r: i64, occupied: bool) -> Result<(), St
 	tile.set_member(vm, "IsOccupied", occupied)
 }
 
-/// Build the sprite class returned by `addSprite`. Brushes resolve through `sprites`
-/// (see [`Sprites::resolve`]).
+impl SpriteState for SpriteData {
+	fn color(&self) -> &SpriteColor {
+		&self.color
+	}
+	fn color_mut(&mut self) -> &mut SpriteColor {
+		&mut self.color
+	}
+	fn anim(&self) -> &Anim {
+		&self.anim
+	}
+	fn anim_mut(&mut self) -> &mut Anim {
+		&mut self.anim
+	}
+	fn spin(&self) -> &Spin {
+		&self.spin
+	}
+	fn spin_mut(&mut self) -> &mut Spin {
+		&mut self.spin
+	}
+	fn brush(&self) -> &str {
+		&self.brush
+	}
+	fn store_brush(&mut self, sprites: &Sprites, brush: String) {
+		self.brush_bits = sprites.brush_bits(&brush, self.brush_bits);
+		self.brush = brush;
+	}
+	fn set_offset(&mut self, x: f64, y: f64) {
+		self.offset = (x, y);
+	}
+	fn num(&self, n: Num) -> f64 {
+		match n {
+			Num::Scale => self.scale,
+			Num::Rotation => f64::from(self.rotation),
+			Num::Saturation => self.saturation,
+			Num::HighlightFactor => self.highlight_factor,
+		}
+	}
+	fn set_num(&mut self, n: Num, v: f64) {
+		match n {
+			Num::Scale => self.scale = v,
+			Num::Rotation => self.rotation = v as f32,
+			Num::Saturation => self.saturation = v,
+			Num::HighlightFactor => self.highlight_factor = v,
+		}
+	}
+	fn flag(&self, f: Flag) -> bool {
+		match f {
+			Flag::Visible => self.visible,
+			Flag::Flipped => self.flipped,
+			Flag::IgnoreAmbientColor => self.ignore_ambient,
+			Flag::IgnoreCameraFlip => self.ignore_camera_flip,
+		}
+	}
+	fn set_flag(&mut self, f: Flag, on: bool) {
+		match f {
+			Flag::Visible => self.visible = on,
+			Flag::Flipped => self.flipped = on,
+			Flag::IgnoreAmbientColor => self.ignore_ambient = on,
+			Flag::IgnoreCameraFlip => self.ignore_camera_flip = on,
+		}
+	}
+	fn highlight(&self) -> u32 {
+		self.highlight
+	}
+	fn set_highlight(&mut self, argb: u32) {
+		self.highlight = argb;
+	}
+}
+
+impl SpriteHandle for SpriteData {
+	fn with<R>(&self, f: impl FnOnce(&dyn SpriteState) -> R) -> R {
+		f(self)
+	}
+	fn with_mut<R>(&mut self, f: impl FnOnce(&mut dyn SpriteState) -> R) -> R {
+		f(self)
+	}
+}
+
+/// Build the sprite class `addSprite` hands out (see `sprite_class`).
 fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
-	let (set_with, get_with, reset_with) = (sprites.clone(), sprites.clone(), sprites.clone());
-	ClassBuilder::<SpriteData>::new("WorldEntitySprite")
-		// `Alpha` is the colour's top byte, an integer (`0x504b40` family).
-		.property(
-			"Alpha",
-			|s: &SpriteData| s.color.alpha(),
-			|s: &mut SpriteData, v: i64| s.color.set_alpha(v),
-		)
-		.property(
-			"Scale",
-			|s: &SpriteData| s.scale,
-			|s: &mut SpriteData, v: f64| s.scale = v,
-		)
-		.property(
-			"Visible",
-			|s: &SpriteData| s.visible,
-			|s: &mut SpriteData, v: bool| s.visible = v,
-		)
-		.property(
-			"IgnoreAmbientColor",
-			|s: &SpriteData| s.ignore_ambient,
-			|s: &mut SpriteData, v: bool| s.ignore_ambient = v,
-		)
-		.property(
-			"Rotation",
-			|s: &SpriteData| f64::from(s.rotation),
-			|s: &mut SpriteData, v: f64| s.rotation = v as f32,
-		)
-		.property(
-			"Torque",
-			|s: &SpriteData| f64::from(s.spin.torque),
-			|s: &mut SpriteData, v: f64| s.spin.torque = v as f32,
-		)
-		.property(
-			"IsFadingDone",
-			|s: &SpriteData| s.color.is_fading_done(),
-			|_s: &mut SpriteData, _v: bool| {},
-		)
-		.property_obj_rw(
-			"Color",
-			|s: &SpriteData, vm: &SQVM| super::color::color_object(vm, s.color.color),
-			|s: &mut SpriteData, vm: &SQVM, v: SqStrongRef| {
-				s.color.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
-				Ok(())
-			},
-		)
-		.property("HasBrush", |s: &SpriteData| !s.brush.is_empty(), |_s: &mut SpriteData, _v: bool| {})
-		.method("setBrush", move |s: &mut SpriteData, vm: &SQVM, brush: &str| {
-			let brush = set_with.resolve(brush);
-			s.spin.rebrush(&set_with, &s.brush, &brush);
-			s.anim.rebrush(&set_with, &s.brush, &brush, virtual_ms(vm));
-			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);
-			s.brush = brush;
-		})
-		.method("resetBrush", move |s: &mut SpriteData| {
-			s.brush.clear();
-			s.brush_bits = reset_with.brush_bits("", s.brush_bits);
-		})
-		.method("getBrush", move |s: &mut SpriteData, vm: &SQVM| -> Option<SqStrongRef> {
-			get_with.brush_object(vm, &s.brush)
-		})
-		.method("setOffset", |s: &mut SpriteData, vm: &SQVM, offset: Retained| {
-			s.offset = vec_xy(vm, &offset.0)
-		})
-		.method("setHorizontalFlipping", |s: &mut SpriteData, flipped: bool| s.flipped = flipped)
-		// Its brush's frames (see `sprite_anim`).
-		.method("play", |s: &mut SpriteData, vm: &SQVM| s.anim.play(virtual_ms(vm)))
-		.method("stop", |s: &mut SpriteData| s.anim.stop())
-		.method("finish", |s: &mut SpriteData| s.anim.finish())
-		// Fades run on real time and finish when the sprite is drawn (see `SpriteColor`).
-		.method("fadeIn", |s: &mut SpriteData, vm: &SQVM, ms: i64| s.color.fade_in(ms, real_time(vm)))
-		.method("fadeOut", |s: &mut SpriteData, vm: &SQVM, ms: i64| {
-			s.color.fade_out(ms, real_time(vm), false)
-		})
-		.method("fadeOutAndHide", |s: &mut SpriteData, vm: &SQVM, ms: i64| {
-			s.color.fade_out(ms, real_time(vm), true)
-		})
-		.method("fadeToAlpha", |s: &mut SpriteData, vm: &SQVM, alpha: i64, ms: i64| {
-			s.color.fade_to_alpha(alpha, ms, real_time(vm))
-		})
-		.build(vm)
+	let b = ClassBuilder::<SpriteData>::new("WorldEntitySprite");
+	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: false, moving: None }).build(vm)
 }
 
 /// Build the inert label stub class returned by `addLabel`.

@@ -138,6 +138,13 @@ impl Anim {
 		self.run.as_ref().map_or(0, |r| r.frame)
 	}
 
+	/// `Finished`: its frames have stopped (`stop`, `finish`, or the end of its run)
+	/// and `play` hasn't started them again (the sprite's flag bit 2: set at
+	/// `0x504b30`, `0x52c100` and `0x504b17`, cleared at `0x52c0e0`).
+	pub(crate) fn finished(&self) -> bool {
+		self.run.as_ref().is_some_and(|r| r.stopped)
+	}
+
 	/// Whether a step may still change it (it needn't be visited otherwise).
 	pub(crate) fn running(&self) -> bool {
 		self.run.as_ref().is_none_or(|r| !r.stopped)

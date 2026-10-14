@@ -85,6 +85,14 @@ impl SqStrongRef {
 		held
 	}
 
+	/// A bool, held: for a value an object-valued accessor reads.
+	pub fn bool(vm: &SQVM, value: bool) -> Self {
+		unsafe { squirrel_sys::sq_pushbool(vm.as_ptr(), value as squirrel_sys::SQBool) };
+		let held = Self::from_stack(vm, -1);
+		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
+		held
+	}
+
 	/// A new, empty userdata object, held: an opaque per-object token scripts can see
 	/// but not use.
 	pub fn userdata(vm: &SQVM) -> Self {

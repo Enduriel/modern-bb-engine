@@ -13,6 +13,7 @@ use super::{GridState, TileData, WorldGrid, bound_camera, fog_extent};
 use crate::native::save::original::record::{Head, SceneEntity, Text};
 use crate::native::save::original::scene::{Grid, HexTileLayer, TILE_ALWAYS};
 use crate::native::save::original::sprite::{ALWAYS, BRUSH_BITS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, VISIBLE};
+use crate::native::sprite_color::SpriteColor;
 use crate::native::world_detail::{self, DetailData};
 use crate::native::world_entities::{argb, rgba};
 use crate::native::world_layout;
@@ -157,7 +158,10 @@ impl WorldGrid {
 /// A decoration as the original saves it (a `WorldDecal`, see `spawnDetail`).
 fn decal(g: &GridState, d: &DetailData) -> SceneEntity {
 	let look = g.sprites.with(|r| BrushLook::of(r, &d.brush));
-	let mut flags = ALWAYS | VISIBLE | d.brush_bits;
+	let mut flags = ALWAYS | d.brush_bits;
+	if d.visible {
+		flags |= VISIBLE;
+	}
 	if d.flipped {
 		flags |= FLIPPED;
 	}
@@ -179,7 +183,7 @@ fn decal(g: &GridState, d: &DetailData) -> SceneEntity {
 		body: Body::Sprite(Sprite {
 			brush: look.hash,
 			flags,
-			color: rgba(((d.alpha as u32 & 0xff) << 24) | (d.tint & 0x00ff_ffff)),
+			color: rgba(d.color.color),
 			scale: d.scale as f32,
 			rotation: d.rotation as f32,
 			saturation: d.saturation as f32,
@@ -229,21 +233,22 @@ fn add_decal(g: &mut GridState, e: &SceneEntity) {
 	let (depth_bias, rotation_speed) = g
 		.sprites
 		.with(|reg| reg.get(&brush).map_or((0, 0.0), |(_, s)| (i64::from(s.depth_bias), s.rotation_speed)));
-	let color = argb(sprite.color);
+	let (cx, cy) = world_layout::tile_pos(q, r + q / 2);
 	let mut data = DetailData {
 		brush,
 		// The z level it was spawned with, as far as its containing tile tells.
 		z_level: i64::from(e.head.z) - y as i64 - depth_bias + (r & 1),
 		flags: i64::from(e.head.u34),
 		flipped: sprite.flags & FLIPPED != 0,
-		alpha: i64::from(color >> 24),
+		visible: sprite.flags & VISIBLE != 0,
+		color: SpriteColor::new(argb(sprite.color)),
 		rotation: sprite.rotation.into(),
 		saturation: sprite.saturation.into(),
 		scale: sprite.scale.into(),
-		tint: color & 0x00ff_ffff,
 		ignore_ambient: sprite.flags & IGNORE_AMBIENT_COLOR != 0,
 		id: e.head.id.into(),
 		pos: e.head.pos,
+		offset: (e.head.pos.0 - cx as f32, e.head.pos.1 - cy as f32),
 		z: e.head.z,
 		brush_bits: sprite.flags & BRUSH_BITS,
 		..DetailData::default()

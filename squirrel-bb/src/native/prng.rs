@@ -40,6 +40,12 @@ pub(crate) struct Prng {
 	state: Rc<RefCell<State>>,
 }
 
+impl Default for Prng {
+	fn default() -> Self {
+		Prng::new()
+	}
+}
+
 impl Prng {
 	/// A new generator. The twister starts at the C++ default seed (5489) and the C
 	/// runtime stream at its default (`srand(1)`); the game seeds explicitly wherever

@@ -31,9 +31,13 @@ use std::rc::Rc;
 use bb_assets::SpriteRegistry;
 use squirrel::{Retained, SQVM, SqStrongRef, SqTable};
 
+use crate::native::prng::Prng;
+
 #[derive(Default)]
 struct State {
 	registry: RefCell<SpriteRegistry>,
+	/// The C runtime's `rand()`, which the sprite class's `vary…` draw from.
+	crt: Prng,
 	loaded: Cell<bool>,
 	/// Paths hinted since the last [`Sprites::take_hints`], in order, each once.
 	hints: RefCell<Queue>,
@@ -61,8 +65,9 @@ impl Queue {
 	}
 }
 
-/// The engine's sprite registry, shared with the natives that read it. It holds no
-/// VM handles, so it needs no teardown before the VM closes.
+/// The engine's sprite registry, shared with the natives that read it, and the random
+/// stream sprites draw from. It holds no VM handles, so it needs no teardown before the
+/// VM closes.
 #[derive(Clone, Default)]
 pub struct Sprites(Rc<State>);
 
@@ -71,6 +76,11 @@ impl Sprites {
 	pub fn set(&self, registry: SpriteRegistry) {
 		*self.0.registry.borrow_mut() = registry;
 		self.0.loaded.set(true);
+	}
+
+	/// The C runtime's `rand()`, which the sprite class's `vary…` draw from.
+	pub(crate) fn crt(&self) -> Prng {
+		self.0.crt.clone()
 	}
 
 	/// Read the registry.
@@ -154,9 +164,10 @@ impl Sprites {
 	}
 }
 
-/// Register `doesBrushExist` over a new, empty registry and return the registry.
-pub(crate) fn install(vm: &mut SQVM) -> Sprites {
-	let sprites = Sprites::default();
+/// Register `doesBrushExist` over a new, empty registry and return the registry, its
+/// sprites drawing from `crt`.
+pub(crate) fn install(vm: &mut SQVM, crt: Prng) -> Sprites {
+	let sprites = Sprites(Rc::new(State { crt, ..State::default() }));
 	let lookup = sprites.clone();
 	vm.register("doesBrushExist", move |vm: &SQVM, name: Retained| {
 		let name = name.0.get_value::<String>(vm);

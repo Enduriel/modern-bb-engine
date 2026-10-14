@@ -90,6 +90,12 @@ impl SpriteColor {
 		self.fade.is_none()
 	}
 
+	/// `Fading` at real time `now`: a fade is under way and its time isn't up
+	/// (`0x4b9860`). One that ran out is not fading, though not done until drawn.
+	pub fn is_fading(&self, now: f32) -> bool {
+		self.fade.is_some_and(|f| f.length > now - f.start)
+	}
+
 	/// Fade to `target` over `ms` milliseconds from real time `now` (seconds);
 	/// `hide` hides the sprite when it ends.
 	pub fn fade_to(&mut self, target: u32, ms: i64, now: f32, hide: bool) {
