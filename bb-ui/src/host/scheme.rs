@@ -54,10 +54,16 @@ pub(super) fn scheme_options() -> i32 {
 /// Which bridge call the page made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestKind {
-	/// `engine.call(...)`: run a handler in the game.
+	/// `engine.call(...)` from inside one of the game's calls into the page: run a
+	/// handler in the game.
 	Call,
+	/// `engine.call(...)` from one of the page's own tasks (an animation frame, a
+	/// timer, input): the same, but the game wasn't calling the page.
+	Task,
 	/// The result of a call the game made into the page while the page was waiting.
 	Resume,
+	/// The page parks: it waits until the game lets it go on (`UiHost::park`).
+	Park,
 }
 
 /// One response being read.
@@ -177,7 +183,9 @@ wrap_resource_handler! {
 			if let Some(kind) = path.strip_prefix(BRIDGE_PREFIX) {
 				let kind = match kind {
 					"call" => RequestKind::Call,
+					"task" => RequestKind::Task,
 					"resume" => RequestKind::Resume,
+					"park" => RequestKind::Park,
 					_ => return 0,
 				};
 				let Some(callback) = callback else { return 0 };

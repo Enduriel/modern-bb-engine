@@ -2,9 +2,10 @@
 //! (offscreen, headless) against the real scripts, boots to the main menu, and a real
 //! mouse click on "New Campaign" opens the new-campaign menu, whose origin list the
 //! mouse wheel scrolls and which "Cancel" closes; Options round-trips its settings;
-//! calls between scripts and page run inline both ways, as in the original. Images with
-//! nothing to show paint nothing and right clicks open no menu, as in Coherent. Skips
-//! if there is no Steam install.
+//! calls between scripts and page run inline both ways, as in the original, and the
+//! page's own tasks run between the scripts, never inside one. Images with nothing to
+//! show paint nothing and right clicks open no menu, as in Coherent. Skips if there is
+//! no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -19,6 +20,7 @@ use std::time::{Duration, Instant};
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{HostConfig, MouseButton, UiSession};
 use bb_ui::json::Json;
+use squirrel::SqTable;
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition {
@@ -237,6 +239,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 
 	images_with_nothing_to_show_paint_nothing(&session)?;
 	right_clicks_reach_the_page(&session)?;
+	page_tasks_run_between_scripts(&session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -247,6 +250,55 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	ensure(
 		problems.is_empty(),
 		format!("page or bridge errors:\n{}", problems.join("\n")),
+	)
+}
+
+/// The page's own tasks (here a timer) run between the scripts, as the original's UI
+/// runs on the game's thread: a timer that keeps the page busy while a script calls
+/// into the page reaches the scripts after that script, not in the middle of its call.
+fn page_tasks_run_between_scripts(session: &UiSession) -> Result<(), String> {
+	session.engine().run_script(
+		r#"
+		::__inScript <- false;
+		::__fromTask <- [];
+		::RootState.get("MainMenuState").m.MainMenuScreen.__fromTask <- function () { ::__fromTask.push(::__inScript); };
+		"#,
+		"listen",
+	)?;
+	session.eval(
+		"setTimeout(function () {
+			var until = Date.now() + 300;
+			while (Date.now() < until) {}
+			SQ.call(Screens.MainMenuScreen.mSQHandle, '__fromTask');
+		}, 0); 0",
+	)?;
+	// Time for the timer to start, if the page may run now.
+	std::thread::sleep(Duration::from_millis(50));
+	session.engine().run_script(
+		"::__inScript = true; ::Tooltip.hide(); ::__inScript = false;",
+		"a script calling the page",
+	)?;
+	let calls = || {
+		session
+			.engine()
+			.run_script("::__calls <- ::__fromTask.len();", "count")?;
+		Ok::<_, String>(
+			SqTable::root(session.engine().vm())
+				.get::<i64>("__calls")
+				.unwrap_or(0),
+		)
+	};
+	session.pump_until(Duration::from_secs(5), |_| calls().is_ok_and(|n| n > 0));
+	ensure(
+		calls()? == 1,
+		format!("the page's timer reached the scripts {} times", calls()?),
+	)?;
+	session
+		.engine()
+		.run_script("::__inside <- ::__fromTask[0];", "check")?;
+	ensure(
+		SqTable::root(session.engine().vm()).get::<bool>("__inside") == Some(false),
+		"the page's timer reached the scripts inside a script's call into the page",
 	)
 }
 

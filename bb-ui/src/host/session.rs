@@ -103,6 +103,7 @@ impl UiSession {
 	/// Modern Hooks, the page first loads every mod's JS and then resumes the boot (its
 	/// handshake), so this runs the page for up to 10 s until it has.
 	pub fn boot_menu(&self) -> Result<(), String> {
+		self.park();
 		harness::boot_menu_with(&self.engine, 600, || {
 			self.pump_until_deadline(Instant::now() + Duration::from_micros(16_667));
 			Ok(())
@@ -142,7 +143,7 @@ impl UiSession {
 	fn handle(&self, event: Event) {
 		match event {
 			Event::Request {
-				kind: RequestKind::Call,
+				kind: RequestKind::Call | RequestKind::Task,
 				body,
 				responder,
 			} => {
@@ -179,25 +180,61 @@ impl UiSession {
 		}
 	}
 
-	/// Handle everything the page sent so far (its calls into the scripts run now).
-	pub fn pump(&self) {
-		for event in self.host().poll() {
-			self.handle(event);
+	/// Park the page (see [`UiHost::park`]): its own tasks (animation frames, timers,
+	/// input) wait until the session pumps, as the original's UI waits for the game's
+	/// thread. The session keeps the page parked whenever the scripts may run: every
+	/// method returns with it parked, but [`unpark`](Self::unpark).
+	pub fn park(&self) {
+		let (vm, bridge) = (self.engine.vm(), self.engine.ui());
+		let parked = self
+			.host()
+			.park(&mut |message| self.protocol.handle_message(vm, bridge, message));
+		if let Err(error) = parked {
+			self.record("bridge", format!("the page didn't park: {error}"));
+		}
+		self.report_notes();
+	}
+
+	/// Let the page run its own tasks until the session parks it again (before the
+	/// scripts next run). For a game loop that draws while the page works.
+	pub fn unpark(&self) {
+		self.host().unpark();
+	}
+
+	fn report_notes(&self) {
+		for note in self.host().take_notes() {
+			self.record("bridge", note);
 		}
 	}
 
-	/// Handle the page's events as they come until `deadline`.
+	/// Let the page run until it has done what it had to (its calls into the scripts
+	/// run now), then park it again.
+	pub fn pump(&self) {
+		self.unpark();
+		for event in self.host().poll() {
+			self.handle(event);
+		}
+		self.park();
+	}
+
+	/// Let the page run, handling its events as they come until `deadline`, then park
+	/// it again.
 	fn pump_until_deadline(&self, deadline: Instant) {
-		self.pump();
+		self.unpark();
+		for event in self.host().poll() {
+			self.handle(event);
+		}
 		while let Some(left) = deadline.checked_duration_since(Instant::now()) {
 			match self.host().next_event(left) {
 				Some(event) => self.handle(event),
 				None => break,
 			}
 		}
+		self.park();
 	}
 
-	/// Pump until `done` holds (true) or `timeout` passes (false).
+	/// Pump until `done` holds (true) or `timeout` passes (false). `done` runs with the
+	/// page parked, so it may run scripts.
 	pub fn pump_until(&self, timeout: Duration, done: impl Fn(&Self) -> bool) -> bool {
 		let deadline = Instant::now() + timeout;
 		loop {
@@ -218,6 +255,7 @@ impl UiSession {
 	pub fn run_frames(&self, seconds: f64) -> Result<(), String> {
 		let frame = Duration::from_micros(16_667);
 		let frames = (seconds * 60.0).round().max(1.0) as u64;
+		self.park();
 		for _ in 0..frames {
 			let start = Instant::now();
 			self.engine.frame(1000.0 / 60.0)?;

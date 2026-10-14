@@ -74,6 +74,7 @@ wrap_render_process_handler! {
 			let function = match name.as_str() {
 				ipc::CALL => "__bbCall",
 				ipc::EVAL => "__bbEval",
+				ipc::PARK => "__bbPark",
 				_ => return 0,
 			};
 			let id = ipc::int_arg(message, 0);

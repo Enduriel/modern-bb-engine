@@ -4,16 +4,19 @@
 //!
 //! Browser → renderer:
 //! - [`CALL`] `(id, entry)`: run an SQ→JS entry now and reply (`__bbCall`);
-//! - [`EVAL`] `(id, code)`: evaluate test code and reply (`__bbEval`).
+//! - [`EVAL`] `(id, code)`: evaluate test code and reply (`__bbEval`);
+//! - [`PARK`] `(id)`: park (`__bbPark`), replying once the game lets the page go
+//!   on, or at once if the page has no bridge yet.
 //!
 //! Renderer → browser:
-//! - [`REPLY`] `(id, ok, text)`: the answer to a `CALL` or `EVAL`: its JSON result if
-//!   `ok` is 1, else why it couldn't run.
+//! - [`REPLY`] `(id, ok, text)`: the answer to a `CALL`, `EVAL` or `PARK`: its JSON
+//!   result if `ok` is 1, else why it couldn't run.
 
 use cef::*;
 
 pub const CALL: &str = "bb.call";
 pub const EVAL: &str = "bb.eval";
+pub const PARK: &str = "bb.park";
 pub const REPLY: &str = "bb.reply";
 
 /// An argument of a process message.

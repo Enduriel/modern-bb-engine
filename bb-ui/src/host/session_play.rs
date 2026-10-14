@@ -36,9 +36,10 @@ const START_CAMPAIGN: &str = r#"::RootState.get("MainMenuState").campaign_menu_m
 });"#;
 
 impl UiSession {
-	/// One frame of `ms` real time: the game's frame, the page laid out at the UI
-	/// scale, and the page's calls into the game answered.
+	/// One frame of `ms` real time: the game's frame (the page parked), the page laid
+	/// out at the UI scale, and the page's turn, its calls into the game answered.
 	pub fn step(&self, ms: f64) -> Result<(), String> {
+		self.park();
 		self.engine().frame(ms)?;
 		self.follow_ui_scale();
 		self.pump();
@@ -50,6 +51,7 @@ impl UiSession {
 	/// next frames.
 	pub fn start_campaign(&self, seed: &str) -> Result<(), String> {
 		let seed = Json::Str(seed.to_string()).to_text();
+		self.park();
 		self.engine()
 			.run_script(&START_CAMPAIGN.replace("{seed}", &seed), "start campaign")
 	}

@@ -18,6 +18,14 @@
 //!   and its result comes back as the next XHR (`__bb__/resume`), because a renderer
 //!   blocked in an XHR can't receive process messages.
 //!
+//! The page runs in its own process, so its own tasks (animation frames, timers,
+//! input) could run while the game runs a script, and call into the game in the middle
+//! of one of the script's calls into the page. The original can't do that: its UI runs
+//! on the game's thread, between the game's scripts. So the page is **parked** while
+//! the game runs scripts ([`UiHost::park`]): it waits in a bridge request
+//! (`__bb__/park`) that the game answers when it lets it go on, and the game's calls
+//! reach it as that request's answers, as while it waits in a call.
+//!
 //! A page that doesn't answer in time makes the call fail (and the game carry on)
 //! instead of hanging. Every process runs the same binary: call [`run_subprocess`]
 //! first thing in `main`.
@@ -140,8 +148,14 @@ pub struct UiHost {
 	events: mpsc::Receiver<Event>,
 	/// Events set aside while a blocking call waited.
 	deferred: RefCell<VecDeque<Event>>,
-	/// The page's call into the game that is being served (the page is blocked in it).
+	/// The request the page is blocked in: its call into the game that is being
+	/// served, or its park.
 	pending: RefCell<Option<Responder>>,
+	/// Whether the page is parked (its park request is `pending`, or out carrying a
+	/// call into the page).
+	parked: Cell<bool>,
+	/// What went wrong between the game and the page, for the owner to report.
+	notes: RefCell<Vec<String>>,
 	next_request: Cell<i32>,
 	/// Where the mouse was last sent, if anywhere.
 	pointer: Cell<Option<(i32, i32)>>,
@@ -206,6 +220,8 @@ impl UiHost {
 			events,
 			deferred: RefCell::new(VecDeque::new()),
 			pending: RefCell::new(None),
+			parked: Cell::new(false),
+			notes: RefCell::new(Vec::new()),
 			next_request: Cell::new(1),
 			pointer: Cell::new(None),
 			held: Cell::new(0),
@@ -304,24 +320,101 @@ impl UiHost {
 		}
 	}
 
+	/// Park the page (see the module notes): it waits in a request the game answers
+	/// when it [`unpark`](Self::unpark)s it, and the game's calls into it meanwhile
+	/// travel as that request's answers. Its own tasks (animation frames, timers,
+	/// input) don't run until then. Waits for the page to finish what it's doing,
+	/// serving its calls into the game meanwhile. Nothing to do if the page is parked
+	/// already, or blocked in a call the game is serving.
+	pub fn park(&self, serve: &mut Serve) -> Result<(), String> {
+		if self.parked.get() || self.pending.borrow().is_some() {
+			return Ok(());
+		}
+		let id = self.next_id();
+		self.send(ipc::PARK, &[Arg::Int(id)])?;
+		let mut deadline = Instant::now() + CALL_TIMEOUT;
+		loop {
+			let late = || format!("the page did not park within {CALL_TIMEOUT:?}");
+			let left = deadline
+				.checked_duration_since(Instant::now())
+				.ok_or_else(late)?;
+			match self.events.recv_timeout(left).map_err(|_| late())? {
+				Event::Request {
+					kind: RequestKind::Park,
+					responder,
+					..
+				} => {
+					self.pending.replace(Some(responder));
+					self.parked.set(true);
+					return Ok(());
+				}
+				// No bridge in the page yet: none of its scripts run.
+				Event::Reply { id: reply, .. } if reply == id => return Ok(()),
+				Event::Request {
+					kind: RequestKind::Call | RequestKind::Task,
+					body,
+					responder,
+				} => {
+					self.serve(responder, &body, serve);
+					deadline = Instant::now() + CALL_TIMEOUT;
+				}
+				Event::RendererGone(why) => {
+					let error = format!("the page crashed: {why}");
+					self.deferred
+						.borrow_mut()
+						.push_back(Event::RendererGone(why));
+					return Err(error);
+				}
+				other => self.deferred.borrow_mut().push_back(other),
+			}
+		}
+	}
+
+	/// Let the parked page go on (see [`park`](Self::park)).
+	pub fn unpark(&self) {
+		if self.parked.replace(false) {
+			if let Some(responder) = self.pending.take() {
+				responder.respond(r#"{"done":true}"#.into());
+			}
+		}
+	}
+
+	/// Whether the page is parked.
+	pub fn is_parked(&self) -> bool {
+		self.parked.get()
+	}
+
+	/// What went wrong between the game and the page since the last call: e.g. one of
+	/// the page's own tasks calling into the game while a script's call waited on the
+	/// page, which parking prevents.
+	pub fn take_notes(&self) -> Vec<String> {
+		self.notes.take()
+	}
+
+	fn next_id(&self) -> i32 {
+		let id = self.next_request.get();
+		self.next_request.set(id.wrapping_add(1));
+		id
+	}
+
 	/// Run `text` in the page as `kind` ([`ipc::CALL`] or [`ipc::EVAL`]) and wait for
 	/// its result, serving the page's calls into the game meanwhile.
 	fn run_in_page(&self, kind: &str, text: &str, serve: &mut Serve) -> Result<String, String> {
-		// If the page is blocked in a call into the game, this is a nested call: it
-		// travels as that call's answer.
+		// If the page waits (parked, or blocked in a call into the game), this is a
+		// nested call: it travels as that request's answer.
 		let nested = match self.pending.take() {
-			Some(responder) if kind == ipc::CALL => {
-				responder.respond(format!("{{\"nested\":{text}}}"));
-				true
-			}
 			Some(responder) => {
-				self.pending.replace(Some(responder));
-				return Err("the page is busy in a call into the game".into());
+				let entry = if kind == ipc::EVAL {
+					Json::Array(vec![Json::Str("e".into()), Json::Str(text.into())]).to_text()
+				} else {
+					text.to_string()
+				};
+				responder.respond(format!("{{\"nested\":{entry}}}"));
+				true
 			}
 			None => false,
 		};
-		let id = self.next_request.get();
-		self.next_request.set(id.wrapping_add(1));
+		let id = self.next_id();
 		if !nested {
 			self.send(kind, &[Arg::Int(id), Arg::Str(text)])?;
 		}
@@ -346,10 +439,16 @@ impl UiHost {
 					return Ok(body);
 				}
 				Event::Request {
-					kind: RequestKind::Call,
+					kind: kind @ (RequestKind::Call | RequestKind::Task),
 					body,
 					responder,
 				} => {
+					if kind == RequestKind::Task && !nested {
+						self.notes.borrow_mut().push(format!(
+							"the page's own task called the game ({}) while the game's call into the page waited",
+							body.chars().take(80).collect::<String>()
+						));
+					}
 					self.serve(responder, &body, serve);
 					deadline = Instant::now() + CALL_TIMEOUT;
 				}

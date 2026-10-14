@@ -137,6 +137,7 @@ impl Game {
 	}
 
 	fn mouse(&mut self, input: MouseInput) -> Result<(), String> {
+		self.front.park();
 		self.engine().root_state().mouse_input(self.engine().vm(), input).map(|_| ())
 	}
 

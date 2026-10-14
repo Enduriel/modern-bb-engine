@@ -65,9 +65,19 @@ impl Front {
 		&self.session
 	}
 
-	/// Advance the game by `ms` of real time, answering the page.
+	/// Advance the game by `ms` of real time, answering the page. The page then runs
+	/// on while the frame is drawn, until the scripts next run.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
-		self.session.step(ms)
+		self.session.step(ms)?;
+		self.session.unpark();
+		Ok(())
+	}
+
+	/// Before the scripts run outside a step (the player's input): the page waits
+	/// until the next step lets it go on, as the original's UI runs between the
+	/// game's scripts.
+	pub fn park(&mut self) {
+		self.session.park();
 	}
 
 	/// The cursor moved to the screen pixel `(x, y)`: the page's mouse follows, and
