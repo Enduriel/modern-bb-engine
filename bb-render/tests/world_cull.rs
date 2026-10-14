@@ -33,7 +33,7 @@ fn a_view_draws_the_same_from_only_the_tiles_it_shows() {
 		([w / 2.0, h / 2.0], 0.4),
 	];
 	engine.sprites().with(|registry| {
-		for (center, zoom) in views {
+		for (i, (center, zoom)) in views.into_iter().enumerate() {
 			let view = WorldView {
 				center,
 				zoom,
@@ -45,7 +45,11 @@ fn a_view_draws_the_same_from_only_the_tiles_it_shows() {
 			let fonts = || WorldFonts { label: None, region: None };
 			let all = world_quads(&whole, registry, &view, fonts());
 			let some = world_quads(&cut, registry, &view, fonts());
-			assert!(!all.quads.is_empty());
+			// The start is on land; a corner may be open sea, and the clouds over it drift
+			// from an unseeded engine RNG.
+			if i == 0 {
+				assert!(!all.quads.is_empty(), "the start view draws something");
+			}
 			assert_eq!(some.atlases.paths, all.atlases.paths, "view at {center:?}, zoom {zoom}");
 			assert_eq!(some.labels_from, all.labels_from);
 			assert!(some.quads == all.quads, "view at {center:?}, zoom {zoom}: the same quads");
