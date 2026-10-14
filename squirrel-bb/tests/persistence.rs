@@ -73,3 +73,47 @@ fn enumerate_files_takes_one_argument_and_null_lists_nothing() {
 		.expect_err("no directory is an error");
 	assert!(err.contains("wrong number of parameters"), "{err}");
 }
+
+/// Storages are files in the original's container, so a mod's data is the same file for
+/// both engines: one the original wrote reads back here, and one written here has the
+/// original's header and `u16`-length strings.
+#[test]
+fn storages_are_the_originals_files() {
+	let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("storages_are_the_originals_files");
+	let _ = std::fs::remove_dir_all(&dir);
+	std::fs::create_dir_all(&dir).unwrap();
+	// A storage as the original writes it: magic, format 2, version 0, the creation and
+	// modification times, the label, no metadata, the end magic, then the body:
+	// writeString("hi"), writeU8(7).
+	let header = |label: &[u8]| {
+		let mut h = vec![0xbb, 0, 2, 0, 0, 0, 0];
+		h.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+		h.extend_from_slice(&1_700_000_000u64.to_le_bytes());
+		h.extend_from_slice(&(label.len() as u16).to_le_bytes());
+		h.extend_from_slice(label);
+		h.extend_from_slice(&[0, 0, 0xbb, 0]);
+		h
+	};
+	let body = [2, 0, b'h', b'i', 7];
+	std::fs::write(dir.join("MSU#x.sav"), [header(b"MSU#x"), body.to_vec()].concat()).unwrap();
+
+	let engine = Engine::new(NoScripts);
+	engine.saves().set_directory(dir.clone());
+	engine
+		.run_script(
+			r#"
+			local r = ::PersistenceManager.loadStorage("MSU#x");
+			assert(r.getMetaData().getName() == "MSU#x");
+			assert(r.readString() == "hi" && r.readU8() == 7);
+			local w = ::PersistenceManager.createStorage("mine");
+			w.beginWrite(); w.writeString("hi"); w.writeU8(7); w.endWrite();
+			"#,
+			"original storages",
+		)
+		.expect("an original storage reads back");
+	let mine = std::fs::read(dir.join("mine.sav")).unwrap();
+	let expected = [header(b"mine"), body.to_vec()].concat();
+	assert_eq!(mine[..7], expected[..7]);
+	// The times are now; the rest is as the original writes it.
+	assert_eq!(mine[23..], expected[23..]);
+}

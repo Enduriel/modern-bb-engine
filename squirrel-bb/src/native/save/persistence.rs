@@ -7,6 +7,9 @@
 //! label, version 0); `loadStorage(name)` gives one read between `beginRead()` and
 //! `endRead()`, or null if there is none; `deleteStorage(name)` removes one.
 //! `deleteStorages()` removes every storage (disassembled, `0x5671f0`).
+//!
+//! Storages are written in the original's container, so a mod's data is the same file
+//! for both engines (MSU's settings, say), and read in either format.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,7 +17,7 @@ use std::rc::Rc;
 use squirrel::{SQVM, SqArray, SqStrongRef};
 
 use super::stream::{Meta, SaveReader};
-use super::{Inner, now_secs, storage};
+use super::{Inner, container, now_secs, storage};
 
 /// The `PersistenceManager` natives, by name.
 pub(super) fn natives(inner: &Rc<Inner>, vm: &mut SQVM) -> Vec<(&'static str, SqStrongRef)> {
@@ -26,7 +29,7 @@ pub(super) fn natives(inner: &Rc<Inner>, vm: &mut SQVM) -> Vec<(&'static str, Sq
 			let mut list = SqArray::new(vm);
 			let storage = inner.storage.borrow();
 			for name in storage.names() {
-				let Ok((meta, _)) = storage.read(&name).and_then(storage::decode) else {
+				let Ok((_, meta, _)) = storage.read(&name).and_then(|b| storage::decode(b, &name)) else {
 					continue;
 				};
 				list.push(classes.meta_object(vm, Rc::new(RefCell::new(meta))));
@@ -38,14 +41,16 @@ pub(super) fn natives(inner: &Rc<Inner>, vm: &mut SQVM) -> Vec<(&'static str, Sq
 		let inner = inner.clone();
 		vm.make_closure(move |vm: &SQVM, name: String| -> Result<SqStrongRef, String> {
 			let classes = inner.classes.borrow().clone().ok_or("PersistenceManager: not installed")?;
+			let now = now_secs();
 			let meta = Meta {
 				name: name.clone(),
 				file_name: name.clone(),
-				created: now_secs(),
+				created: now,
+				modified: now,
 				..Meta::default()
 			};
 			let store = inner.clone();
-			let end_write = Rc::new(move |meta: &Meta, body: &[u8]| store.storage.borrow().write(&name, storage::encode(meta, body)));
+			let end_write = Rc::new(move |meta: &Meta, body: &[u8]| store.storage.borrow().write(&name, container::encode(meta, body)));
 			Ok(classes.storage(vm, Rc::new(RefCell::new(meta)), end_write))
 		})
 	};
@@ -53,7 +58,7 @@ pub(super) fn natives(inner: &Rc<Inner>, vm: &mut SQVM) -> Vec<(&'static str, Sq
 		let inner = inner.clone();
 		vm.make_closure(move |vm: &SQVM, name: String| -> Result<Option<SqStrongRef>, String> {
 			let classes = inner.classes.borrow().clone().ok_or("PersistenceManager: not installed")?;
-			let Ok((meta, reader)) = inner.storage.borrow().read(&name).and_then(storage::decode) else {
+			let Ok((_, meta, reader)) = inner.storage.borrow().read(&name).and_then(|b| storage::decode(b, &name)) else {
 				return Ok(None);
 			};
 			let reader: Rc<RefCell<SaveReader>> = Rc::new(RefCell::new(reader));

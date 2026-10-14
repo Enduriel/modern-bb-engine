@@ -18,6 +18,8 @@
 //! it wrote, in order. Keeping the engine parts behind [`SavePart`] leaves room for a
 //! later importer of the original's save files.
 
+mod container;
+mod meta;
 mod persistence;
 mod storage;
 pub(crate) mod stream;
@@ -98,10 +100,12 @@ fn now_secs() -> i64 {
 
 /// Write the campaign to save `file`: `onBeforeSave`, each engine part, `onSave`.
 fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String, label: Option<String>) -> Result<(), String> {
+	let now = now_secs();
 	let meta = Rc::new(RefCell::new(Meta {
 		name: label.unwrap_or_else(|| file.clone()),
 		file_name: file.clone(),
-		created: now_secs(),
+		created: now,
+		modified: now,
 		..Meta::default()
 	}));
 	let writer = Rc::new(RefCell::new(SaveWriter::default()));
@@ -126,7 +130,10 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 /// Read the campaign back from save `file`, in the order it was written.
 fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String) -> Result<(), String> {
 	let bytes = inner.storage.borrow().read(&file)?;
-	let (meta, reader) = storage::decode(bytes)?;
+	let (format, meta, reader) = storage::decode(bytes, &file)?;
+	if format == storage::Format::Original {
+		return Err(format!("{file}: loading the original's saves isn't supported yet"));
+	}
 	let reader = Rc::new(RefCell::new(reader));
 	let stream = classes.in_stream(vm, reader.clone(), Rc::new(RefCell::new(meta)));
 	let before = inner.callbacks.borrow().before_load.clone();

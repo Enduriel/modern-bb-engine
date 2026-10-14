@@ -2,20 +2,35 @@
 //! `_in.readString()`, `_in.getMetaData().getVersion()`), plus the byte buffers behind
 //! them that the engine's own save code shares.
 //!
-//! Encoding (our format): little-endian fixed-width integers, `f32` as IEEE bits, a
-//! bool as one byte, a string as a `u32` byte length then UTF-8. Values are truncated to
-//! the written width, as a C++ cast would.
+//! Encoding: little-endian fixed-width integers, `f32` as IEEE bits, a bool as one
+//! byte, a string as its byte length then its bytes. The length is a `u16` in the
+//! original's format and a `u32` in this engine's own (see [`StrLen`]). Values are
+//! truncated to the written width, as a C++ cast would.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, SQVM, SqClass, SqStrongRef};
+use squirrel::{ClassBuilder, Number, SQVM, SqBytes, SqClass, SqStrongRef};
+
+pub(crate) use super::meta::Meta;
+use super::meta::date;
+
+/// How a string's length is written.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) enum StrLen {
+	/// This engine's own format.
+	#[default]
+	U32,
+	/// The original's (`0x4edb10`). As there, a longer string's length is truncated
+	/// while all its bytes are written, which corrupts the rest of the stream.
+	U16,
+}
 
 /// Bytes being written.
 #[derive(Default)]
 pub(crate) struct SaveWriter {
 	pub buf: Vec<u8>,
+	pub strings: StrLen,
 }
 
 impl SaveWriter {
@@ -44,7 +59,10 @@ impl SaveWriter {
 		self.bytes(v.as_bytes());
 	}
 	pub fn bytes(&mut self, v: &[u8]) {
-		self.u32(v.len() as u32);
+		match self.strings {
+			StrLen::U32 => self.u32(v.len() as u32),
+			StrLen::U16 => self.u16(v.len() as u16),
+		}
 		self.buf.extend_from_slice(v);
 	}
 }
@@ -53,11 +71,29 @@ impl SaveWriter {
 pub(crate) struct SaveReader {
 	buf: Vec<u8>,
 	pos: usize,
+	strings: StrLen,
 }
 
 impl SaveReader {
 	pub fn new(buf: Vec<u8>) -> Self {
-		SaveReader { buf, pos: 0 }
+		Self::with(buf, StrLen::U32)
+	}
+
+	pub fn with(buf: Vec<u8>, strings: StrLen) -> Self {
+		SaveReader { buf, pos: 0, strings }
+	}
+
+	/// Skip to byte `pos`.
+	pub fn seek(&mut self, pos: usize) {
+		self.pos = pos;
+	}
+
+	/// The next `n` bytes, as they are.
+	pub fn raw(&mut self, n: usize) -> Result<&[u8], String> {
+		let end = self.pos.checked_add(n).ok_or("save data ends early")?;
+		let bytes = self.buf.get(self.pos..end).ok_or("save data ends early")?;
+		self.pos = end;
+		Ok(bytes)
 	}
 
 	fn take<const N: usize>(&mut self) -> Result<[u8; N], String> {
@@ -92,63 +128,11 @@ impl SaveReader {
 		String::from_utf8(self.bytes()?).map_err(|_| "save string is not UTF-8".to_string())
 	}
 	pub fn bytes(&mut self) -> Result<Vec<u8>, String> {
-		let len = self.u32()? as usize;
-		let end = self.pos + len;
-		let bytes = self.buf.get(self.pos..end).ok_or("save data ends early")?;
-		self.pos = end;
-		Ok(bytes.to_vec())
-	}
-}
-
-/// A save's metadata: what the load menu lists, plus what `onBeforeSerialize` records.
-#[derive(Clone, Default)]
-pub(crate) struct Meta {
-	pub version: i64,
-	/// The label shown in menus (`getName`).
-	pub name: String,
-	/// The storage name the save is written under (`getFileName`).
-	pub file_name: String,
-	/// Seconds since the Unix epoch.
-	pub created: i64,
-	pub ints: BTreeMap<String, i64>,
-	pub strings: BTreeMap<String, String>,
-}
-
-impl Meta {
-	pub fn write(&self, w: &mut SaveWriter) {
-		w.i64(self.version);
-		w.str(&self.name);
-		w.str(&self.file_name);
-		w.i64(self.created);
-		w.u32(self.ints.len() as u32);
-		for (k, v) in &self.ints {
-			w.str(k);
-			w.i64(*v);
-		}
-		w.u32(self.strings.len() as u32);
-		for (k, v) in &self.strings {
-			w.str(k);
-			w.str(v);
-		}
-	}
-
-	pub fn read(r: &mut SaveReader) -> Result<Self, String> {
-		let mut meta = Meta {
-			version: r.i64()?,
-			name: r.str()?,
-			file_name: r.str()?,
-			created: r.i64()?,
-			..Meta::default()
+		let len = match self.strings {
+			StrLen::U32 => self.u32()? as usize,
+			StrLen::U16 => self.u16()?.into(),
 		};
-		for _ in 0..r.u32()? {
-			let k = r.str()?;
-			meta.ints.insert(k, r.i64()?);
-		}
-		for _ in 0..r.u32()? {
-			let k = r.str()?;
-			meta.strings.insert(k, r.str()?);
-		}
-		Ok(meta)
+		Ok(self.raw(len)?.to_vec())
 	}
 }
 
@@ -180,29 +164,6 @@ struct InStream {
 	meta_class: SqClass<SharedMeta>,
 }
 
-/// `getCreationDate()`: the original's `dd.mm.yy HH:MM:SS` (probed `14.10.26 03:47:33`).
-/// The original shows local time; without a time-zone source this is UTC.
-fn creation_date(secs: i64) -> String {
-	let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-	// Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-	let z = days + 719_468;
-	let era = z.div_euclid(146_097);
-	let doe = z - era * 146_097;
-	let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-	let mp = (5 * doy + 2) / 153;
-	let day = doy - (153 * mp + 2) / 5 + 1;
-	let month = if mp < 10 { mp + 3 } else { mp - 9 };
-	let year = yoe + era * 400 + i64::from(month <= 2);
-	format!(
-		"{day:02}.{month:02}.{:02} {:02}:{:02}:{:02}",
-		year.rem_euclid(100),
-		rem / 3600,
-		rem % 3600 / 60,
-		rem % 60
-	)
-}
-
 /// A script integer argument as the original casts it (floats truncate).
 fn int(n: Number) -> i64 {
 	n.0 as i64
@@ -215,15 +176,15 @@ impl StreamClasses {
 			.method("setVersion", |m: &mut SharedMeta, v: Number| m.borrow_mut().version = int(v))
 			.method("getName", |m: &mut SharedMeta| m.borrow().name.clone())
 			.method("getFileName", |m: &mut SharedMeta| m.borrow().file_name.clone())
-			.method("getCreationDate", |m: &mut SharedMeta| creation_date(m.borrow().created))
-			.method("getInt", |m: &mut SharedMeta, k: String| m.borrow().ints.get(&k).copied().unwrap_or(0))
-			.method("setInt", |m: &mut SharedMeta, k: String, v: Number| {
-				m.borrow_mut().ints.insert(k, int(v));
-			})
-			.method("getString", |m: &mut SharedMeta, k: String| m.borrow().strings.get(&k).cloned().unwrap_or_default())
-			.method("setString", |m: &mut SharedMeta, k: String, v: String| {
-				m.borrow_mut().strings.insert(k, v);
-			})
+			.method("getCreationDate", |m: &mut SharedMeta| date(m.borrow().created))
+			.method("getModificationDate", |m: &mut SharedMeta| date(m.borrow().modified))
+			.method("hasData", |m: &mut SharedMeta, k: String| m.borrow().has_data(&k))
+			.method("getInt", |m: &mut SharedMeta, k: String| m.borrow().get_int(&k))
+			.method("setInt", |m: &mut SharedMeta, k: String, v: Number| m.borrow_mut().set_int(k, int(v)))
+			.method("getFloat", |m: &mut SharedMeta, k: String| m.borrow().get_float(&k))
+			.method("setFloat", |m: &mut SharedMeta, k: String, v: Number| m.borrow_mut().set_float(k, v.0))
+			.method("getString", |m: &mut SharedMeta, k: String| m.borrow().get_string(&k))
+			.method("setString", |m: &mut SharedMeta, k: String, v: String| m.borrow_mut().set_string(k, v))
 			.build(vm);
 
 		let out = ClassBuilder::<OutStream>::new("SaveOutputStream")
@@ -235,7 +196,7 @@ impl StreamClasses {
 			.method("writeI32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u32(int(v) as i32 as u32))
 			.method("writeF32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().f32(v.0 as f32))
 			.method("writeBool", |s: &mut OutStream, v: bool| s.writer.borrow_mut().bool(v))
-			.method("writeString", |s: &mut OutStream, v: String| s.writer.borrow_mut().str(&v))
+			.method("writeString", |s: &mut OutStream, v: SqBytes| s.writer.borrow_mut().bytes(&v.0))
 			.method("getMetaData", |s: &mut OutStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
 			})
@@ -269,7 +230,7 @@ impl StreamClasses {
 			})
 			.method("readF32", |s: &mut InStream| -> Result<f64, String> { Ok(s.reader.borrow_mut().f32()?.into()) })
 			.method("readBool", |s: &mut InStream| -> Result<bool, String> { s.reader.borrow_mut().bool() })
-			.method("readString", |s: &mut InStream| -> Result<String, String> { s.reader.borrow_mut().str() })
+			.method("readString", |s: &mut InStream| -> Result<SqBytes, String> { Ok(SqBytes(s.reader.borrow_mut().bytes()?)) })
 			.method("getMetaData", |s: &mut InStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
 			})
@@ -293,10 +254,15 @@ impl StreamClasses {
 	}
 
 	/// A storage for `PersistenceManager.createStorage`: an output stream with `meta`,
-	/// whose `endWrite()` hands what was written to `end_write`.
+	/// whose `endWrite()` hands what was written to `end_write` (in the original's
+	/// encoding, as storages are kept in its container).
 	pub fn storage(&self, vm: &SQVM, meta: SharedMeta, end_write: EndWrite) -> SqStrongRef {
+		let writer = SaveWriter {
+			strings: StrLen::U16,
+			..SaveWriter::default()
+		};
 		let stream = OutStream {
-			writer: Rc::default(),
+			writer: Rc::new(RefCell::new(writer)),
 			meta,
 			meta_class: self.meta.clone(),
 			end_write: Some(end_write),
@@ -347,33 +313,5 @@ mod tests {
 		assert_eq!(r.str().unwrap(), "Grimald");
 		assert_eq!(r.i64().unwrap(), -123_456_789_012);
 		assert!(r.u8().is_err());
-	}
-
-	#[test]
-	fn creation_dates_read_like_the_original() {
-		// 2026-10-14 01:47:33 UTC.
-		assert_eq!(creation_date(1_791_942_453), "14.10.26 01:47:33");
-		assert_eq!(creation_date(0), "01.01.70 00:00:00");
-		assert_eq!(creation_date(951_782_400), "29.02.00 00:00:00");
-	}
-
-	#[test]
-	fn meta_round_trips() {
-		let mut meta = Meta {
-			version: 72,
-			name: "My Company".into(),
-			file_name: "my_company".into(),
-			created: 1_760_000_000,
-			..Meta::default()
-		};
-		meta.ints.insert("days".into(), 12);
-		meta.strings.insert("banner".into(), "banner_04".into());
-		let mut w = SaveWriter::default();
-		meta.write(&mut w);
-		let back = Meta::read(&mut SaveReader::new(w.buf)).unwrap();
-		assert_eq!(back.version, 72);
-		assert_eq!(back.name, "My Company");
-		assert_eq!(back.ints["days"], 12);
-		assert_eq!(back.strings["banner"], "banner_04");
 	}
 }

@@ -1,19 +1,21 @@
 //! Where saves live, and the file container around a save.
 //!
-//! A save file is `MAGIC`, a `u32` format version, the metadata (see [`Meta`]), then
-//! the body: the engine's world state interleaved with what the scripts wrote, in
-//! save order. Saves go to a directory as `<name>.sav`, or, with no directory (tests,
-//! tools), stay in memory.
+//! A save file of this engine's own format is `MAGIC`, a `u32` format version, the
+//! metadata (see [`Meta`]), then the body: the engine's world state interleaved with
+//! what the scripts wrote, in save order. Files in the original's container (its saves,
+//! and the storages `PersistenceManager` writes) are read by [`decode`] too. Saves go to
+//! a directory as `<name>.sav`, or, with no directory (tests, tools), stay in memory.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use super::container;
 use super::stream::{Meta, SaveReader, SaveWriter};
 
 const MAGIC: &[u8; 8] = b"BBMESAVE";
 /// Bumped whenever the engine-side layout changes.
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// The save store.
 pub(crate) enum Storage {
@@ -84,28 +86,63 @@ impl Storage {
 	}
 }
 
-/// A whole save file: header, metadata, then `body`.
+/// Which format a file is in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Format {
+	/// This engine's own.
+	Own,
+	/// The original's container (and, for a campaign save, its body layout).
+	Original,
+}
+
+/// A whole save file of this engine's own format: header, metadata, then `body`.
 pub(crate) fn encode(meta: &Meta, body: &[u8]) -> Vec<u8> {
 	let mut w = SaveWriter::default();
 	w.buf.extend_from_slice(MAGIC);
 	w.u32(FORMAT_VERSION);
-	meta.write(&mut w);
+	w.i64(meta.version);
+	w.str(&meta.name);
+	w.str(&meta.file_name);
+	w.i64(meta.created);
+	w.i64(meta.modified);
+	w.u32(meta.data.len() as u32);
+	for (k, v) in &meta.data {
+		w.str(k);
+		w.str(v);
+	}
 	w.buf.extend_from_slice(body);
 	w.buf
 }
 
-/// Split a save file into its metadata and a reader positioned at the body.
-pub(crate) fn decode(bytes: Vec<u8>) -> Result<(Meta, SaveReader), String> {
-	if bytes.get(..MAGIC.len()) != Some(&MAGIC[..]) {
-		return Err("not a save file of this engine".to_string());
+/// Split save file `bytes` (stored as `name`), in either format, into its format, its
+/// metadata and a reader positioned at the body.
+pub(crate) fn decode(bytes: Vec<u8>, name: &str) -> Result<(Format, Meta, SaveReader), String> {
+	if container::is_original(&bytes) {
+		let (meta, r) = container::decode(bytes, name)?;
+		return Ok((Format::Original, meta, r));
 	}
-	let mut r = SaveReader::new(bytes[MAGIC.len()..].to_vec());
+	if bytes.get(..MAGIC.len()) != Some(&MAGIC[..]) {
+		return Err(format!("{name}: not a save file"));
+	}
+	let mut r = SaveReader::new(bytes);
+	r.seek(MAGIC.len());
 	let version = r.u32()?;
 	if version != FORMAT_VERSION {
 		return Err(format!("save format {version} is not supported (this engine writes {FORMAT_VERSION})"));
 	}
-	let meta = Meta::read(&mut r)?;
-	Ok((meta, r))
+	let mut meta = Meta {
+		version: r.i64()?,
+		name: r.str()?,
+		file_name: r.str()?,
+		created: r.i64()?,
+		modified: r.i64()?,
+		..Meta::default()
+	};
+	for _ in 0..r.u32()? {
+		let k = r.str()?;
+		meta.data.insert(k, r.str()?);
+	}
+	Ok((Format::Own, meta, r))
 }
 
 #[cfg(test)]
@@ -115,15 +152,21 @@ mod tests {
 	#[test]
 	fn files_round_trip_through_memory() {
 		let storage = Storage::Memory(RefCell::default());
-		let meta = Meta {
+		let mut meta = Meta {
+			version: 72,
 			name: "Label".into(),
 			file_name: "slot1".into(),
+			created: 1_760_000_000,
+			modified: 1_760_000_001,
 			..Meta::default()
 		};
+		meta.set_int("days".into(), 12);
+		meta.set_string("banner".into(), "banner_04".into());
 		storage.write("slot1", encode(&meta, &[1, 2, 3])).unwrap();
 		assert_eq!(storage.names(), ["slot1"]);
-		let (back, mut body) = decode(storage.read("slot1").unwrap()).unwrap();
-		assert_eq!(back.name, "Label");
+		let (format, back, mut body) = decode(storage.read("slot1").unwrap(), "slot1").unwrap();
+		assert_eq!(format, Format::Own);
+		assert_eq!(back, meta);
 		assert_eq!((body.u8().unwrap(), body.u8().unwrap(), body.u8().unwrap()), (1, 2, 3));
 		storage.delete("slot1");
 		assert!(storage.names().is_empty());
@@ -131,6 +174,6 @@ mod tests {
 
 	#[test]
 	fn rejects_foreign_files() {
-		assert!(decode(b"not a save".to_vec()).is_err());
+		assert!(decode(b"not a save".to_vec(), "x").is_err());
 	}
 }
