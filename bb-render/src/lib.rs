@@ -10,10 +10,12 @@
 //! - [`world`]: the world map, from the game's [`WorldScene`](squirrel_bb::scene::WorldScene).
 //! - [`WorldRenderer`]: draws it frame by frame, loading atlases on demand.
 //! - [`Presenter`]: copies a finished frame onto a window's surface.
+//! - [`portrait`]: an entity drawn on its own, for the UI's procedural images.
 
 mod fog;
 mod gpu;
 pub mod labels;
+pub mod portrait;
 mod present;
 mod screenshot;
 pub mod sprite;

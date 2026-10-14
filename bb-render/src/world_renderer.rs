@@ -270,6 +270,50 @@ impl WorldRenderer {
 		view: &WorldView,
 		atlases: Atlases,
 	) -> FrameStats {
+		let map = tactical_quads(scene, registry, view);
+		// The battle's light (the weather's `setAmbientLighting*`), and the depth of
+		// field below the camera's level.
+		let uniforms = SceneUniforms {
+			ambient_color: argb_floats(scene.light.color),
+			ambient_saturation: scene.light.saturation,
+			camera_level: scene.camera.level.clamp(0, 3) as f32,
+			dof_strength: crate::tactical::DOF_STRENGTH,
+			..view.uniforms()
+		};
+		self.draw_quads(gpu, target, &map, &uniforms, CLEAR, atlases)
+	}
+
+	/// Entity `portrait` drawn on its own, without the sprites named in `hidden` (see
+	/// [`crate::portrait`]); `None` if nothing in it can be drawn. Waits for its atlases.
+	pub fn compose_portrait(
+		&mut self,
+		gpu: &Gpu,
+		portrait: &squirrel_bb::scene::ScenePortrait,
+		hidden: &[String],
+		registry: &SpriteRegistry,
+	) -> Result<Option<Image>, String> {
+		let (width, height) = crate::portrait::portrait_size(portrait, hidden, registry);
+		if width == 0 || height == 0 {
+			return Ok(None);
+		}
+		let map = crate::portrait::portrait_quads(portrait, hidden, registry);
+		let target = RenderTarget::new(gpu, width, height);
+		let uniforms = SceneUniforms::centered([0.0, 0.0], width as f32, height as f32);
+		self.draw_quads(gpu, &target, &map, &uniforms, [0.0; 4], Atlases::WaitForAll);
+		target.read(gpu).map(Some)
+	}
+
+	/// Draw `map`'s quads into `target` over `clear`, with the atlases they use as ready
+	/// (or waited for).
+	fn draw_quads(
+		&mut self,
+		gpu: &Gpu,
+		target: &RenderTarget,
+		map: &crate::world::WorldQuads,
+		uniforms: &SceneUniforms,
+		clear: [f64; 4],
+		atlases: Atlases,
+	) -> FrameStats {
 		let upload = |path: &str, image: bb_assets::Image| {
 			if path.starts_with(FONT_DIR) {
 				GpuTexture::upload_flat(gpu, path, &image)
@@ -278,7 +322,6 @@ impl WorldRenderer {
 			}
 		};
 		self.textures.pump(upload);
-		let map = tactical_quads(scene, registry, view);
 		for path in &map.atlases.paths {
 			match atlases {
 				Atlases::WaitForAll => {
@@ -319,17 +362,7 @@ impl WorldRenderer {
 			})
 			.collect();
 		stats.quads = quads.len();
-		// The battle's light (the weather's `setAmbientLighting*`), and the depth of
-		// field below the camera's level.
-		let uniforms = SceneUniforms {
-			ambient_color: argb_floats(scene.light.color),
-			ambient_saturation: scene.light.saturation,
-			camera_level: scene.camera.level.clamp(0, 3) as f32,
-			dof_strength: crate::tactical::DOF_STRENGTH,
-			..view.uniforms()
-		};
-		self.sprites
-			.draw(gpu, target, &uniforms, Some(CLEAR), &quads, &ready);
+		self.sprites.draw(gpu, target, uniforms, Some(clear), &quads, &ready);
 		stats
 	}
 }
