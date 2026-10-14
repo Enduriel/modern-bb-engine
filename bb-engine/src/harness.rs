@@ -37,7 +37,8 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// `scripts/dlc/` init script). Transcoded scripts are cached on disk as
 /// [`ScriptCache::from_env`] configures (`BB_SCRIPT_CACHE=off` disables it). The sprite
 /// sheets are loaded, as the original does before any script runs; a sheet that fails
-/// to load is reported on stderr.
+/// to load is reported on stderr. The engine's own random stream is clock-seeded like
+/// the original's, unless `BB_ENGINE_SEED` gives a seed (for reproducible renders).
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
 	let source = DatScriptSource::open(data_archives(dir)?)?.with_cache(ScriptCache::from_env());
 	let sprites = source.with_archives(|archives| load_sprites(archives));
@@ -47,6 +48,7 @@ pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
 	let config = NativeConfig {
 		is_steam_build: true,
 		owned_dlc: installed_dlc(&source),
+		engine_seed: std::env::var("BB_ENGINE_SEED").ok().and_then(|s| s.parse().ok()),
 		..NativeConfig::default()
 	};
 	let engine = Engine::with_config(source, &config);

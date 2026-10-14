@@ -9,9 +9,10 @@
 //!   upside down, the way GL reads rows bottom-up;
 //! - brush and sprite offsets are y up; a mirror is about the anchor.
 //!
-//! Not yet the original's: the draw order. This draws tile terrain, then details by z
-//! level (back to front), then entities, each layer north to south. The original sorts
-//! details by `int(y) + depth_bias + z level` (`spawnDetail`, `0x4fb707`).
+//! Draw order: tile terrain, then the details layer, then the entities layer (the
+//! original keeps one quadtree per scene layer). Details sort back to front on the
+//! original's key, `int(y) + depth_bias + z level` (`spawnDetail`, `0x4fb707`); ties
+//! keep spawn order, and entities sort north to south, which is not yet checked.
 
 use std::collections::HashMap;
 
@@ -56,10 +57,10 @@ impl WorldView {
 
 /// One sprite to draw, before sorting.
 struct Drawable<'a> {
-	/// Draw layer: higher draws first (further back).
-	layer: i64,
-	/// World y of the anchor: higher (further north) draws first within a layer.
-	y: f32,
+	/// Scene layer, drawn in turn: tile terrain, details, entities.
+	layer: Layer,
+	/// Within a layer, a higher key draws first (further back).
+	key: i64,
 	/// Spawn order, to keep ties stable.
 	order: usize,
 	texture: &'a str,
@@ -84,10 +85,15 @@ impl AtlasList {
 	}
 }
 
-/// Layer of tile terrain: behind every detail.
-const TERRAIN_LAYER: i64 = 1000;
-/// Layer of entities, between objects (-10) and locations (-20) for now.
-const ENTITY_LAYER: i64 = -15;
+/// The world's scene layers, in drawing order. The original keeps one quadtree per
+/// layer (details, entities, effects) and draws them in turn; tile terrain is drawn
+/// before all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Layer {
+	Terrain,
+	Details,
+	Entities,
+}
 
 /// The quads that draw `scene` in `view`, and the atlases they index.
 pub fn world_quads(
@@ -102,31 +108,41 @@ pub fn world_quads(
 		x >= left && x <= right && y >= bottom && y <= top
 	};
 	let mut drawables: Vec<Drawable> = Vec::new();
-	let mut push = |layer: i64, brush: &str, anchor: [f32; 2], offset: [f32; 2], look: Look| {
-		let Some((sheet, sprite)) = sprites.get(brush) else {
-			return;
+	// `key`: the sort key without the brush's depth bias, which is added here.
+	let mut push =
+		|layer: Layer, key: i64, brush: &str, anchor: [f32; 2], offset: [f32; 2], look: Look| {
+			let Some((sheet, sprite)) = sprites.get(brush) else {
+				return;
+			};
+			let Some(frame) = sprite.frames.first() else {
+				return;
+			};
+			let anchor = [
+				anchor[0] + offset[0] + f32::from(sprite.offset_x),
+				anchor[1] + offset[1] + f32::from(sprite.offset_y),
+			];
+			let order = drawables.len();
+			drawables.push(Drawable {
+				layer,
+				key: key + i64::from(sprite.depth_bias),
+				order,
+				texture: &sheet.sheet.texture,
+				quad: frame_quad(frame, anchor, look),
+			});
 		};
-		let Some(frame) = sprite.frames.first() else {
-			return;
-		};
-		let anchor = [
-			anchor[0] + offset[0] + f32::from(sprite.offset_x),
-			anchor[1] + offset[1] + f32::from(sprite.offset_y),
-		];
-		let order = drawables.len();
-		drawables.push(Drawable {
-			layer,
-			y: anchor[1],
-			order,
-			texture: &sheet.sheet.texture,
-			quad: frame_quad(frame, anchor, look),
-		});
-	};
 
 	for tile in scene.tiles.iter().filter(|t| on_screen(t.pos)) {
 		let anchor = [tile.pos.0 as f32, tile.pos.1 as f32];
 		if !tile.brush.is_empty() {
-			push(TERRAIN_LAYER, &tile.brush, anchor, [0.0; 2], Look::PLAIN);
+			let key = anchor[1] as i64;
+			push(
+				Layer::Terrain,
+				key,
+				&tile.brush,
+				anchor,
+				[0.0; 2],
+				Look::PLAIN,
+			);
 		}
 		for detail in &tile.details {
 			let look = Look {
@@ -135,7 +151,9 @@ pub fn world_quads(
 				alpha: detail.alpha as f32,
 				rotation: detail.rotation as f32,
 			};
-			push(detail.z_level, &detail.brush, anchor, [0.0; 2], look);
+			// The original's detail key: int(y) + depth bias + z level (`0x4fb707`).
+			let key = anchor[1] as i64 + detail.z_level;
+			push(Layer::Details, key, &detail.brush, anchor, [0.0; 2], look);
 		}
 	}
 	for entity in scene
@@ -156,14 +174,21 @@ pub fn world_quads(
 				alpha: sprite.alpha as f32,
 				rotation: 0.0,
 			};
-			push(ENTITY_LAYER, &sprite.brush, anchor, offset, look);
+			push(
+				Layer::Entities,
+				anchor[1] as i64,
+				&sprite.brush,
+				anchor,
+				offset,
+				look,
+			);
 		}
 	}
 
 	drawables.sort_by(|a, b| {
-		b.layer
-			.cmp(&a.layer)
-			.then(b.y.total_cmp(&a.y))
+		a.layer
+			.cmp(&b.layer)
+			.then(b.key.cmp(&a.key))
 			.then(a.order.cmp(&b.order))
 	});
 	let mut atlases = AtlasList::default();
