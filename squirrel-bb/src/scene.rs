@@ -7,6 +7,7 @@
 pub mod tactical;
 
 pub use crate::native::world_camera::CameraView as SceneWorldCamera;
+pub use crate::native::particles::SceneParticle;
 pub use crate::native::world_clouds::SceneCloud;
 pub use crate::native::world_waves::SceneWave;
 pub use crate::native::world_detail::DetailData as SceneDetail;
@@ -36,6 +37,8 @@ pub struct WorldScene {
 	pub waves: Vec<SceneWave>,
 	/// The camera (`World.getCamera()`): where the screen's centre is and its zoom.
 	pub camera: SceneWorldCamera,
+	/// Particle effects (`World.spawnParticleEffect`), effect by effect.
+	pub particles: Vec<SceneParticle>,
 }
 
 /// What an entity's portrait draws (the UI's `coui://procedural/tacticalentity(...)`

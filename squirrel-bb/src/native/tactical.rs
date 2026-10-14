@@ -71,6 +71,8 @@ pub(crate) struct TacticalParts {
 	/// The battle's clouds (`Tactical.getWeather().buildCloudCover`), the world's kind
 	/// over the battle map. `Tactical.update` moves them.
 	pub clouds: Clouds,
+	/// The battle's particle effects (`Tactical.spawnParticleEffect`).
+	pub particles: super::particles::ParticlesHandle,
 }
 
 /// The first and last tile centres of the battle map (`Tactical.getMapSize()`), or
@@ -90,14 +92,30 @@ fn battle_span(vm: &SQVM) -> Result<Option<MapSpan>, String> {
 	}))
 }
 
-/// Make `Tactical.update()` also move the battle's clouds, by the frame's real time
-/// while the game runs (as the world's weather moves with `World.update`). Call after
-/// whatever else `Tactical.update` does is installed.
-pub(crate) fn move_clouds_on_update(vm: &mut SQVM, clouds: &Clouds) {
+/// The battle's effects over the rest of `Tactical`: `Tactical.update()` also moves the
+/// clouds (by the frame's real time while the game runs, as the world's weather moves
+/// with `World.update`) and the particle effects; `Tactical.clearScene()` also clears
+/// them; `spawnParticleEffect` spawns into them. Call after whatever else the
+/// `Tactical` table holds is installed.
+pub(crate) fn install_effects(vm: &mut SQVM, parts: &TacticalParts) {
 	let inner = SqTable::root(vm)
 		.get::<SqTable>("Tactical")
 		.and_then(|t| t.get::<SqStrongRef>("update"));
-	let clouds = clouds.clone();
+	let inner_clear = SqTable::root(vm)
+		.get::<SqTable>("Tactical")
+		.and_then(|t| t.get::<SqStrongRef>("clearScene"));
+	let (clouds, particles) = (parts.clouds.clone(), parts.particles.clone());
+	let clear = {
+		let (clouds, particles) = (clouds.clone(), particles.clone());
+		vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+			if let Some(inner) = &inner_clear {
+				inner.call(vm, ())?;
+			}
+			clouds.borrow_mut().clear();
+			particles.borrow_mut().clear();
+			Ok(())
+		})
+	};
 	let update = vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 		if let Some(inner) = &inner {
 			inner.call(vm, ())?;
@@ -106,11 +124,14 @@ pub(crate) fn move_clouds_on_update(vm: &mut SQVM, clouds: &Clouds) {
 		let delta = time.call_method_ret::<Number, _>(vm, "getDelta", ())?.map_or(0.0, |n| n.0);
 		let speed = time.call_method_ret::<Number, _>(vm, "getVirtualSpeed", ())?.map_or(1.0, |n| n.0);
 		clouds.borrow_mut().advance(delta as f32, speed as f32);
+		super::particles::advance_now(vm, &particles, delta as f32);
 		Ok(())
 	});
 	if let Some(mut tactical) = SqTable::root(vm).get::<SqTable>("Tactical") {
 		tactical.set("update", update);
+		tactical.set("clearScene", clear);
 	}
+	super::particles::install_on(vm, "Tactical", &parts.particles);
 }
 
 /// Register the tile-transition class, the `createTileTransition` root global, and
@@ -251,5 +272,6 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> TacticalP
 		transitions: registry,
 		light,
 		clouds,
+		particles: Rc::new(RefCell::new(super::particles::Particles::new(engine_rng.clone()))),
 	}
 }

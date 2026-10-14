@@ -60,7 +60,7 @@ pub(crate) fn install(
 	vm: &mut SQVM,
 	engine_rng: &super::EngineRng,
 	sprites: &super::Sprites,
-) -> (super::world_time::Clock, Clouds, Waves, super::world_camera::WorldCamera) {
+) -> (super::world_time::Clock, Clouds, Waves, super::world_camera::WorldCamera, super::particles::ParticlesHandle) {
 	let world_clock: super::world_time::Clock = Default::default();
 	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
 	let waves: Waves = Rc::default();
@@ -103,14 +103,16 @@ pub(crate) fn install(
 	weather.set_member(vm, "buildCloudCover", build_cloud_cover).expect("the weather table");
 	let get_weather = vm.make_closure(move || weather.clone());
 
-	// Footprints are the world entities' (see `world_entities::footprints`). Particle
-	// effects are visual, and no script uses the returned effect.
-	let spawn_particle_effect = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let on_update: Rc<dyn Fn(f32, f32)> = {
-		let (clouds, waves) = (clouds.clone(), waves.clone());
-		Rc::new(move |delta, speed| {
+	// Footprints are the world entities' (see `world_entities::footprints`); particle
+	// effects are `particles`', set on the table below.
+	let particles: super::particles::ParticlesHandle =
+		Rc::new(RefCell::new(super::particles::Particles::new(engine_rng.clone())));
+	let on_update: Rc<dyn Fn(&SQVM, f32, f32)> = {
+		let (clouds, waves, particles) = (clouds.clone(), waves.clone(), particles.clone());
+		Rc::new(move |vm: &SQVM, delta, speed| {
 			clouds.borrow_mut().advance(delta, speed);
 			waves.borrow_mut().advance(delta, speed);
+			super::particles::advance_now(vm, &particles, delta);
 		})
 	};
 	let clock = super::world_time::world_entries(vm, &world_clock, on_update);
@@ -157,7 +159,6 @@ pub(crate) fn install(
 	world.set("isVisible", is_visible);
 	world.set("getWeather", get_weather);
 	world.set("spawnWaveSprite", spawn_wave_sprite);
-	world.set("spawnParticleEffect", spawn_particle_effect);
 	world.set("setOnLoadCallback", set_on_load);
 	world.set("setOnBeforeLoadCallback", set_on_before_load);
 	world.set("setOnSaveCallback", set_on_save);
@@ -166,5 +167,6 @@ pub(crate) fn install(
 		world.set(name, closure);
 	}
 	SqTable::root(vm).set("World", world);
-	(world_clock, clouds, waves, world_camera)
+	super::particles::install_on(vm, "World", &particles);
+	(world_clock, clouds, waves, world_camera, particles)
 }

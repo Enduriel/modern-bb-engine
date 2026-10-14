@@ -25,6 +25,8 @@ pub struct TacticalScene {
 	/// Tree tops are hidden (`Settings.getTempGameplaySettings().HideTrees`, the `T` key;
 	/// a battle starts with `AlwaysHideTrees`).
 	pub hide_trees: bool,
+	/// Particle effects (`Tactical.spawnParticleEffect`), effect by effect.
+	pub particles: Vec<crate::scene::SceneParticle>,
 }
 
 /// A unit or map object on the battle map.

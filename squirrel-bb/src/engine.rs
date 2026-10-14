@@ -56,6 +56,8 @@ pub struct Engine<S: ScriptSource> {
 	tactical_light: crate::native::tactical::TacticalLight,
 	tactical_clouds: crate::native::world_clouds::Clouds,
 	world_camera: crate::native::world_camera::WorldCamera,
+	world_particles: crate::native::particles::ParticlesHandle,
+	tactical_particles: crate::native::particles::ParticlesHandle,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -105,7 +107,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
 		tactical_navigator.install(&mut vm);
-		crate::native::tactical::move_clouds_on_update(&mut vm, &natives.tactical.clouds);
+		crate::native::tactical::install_effects(&mut vm, &natives.tactical);
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.
@@ -148,6 +150,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tactical_light: natives.tactical.light.clone(),
 			tactical_clouds: natives.tactical.clouds.clone(),
 			world_camera: natives.world_camera.clone(),
+			world_particles: natives.world_particles.clone(),
+			tactical_particles: natives.tactical.particles.clone(),
 			time,
 			modules,
 			vm,
@@ -199,6 +203,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
 			camera: *self.world_camera.borrow(),
+			particles: self.world_particles.borrow().scene(),
 		}
 	}
 	/// What entity `id`'s portrait draws: a battle unit (placed on the map or not, e.g.
@@ -220,6 +225,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			},
 			clouds: self.tactical_clouds.borrow().clouds().to_vec(),
 			hide_trees: crate::native::temp_gameplay_flag(&self.vm, "HideTrees"),
+			particles: self.tactical_particles.borrow().scene(),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}

@@ -1,9 +1,6 @@
 //! The battle's visual effect spawners (`Tactical.spawn…Effect`). Headless they draw
 //! nothing; what scripts get back is kept: a sprite from `spawnSpriteEffect`, one sprite
-//! per layer from `spawnHeadEffect`, a particle system from `spawnParticleEffect` (an
-//! object whose `die()` stops it, which tile effects call when they expire; probed:
-//! returned for both of its modes, and `die()` may be called twice), and from
-//! `spawnProjectileEffect` its flight time in
+//! per layer from `spawnHeadEffect`, and from `spawnProjectileEffect` its flight time in
 //! ms, which scripts schedule the hit with. That time is the original's (disassembled):
 //! `trunc(min(0.75, d · 0.0007) · timeScale · 1000)`, `d` the pixel distance between the
 //! tiles with the target 5 px lower.
@@ -11,7 +8,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqStrongRef, Variadic};
+use squirrel::{Native, Number, Retained, SQVM, SqArray, SqStrongRef, Variadic};
 
 use super::{TacticalMachine, UnitSpriteData};
 use crate::native::tactical_grid::TileHandle;
@@ -33,10 +30,6 @@ fn projectile_ms(from: (f64, f64), to: (f64, f64), time_scale: f32) -> i64 {
 
 pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrongRef)> {
 	let none = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let particles_class = ClassBuilder::<()>::new("ParticleSystem")
-		.method("die", |_p: &mut ()| {})
-		.build(vm);
-	let particle_effect = vm.make_closure(move |vm: &SQVM, Variadic(_a): Variadic<Retained>| particles_class.instantiate(vm, ()));
 	let sprite_effect = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, Variadic(_a): Variadic<Retained>| sprite(&m, vm))
@@ -63,7 +56,6 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 		},
 	);
 	vec![
-		("spawnParticleEffect", particle_effect),
 		("spawnIconEffect", none.clone()),
 		("spawnAttackEffect", none.clone()),
 		("spawnPoolEffect", none),

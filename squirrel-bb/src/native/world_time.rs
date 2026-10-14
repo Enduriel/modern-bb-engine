@@ -201,7 +201,7 @@ pub(crate) type Clock = Rc<RefCell<WorldClock>>;
 pub(crate) fn world_entries(
 	vm: &mut SQVM,
 	clock: &Clock,
-	on_update: Rc<dyn Fn(f32, f32)>,
+	on_update: Rc<dyn Fn(&SQVM, f32, f32)>,
 ) -> Vec<(&'static str, SqStrongRef)> {
 	// The object `World.getTime()` returns: one live view of the clock, read-only except
 	// `IsPaused`.
@@ -245,7 +245,7 @@ pub(crate) fn world_entries(
 			c.borrow_mut().advance(delta as f32);
 			// Clouds and waves move with the same update (`0x4fdc30`).
 			let speed = c.borrow().speed;
-			on_update(delta as f32, speed);
+			on_update(vm, delta as f32, speed);
 			Ok(())
 		})
 	};
