@@ -1,0 +1,5 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE new missing = string null
+PROBE this.new missing = string null
+PROBE new missing then use = string ERROR the index 'getID' does not exist
+PROBE inherit missing = string null

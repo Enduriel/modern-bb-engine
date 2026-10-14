@@ -22,6 +22,7 @@ mod hash;
 mod input_events;
 mod io_table;
 mod key_queue;
+mod missing_script;
 mod module;
 mod native;
 pub mod platform;

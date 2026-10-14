@@ -133,13 +133,13 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		{
 			let state = self.state.clone();
 			vm.register("inherit", move |vm: &SQVM, parent: &str, body: SqTable| {
-				inherit(vm, &state, parent, body)
+				crate::missing_script::inherit_or_null(vm, parent, inherit(vm, &state, parent, body))
 			});
 		}
 		{
 			let state = self.state.clone();
 			vm.register("new", move |vm: &SQVM, path: &str| {
-				new_instance(vm, &state, path)
+				crate::missing_script::new_or_null(vm, path, new_instance(vm, &state, path))
 			});
 		}
 		{
