@@ -36,7 +36,7 @@ pub(crate) fn label_quads<'a>(
 	pixel: f32,
 	font: LabelFont<'a>,
 ) -> Vec<(&'a str, Quad)> {
-	let text = label.text.as_bytes();
+	let text = label.text.as_slice();
 	let [x, y] = [
 		anchor[0] + label.offset.0 as f32 * pixel,
 		anchor[1] + label.offset.1 as f32 * pixel,

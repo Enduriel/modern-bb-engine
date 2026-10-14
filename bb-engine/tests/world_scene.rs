@@ -75,6 +75,24 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	}
 	assert!(scene.region_texts.iter().all(|t| [0.5, 0.75, 1.0].contains(&t.scale)));
 
+	// A label keeps whatever bytes the scripts give it, UTF-8 or not: the original draws
+	// one glyph per byte (Windows-1252's é is 0xE9).
+	engine
+		.run_script(
+			r#"
+			local label = ::World.EntityManager.getSettlements()[0].getLabel("name");
+			label.Text = "A" + (0xE9).tochar();
+			::__labelLength <- label.Text.len();
+			"#,
+			"label bytes",
+		)
+		.expect("label bytes");
+	assert_eq!(SqTable::root(engine.vm()).get::<i64>("__labelLength"), Some(2));
+	assert!(
+		engine.world_scene().entities.iter().flat_map(|e| &e.labels).any(|l| l.text == [0x41, 0xE9]),
+		"the scene has the label's bytes"
+	);
+
 	// Footprints and waves, as scripts make and query them.
 	engine
 		.run_script(

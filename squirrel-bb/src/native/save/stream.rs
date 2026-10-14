@@ -41,8 +41,11 @@ impl SaveWriter {
 		self.u8(u8::from(v));
 	}
 	pub fn str(&mut self, v: &str) {
+		self.bytes(v.as_bytes());
+	}
+	pub fn bytes(&mut self, v: &[u8]) {
 		self.u32(v.len() as u32);
-		self.buf.extend_from_slice(v.as_bytes());
+		self.buf.extend_from_slice(v);
 	}
 }
 
@@ -86,11 +89,14 @@ impl SaveReader {
 		Ok(self.u8()? != 0)
 	}
 	pub fn str(&mut self) -> Result<String, String> {
+		String::from_utf8(self.bytes()?).map_err(|_| "save string is not UTF-8".to_string())
+	}
+	pub fn bytes(&mut self) -> Result<Vec<u8>, String> {
 		let len = self.u32()? as usize;
 		let end = self.pos + len;
 		let bytes = self.buf.get(self.pos..end).ok_or("save data ends early")?;
 		self.pos = end;
-		String::from_utf8(bytes.to_vec()).map_err(|_| "save string is not UTF-8".to_string())
+		Ok(bytes.to_vec())
 	}
 }
 

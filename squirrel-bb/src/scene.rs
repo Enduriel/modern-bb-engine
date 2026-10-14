@@ -109,7 +109,9 @@ pub struct SceneEntity {
 #[derive(Clone, Debug)]
 pub struct SceneLabel {
 	pub name: String,
-	pub text: String,
+	/// One glyph per byte, as the original draws it: scripts' bytes, not necessarily
+	/// UTF-8.
+	pub text: Vec<u8>,
 	pub visible: bool,
 	/// ARGB.
 	pub color: u32,

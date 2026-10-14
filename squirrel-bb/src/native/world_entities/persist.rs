@@ -154,7 +154,7 @@ impl SavePart for EntitiesPart {
 					w.str(&name);
 					label_class
 						.with_payload(vm, &handle, |l| {
-							w.str(&l.text);
+							w.bytes(&l.text);
 							w.bool(l.visible);
 							w.u32(l.color);
 							w.f64(l.offset.0);
@@ -248,7 +248,7 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 			let mut rd = cx.reader.borrow_mut();
 			let name = rd.str()?;
 			data = LabelData {
-				text: rd.str()?,
+				text: rd.bytes()?,
 				visible: rd.bool()?,
 				color: rd.u32()?,
 				offset: (rd.f64()?, rd.f64()?),

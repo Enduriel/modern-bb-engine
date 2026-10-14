@@ -25,7 +25,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::inject_natives;
 use super::overload::{make_dispatcher, overload_key};
@@ -93,7 +93,8 @@ impl SpriteData {
 /// renderer reads through the world scene.
 #[derive(Clone)]
 struct LabelData {
-	text: String,
+	/// Bytes, not necessarily UTF-8: the original draws a label one glyph per byte.
+	text: Vec<u8>,
 	visible: bool,
 	/// ARGB (`Color`, set from a `color` object).
 	color: u32,
@@ -104,7 +105,7 @@ struct LabelData {
 impl Default for LabelData {
 	fn default() -> Self {
 		LabelData {
-			text: String::new(),
+			text: Vec::new(),
 			visible: false,
 			color: 0xffff_ffff,
 			offset: (0.0, 0.0),
@@ -437,8 +438,8 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 	ClassBuilder::<LabelData>::new("WorldEntityLabel")
 		.property(
 			"Text",
-			|l: &LabelData| l.text.clone(),
-			|l: &mut LabelData, v: String| l.text = v,
+			|l: &LabelData| SqBytes(l.text.clone()),
+			|l: &mut LabelData, v: SqBytes| l.text = v.0,
 		)
 		.property(
 			"Visible",
