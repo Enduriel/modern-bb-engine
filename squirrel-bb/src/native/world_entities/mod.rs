@@ -133,7 +133,13 @@ struct EntityRecord {
 	id: i64,
 	/// The script it was created from (to re-create it on load).
 	path: String,
-	entity: SqStrongRef,
+	/// The script object; let go once the entity dies (see [`release`]).
+	entity: Option<SqStrongRef>,
+	/// After its death, a script weak reference to the object, which goes null once
+	/// nothing holds it: the slot is then free for a new entity.
+	weak: Option<SqStrongRef>,
+	/// Its class levels' identities, its keys in [`EntityMachine::by_identity`].
+	identities: Vec<i64>,
 	q: i64,
 	r: i64,
 	/// World pixel position (a tile centre until `setPos` moves it).
@@ -173,8 +179,13 @@ struct EntityMachine {
 	entities: Vec<EntityRecord>,
 	/// Every class-level identity of every entity → its record index in `entities`.
 	by_identity: HashMap<i64, usize>,
-	/// Entity id → its record index in `entities` (`getEntityByID`).
+	/// Entity id → its record index in `entities` (`getEntityByID`); the living only.
 	by_id: HashMap<i64, usize>,
+	/// The slots of dead entities, oldest first, to take for new ones once their script
+	/// objects are gone.
+	dead: Vec<usize>,
+	/// Passes over the slots running scripts (think, sight): no slot is taken meanwhile.
+	walking: u32,
 	methods: Vec<(&'static str, SqStrongRef)>,
 	player_view: view::PlayerView,
 	footprints: footprints::Footprints,
@@ -233,7 +244,9 @@ fn inject_levels(
 		return;
 	};
 	for identity in inject_natives(vm, &leaf, &methods) {
-		machine.borrow_mut().by_identity.insert(identity, record_idx);
+		let mut m = machine.borrow_mut();
+		m.by_identity.insert(identity, record_idx);
+		m.entities[record_idx].identities.push(identity);
 	}
 }
 
@@ -250,14 +263,17 @@ fn create_entity(
 ) -> Result<(SqStrongRef, usize), String> {
 	let instantiate = machine.borrow().instantiate.clone();
 	let entity = instantiate(vm, path)?;
+	let free = free_slot(machine, vm);
 	let record_idx = {
 		let mut m = machine.borrow_mut();
-		let idx = m.entities.len();
+		let idx = free.unwrap_or(m.entities.len());
 		m.by_id.insert(id, idx);
-		m.entities.push(EntityRecord {
+		let record = EntityRecord {
 			id,
 			path: path.to_string(),
-			entity: entity.clone(),
+			entity: Some(entity.clone()),
+			weak: None,
+			identities: Vec::new(),
 			q,
 			r,
 			pos: world_layout::tile_pos(q, r + q / 2),
@@ -278,11 +294,63 @@ fn create_entity(
 			portrait_offsets: false,
 			sprites: slots::Slots::default(),
 			labels: HashMap::new(),
-		});
+		};
+		match free {
+			Some(i) => m.entities[i] = record,
+			None => m.entities.push(record),
+		}
 		idx
 	};
 	inject_levels(machine, vm, &entity, record_idx);
 	Ok((entity, record_idx))
+}
+
+/// How many dead slots a new entity looks at for one to take.
+const SLOTS_LOOKED_AT: usize = 16;
+
+/// A dead entity's slot whose script object is gone, for a new entity, cleared of what
+/// pointed at it (its identity keys, thinker entries). None during a pass over the
+/// slots (think, sight), which holds them.
+fn free_slot(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM) -> Option<usize> {
+	let candidates: Vec<(usize, Option<SqStrongRef>)> = {
+		let machine = m.borrow();
+		if machine.walking > 0 {
+			return None;
+		}
+		machine.dead.iter().take(SLOTS_LOOKED_AT).map(|&i| (i, machine.entities[i].weak.clone())).collect()
+	};
+	let found = candidates.iter().position(|(_, weak)| weak.as_ref().is_none_or(|w| w.weak_is_gone(vm)));
+	let mut machine = m.borrow_mut();
+	let Some(pos) = found else {
+		// All held still (a contract's reference, say): look at others next time.
+		let n = candidates.len().min(machine.dead.len());
+		machine.dead.rotate_left(n);
+		return None;
+	};
+	let idx = machine.dead.remove(pos);
+	let machine = &mut *machine;
+	for identity in std::mem::take(&mut machine.entities[idx].identities) {
+		if machine.by_identity.get(&identity) == Some(&idx) {
+			machine.by_identity.remove(&identity);
+		}
+	}
+	machine.thinkers.forget(idx);
+	Some(idx)
+}
+
+/// A dead entity lets go of its script object. Its record stays, sprites and labels
+/// too, while scripts may still hold the object and call its natives (which find it
+/// dead), with a weak reference that tells when the object is gone and the slot free.
+fn release(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize) {
+	let mut machine = m.borrow_mut();
+	let rec = &mut machine.entities[idx];
+	let Some(entity) = rec.entity.take() else { return };
+	rec.weak = Some(entity.downgrade(vm));
+	let id = rec.id;
+	if machine.by_id.get(&id) == Some(&idx) {
+		machine.by_id.remove(&id);
+	}
+	machine.dead.push(idx);
 }
 
 /// Spawn a new entity of `path` at axial `(q, r)`: create it with the next id, then run
@@ -320,7 +388,10 @@ fn kill(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize) -> Result<(), Str
 		rec.alive = false;
 		rec.entity.clone()
 	};
-	ignore_missing(entity.call_method(vm, "onFinish", ()))
+	let Some(entity) = entity else { return Ok(()) };
+	let finished = ignore_missing(entity.call_method(vm, "onFinish", ()));
+	release(m, vm, idx);
+	finished
 }
 
 /// Kill entity `idx` if its `fadeAndDie` delay has run out by real time `now` (ms).
@@ -544,6 +615,8 @@ impl WorldEntities {
 				entities: Vec::new(),
 				by_identity: HashMap::new(),
 				by_id: HashMap::new(),
+				dead: Vec::new(),
+				walking: 0,
 				methods: Vec::new(),
 				player_view: view::PlayerView::default(),
 				footprints: footprints::Footprints::default(),
@@ -898,7 +971,7 @@ impl WorldEntities {
 					.iter()
 					.filter(|rec| rec.alive && rec.faction == 1)
 					.min_by_key(|rec| rec.id)
-					.map(|rec| rec.entity.clone())
+					.and_then(|rec| rec.entity.clone())
 			})
 		};
 		let get_entity_at_tile = {
@@ -907,7 +980,7 @@ impl WorldEntities {
 				let q = coords.0.get_member::<i64>(vm, "X")?;
 				let r = coords.0.get_member::<i64>(vm, "Y")?;
 				let machine = m.borrow();
-				world_query::entity_at_tile((q, r), &machine.entities).map(|i| machine.entities[i].entity.clone())
+				world_query::entity_at_tile((q, r), &machine.entities).and_then(|i| machine.entities[i].entity.clone())
 			})
 		};
 		let get_entity_by_id = {
@@ -915,7 +988,7 @@ impl WorldEntities {
 			vm.make_closure(move |id: i64| -> Option<SqStrongRef> {
 				let machine = m.borrow();
 				let rec = &machine.entities[*machine.by_id.get(&id)?];
-				rec.alive.then(|| rec.entity.clone())
+				rec.alive.then(|| rec.entity.clone()).flatten()
 			})
 		};
 		slots.push(("getAllEntitiesAtPos".to_string(), all_at_pos));
@@ -980,7 +1053,8 @@ impl WorldEntities {
 		move |vm: &SQVM| render::run_pass(&m, vm)
 	}
 
-	/// Number of spawned entities (host/test inspection).
+	/// Number of entity slots, the living and the dead not yet taken over (host/test
+	/// inspection).
 	pub fn count(&self) -> usize {
 		self.machine.borrow().entities.len()
 	}
@@ -1070,9 +1144,10 @@ impl WorldEntities {
 		let (Some(class), Some(label_class)) = (m.sprite_class.clone(), m.label_class.clone()) else {
 			return Vec::new();
 		};
-		m.entities
-			.iter()
-			.filter(|rec| rec.alive)
+		// By id: a new entity may take a dead one's slot.
+		let mut live: Vec<&EntityRecord> = m.entities.iter().filter(|rec| rec.alive).collect();
+		live.sort_by_key(|rec| rec.id);
+		live.into_iter()
 			.map(|rec| crate::scene::SceneEntity {
 				id: rec.id,
 				pos: rec.pos,
@@ -1128,6 +1203,7 @@ impl WorldEntities {
 		m.entities.clear();
 		m.by_identity.clear();
 		m.by_id.clear();
+		m.dead.clear();
 		m.thinkers = think::Thinkers::default();
 		m.methods.clear();
 		m.sprite_class = None;

@@ -62,4 +62,10 @@ impl SQVM {
 		// matching the rest of the crate's contract for a VM-produced object).
 		unsafe { SqObject::from_raw(raw.assume_init()) }.identity()
 	}
+
+	/// The receiver (`this`) of the native call in progress, held: for a native that
+	/// takes `&SQVM` and fixed arguments, where [`This`](crate::This) can't go.
+	pub fn this_ref(&self) -> crate::SqStrongRef {
+		crate::SqStrongRef::from_stack(self, 1)
+	}
 }

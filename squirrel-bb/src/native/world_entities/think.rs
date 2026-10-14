@@ -59,6 +59,11 @@ impl Thinkers {
 	pub(super) fn len(&self) -> usize {
 		self.list.len()
 	}
+
+	/// Drop every entry of slot `idx` (a dead entity's, before the slot is taken).
+	pub(super) fn forget(&mut self, idx: usize) {
+		self.list.retain(|&i| i != idx);
+	}
 }
 
 type Machine = Rc<RefCell<EntityMachine>>;
@@ -112,9 +117,15 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 	}
 	let now = script_number(vm, "Time", "getVirtualTimeF")? as f32;
 	let real_now = script_number(vm, "Time", "getRealTime")? as i64;
-	m.borrow_mut().thinkers.in_pass = true;
+	{
+		let mut machine = m.borrow_mut();
+		machine.thinkers.in_pass = true;
+		machine.walking += 1;
+	}
 	let result = think_all(m, vm, now, real_now);
-	m.borrow_mut().thinkers.in_pass = false;
+	let mut machine = m.borrow_mut();
+	machine.thinkers.in_pass = false;
+	machine.walking -= 1;
 	result
 }
 
@@ -145,7 +156,12 @@ fn think_all(m: &Machine, vm: &SQVM, now: f32, real_now: i64) -> Result<(), Stri
 			}
 			rec.think.out_of_range = far;
 			rec.think.last_update = now;
-			(idx, rec.entity.clone())
+			let Some(entity) = rec.entity.clone() else {
+				// Dead (a live entity always has its object).
+				machine.thinkers.list.remove(i);
+				continue;
+			};
+			(idx, entity)
 		};
 		let (idx, entity) = call;
 		ignore_missing(entity.call_method(vm, "onUpdate", ()))?;

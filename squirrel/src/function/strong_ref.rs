@@ -121,6 +121,41 @@ impl SqStrongRef {
 		table
 	}
 
+	/// A weak reference to the referenced object (the script's `weakref()`): it doesn't
+	/// keep the object alive; [`weak_is_gone`](Self::weak_is_gone) tells when the object
+	/// is. A value that isn't reference-counted (a number, null) is its own weak ref.
+	pub fn downgrade(&self, vm: &SQVM) -> SqStrongRef {
+		self.debug_check_vm(vm);
+		let ptr = vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [obj]
+			squirrel_sys::sq_weakref(ptr, -1); // [obj, weak]
+			let weak = SqStrongRef::from_stack(vm, -1);
+			squirrel_sys::sq_pop(ptr, 2);
+			weak
+		}
+	}
+
+	/// Whether this is a weak reference whose object is gone (or a null). False for
+	/// any other value.
+	pub fn weak_is_gone(&self, vm: &SQVM) -> bool {
+		self.debug_check_vm(vm);
+		let ptr = vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [weak]
+			if squirrel_sys::sq_getweakrefval(ptr, -1) != SQ_OK {
+				// Not a weak reference: nothing pushed.
+				let null = squirrel_sys::sq_gettype(ptr, -1) == squirrel_sys::tagSQObjectType_OT_NULL;
+				squirrel_sys::sq_pop(ptr, 1);
+				return null;
+			}
+			// [weak, value]
+			let gone = squirrel_sys::sq_gettype(ptr, -1) == squirrel_sys::tagSQObjectType_OT_NULL;
+			squirrel_sys::sq_pop(ptr, 2);
+			gone
+		}
+	}
+
 	/// Call the referenced closure, discarding any return value.
 	///
 	/// Arguments are passed as a tuple (`()`, `(a,)`, `(a, b)`, …). `this` is the

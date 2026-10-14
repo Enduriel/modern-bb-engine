@@ -172,7 +172,7 @@ impl SavePart for EntitiesPart {
 						})
 						.ok_or("save: not a label")?;
 				}
-				rec.entity.clone()
+				rec.entity.clone().ok_or("save: a live entity without its object")?
 			};
 			entity.call_method(vm, "onSerialize", (cx.stream.clone(),))?;
 		}
@@ -187,6 +187,7 @@ impl SavePart for EntitiesPart {
 			m.entities.clear();
 			m.by_identity.clear();
 			m.by_id.clear();
+			m.dead.clear();
 			m.thinkers = think::Thinkers::default();
 		}
 		let count = cx.reader.borrow_mut().u32()?;

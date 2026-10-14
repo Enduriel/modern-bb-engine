@@ -84,7 +84,7 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 			};
 			let (to, moving) = step(pos, (dx as f32, dy as f32), speed.0 as f32, on_blocking_tile, blocked)?;
 			if let Some((x, y)) = to {
-				let entity = m.borrow().record(vm.this_identity()).map(|rec| rec.entity.clone());
+				let entity = m.borrow().record(vm.this_identity()).and_then(|rec| rec.entity.clone());
 				let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("createVec missing")?;
 				let new_pos = create_vec
 					.call_ret::<SqStrongRef, _>(vm, (f64::from(x), f64::from(y)))?

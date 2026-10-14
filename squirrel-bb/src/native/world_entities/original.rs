@@ -85,6 +85,7 @@ impl WorldEntities {
 		m.entities.clear();
 		m.by_identity.clear();
 		m.by_id.clear();
+		m.dead.clear();
 		m.thinkers = super::think::Thinkers::default();
 		m.footprints = super::footprints::Footprints::default();
 	}
@@ -262,7 +263,7 @@ impl WorldEntities {
 			.entities
 			.iter()
 			.filter(|e| e.alive && e.dies_at.is_none())
-			.map(|e| (e.id as u32, e.entity.clone()))
+			.filter_map(|e| Some((e.id as u32, e.entity.clone()?)))
 			.collect();
 		v.sort_by(|a, b| b.0.cmp(&a.0));
 		v

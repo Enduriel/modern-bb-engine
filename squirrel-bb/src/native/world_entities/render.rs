@@ -114,6 +114,18 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 		ids.sort_by_key(|&i| machine.entities[i].id);
 		ids
 	};
+	// The pass holds slots: none is taken over until it's done.
+	m.borrow_mut().walking += 1;
+	let result = sight_pass(m, vm, order, fog, now);
+	m.borrow_mut().walking -= 1;
+	result?;
+	draw_sprites(m, vm, now as f32 * 0.001);
+	Ok(())
+}
+
+/// Each entity of `order` (by id) comes into sight or goes out of it, and a dying one
+/// whose fade is over dies.
+fn sight_pass(m: &Machine, vm: &SQVM, order: Vec<usize>, fog: bool, now: i64) -> Result<(), String> {
 	for idx in order {
 		if super::reap(m, vm, idx, now)? {
 			continue;
@@ -143,13 +155,14 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 					rec.discovered = true;
 					rec.render.hidden = false;
 					rec.render.next_change = now + FADE_MS;
-					Some((rec.entity.clone(), first))
+					rec.entity.clone().map(|e| (e, first))
 				}
 				_ => continue,
 			}
 		};
 		let seconds = now as f32 * 0.001;
 		let Some((entity, first)) = discovered_now else {
+			// Out of sight (a live entity always has its object).
 			fade_sprites(m, vm, idx, Fade::Out(FADE_MS), seconds);
 			continue;
 		};
@@ -162,7 +175,6 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 			ignore_missing(entity.call_method(vm, "onVisibleToPlayer", ()))?;
 		}
 	}
-	draw_sprites(m, vm, now as f32 * 0.001);
 	Ok(())
 }
 

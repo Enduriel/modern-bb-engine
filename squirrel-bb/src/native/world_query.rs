@@ -30,7 +30,7 @@ pub(crate) trait QueryEntity {
 	fn tile(&self) -> (i64, i64);
 	/// `getVisibility()`: the multiplier on how far away it can be seen.
 	fn visibility(&self) -> f32;
-	/// Dead entities stay in the registry until it's cleared; queries skip them.
+	/// Dead entities keep their slots until a new entity takes them; queries skip them.
 	fn alive(&self) -> bool;
 }
 

@@ -153,7 +153,8 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 				};
 				let first = !rec.discovered && discovered;
 				rec.discovered = discovered;
-				(rec.entity.clone(), first)
+				// A dead entity's record has let go of it; `this` is it (bound to the leaf).
+				(rec.entity.clone().unwrap_or_else(|| vm.this_ref()), first)
 			};
 			if first {
 				ignore_missing(entity.call_method(vm, "onDiscovered", ()))?;
