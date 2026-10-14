@@ -27,7 +27,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 		w.f64(v);
 	}
 	w.f64(s.highlight_factor);
-	w.f64(s.torque);
+	w.f64(f64::from(s.spin.torque));
 	for b in [
 		s.visible,
 		s.raising_weapon,
@@ -64,7 +64,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		saturation: r.f64()?,
 		render_anim_start: r.f64()?,
 		highlight_factor: r.f64()?,
-		torque: r.f64()?,
+		spin: crate::native::spin::Spin::new(r.f64()? as f32),
 		visible: r.bool()?,
 		raising_weapon: r.bool()?,
 		lowering_weapon: r.bool()?,

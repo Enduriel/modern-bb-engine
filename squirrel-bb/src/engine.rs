@@ -285,11 +285,22 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// Run one frame of the original's main loop with `real_delta_ms` of real time
 	/// (order probed 2026-10-13): advance the clocks and fire due scheduled events, run
 	/// `onUpdate` then `onRender` on every visible state, then the background task once.
+	/// The sprites with a torque turn after the updates, as the scene updates.
 	pub fn frame(&self, real_delta_ms: f64) -> Result<(), String> {
 		self.time.tick(&self.vm, real_delta_ms);
 		self.root_state.update(&self.vm)?;
+		self.turn_sprites();
 		self.root_state.render(&self.vm)?;
 		self.root_state.run_background(&self.vm)
+	}
+
+	/// Turn every sprite with a torque to the virtual clock (see `native::spin`).
+	fn turn_sprites(&self) {
+		let now = self.time.virtual_seconds() as f32;
+		self.world_grid.turn(now);
+		self.world_entities.turn(&self.vm, now);
+		self.tactical_grid.turn(now);
+		self.tactical_entities.turn(&self.vm, now);
 	}
 
 	/// Install logging to a custom sink (defaults to stderr/stdout otherwise).

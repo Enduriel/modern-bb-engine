@@ -190,6 +190,8 @@ struct GridState {
 	sprites: Sprites,
 	/// The engine's random stream: new details' mirroring, scale and rotation.
 	engine_rng: EngineRng,
+	/// The details that may turn (see `world_detail::Spinning`).
+	spinning: world_detail::Spinning,
 	/// Fog of war is on (`setFogOfWar`).
 	fog_on: bool,
 	/// Where the fog of war is drawn.
@@ -276,6 +278,7 @@ impl WorldGrid {
 				nav_path_class: None,
 				sprites: Sprites::default(),
 				engine_rng: EngineRng::unseeded(),
+				spinning: Rc::default(),
 				fog_on: true,
 				fog: FogMask::default(),
 				region_texts: Vec::new(),
@@ -300,8 +303,11 @@ impl WorldGrid {
 	pub fn install(&self, vm: &mut SQVM) {
 		// Build the detail class first so `spawnDetail` can mint instances (the tile
 		// methods fetch it from the grid at call time, capturing no `SqStrongRef`).
-		let sprites = self.grid.borrow().sprites.clone();
-		let detail_class = world_detail::build_class(vm, &sprites);
+		let (sprites, spinning) = {
+			let g = self.grid.borrow();
+			(g.sprites.clone(), g.spinning.clone())
+		};
+		let detail_class = world_detail::build_class(vm, &sprites, &spinning);
 		self.grid.borrow_mut().detail_class = Some(detail_class);
 		let nav_path_class = build_world_navigation_path_class(vm);
 		self.grid.borrow_mut().nav_path_class = Some(nav_path_class);
@@ -842,6 +848,12 @@ impl WorldGrid {
 		g.detail_class = None;
 		g.nav_path_class = None;
 	}
+
+	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`).
+	pub(crate) fn turn(&self, now: f32) {
+		let spinning = self.grid.borrow().spinning.clone();
+		world_detail::turn_all(&spinning, now);
+	}
 }
 
 /// The map's extent on a `w` × `h` map, which the fog mask and the water texture span:
@@ -882,12 +894,13 @@ fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Opti
 /// way only a brush with flag `0x400` mirrors (settlement houses and forests don't).
 /// A brush that rotates (or has flag `0x2000`) starts at a random rotation, and one
 /// with flag `0x1000` (ground scatter: grass, bones, coast details) gets a random
-/// scale in `[0.6, 1.0]`. Drawn in that order.
+/// scale in `[0.6, 1.0]`. Drawn in that order. A rotating brush's speed is the
+/// detail's torque (see `spin`).
 fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: bool) -> Option<SqStrongRef> {
 	let class = t.grid.borrow().detail_class.clone()?;
-	let (sprites, rng) = {
+	let (sprites, rng, spinning) = {
 		let g = t.grid.borrow();
-		(g.sprites.clone(), g.engine_rng.clone())
+		(g.sprites.clone(), g.engine_rng.clone(), g.spinning.clone())
 	};
 	if random_flip {
 		data.flipped = rng.range(0, 1) == 0;
@@ -901,9 +914,11 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 		if flags & 0x1000 != 0 {
 			data.scale = f64::from(rng.range(0, 40) as f32 / 100.0 + 0.6);
 		}
+		data.spin.torque = rotation_speed;
 	}
 	hint_brush(t, &data.brush);
 	let detail: Detail = Rc::new(RefCell::new(data));
+	world_detail::note_spin(&spinning, &detail);
 	t.with_mut(|d| d.details.push(detail.clone()));
 	Some(class.instantiate(vm, DetailHandle(detail)))
 }

@@ -14,13 +14,15 @@
 //!   scale in 0.6–1.0, in that order. With `fadeIn` it starts transparent and fades in
 //!   over 100 ms.
 //! - What the script gets is the detail's sprite: its `Alpha`, `Scale`, `Saturation`,
-//!   `Color`, `setBrightness` and `setBrush` change the detail in place.
+//!   `Torque`, `Color`, `setBrightness` and `setBrush` change the detail in place.
+//! - A rotating brush's speed is the detail's torque (see `spin`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{ClassBuilder, SQVM, SqClass, SqStrongRef};
 
+use crate::native::spin::Spin;
 use crate::native::sprite_color::{SpriteColor, real_time};
 use crate::native::{EngineRng, Sprites};
 
@@ -35,6 +37,8 @@ pub(crate) struct DetailData {
 	pub offset: (f32, f32),
 	/// Degrees, counter-clockwise.
 	pub rotation: f32,
+	/// Its `Torque` (see `spin`).
+	pub spin: Spin,
 	pub scale: f32,
 	pub saturation: f32,
 	pub brightness: f32,
@@ -101,6 +105,7 @@ pub(super) fn spawn(details: &mut Vec<Detail>, spawn: Spawn, sprites: &Sprites, 
 		mirrored,
 		offset: spawn.offset,
 		rotation,
+		spin: Spin::new(rotation_speed),
 		scale,
 		saturation: 1.0,
 		brightness: 1.0,
@@ -129,6 +134,11 @@ pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHan
 			|d: &mut DetailHandle, v: f64| d.0.borrow_mut().saturation = v as f32,
 		)
 		.property(
+			"Torque",
+			|d: &DetailHandle| f64::from(d.0.borrow().spin.torque),
+			|d: &mut DetailHandle, v: f64| d.0.borrow_mut().spin.torque = v as f32,
+		)
+		.property(
 			"IsFadingDone",
 			|d: &DetailHandle| d.0.borrow().color.is_fading_done(),
 			|_d: &mut DetailHandle, _v: bool| {},
@@ -143,7 +153,11 @@ pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHan
 		)
 		.method("setBrightness", |d: &mut DetailHandle, v: f64| d.0.borrow_mut().brightness = v as f32)
 		.method("setBrush", move |d: &mut DetailHandle, brush: String| {
-			d.0.borrow_mut().brush = sprites.resolve(&brush)
+			let brush = sprites.resolve(&brush);
+			let mut d = d.0.borrow_mut();
+			let d = &mut *d;
+			d.spin.rebrush(&sprites, &d.brush, &brush);
+			d.brush = brush;
 		})
 		.method("fadeIn", |d: &mut DetailHandle, vm: &SQVM, ms: i64| {
 			d.0.borrow_mut().color.fade_in(ms, real_time(vm))

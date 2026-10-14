@@ -15,11 +15,12 @@
 //! masks of `clear(mask)` / `clearAllBut(mask)` select.
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use squirrel::{ClassBuilder, SQVM, SqClass};
 
 use crate::native::Sprites;
+use crate::native::spin::Spin;
 
 /// One detail on a tile.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,7 +32,8 @@ pub struct DetailData {
 	pub flags: i64,
 	pub flipped: bool,
 	pub alpha: i64,
-	pub torque: i64,
+	/// Its `Torque` (see `spin`).
+	pub(crate) spin: Spin,
 	/// Rotation in degrees (the original's `Rotation`, field `+0x40`).
 	pub rotation: f64,
 	pub saturation: f64,
@@ -48,7 +50,7 @@ impl Default for DetailData {
 			flags: 0,
 			flipped: false,
 			alpha: 255,
-			torque: 0,
+			spin: Spin::default(),
 			rotation: 0.0,
 			saturation: 1.0,
 			scale: 1.0,
@@ -60,6 +62,34 @@ impl Default for DetailData {
 
 /// A detail as shared by its tile and its script object.
 pub(crate) type Detail = Rc<RefCell<DetailData>>;
+
+/// The details that may turn (those given a torque), so a frame needn't visit every
+/// detail on the map.
+pub(crate) type Spinning = Rc<RefCell<Vec<Weak<RefCell<DetailData>>>>>;
+
+/// Keep `detail` turning if it has a torque.
+pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
+	if detail.borrow().spin.torque == 0.0 {
+		return;
+	}
+	let mut spinning = spinning.borrow_mut();
+	let weak = Rc::downgrade(detail);
+	if !spinning.iter().any(|d| d.ptr_eq(&weak)) {
+		spinning.push(weak);
+	}
+}
+
+/// Turn the spinning details to virtual time `now` (seconds), and forget those gone
+/// or without a torque.
+pub(crate) fn turn_all(spinning: &Spinning, now: f32) {
+	spinning.borrow_mut().retain(|d| {
+		let Some(d) = d.upgrade() else { return false };
+		let mut d = d.borrow_mut();
+		let d = &mut *d;
+		d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
+		d.spin.torque != 0.0
+	});
+}
 
 /// The payload of a `WorldDetail` instance.
 #[derive(Clone)]
@@ -75,19 +105,25 @@ impl DetailHandle {
 }
 
 /// Build the `WorldDetail` class returned by `tile.spawnDetail(...)`. A brush set
-/// on a detail hints its atlas to `sprites`.
-pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHandle> {
+/// on a detail hints its atlas to `sprites`; a detail given a torque goes on
+/// `spinning`.
+pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites, spinning: &Spinning) -> SqClass<DetailHandle> {
 	let sprites = sprites.clone();
+	let (spin_torque, spin_brush) = (spinning.clone(), spinning.clone());
 	ClassBuilder::<DetailHandle>::new("WorldDetail")
 		.property(
 			"Alpha",
 			|d: &DetailHandle| d.get(|d| d.alpha),
 			|d: &mut DetailHandle, v: i64| d.set(|d| d.alpha = v),
 		)
+		// A float, like the original's (`0x4bcd00`).
 		.property(
 			"Torque",
-			|d: &DetailHandle| d.get(|d| d.torque),
-			|d: &mut DetailHandle, v: i64| d.set(|d| d.torque = v),
+			|d: &DetailHandle| f64::from(d.get(|d| d.spin.torque)),
+			move |d: &mut DetailHandle, v: f64| {
+				d.set(|d| d.spin.torque = v as f32);
+				note_spin(&spin_torque, &d.0);
+			},
 		)
 		.property(
 			"Saturation",
@@ -104,8 +140,13 @@ pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHan
 			|d: &DetailHandle| d.get(|d| d.ignore_ambient),
 			|d: &mut DetailHandle, v: bool| d.set(|d| d.ignore_ambient = v),
 		)
+		// A new brush brings its own rotation speed as the torque.
 		.method("setBrush", move |d: &mut DetailHandle, brush: &str| {
-			d.set(|d| d.brush = brush.to_string());
+			d.set(|d| {
+				d.spin.rebrush(&sprites, &d.brush, brush);
+				d.brush = brush.to_string();
+			});
+			note_spin(&spin_brush, &d.0);
 			sprites.hint(&sprites.texture_of(brush));
 		})
 		.method("setBrightness", |d: &mut DetailHandle, v: f64| d.set(|d| d.brightness = v))

@@ -232,7 +232,7 @@ pub fn world_quads<'a>(
 				scale: sprite.scale as f32 * zoom_scale,
 				flipped: sprite.flipped,
 				alpha: (sprite.color >> 24) as f32,
-				rotation: 0.0,
+				rotation: sprite.rotation,
 				tint: {
 					let [_, r, g, b] = sprite.color.to_be_bytes();
 					[r, g, b]

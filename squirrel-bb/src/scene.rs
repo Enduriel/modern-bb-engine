@@ -171,6 +171,8 @@ pub struct SceneSprite {
 	/// From the entity's position, in world units with y up.
 	pub offset: (f64, f64),
 	pub flipped: bool,
+	/// Degrees, counter-clockwise.
+	pub rotation: f32,
 	pub ignore_ambient: bool,
 	pub scaling: bool,
 	pub colorization: bool,

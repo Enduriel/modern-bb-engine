@@ -33,6 +33,7 @@ use super::world_layout;
 use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
 use crate::native::{EntityIds, Sprites};
+use crate::native::spin::Spin;
 use crate::native::sprite_color::{SpriteColor, real_time};
 
 mod footprints;
@@ -66,6 +67,10 @@ struct SpriteData {
 	colorization: bool,
 	/// Drawn into the entity's portrait (`setSpriteRenderToTexture`, on by default).
 	in_portrait: bool,
+	/// Degrees, counter-clockwise (`Rotation`).
+	rotation: f32,
+	/// Its `Torque` (see `spin`).
+	spin: Spin,
 }
 
 impl SpriteData {
@@ -81,6 +86,8 @@ impl SpriteData {
 			scaling: true,
 			colorization: true,
 			in_portrait: true,
+			rotation: 0.0,
+			spin: Spin::default(),
 		}
 	}
 }
@@ -412,6 +419,16 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 			|s: &mut SpriteData, v: bool| s.ignore_ambient = v,
 		)
 		.property(
+			"Rotation",
+			|s: &SpriteData| f64::from(s.rotation),
+			|s: &mut SpriteData, v: f64| s.rotation = v as f32,
+		)
+		.property(
+			"Torque",
+			|s: &SpriteData| f64::from(s.spin.torque),
+			|s: &mut SpriteData, v: f64| s.spin.torque = v as f32,
+		)
+		.property(
 			"IsFadingDone",
 			|s: &SpriteData| s.color.is_fading_done(),
 			|_s: &mut SpriteData, _v: bool| {},
@@ -425,7 +442,11 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 			},
 		)
 		.property("HasBrush", |s: &SpriteData| !s.brush.is_empty(), |_s: &mut SpriteData, _v: bool| {})
-		.method("setBrush", move |s: &mut SpriteData, brush: &str| s.brush = set_with.resolve(brush))
+		.method("setBrush", move |s: &mut SpriteData, brush: &str| {
+			let brush = set_with.resolve(brush);
+			s.spin.rebrush(&set_with, &s.brush, &brush);
+			s.brush = brush;
+		})
 		.method("resetBrush", |s: &mut SpriteData| s.brush.clear())
 		.method("getBrush", move |s: &mut SpriteData, vm: &SQVM| -> Option<SqStrongRef> {
 			get_with.brush_object(vm, &s.brush)
@@ -947,7 +968,18 @@ impl WorldEntities {
 			.collect()
 	}
 
-	/// Every live entity and its sprites as the renderer sees them.
+	/// Turn the live entities' sprites that have a torque to virtual time `now`, in
+	/// seconds (see `spin`).
+	pub(crate) fn turn(&self, vm: &SQVM, now: f32) {
+		let m = self.machine.borrow();
+		let Some(class) = m.sprite_class.clone() else { return };
+		for rec in m.entities.iter().filter(|rec| rec.alive) {
+			for (_, handle) in rec.sprites.iter() {
+				class.with_payload(vm, handle, |s| s.rotation = s.spin.turn(s.rotation, now));
+			}
+		}
+	}
+
 	/// What entity `id`'s portrait draws (`None` for no such live entity).
 	pub(crate) fn portrait(&self, vm: &SQVM, id: i64) -> Option<crate::scene::ScenePortrait> {
 		let m = self.machine.borrow();
@@ -962,7 +994,7 @@ impl WorldEntities {
 					brush: s.brush.clone(),
 					color: s.color.color,
 					scale: s.scale as f32,
-					rotation: 0.0,
+					rotation: s.rotation,
 					saturation: 1.0,
 					flipped: s.flipped,
 					offset: (s.offset.0 as f32, s.offset.1 as f32),
@@ -1002,6 +1034,7 @@ impl WorldEntities {
 							visible: s.visible,
 							offset: s.offset,
 							flipped: s.flipped,
+							rotation: s.rotation,
 							ignore_ambient: s.ignore_ambient,
 							scaling: s.scaling,
 							colorization: s.colorization,

@@ -674,6 +674,17 @@ impl TacticalGrid {
 		}
 	}
 
+	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`).
+	pub(crate) fn turn(&self, now: f32) {
+		for t in &self.grid.borrow().tiles {
+			for d in &t.details {
+				let mut d = d.borrow_mut();
+				let d = &mut *d;
+				d.rotation = d.spin.turn(d.rotation, now);
+			}
+		}
+	}
+
 	/// Release every script reference the map holds. Call before the VM is closed.
 	pub fn clear(&self) {
 		let mut g = self.grid.borrow_mut();

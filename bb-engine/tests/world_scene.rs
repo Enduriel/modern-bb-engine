@@ -189,4 +189,73 @@ fn a_new_campaign_world_is_ready_to_draw() {
 		.expect("fade after");
 	let fade = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__fade").expect("fade");
 	assert_eq!((fade.get::<Number>(0).map(|n| n.0), fade.get::<bool>(1)), (Some(255.0), Some(true)), "drawn past its end");
+
+	// Sprites turn by their torque as virtual time passes (see `spin`): a brush brings
+	// its rotation speed (the selection ring's 45), and scripts can set one (the
+	// swamp's fog). The first frame only notes the time.
+	engine
+		.run_script(
+			r#"
+			::World.State.setAutoPause(false);
+			::World.State.setPause(false);
+			local p = ::World.State.getPlayer();
+			local ring = p.addSprite("spin_probe");
+			ring.setBrush("world_party_selection");
+			local fog = p.getTile().spawnDetail("world_swamp_fog_05", ::Const.World.ZLevel.Object + 305, 0);
+			fog.Scale = 0.777;
+			fog.Torque = -15;
+			::__spin <- [ring.Torque, typeof fog.Torque, fog.Torque];
+			"#,
+			"spin",
+		)
+		.expect("spin");
+	let spin = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__spin").expect("spin");
+	assert_eq!(spin.get::<Number>(0).map(|n| n.0), Some(45.0));
+	assert_eq!(spin.get::<String>(1).as_deref(), Some("float"), "Torque is a float");
+	assert_eq!(spin.get::<Number>(2).map(|n| n.0), Some(-15.0));
+	let turned = |engine: &harness::GameEngine| {
+		engine
+			.run_script(
+				r#"::__turned <- [::Time.getVirtualTimeF(), ::World.State.getPlayer().getSprite("spin_probe").Rotation];"#,
+				"turned",
+			)
+			.expect("turned");
+		let t = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__turned").expect("turned");
+		let fog = engine
+			.world_scene()
+			.tiles
+			.iter()
+			.flat_map(|t| t.details.clone())
+			.find(|d| (d.scale - 0.777).abs() < 1e-6)
+			.unwrap_or_else(|| {
+				let fogs: Vec<_> = engine
+					.world_scene()
+					.tiles
+					.iter()
+					.flat_map(|t| t.details.clone())
+					.filter(|d| d.brush == "world_swamp_fog_05")
+					.map(|d| (d.scale, d.rotation))
+					.collect();
+				panic!("the fog: {fogs:?}")
+			});
+		(t.get::<Number>(0).unwrap().0, t.get::<Number>(1).unwrap().0, fog.rotation)
+	};
+	engine.frame(16.0).expect("frame");
+	let (t0, ring0, fog0) = turned(&engine);
+	for _ in 0..20 {
+		engine.frame(16.0).expect("frame");
+	}
+	let (t1, ring1, fog1) = turned(&engine);
+	assert!(t1 > t0, "virtual time runs ({t0} -> {t1})");
+	let close = |a: f64, b: f64| (a - b).abs() < 0.01;
+	assert!(close(ring1 - ring0, 45.0 * (t1 - t0)), "the ring turned {} in {} s", ring1 - ring0, t1 - t0);
+	assert!(close(fog1 - fog0, -15.0 * (t1 - t0)), "the fog turned {} in {} s", fog1 - fog0, t1 - t0);
+	engine.run_script("::World.State.setPause(true);", "pause").expect("pause");
+	engine.frame(16.0).expect("frame");
+	let (_, ring2, _) = turned(&engine);
+	for _ in 0..5 {
+		engine.frame(16.0).expect("frame");
+	}
+	let (_, ring3, _) = turned(&engine);
+	assert_eq!(ring2, ring3, "paused, nothing turns");
 }

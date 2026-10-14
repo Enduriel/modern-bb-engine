@@ -31,6 +31,7 @@ mod placement;
 mod render;
 mod vision;
 use crate::module::Instantiator;
+use crate::native::spin::Spin;
 use crate::native::{EntityIds, Sprites};
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
@@ -77,7 +78,8 @@ struct UnitSpriteData {
 	finished: bool,
 	fading: bool,
 	fading_done: bool,
-	torque: f64,
+	/// Its `Torque` (see `spin`).
+	spin: Spin,
 	ignore_ambient: bool,
 	ignore_camera_flip: bool,
 	/// `setSpriteOcclusion(name, a, b, c)`, kept on the sprite's slot (`0x4a8950`):
@@ -109,7 +111,7 @@ impl UnitSpriteData {
 			finished: false,
 			fading: false,
 			fading_done: true,
-			torque: 0.0,
+			spin: Spin::default(),
 			ignore_ambient: false,
 			ignore_camera_flip: false,
 			occlusion: None,
@@ -346,7 +348,11 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 				Ok(())
 			},
 		)
-		.method("setBrush", move |s: &mut UnitSpriteData, brush: &str| s.brush = set_with.resolve(brush))
+		.method("setBrush", move |s: &mut UnitSpriteData, brush: &str| {
+			let brush = set_with.resolve(brush);
+			s.spin.rebrush(&set_with, &s.brush, &brush);
+			s.brush = brush;
+		})
 		// getBrush(): `null` without a brush, else `{ Name, TextureName }`; scripts read
 		// `getBrush().Name + "_top"` and hand `TextureName` to `Tactical.addResource`.
 		.method("getBrush", move |s: &mut UnitSpriteData, vm: &SQVM| -> Option<SqStrongRef> {
@@ -365,7 +371,11 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 		.property("Finished", |s: &UnitSpriteData| s.finished, |s: &mut UnitSpriteData, v: bool| s.finished = v)
 		.property("Fading", |s: &UnitSpriteData| s.fading, |s: &mut UnitSpriteData, v: bool| s.fading = v)
 		.property("IsFadingDone", |s: &UnitSpriteData| s.fading_done, |s: &mut UnitSpriteData, v: bool| s.fading_done = v)
-		.property("Torque", |s: &UnitSpriteData| s.torque, |s: &mut UnitSpriteData, v: f64| s.torque = v)
+		.property(
+			"Torque",
+			|s: &UnitSpriteData| f64::from(s.spin.torque),
+			|s: &mut UnitSpriteData, v: f64| s.spin.torque = v as f32,
+		)
 		.property("IgnoreAmbientColor", |s: &UnitSpriteData| s.ignore_ambient, |s: &mut UnitSpriteData, v: bool| s.ignore_ambient = v)
 		.property("IgnoreCameraFlip", |s: &UnitSpriteData| s.ignore_camera_flip, |s: &mut UnitSpriteData, v: bool| s.ignore_camera_flip = v)
 		// Animation and fades are visual; a fade that hides does so at once headless.
@@ -1074,6 +1084,20 @@ impl TacticalEntities {
 
 	/// The units and objects on the battle map, with their sprites in layering order,
 	/// as a renderer reads them.
+	/// Turn the placed units' sprites that have a torque to virtual time `now`, in
+	/// seconds (see `spin`).
+	pub(crate) fn turn(&self, vm: &SQVM, now: f32) {
+		let m = self.machine.borrow();
+		let Some(class) = m.sprite_class.clone() else { return };
+		for u in m.units.iter().filter(|u| !u.dead && u.tile.is_some()) {
+			for (_, handle) in u.sprites.iter() {
+				class.with_payload(vm, handle, |s| {
+					s.rotation = f64::from(s.spin.turn(s.rotation as f32, now));
+				});
+			}
+		}
+	}
+
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return Vec::new() };
