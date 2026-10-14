@@ -39,10 +39,22 @@ pub struct SceneTacticalEntity {
 	pub tile: Option<usize>,
 	/// A unit, rather than a map object.
 	pub is_actor: bool,
-	/// Its bars (`setOverlayValues`): head armour, body armour, hitpoints, each 0 to 1.
-	pub overlay: Option<[f32; 3]>,
+	/// Its bars and status icons (`createOverlay`), as drawn now.
+	pub overlay: Option<SceneOverlay>,
 	/// Its sprites, back to front.
 	pub sprites: Vec<SceneTacticalSprite>,
+}
+
+/// A unit's bars and status icons, as drawn now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneOverlay {
+	/// Each bar's value in 24ths (none at 0): head armour, body armour, hitpoints.
+	pub bars: [i32; 3],
+	/// Under each bar, what it showed before its last drop (in 24ths), and that
+	/// twin's colour (ARGB) as it fades out.
+	pub lost: [Option<(i32, u32)>; 3],
+	/// The status icons (`setOverlayIcons`), brush names in order.
+	pub icons: Vec<String>,
 }
 
 /// One of a battle entity's named sprites.

@@ -27,11 +27,13 @@ use super::overload::{make_dispatcher, overload_key, single_overload};
 
 mod persist;
 mod effects;
+mod overlay;
 mod placement;
 mod render;
 mod vision;
 use crate::module::Instantiator;
 use crate::native::spin::Spin;
+use crate::native::sprite_color::real_time;
 use crate::native::{EntityIds, Sprites};
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
@@ -145,9 +147,8 @@ struct UnitRecord {
 	/// The portrait draws the sprites at their offsets (`setAlwaysApplySpriteOffset`;
 	/// scripts set it in `onInit`).
 	portrait_offsets: bool,
-	/// The bars over a unit (`createOverlay`): head armour, body armour and hitpoints,
-	/// each 0 to 1, as `setOverlayValues` last set them (`0x4c2ec0`, `0x4c2f60`).
-	overlay: Option<[f32; 3]>,
+	/// The bars over a unit and its status icons (`createOverlay`; see `overlay`).
+	overlay: Option<overlay::Overlay>,
 	/// `getPos`/`setPos` world position (0,0 while off any map, like the original).
 	pos: (f64, f64),
 	/// The battle tile it stands on, if placed.
@@ -644,7 +645,7 @@ impl TacticalEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, _a: Variadic<Retained>| -> Option<SqStrongRef> {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.overlay.get_or_insert([0.0; 3]);
+					rec.overlay.get_or_insert_with(Default::default);
 				}
 				let class = m.borrow().sprite_class.clone()?;
 				Some(class.instantiate(vm, UnitSpriteData::fresh()))
@@ -656,7 +657,21 @@ impl TacticalEntities {
 			vm.make_closure(move |vm: &SQVM, head: Number, body: Number, hitpoints: Number| {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					if let Some(overlay) = rec.overlay.as_mut() {
-						*overlay = [head.0 as f32, body.0 as f32, hitpoints.0 as f32];
+						overlay.set_values([head.0 as f32, body.0 as f32, hitpoints.0 as f32], real_time(vm));
+					}
+				}
+			})
+		};
+		// setOverlayIcons(brushes): the icons over a unit's bars (`0x4b42f0`); nothing
+		// without bars or for anything but an array.
+		let set_overlay_icons = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, icons: Retained| {
+				let Some(icons) = icons.0.get_value::<SqArray>(vm) else { return };
+				let icons: Vec<String> = (0..icons.len()).filter_map(|i| icons.get::<String>(i)).collect();
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					if let Some(overlay) = rec.overlay.as_mut() {
+						overlay.icons = icons;
 					}
 				}
 			})
@@ -860,6 +875,7 @@ impl TacticalEntities {
 			("setAlwaysApplySpriteOffset", set_portrait_offsets),
 			("createOverlay", create_overlay),
 			("setOverlayValues", set_overlay_values),
+			("setOverlayIcons", set_overlay_icons),
 			("isInitialized", is_initialized),
 			("isPlacedOnMap", is_placed_on_map),
 			("getTile", get_tile),
@@ -886,7 +902,6 @@ impl TacticalEntities {
 			"setSpriteColorization",
 			"addDefaultStatusSprites",
 			"updateOverlay",
-			"setOverlayIcons",
 			// Render-only, or map-only while units aren't placed:
 			"fadeIn",
 			"fadeOut",
@@ -1099,6 +1114,7 @@ impl TacticalEntities {
 	}
 
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
+		let now = real_time(vm);
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return Vec::new() };
 		m.units
@@ -1109,7 +1125,7 @@ impl TacticalEntities {
 				pos: u.pos,
 				tile: u.tile,
 				is_actor: u.is_actor,
-				overlay: u.overlay,
+				overlay: u.overlay.as_ref().map(|o| o.scene(now)),
 				sprites: u
 					.sprites
 					.iter()

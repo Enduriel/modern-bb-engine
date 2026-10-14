@@ -57,4 +57,34 @@ fn a_battle_map_is_ready_to_draw() {
 	let color = 0xff00_0000 | u32::from_str_radix(&hex[1..], 16).expect("hex");
 	assert_eq!(scene.light.color, color, "ambient colour {hex}");
 	assert_eq!(scene.light.saturation, root.get::<f64>("__saturation").expect("saturation") as f32);
+
+	// A unit's status effects show as icons over its bars (`setOverlayIcons`).
+	let mut unit = None;
+	for frame in 0..3_000 {
+		unit = engine.tactical_scene().entities.iter().find(|e| e.is_actor && e.overlay.is_some()).map(|e| e.id);
+		if unit.is_some() {
+			break;
+		}
+		harness::run_frame(&engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("frame {frame}: {e}"));
+	}
+	let unit = unit.expect("a unit with bars");
+	engine
+		.run_script(
+			&format!(
+				"local a = ::Tactical.getEntityByID({unit}); \
+				 a.getSkills().add(::new(\"scripts/skills/effects/stunned_effect\")); \
+				 a.updateOverlay();"
+			),
+			"stun",
+		)
+		.expect("stun");
+	let icons = engine
+		.tactical_scene()
+		.entities
+		.into_iter()
+		.find(|e| e.id == unit)
+		.and_then(|e| e.overlay)
+		.map(|o| o.icons)
+		.expect("the unit's bars");
+	assert!(icons.iter().any(|i| i == "status_effect_05_mini"), "the stun's icon: {icons:?}");
 }
