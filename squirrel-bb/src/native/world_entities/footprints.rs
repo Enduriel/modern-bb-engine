@@ -74,6 +74,11 @@ impl Footprints {
 		});
 	}
 
+	/// A footprint as a save had it (the newest last).
+	pub fn push(&mut self, footprint: Footprint) {
+		self.list.push(footprint);
+	}
+
 	/// Remove the expired ones the original's update would have by `now`.
 	pub fn expire(&mut self, now: f32) {
 		let gone = self.list.iter().take_while(|f| now - f.expires >= FADE).count();

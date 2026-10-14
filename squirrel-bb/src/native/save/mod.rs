@@ -20,6 +20,7 @@
 
 mod container;
 mod meta;
+pub(crate) mod original;
 mod persistence;
 mod storage;
 pub(crate) mod stream;
@@ -66,6 +67,8 @@ struct Callbacks {
 struct Inner {
 	storage: RefCell<Storage>,
 	parts: RefCell<Vec<Rc<dyn SavePart>>>,
+	/// The engine's parts for the original's layout (see [`original`]).
+	original: RefCell<Option<Rc<dyn original::world::OriginalWorld>>>,
 	callbacks: RefCell<Callbacks>,
 	classes: RefCell<Option<Rc<StreamClasses>>>,
 	/// A save or load is running (the original's `World+0x2d0`): another one is
@@ -131,11 +134,18 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String) -> Result<(), String> {
 	let bytes = inner.storage.borrow().read(&file)?;
 	let (format, meta, reader) = storage::decode(bytes, &file)?;
-	if format == storage::Format::Original {
-		return Err(format!("{file}: loading the original's saves isn't supported yet"));
-	}
+	let version = meta.version;
 	let reader = Rc::new(RefCell::new(reader));
 	let stream = classes.in_stream(vm, reader.clone(), Rc::new(RefCell::new(meta)));
+	if format == storage::Format::Original {
+		let world = inner.original.borrow().clone().ok_or("loading the original's saves: no world to load into")?;
+		let cx = LoadCx { vm, reader, stream };
+		let (before, after) = {
+			let c = inner.callbacks.borrow();
+			(c.before_load.clone(), c.load.clone())
+		};
+		return original::import::load(world.as_ref(), &cx, version, before, after);
+	}
 	let before = inner.callbacks.borrow().before_load.clone();
 	run_callback(vm, before, &stream)?;
 	let parts = inner.parts.borrow().clone();
@@ -158,6 +168,7 @@ impl SaveSystem {
 			inner: Rc::new(Inner {
 				storage: RefCell::new(Storage::Memory(RefCell::default())),
 				parts: RefCell::default(),
+				original: RefCell::default(),
 				callbacks: RefCell::default(),
 				classes: RefCell::default(),
 				busy: Cell::new(false),
@@ -185,6 +196,11 @@ impl SaveSystem {
 	/// Keep saves as `<name>.sav` files in `dir`.
 	pub fn set_directory(&self, dir: PathBuf) {
 		*self.inner.storage.borrow_mut() = Storage::Dir(dir);
+	}
+
+	/// The engine's parts for loading (and writing) the original's layout.
+	pub(crate) fn set_original_world(&self, world: Rc<dyn original::world::OriginalWorld>) {
+		*self.inner.original.borrow_mut() = Some(world);
 	}
 
 	/// Add an engine part; parts save and load in the order they were added.
@@ -281,5 +297,6 @@ impl SaveSystem {
 		*self.inner.callbacks.borrow_mut() = Callbacks::default();
 		*self.inner.classes.borrow_mut() = None;
 		self.inner.parts.borrow_mut().clear();
+		*self.inner.original.borrow_mut() = None;
 	}
 }

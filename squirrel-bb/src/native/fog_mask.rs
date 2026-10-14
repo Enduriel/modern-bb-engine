@@ -211,6 +211,22 @@ impl FogMask {
 		})
 	}
 
+	/// Replace the mask (`MASK_SIZE²` bytes, as the original saves it).
+	pub(crate) fn set_alpha(&mut self, alpha: Vec<u8>) -> Result<(), String> {
+		if alpha.len() != MASK_SIZE * MASK_SIZE {
+			return Err(format!("a fog of war mask of {} bytes (not {MASK_SIZE}²)", alpha.len()));
+		}
+		self.alpha = alpha;
+		self.dirty = Some(Rect::FULL);
+		self.last = None;
+		Ok(())
+	}
+
+	/// The mask's bytes (`MASK_SIZE²`, or none before the map exists).
+	pub(crate) fn alpha(&self) -> &[u8] {
+		&self.alpha
+	}
+
 	/// Write the mask as runs of equal bytes.
 	pub(crate) fn save(&self, w: &mut SaveWriter) {
 		w.f32(self.world.0);

@@ -149,6 +149,14 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// character backgrounds build their description from them).
 		saves.add_part(world_entities.save_part());
 		saves.add_part(tactical_entities.save_part());
+		saves.set_original_world(Rc::new(crate::native::original_world::EngineWorld {
+			grid: world_grid.clone(),
+			entities: world_entities.clone(),
+			units: tactical_entities.clone(),
+			time: time.clone(),
+			clock: natives.world_clock.clone(),
+			camera: natives.world_camera.clone(),
+		}));
 
 		Engine {
 			saves,

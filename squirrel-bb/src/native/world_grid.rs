@@ -25,6 +25,9 @@ use super::world_layout;
 use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
 
+mod original;
+pub(crate) use original::brush_name;
+
 /// Axial neighbour deltas `(dq, dr)` indexed by `Const.Direction`: N, NE, SE, S, SW, NW.
 const DIRECTION_STEP: [(i64, i64); 6] = [(0, 1), (1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1)];
 
@@ -259,6 +262,7 @@ fn hex_distance_to(a: &TileHandle, q: i64, r: i64) -> i64 {
 /// table exists), then `World.resizeScene(w,h)` allocates it. Holds the `WorldTile`
 /// class (an `SqStrongRef`), so [`clear`](Self::clear) it before the VM closes
 /// ([`Engine`](crate::Engine) does this automatically).
+#[derive(Clone)]
 pub struct WorldGrid {
 	grid: Rc<RefCell<GridState>>,
 }

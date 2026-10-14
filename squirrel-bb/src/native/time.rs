@@ -75,6 +75,7 @@ struct TimeState {
 /// after `sq_close` is a use-after-free). The host naturally satisfies this by
 /// owning the VM at the top and dropping the service first; [`clear`](Self::clear)
 /// can drop all pending events explicitly while the VM is still live.
+#[derive(Clone)]
 pub struct TimeService {
 	state: Rc<RefCell<TimeState>>,
 }
@@ -139,6 +140,11 @@ impl TimeService {
 	/// world state.)
 	pub(crate) fn save_part(&self) -> Rc<dyn super::save::SavePart> {
 		Rc::new(TimePart(self.state.clone()))
+	}
+
+	/// Set the virtual time to `seconds` (a loaded save's).
+	pub(crate) fn set_virtual_seconds(&self, seconds: f64) {
+		self.state.borrow_mut().virtual_time = seconds * 1000.0;
 	}
 
 	/// Drop all pending scheduled events (releasing their callback/userdata

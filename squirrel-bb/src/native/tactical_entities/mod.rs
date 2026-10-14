@@ -27,6 +27,7 @@ use super::overload::{make_dispatcher, overload_key, single_overload};
 
 mod persist;
 mod effects;
+mod original;
 mod overlay;
 mod placement;
 mod render;
@@ -574,6 +575,7 @@ impl Units {
 	}
 }
 
+#[derive(Clone)]
 pub struct TacticalEntities {
 	machine: Rc<RefCell<TacticalMachine>>,
 }

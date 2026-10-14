@@ -132,6 +132,21 @@ impl WorldClock {
 		(self.ambient, self.saturation)
 	}
 
+	/// The clock as the original saves it: `Time`, the seconds into the phase, the
+	/// phase.
+	pub(crate) fn saved(&self) -> (f32, f32, u8) {
+		(self.time, self.into_phase, self.phase as u8)
+	}
+
+	/// The clock and the lighting as a loaded save of the original's has them.
+	pub(crate) fn load_original(&mut self, time: f32, into_phase: f32, phase: u8, ambient: u32, saturation: f32) {
+		self.time = time;
+		self.into_phase = into_phase;
+		self.phase = usize::from(phase).min(PHASES.len() - 1);
+		self.ambient = ambient;
+		self.saturation = saturation;
+	}
+
 	/// `World.clearScene()`: Day 1, 2:00, phase reset (it is recomputed on the next
 	/// advance), full speed.
 	pub(crate) fn clear_scene(&mut self) {

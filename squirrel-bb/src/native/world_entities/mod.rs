@@ -39,6 +39,8 @@ use crate::native::sprite_color::{SpriteColor, real_time};
 mod footprints;
 mod hover;
 mod movement;
+mod original;
+pub(crate) use original::{argb, rgba};
 mod persist;
 mod render;
 use super::sprite_slots as slots;
@@ -505,6 +507,7 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 }
 
 /// The native World-entity subsystem (`World.spawnLocation` + injected entity methods).
+#[derive(Clone)]
 pub struct WorldEntities {
 	machine: Rc<RefCell<EntityMachine>>,
 	hover: hover::Hover,
