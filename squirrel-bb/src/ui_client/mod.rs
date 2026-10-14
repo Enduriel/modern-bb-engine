@@ -10,9 +10,10 @@
 //!
 //! Headless there is no animation, so each callback follows on the next pump. Modules
 //! with more behaviour than that get their own emulation ([`turn_sequence_bar`]), and so
-//! does Modern Hooks' loader handshake ([`modern_hooks`]). A real browser host replaces
-//! this module.
+//! do Modern Hooks' loader handshake ([`modern_hooks`]) and mods' late JS
+//! ([`late_js`]). A real browser host replaces this module.
 
+mod late_js;
 mod modern_hooks;
 mod turn_sequence_bar;
 
@@ -50,11 +51,18 @@ impl UiClient {
 	/// a screen that was just shown).
 	pub fn pump(&mut self, bridge: &UiBridge, vm: &SQVM) -> Result<Vec<crate::UiCall>, String> {
 		for (screen, module) in bridge.take_new_connections() {
-			if module.is_none() {
-				if let Some(receiver) = bridge.receiver(&screen, None) {
-					notify(vm, &receiver, "onScreenConnected").map_err(|e| format!("{screen}.{e}"))?;
-					if screen == modern_hooks::SCREEN {
-						modern_hooks::on_connected(vm, &receiver)?;
+			match module {
+				None => {
+					if let Some(receiver) = bridge.receiver(&screen, None) {
+						notify(vm, &receiver, "onScreenConnected").map_err(|e| format!("{screen}.{e}"))?;
+						if screen == modern_hooks::SCREEN {
+							modern_hooks::on_connected(vm, &receiver)?;
+						}
+					}
+				}
+				Some(module) => {
+					if let Some(receiver) = bridge.receiver(&screen, Some(&module)) {
+						late_js::on_module_connected(vm, &screen, &module, &receiver)?;
 					}
 				}
 			}
