@@ -25,7 +25,7 @@ mod variadic;
 #[cfg(test)]
 mod tests;
 
-pub use forward::{Forwarded, StackArg};
+pub use forward::{ForwardArgs, Forwarded, MemberKey, StackArg, StackArgs};
 pub use number::{DynNumber, Number};
 pub use strong_ref::{Retained, SqStrongRef};
 pub use this::This;

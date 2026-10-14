@@ -1,11 +1,11 @@
 //! The `TacticalTile` script class: one battle tile's fields and methods.
 
 use squirrel::{
-	ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, StackArg, This, Variadic,
+	ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, StackArgs, This, Variadic,
 };
 
 use super::{Grid, TacticalTileData, detail, hex_distance, picking, tile_handle, vec};
-use crate::native::overload::{dispatch_overload, overload_key};
+use crate::native::overload::{Overload, overload_key};
 use crate::native::world_query;
 
 /// A script handle to one tile (a shared map + the tile's index).
@@ -246,20 +246,23 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		// arguments as below.
 		.method(&overload_key("setColor", 1), set_color)
 		.method(&overload_key("setColor", 3), set_color)
-		.native_method("setColor", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
-			dispatch_overload(vm, this, "setColor", args)
+		.native_method("setColor", {
+			let overload = Overload::new("setColor");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		.method(&overload_key("clear", 0), clear)
 		.method(&overload_key("clear", 1), clear)
-		.native_method("clear", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
-			dispatch_overload(vm, this, "clear", args)
+		.native_method("clear", {
+			let overload = Overload::new("clear");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		});
 	for arity in 1..=5 {
 		b = b.method(&overload_key("spawnDetail", arity), spawn_detail);
 	}
 	b = b
-		.native_method("spawnDetail", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
-			dispatch_overload(vm, this, "spawnDetail", args)
+		.native_method("spawnDetail", {
+			let overload = Overload::new("spawnDetail");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		.method("hasNextTile", |t: &mut TileHandle, dir: i64| -> bool { t.grid.borrow().neighbour(t.id, dir).is_some() })
 		.method("getNextTile", |t: &mut TileHandle, vm: &SQVM, dir: i64| -> Result<SqStrongRef, String> {

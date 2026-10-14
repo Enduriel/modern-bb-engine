@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::{StackArg, This, Variadic};
+use super::{StackArg, StackArgs, This, Variadic};
 use crate::{SQVM, SqObjectType, SqStrongRef, SqTable};
 
 #[test]
@@ -422,13 +422,23 @@ fn register_optional_and_this_borrowed_str() {
 fn register_forwarding_dispatcher(vm: &mut SQVM) {
 	let dispatch = vm.make_closure(|vm: &SQVM, this: This, args: Variadic<StackArg>| {
 		let key = format!("leaf_{}", args.0.len());
-		match this.forward_member(vm, &key, &args.0)? {
+		match this.forward_member(vm, key.as_str(), args.0.as_slice())? {
+			Some(result) => Ok(result),
+			None => Err("no such leaf".to_string()),
+		}
+	});
+	// The same over `StackArgs` (no collection) and keys interned once.
+	let keys: Vec<SqStrongRef> = (0..4).map(|n| SqStrongRef::string(vm, &format!("leaf_{n}"))).collect();
+	let dispatch_in_place = vm.make_closure(move |vm: &SQVM, this: This, args: StackArgs| {
+		let key = keys.get(args.len()).ok_or("no such leaf")?;
+		match this.forward_member(vm, key, args)? {
 			Some(result) => Ok(result),
 			None => Err("no such leaf".to_string()),
 		}
 	});
 	let mut obj = SqTable::new(vm);
 	obj.set("go", dispatch);
+	obj.set("go2", dispatch_in_place);
 	SqTable::root(vm).set("Obj", obj);
 }
 
@@ -451,6 +461,14 @@ fn forward_member_passes_args_through_and_returns_the_result() {
 		assert(Obj.go(table) == table);                               // same object back
 		local n = 0;
 		for (local i = 0; i < 10000; i++) n += Obj.go(i, 1);          // stack stays balanced
+		assert(n == 49985000);
+		// StackArgs + interned keys: the same results.
+		assert(Obj.go2() == "zero");
+		assert(Obj.go2(10, 3) == 7);
+		assert(Obj.go2({ x = 1 }, "ab", 0.5) == 3.5);
+		assert(Obj.go2(table) == table);
+		n = 0;
+		for (local i = 0; i < 10000; i++) n += Obj.go2(i, 1);
 		assert(n == 49985000);
 		"#,
 		"forward_member",

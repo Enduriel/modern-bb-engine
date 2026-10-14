@@ -12,13 +12,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{
-	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, StackArg, This,
+	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, StackArgs, This,
 	Variadic,
 };
 
 use super::fog_mask::{FogMask, FogPatch, FogStamp};
 use crate::scene::SceneRegionText;
-use super::overload::{dispatch_overload, make_dispatcher, overload_key};
+use super::overload::{Overload, make_dispatcher, overload_key};
 use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
 use crate::native::{EngineRng, Sprites};
 use super::world_layout;
@@ -1176,9 +1176,10 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		)
 		.native_method(
 			"spawnDetail",
-			|vm: &SQVM, this: This, args: Variadic<StackArg>| {
-				dispatch_overload(vm, this, "spawnDetail", args)
-			},
+			{
+			let overload = Overload::new("spawnDetail");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
+		},
 		);
 
 	// The terrain brush is state worldgen reads back.
@@ -1199,13 +1200,15 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.method(&overload_key("clear", 0), clear)
 		.method(&overload_key("clear", 1), clear)
-		.native_method("clear", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
-			dispatch_overload(vm, this, "clear", args)
+		.native_method("clear", {
+			let overload = Overload::new("clear");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		.method("clearAndFade", clear)
 		.method(&overload_key("clearAllBut", 1), clear_all_but)
-		.native_method("clearAllBut", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
-			dispatch_overload(vm, this, "clearAllBut", args)
+		.native_method("clearAllBut", {
+			let overload = Overload::new("clearAllBut");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		// hasDetailType(mask): whether one of the tile's details has any of the type
 		// bits (0x4fbd10, which finds them through the scene around the tile).
@@ -1219,8 +1222,9 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.method(&overload_key("setColor", 1), ignore)
 		.method(&overload_key("setColor", 3), ignore)
-		.native_method("setColor", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
-			dispatch_overload(vm, this, "setColor", args)
+		.native_method("setColor", {
+			let overload = Overload::new("setColor");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		.method("onRoadPass", ignore);
 

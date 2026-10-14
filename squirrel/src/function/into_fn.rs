@@ -9,7 +9,7 @@
 //! Borrowed args (`&str` and the like) rely on a double `FnMut` bound; see the
 //! fixed-arity arm of the macro below.
 
-use super::{IntoSqReturn, SqArg, SqFunction, This, Variadic};
+use super::{IntoSqReturn, SqArg, SqFunction, StackArgs, This, Variadic};
 use crate::SQVM;
 
 // Distinct markers so the blanket impls below target different
@@ -22,6 +22,8 @@ use crate::SQVM;
 pub struct FixedMarker;
 #[doc(hidden)]
 pub struct VariadicMarker;
+#[doc(hidden)]
+pub struct StackArgsMarker;
 #[doc(hidden)]
 pub struct ThisMarker;
 #[doc(hidden)]
@@ -378,6 +380,37 @@ where
 				idx += 1;
 			}
 			match func(vm, this, Variadic(rest)).push_return(vm) {
+				Ok(count) => count,
+				Err(error) => vm.throw_error(&error),
+			}
+		};
+		Box::new(ClosureFn {
+			invoke: Box::new(invoke),
+			nparamscheck,
+			typemask,
+		})
+	}
+}
+
+// `&SQVM` + `This` + `StackArgs`: a forwarding dispatcher that takes any number of
+// arguments and passes them on in place (see `This::forward_member`), with no per-call
+// collection.
+impl<Func, Ret> IntoSqFunction<(VmMarker, ThisMarker, StackArgsMarker)> for Func
+where
+	Func: for<'vm> FnMut(&'vm SQVM, This<'vm>, StackArgs<'vm>) -> Ret + 'static,
+	Ret: IntoSqReturn,
+{
+	fn into_sq_function(self) -> Box<dyn SqFunction> {
+		let typemask = String::from("."); // only `this`; the tail is unconstrained
+		let nparamscheck = -1i64; // "at least `this`" — any number of trailing args
+		let mut func = self;
+		let invoke = move |vm: &SQVM| -> squirrel_sys::SQInteger {
+			let this = This::extract(vm);
+			// Arguments occupy `2 ..= top - 1`; the free variable (closure userdata)
+			// sits at `top`.
+			let top = vm.stack_top();
+			let args = StackArgs::new(2, (top - 2).max(0) as usize);
+			match func(vm, this, args).push_return(vm) {
 				Ok(count) => count,
 				Err(error) => vm.throw_error(&error),
 			}

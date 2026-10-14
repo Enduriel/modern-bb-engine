@@ -76,6 +76,15 @@ impl SqStrongRef {
 	/// Push this reference's object onto the stack without consuming `self` (the
 	/// stack takes its own reference). Crate-internal building block — e.g. the
 	/// native-class factory pushes a cached class before `sq_createinstance`.
+	/// A string object, held. Pass it as a [`MemberKey`](crate::MemberKey) to look a
+	/// member up without hashing and interning its name each time.
+	pub fn string(vm: &SQVM, value: &str) -> Self {
+		vm.push_string(value);
+		let held = Self::from_stack(vm, -1);
+		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
+		held
+	}
+
 	pub(crate) fn push(&self, vm: &SQVM) {
 		self.debug_check_vm(vm);
 		unsafe { squirrel_sys::sq_pushobject(vm.as_ptr(), self.obj) };
