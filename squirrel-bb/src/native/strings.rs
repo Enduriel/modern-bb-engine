@@ -1,41 +1,15 @@
 //! BB string utilities: the `String` table (`contains`/`replace`/`remove`) and
-//! the root helpers `buildTextFromTemplate` / `isFirstCharacter` /
-//! `removeFromBeginningOfText` / `hexStringToInt`.
+//! the root helpers `buildTextFromTemplate` (see [`super::text_template`]) /
+//! `isFirstCharacter` / `removeFromBeginningOfText` / `hexStringToInt`.
 //!
 //! Squirrel's stdlib `format`/`split`/`strip`/`lstrip`/`rstrip` come from the
 //! string library the VM already registers — they are not re-implemented here.
 //!
 //! `toHash(obj)` (a per-object id) is in `native::identity`.
 
-use squirrel::{SQVM, SqArray, SqRef, SqStrongRef, SqTable};
+use squirrel::{SQVM, SqArray, SqBytes, SqRef, SqStrongRef, SqTable};
 
-/// `%token%` substitution. `vars` is an array of `[name, value]` pairs; each
-/// `%name%` in `template` is replaced with `value`.
-///
-/// Squirrel does not coerce numbers to strings on read, so the value is rendered
-/// explicitly: scalars (int/float/bool/string) become their textual form;
-/// containers/null are skipped (vanilla never passes those). This matters because
-/// most vanilla vars are numbers — reward amounts, kill counts, etc.
-fn build_text_from_template(template: &str, vars: &SqArray) -> String {
-	let mut result = template.to_string();
-	for index in 0..vars.len() {
-		let Some(pair) = vars.get::<SqArray>(index) else {
-			continue;
-		};
-		let Some(key) = pair.get::<String>(0) else {
-			continue;
-		};
-		let value = match pair.get_ref(1) {
-			Some(SqRef::String(s)) => s,
-			Some(SqRef::Integer(n)) => n.to_string(),
-			Some(SqRef::Float(f)) => f.to_string(),
-			Some(SqRef::Bool(b)) => b.to_string(),
-			_ => continue, // null / array / table / other: leave the token as-is
-		};
-		result = result.replace(&format!("%{key}%"), &value);
-	}
-	result
-}
+use super::{EngineRng, text_template};
 
 /// Parse a hex string (tolerating a leading `0x`/`0X`/`#`) into an integer; `0`
 /// on malformed input.
@@ -51,11 +25,12 @@ fn parse_hex(text: &str) -> i64 {
 		.unwrap_or(0)
 }
 
-/// Register the string helpers and the `String` table.
-pub(crate) fn install(vm: &mut SQVM) {
+/// Register the string helpers and the `String` table. `buildTextFromTemplate` picks
+/// its random choices from `text_rng`.
+pub(crate) fn install(vm: &mut SQVM, text_rng: EngineRng) {
 	// All `make_closure` calls (mutable VM borrow) happen before the table handles.
-	let build = vm.make_closure(|template: &str, vars: SqArray| -> String {
-		build_text_from_template(template, &vars)
+	let build = vm.make_closure(move |template: SqBytes, vars: SqArray| -> SqBytes {
+		SqBytes(text_template::build(&template.0, &vars, &text_rng))
 	});
 	let is_first = vm.make_closure(|text: &str, chars: SqRef| -> bool {
 		// true if `text` starts with any of the strings in `chars` (vanilla passes

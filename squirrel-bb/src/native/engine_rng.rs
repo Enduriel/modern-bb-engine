@@ -59,6 +59,18 @@ impl EngineRng {
 		let x = u128::from(self.0.borrow_mut().next_u64());
 		(i128::from(min) + (x % span) as i128) as i64
 	}
+
+	/// An index in `[0, n)` as MSVC's `uniform_int_distribution` draws it
+	/// (`_Rng_from_urng`, `0x4b0b80`): a 64-bit draw, drawn again while it lands in the
+	/// top partial bucket, modulo `n`. `n` must be at least 1.
+	pub(crate) fn uniform_index(&self, n: u64) -> u64 {
+		loop {
+			let x = self.0.borrow_mut().next_u64();
+			if x / n != u64::MAX / n || u64::MAX % n == n - 1 {
+				return x % n;
+			}
+		}
+	}
 }
 
 impl Default for EngineRng {

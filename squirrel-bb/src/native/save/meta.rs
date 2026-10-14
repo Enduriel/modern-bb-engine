@@ -94,8 +94,9 @@ fn parse_float(s: &str) -> f64 {
 	n.parse::<f32>().map_or(0.0, f64::from)
 }
 
-/// `ostream << float` with the default precision: `%g` with 6 significant digits.
-fn format_float(v: f32) -> String {
+/// `ostream << float` with the default precision: `%g` with 6 significant digits (also
+/// how Squirrel's `tostring` prints the original's `f32` floats).
+pub(crate) fn format_float(v: f32) -> String {
 	if v == 0.0 {
 		return if v.is_sign_negative() { "-0" } else { "0" }.to_string();
 	}

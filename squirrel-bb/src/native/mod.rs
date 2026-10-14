@@ -40,6 +40,7 @@ pub(crate) use settings::temp_gameplay_flag;
 pub(crate) mod sprite_color;
 pub(crate) mod sprite_slots;
 mod strings;
+mod text_template;
 pub(crate) mod tactical;
 pub(crate) mod tactical_grid;
 mod tactical_entities;
@@ -119,6 +120,10 @@ pub struct NativeConfig {
 	pub battle_camera: BattleCamera,
 }
 
+/// Mixed into `NativeConfig::engine_seed` for the texts' own stream
+/// (`buildTextFromTemplate`'s choices), so a seeded run is reproducible.
+const TEXT_SEED: u64 = 0x7E47_5EED_0000_0001;
+
 /// Each paid DLC's init script and its Steam app ID (the argument the script passes
 /// to `hasDLC`). Every DLC ships its init script in its own `.dat` archive, which
 /// Steam installs only for owners, so "the script is installed" is the ownership
@@ -191,7 +196,8 @@ impl NativeConfig {
 		vec::install(vm);
 		color::install(vm, prng.clone());
 		math::install(vm, prng);
-		strings::install(vm);
+		// The texts' random choices have a stream of their own, as the original's.
+		strings::install(vm, self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ TEXT_SEED)));
 		platform::install(vm, self);
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm);

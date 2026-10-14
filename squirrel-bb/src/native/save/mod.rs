@@ -20,6 +20,7 @@
 
 mod container;
 mod meta;
+pub(crate) use meta::format_float as meta_format_float;
 pub mod original;
 mod persistence;
 mod storage;
