@@ -2,14 +2,20 @@
 //! lists).
 //!
 //! A short sound is decoded once, whole, and kept: the next play of it starts from
-//! memory. A long one (music, the ambience loops) keeps only its file's bytes and is
-//! decoded as it plays, on kira's side, so a 13 MB rain loop costs no decoding on the
-//! game's thread. A file that's missing or doesn't decode is remembered as such, and
-//! reported once.
+//! memory. A long one (music, the ambience loops) is decoded as it plays, on kira's
+//! side, from its file's bytes, so a 13 MB rain loop costs no decoding on the game's
+//! thread. A file that's missing or doesn't decode is remembered as such, and reported
+//! once.
 //!
-//! The decoded sounds kept are capped: past [`KEEP_BYTES`], the least recently played
-//! go (and are read again if they play again). The original keeps a sound only while
-//! one of its instances plays (`0x5283e0`), so this keeps more, not less.
+//! What stays in memory: the original keeps a sound only while one of its instances
+//! plays (`0x5283e0`).
+//! - A long sound's bytes are held by the voices playing it, as the original's, and go
+//!   when the last one ends; the bank remembers only its length, and reads it again
+//!   for its next play (on a loader thread when it's prefetched, as the next track is).
+//!   Holding them all, every track and ambience loop ever played stayed in memory, up to
+//!   about 730 MB for vanilla's.
+//! - Decoded short sounds are kept beyond their play, as a cache, up to [`KEEP_BYTES`]:
+//!   past it the least recently played go (and are read again if they play again).
 //!
 //! A sound known to be wanted soon (the next music track, a new ambience layer's
 //! sounds) is [`prefetch`](SoundBank::prefetch)ed: read, and decoded if short, on a
@@ -20,7 +26,7 @@
 
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 
 use bb_assets::FileSource;
@@ -44,9 +50,18 @@ pub enum Sound {
 	Streaming(StreamingSoundData<FromFileError>),
 }
 
+/// What the bank knows of a sound.
 enum Entry {
 	Static(StaticSoundData, u32),
-	/// The file's bytes, decoded as it plays, and its length.
+	/// A long sound's bytes, while a voice holds them, and its length.
+	Bytes(Weak<[u8]>, u32),
+	Missing,
+}
+
+/// A sound read from the files.
+enum Loaded {
+	Static(StaticSoundData, u32),
+	/// A long sound's bytes, decoded as it plays, and its length.
 	Bytes(Arc<[u8]>, u32),
 	Missing,
 }
@@ -59,7 +74,7 @@ pub struct SoundBank {
 	/// Bytes of decoded sound kept.
 	kept: usize,
 	/// Sounds being read on threads of their own.
-	pending: HashMap<String, JoinHandle<Entry>>,
+	pending: HashMap<String, JoinHandle<Loaded>>,
 }
 
 impl SoundBank {
@@ -77,36 +92,45 @@ impl SoundBank {
 	/// there's no such file or it doesn't decode.
 	pub fn get(&mut self, path: &str) -> Option<Sound> {
 		match self.entry(path) {
-			Entry::Static(data, _) => Some(Sound::Static(data.clone())),
-			Entry::Bytes(bytes, _) => match StreamingSoundData::from_cursor(Cursor::new(bytes.clone())) {
+			Loaded::Static(data, _) => Some(Sound::Static(data)),
+			// The voice holds the bytes from here on.
+			Loaded::Bytes(bytes, _) => match StreamingSoundData::from_cursor(Cursor::new(bytes)) {
 				Ok(data) => Some(Sound::Streaming(data)),
 				Err(e) => {
 					eprintln!("audio: {path}: {e}");
 					None
 				}
 			},
-			Entry::Missing => None,
+			Loaded::Missing => None,
 		}
 	}
 
 	/// How long the sound at `path` plays at normal speed, in milliseconds (0 for
 	/// none), read on its first use like [`get`](Self::get).
 	pub fn length_ms(&mut self, path: &str) -> u32 {
+		if let Some((Entry::Static(_, ms) | Entry::Bytes(_, ms), _)) = self.entries.get(path) {
+			return *ms;
+		}
 		match self.entry(path) {
-			Entry::Static(_, ms) | Entry::Bytes(_, ms) => *ms,
-			Entry::Missing => 0,
+			Loaded::Static(_, ms) | Loaded::Bytes(_, ms) => ms,
+			Loaded::Missing => 0,
 		}
 	}
 
-	/// Whether `path` has been read (and, if short, decoded).
+	/// Whether `path` is in memory: decoded (if short), held by a voice (if long), or
+	/// known to be missing.
 	pub fn is_loaded(&self, path: &str) -> bool {
-		self.entries.contains_key(path)
+		match self.entries.get(path) {
+			Some((Entry::Bytes(bytes, _), _)) => bytes.strong_count() > 0,
+			Some(_) => true,
+			None => false,
+		}
 	}
 
 	/// Start reading (and, if short, decoding) `path` on a thread of its own, unless
 	/// it's read or being read already.
 	pub fn prefetch(&mut self, path: &str) {
-		if self.entries.contains_key(path) || self.pending.contains_key(path) {
+		if self.is_loaded(path) || self.pending.contains_key(path) {
 			return;
 		}
 		let (files, owned) = (self.files.clone(), path.to_string());
@@ -127,21 +151,56 @@ impl SoundBank {
 		self.kept
 	}
 
-	fn entry(&mut self, path: &str) -> &Entry {
+	/// Drop the decoded sounds kept for reuse: the game discarded a scene (a battle
+	/// ended, a campaign was left), whose sounds rarely play in the next. A voice playing
+	/// one keeps its own copy.
+	pub fn discard_unused(&mut self) {
+		self.entries.retain(|_, (entry, _)| !matches!(entry, Entry::Static(..)));
+		self.kept = 0;
+	}
+
+	/// What the bank holds: the sounds it knows, the bytes of decoded sound, and the
+	/// bytes of long sounds the voices playing them hold.
+	pub fn memory_use(&self) -> (usize, usize, usize) {
+		let streamed = self
+			.entries
+			.values()
+			.filter_map(|(entry, _)| match entry {
+				Entry::Bytes(bytes, _) => bytes.upgrade().map(|b| b.len()),
+				_ => None,
+			})
+			.sum();
+		(self.entries.len(), self.kept, streamed)
+	}
+
+	/// The sound at `path`: kept, or read (the prefetch's if one ran) and remembered.
+	fn entry(&mut self, path: &str) -> Loaded {
 		self.uses += 1;
 		let now = self.uses;
-		if let Some((_, used)) = self.entries.get_mut(path) {
-			*used = now;
-		} else {
-			let entry = match self.pending.remove(path) {
-				Some(loading) => loading.join().unwrap_or(Entry::Missing),
-				None => load(&*self.files, path),
+		if let Some((entry, used)) = self.entries.get_mut(path) {
+			let kept = match entry {
+				Entry::Static(data, ms) => Some(Loaded::Static(data.clone(), *ms)),
+				Entry::Bytes(bytes, ms) => bytes.upgrade().map(|bytes| Loaded::Bytes(bytes, *ms)),
+				Entry::Missing => Some(Loaded::Missing),
 			};
-			self.kept += decoded_bytes(&entry);
-			self.entries.insert(path.to_string(), (entry, now));
-			self.trim(path);
+			if let Some(kept) = kept {
+				*used = now;
+				return kept;
+			}
 		}
-		&self.entries[path].0
+		let loaded = match self.pending.remove(path) {
+			Some(loading) => loading.join().unwrap_or(Loaded::Missing),
+			None => load(&*self.files, path),
+		};
+		let entry = match &loaded {
+			Loaded::Static(data, ms) => Entry::Static(data.clone(), *ms),
+			Loaded::Bytes(bytes, ms) => Entry::Bytes(Arc::downgrade(bytes), *ms),
+			Loaded::Missing => Entry::Missing,
+		};
+		self.kept += decoded_bytes(&entry);
+		self.entries.insert(path.to_string(), (entry, now));
+		self.trim(path);
+		loaded
 	}
 
 	/// Drop the least recently used decoded sounds (but `keep`) past the cap.
@@ -163,20 +222,20 @@ impl SoundBank {
 }
 
 /// Read `path` from `files`, decoding it if short.
-fn load(files: &dyn FileSource, path: &str) -> Entry {
+fn load(files: &dyn FileSource, path: &str) -> Loaded {
 	let Some(bytes) = files.read(path) else {
 		eprintln!("audio: {path}: no such file");
-		return Entry::Missing;
+		return Loaded::Missing;
 	};
 	let length = sound_length_ms(&bytes).unwrap_or(0);
 	if bytes.len() >= STREAM_FROM {
-		return Entry::Bytes(bytes.into(), length);
+		return Loaded::Bytes(bytes.into(), length);
 	}
 	match StaticSoundData::from_cursor(Cursor::new(bytes)) {
-		Ok(data) => Entry::Static(data, length),
+		Ok(data) => Loaded::Static(data, length),
 		Err(e) => {
 			eprintln!("audio: {path}: {e}");
-			Entry::Missing
+			Loaded::Missing
 		}
 	}
 }
@@ -194,14 +253,15 @@ mod tests {
 
 	use super::*;
 
-	/// A 0.1 s mono wav, and which threads read files.
+	/// A 0.1 s mono wav (`a.wav`), a 15 s one (`long.wav`, streamed), and which threads
+	/// read files.
 	struct Files(Mutex<Vec<String>>);
 
 	impl FileSource for Files {
 		fn read(&self, path: &str) -> Option<Vec<u8>> {
 			let thread = std::thread::current().name().unwrap_or("").to_string();
 			self.0.lock().unwrap().push(format!("{path} on {thread}"));
-			let frames = 4410u32;
+			let frames = if path == "long.wav" { 661_500u32 } else { 4410 };
 			let mut b = b"RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0".to_vec();
 			b.extend_from_slice(&44_100u32.to_le_bytes());
 			b.extend_from_slice(&88_200u32.to_le_bytes());
@@ -212,7 +272,7 @@ mod tests {
 			b.resize(b.len() + frames as usize * 2, 0);
 			let riff = (b.len() - 8) as u32;
 			b[4..8].copy_from_slice(&riff.to_le_bytes());
-			(path == "a.wav").then_some(b)
+			(path == "a.wav" || path == "long.wav").then_some(b)
 		}
 	}
 
@@ -226,5 +286,35 @@ mod tests {
 		assert_eq!(bank.length_ms("a.wav"), 100);
 		assert_eq!(*files.0.lock().unwrap(), ["a.wav on sound loader"]);
 		assert!(bank.get("missing.wav").is_none());
+	}
+
+	#[test]
+	fn a_long_sound_stays_only_while_it_plays() {
+		let files = Arc::new(Files(Mutex::new(Vec::new())));
+		let mut bank = SoundBank::new(files.clone());
+		let playing = bank.get("long.wav");
+		assert!(matches!(playing, Some(Sound::Streaming(_))));
+		assert_eq!(bank.memory_use().2, 1_323_044, "the playing voice holds its bytes");
+		assert!(bank.is_loaded("long.wav"));
+		drop(playing);
+		assert_eq!(bank.memory_use().2, 0, "gone with the voice");
+		assert!(!bank.is_loaded("long.wav"));
+		assert_eq!(bank.length_ms("long.wav"), 15_000, "its length is remembered");
+		assert_eq!(files.0.lock().unwrap().len(), 1, "without reading it again");
+		assert!(bank.get("long.wav").is_some());
+		assert_eq!(files.0.lock().unwrap().len(), 2, "read again to play again");
+	}
+
+	#[test]
+	fn a_discarded_scene_takes_the_decoded_sounds_with_it() {
+		let files = Arc::new(Files(Mutex::new(Vec::new())));
+		let mut bank = SoundBank::new(files.clone());
+		let playing = bank.get("a.wav");
+		assert_eq!(bank.memory_use().1, 4410 * FRAME_BYTES);
+		bank.discard_unused();
+		assert_eq!(bank.memory_use(), (0, 0, 0));
+		assert!(matches!(playing, Some(Sound::Static(_))), "the playing voice keeps its copy");
+		assert!(bank.get("a.wav").is_some());
+		assert_eq!(files.0.lock().unwrap().len(), 2, "decoded again for its next play");
 	}
 }

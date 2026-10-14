@@ -93,6 +93,11 @@ impl Audio {
 		self.0.borrow_mut().update(now_ms);
 	}
 
+	/// The game discarded a scene (see [`AudioOut::discard_unused`]).
+	pub fn discard_unused(&self) {
+		self.0.borrow_mut().out.discard_unused();
+	}
+
 	/// How the output has been doing since the last call (see [`AudioOut::status`]).
 	pub fn output_status(&self) -> Option<String> {
 		self.0.borrow_mut().out.status()

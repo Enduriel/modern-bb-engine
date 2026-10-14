@@ -50,6 +50,10 @@ pub trait AudioOut {
 	/// The real time is `now_ms` (a frame passed).
 	fn update(&mut self, now_ms: u32);
 
+	/// The game discarded a scene (a battle ended, a campaign was left or replaced): drop
+	/// what was kept only for reuse. Sounds playing play on.
+	fn discard_unused(&mut self) {}
+
 	/// How the output has been doing since the last call (a device's underruns and
 	/// load), for the host to report; `None` if there's nothing to say.
 	fn status(&mut self) -> Option<String> {

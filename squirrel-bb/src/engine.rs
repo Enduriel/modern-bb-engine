@@ -463,7 +463,9 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.root_state.render(&self.vm)?;
 		self.root_state.run_background(&self.vm)?;
 		// What a battle's end, leaving a campaign or a load discarded this frame.
-		self.collector.collect_if_requested(&self.vm);
+		if self.collector.collect_if_requested(&self.vm) {
+			self.audio.discard_unused();
+		}
 		Ok(())
 	}
 

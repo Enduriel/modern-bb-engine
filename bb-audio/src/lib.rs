@@ -13,4 +13,5 @@ pub mod gains;
 mod kira_out;
 
 pub use bank::{Sound, SoundBank};
+pub use kira::backend::mock::MockBackend;
 pub use kira_out::{DEVICE_BUFFER_FRAMES, DeviceStats, KiraOut};

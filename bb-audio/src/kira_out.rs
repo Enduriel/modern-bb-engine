@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bb_assets::FileSource;
+use kira::backend::mock::{MockBackend, MockBackendSettings};
 use kira::backend::{Backend, DefaultBackend};
 use kira::sound::FromFileError;
 use kira::sound::static_sound::StaticSoundHandle;
@@ -149,6 +150,32 @@ impl KiraOut<DefaultBackend> {
 	}
 }
 
+/// The rate the silent output renders at.
+const SILENT_RATE: u32 = 44_100;
+
+impl KiraOut<MockBackend> {
+	/// With no device: kira's mock backend, which renders only when [`KiraOut::run_silent`]
+	/// says so, and nothing is heard. For tools that measure the sound, not play it.
+	pub fn silent(files: Arc<dyn FileSource>, rolloff: f32) -> Result<Self, String> {
+		let settings = AudioManagerSettings {
+			backend_settings: MockBackendSettings { sample_rate: SILENT_RATE },
+			..AudioManagerSettings::default()
+		};
+		// The mock can't fail to start.
+		Self::new(settings, files, rolloff).map_err(|()| "kira's mock backend".to_string())
+	}
+
+	/// Render `ms` of sound into nothing, so voices play on and end as on a device.
+	pub fn run_silent(&mut self, ms: u32) {
+		// The mock renders 128 frames a call.
+		for _ in 0..(SILENT_RATE * ms / 1000).div_ceil(128) {
+			let backend = self.manager.backend_mut();
+			backend.on_start_processing();
+			backend.process();
+		}
+	}
+}
+
 fn device_stats(manager: &mut AudioManager<DefaultBackend>) -> DeviceStats {
 	{
 		let backend = manager.backend_mut();
@@ -212,6 +239,11 @@ impl<B: Backend> KiraOut<B> {
 			rolloff,
 			status: |_| None,
 		})
+	}
+
+	/// What the sound bank holds: see [`SoundBank::memory_use`].
+	pub fn bank_use(&self) -> (usize, usize, usize) {
+		self.bank.memory_use()
 	}
 
 	/// The backend (a mock's, for tests to drive).
@@ -350,6 +382,10 @@ impl<B: Backend> AudioOut for KiraOut<B> {
 
 	fn preload(&mut self, file: &str) {
 		self.bank.prefetch(file);
+	}
+
+	fn discard_unused(&mut self) {
+		self.bank.discard_unused();
 	}
 
 	fn set_listener(&mut self, at: (f32, f32)) {

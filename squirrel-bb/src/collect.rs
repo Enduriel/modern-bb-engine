@@ -13,7 +13,8 @@
 //!
 //! These are moments behind a loading screen, so the pass costs nothing a player sees.
 //! The host hears of each too ([`Discard`], `Engine::take_discards`): the renderer
-//! drops the textures the discarded scene drew there.
+//! drops the textures the discarded scene drew there, and the sound output the sounds it
+//! kept for reuse.
 //! The original collects at the end of `World.clearScene` and on a 60 s clock in its
 //! frame loop (`0x4eff63`, `0x5394c0`); the difference is an intentional divergence
 //! (`docs/differences.md`).
@@ -83,10 +84,12 @@ impl Collector {
 		std::mem::take(&mut self.discards.borrow_mut())
 	}
 
-	/// Collect if a discard asked for it since the last frame.
-	pub(crate) fn collect_if_requested(&self, vm: &SQVM) {
-		if self.requested.replace(false) {
+	/// Collect if a discard asked for it since the last frame; whether one did.
+	pub(crate) fn collect_if_requested(&self, vm: &SQVM) -> bool {
+		let requested = self.requested.replace(false);
+		if requested {
 			vm.collect_garbage();
 		}
+		requested
 	}
 }
