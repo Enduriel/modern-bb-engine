@@ -47,7 +47,7 @@ impl Front {
 		};
 		let session = UiSession::start(data_dir, config, false)?;
 		if let Some(port) = devtools {
-			eprintln!("DevTools: http://127.0.0.1:{port}/ (open in a Chromium-based browser)");
+			super::devtools::announce(port);
 		}
 		// Portraits are composed on the game thread (`Game::draw`).
 		session.queue_procedural(true);

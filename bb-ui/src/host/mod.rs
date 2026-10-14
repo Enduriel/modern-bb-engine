@@ -85,7 +85,7 @@ pub fn run_subprocess() -> Option<i32> {
 	if command_line.has_switch(Some(&"type".into())) == 0 {
 		return None;
 	}
-	let mut app = app::host_app(None);
+	let mut app = app::host_app(None, None);
 	Some(execute_process(
 		Some(args.as_main_args()),
 		Some(&mut app),
@@ -173,7 +173,7 @@ impl UiHost {
 		std::fs::create_dir_all(&config.cache_dir).map_err(|e| format!("cache dir: {e}"))?;
 		let args = Args::new();
 		let (ready_tx, ready_rx) = mpsc::channel();
-		let mut app = app::host_app(Some(ready_tx));
+		let mut app = app::host_app(Some(ready_tx), config.devtools_port);
 
 		let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
 		let cef_dir = PathBuf::from(CEF_DIR);

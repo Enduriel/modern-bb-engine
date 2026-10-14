@@ -21,6 +21,8 @@ use std::sync::Arc;
 use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, GameEngine};
 
+#[cfg(feature = "ui")]
+mod devtools;
 #[cfg(not(feature = "ui"))]
 mod headless;
 #[cfg(feature = "ui")]

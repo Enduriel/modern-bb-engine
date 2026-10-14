@@ -45,6 +45,16 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("disable-features", Some("SpareRendererForSitePerProcess")),
 ];
 
+/// The origins allowed to drive the page over DevTools at `port`
+/// (`--remote-allow-origins`; Chromium refuses a DevTools WebSocket from any other
+/// origin): the frontend the port itself serves (`/devtools/inspector.html`, by either
+/// name of the local host) and the browser's own (`devtools://devtools`, which
+/// `chrome://inspect` opens). Never `*`: any website open in the player's browser could
+/// then drive the game's page over localhost.
+fn devtools_origins(port: u16) -> String {
+	format!("http://127.0.0.1:{port},http://localhost:{port},devtools://devtools")
+}
+
 /// Chrome preferences for every page, set on CEF's UI thread once its context exists
 /// (and kept in the profile, under the cache dir).
 ///
@@ -92,6 +102,8 @@ wrap_browser_process_handler! {
 wrap_app! {
 	pub(super) struct HostApp {
 		ready: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+		// The DevTools port, if served.
+		devtools_port: Option<u16>,
 	}
 
 	impl App {
@@ -110,6 +122,10 @@ wrap_app! {
 					Some(value) => command_line.append_switch_with_value(Some(&(*name).into()), Some(&(*value).into())),
 					None => command_line.append_switch(Some(&(*name).into())),
 				}
+			}
+			if let Some(port) = self.devtools_port {
+				let origins = devtools_origins(port);
+				command_line.append_switch_with_value(Some(&"remote-allow-origins".into()), Some(&origins.as_str().into()));
 			}
 		}
 
@@ -131,6 +147,19 @@ wrap_app! {
 
 /// The application object; `ready` (browser process only) is signalled once CEF's
 /// context is initialized.
-pub(super) fn host_app(ready: Option<mpsc::Sender<()>>) -> App {
-	HostApp::new(Arc::new(Mutex::new(ready)))
+/// The application object; `devtools_port` for the browser process when DevTools is
+/// served (its children don't take switches from it).
+pub(super) fn host_app(ready: Option<mpsc::Sender<()>>, devtools_port: Option<u16>) -> App {
+	HostApp::new(Arc::new(Mutex::new(ready)), devtools_port)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::devtools_origins;
+
+	#[test]
+	fn devtools_allows_only_its_own_frontends() {
+		assert_eq!(devtools_origins(9222), "http://127.0.0.1:9222,http://localhost:9222,devtools://devtools");
+		assert!(!devtools_origins(9222).contains('*'), "no website may drive the page");
+	}
 }
