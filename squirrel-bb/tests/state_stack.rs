@@ -116,12 +116,15 @@ fn boots_root_adds_children_and_runs_the_sibling_bus() {
 		]
 	);
 
-	// finish() runs onFinish and removes the state from the registry.
+	// finish() only flags the state, as in the original: it's still registered until
+	// the next update pass, which runs its onFinish and removes it.
 	root_state
 		.state("MenuA")
 		.unwrap()
 		.call_method(&vm, "finish", ())
 		.expect("finish MenuA");
+	assert_eq!(root_state.state_names(), ["MenuA", "MenuB"]);
+	root_state.update(&vm).expect("update pass");
 	assert_eq!(root_state.state_names(), ["MenuB"]);
 	assert!(root_state.state("MenuA").is_none());
 

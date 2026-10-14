@@ -33,6 +33,8 @@ struct Child {
 	id: i64,
 	state: SqStrongRef,
 	frame: FrameHook,
+	/// `finish()` was called: the next update pass finishes it (see [`RootState::update`]).
+	finishing: bool,
 }
 
 /// The root state itself (the container; not one of its own children).
@@ -198,6 +200,7 @@ fn add_child(
 		id,
 		state: child.clone(),
 		frame,
+		finishing: false,
 	});
 	let siblings = machine.borrow().siblings_of(id);
 	for sibling in siblings {
@@ -303,10 +306,17 @@ impl RootState {
 				target.map_or(Ok(()), |t| t.call_method(vm, "onHide", ()))
 			})
 		};
+		// finish(): a child only gets flagged; the update pass finishes it in its turn
+		// (disassembled). Until then it's still a sibling and still found by `get`.
 		let finish = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
-				let target = m.borrow_mut().remove(vm.this_identity());
+				let id = vm.this_identity();
+				if let Some(child) = m.borrow_mut().children.iter_mut().find(|c| c.id == id) {
+					child.finishing = true;
+					return Ok(());
+				}
+				let target = m.borrow_mut().remove(id);
 				target.map_or(Ok(()), |t| t.call_method(vm, "onFinish", ()))
 			})
 		};
@@ -462,14 +472,36 @@ impl RootState {
 		self.machine.borrow_mut().scene_render = Some(Rc::new(render));
 	}
 
-	/// Run `onUpdate` on every visible state (the root, then the children in
-	/// registration order), as one frame of the original's loop does. States added or
-	/// removed during the pass take effect next frame.
+	/// One frame's update pass, as the original's: the root's `onUpdate`, then each
+	/// child in registration order. A child runs its `onUpdate` (if visible) unless it
+	/// is finishing; then, if it is finishing (even by its own update), its `onFinish`
+	/// runs and it leaves the list. States added during the pass wait for the next one.
 	pub fn update(&self, vm: &SQVM) -> Result<(), String> {
 		init_pending(&self.machine, vm)?;
-		let updates = self.machine.borrow().visible_hooks(|f| f.on_update.clone());
-		for on_update in updates {
+		let root_update = {
+			let m = self.machine.borrow();
+			m.root.as_ref().filter(|r| !r.frame.hidden).and_then(|r| r.frame.on_update.clone())
+		};
+		if let Some(on_update) = root_update {
 			on_update.call(vm, ())?;
+		}
+		let ids: Vec<i64> = self.machine.borrow().children.iter().map(|c| c.id).collect();
+		for id in ids {
+			let hook = {
+				let m = self.machine.borrow();
+				let Some(c) = m.children.iter().find(|c| c.id == id) else { continue };
+				(!c.finishing && !c.frame.hidden).then(|| c.frame.on_update.clone()).flatten()
+			};
+			if let Some(on_update) = hook {
+				on_update.call(vm, ())?;
+			}
+			let finishing = self.machine.borrow().children.iter().any(|c| c.id == id && c.finishing);
+			if finishing {
+				let state = self.machine.borrow_mut().remove(id);
+				if let Some(state) = state {
+					state.call_method(vm, "onFinish", ())?;
+				}
+			}
 		}
 		Ok(())
 	}
