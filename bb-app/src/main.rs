@@ -11,7 +11,8 @@
 //! 140x170 (vanilla's worldgen needs more than 130x130). `--shot` saves the frame after
 //! that many frames and quits. Built with `--features
 //! ui`, the game's real UI is drawn over it and takes the input it's under. The sound
-//! plays on the default output device, unless `--mute`.
+//! plays on the default output device, unless `--mute`. With `BB_STATS=1` the game's
+//! total CPU and memory, its CEF processes included, is logged every 5 seconds.
 
 mod app;
 
@@ -59,6 +60,10 @@ fn main() -> ExitCode {
 	#[cfg(feature = "ui")]
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
+	}
+	// The game's total CPU and memory, with its CEF processes, every 5 s.
+	if std::env::var_os("BB_STATS").is_some_and(|v| v != "0") {
+		bb_app::stats::spawn_logger(std::time::Duration::from_secs(5));
 	}
 	let run = || -> Result<(), String> {
 		let options = options()?;

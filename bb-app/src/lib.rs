@@ -5,4 +5,5 @@
 pub mod front;
 pub mod game;
 pub mod keys;
+pub mod stats;
 pub mod wheel;
