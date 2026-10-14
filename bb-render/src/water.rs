@@ -40,7 +40,8 @@ impl WaterPass {
 
 	/// Draw the water over `target`, cleared to `clear` first: `water` is
 	/// `gfx/water.png`, `map_extent` the map's extent, `virtual_time` (seconds) drives
-	/// the drift. Draws nothing, and returns false, without a map.
+	/// the drift, `ambient` is the scene's light. Draws nothing, and returns false,
+	/// without a map.
 	#[allow(clippy::too_many_arguments)]
 	pub fn draw(
 		&self,
@@ -51,6 +52,7 @@ impl WaterPass {
 		water: &GpuTexture,
 		map_extent: (f32, f32),
 		virtual_time: f32,
+		ambient: [f32; 4],
 	) -> bool {
 		if !(map_extent.0 > 0.0 && map_extent.1 > 0.0) {
 			return false;
@@ -60,7 +62,7 @@ impl WaterPass {
 			map_extent,
 			texture_size: (water.width as f32, water.height as f32),
 			factor: virtual_time / 130.0,
-			ambient: [1.0; 4],
+			ambient,
 		};
 		self.pass.draw(gpu, target, clear, &params, water, None);
 		true

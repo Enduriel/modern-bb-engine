@@ -106,7 +106,7 @@ fn atlases_load_on_first_use() {
 		entities: Vec::new(),
 		extent: (0.0, 0.0),
 		fog_of_war: false,
-		region_texts: Vec::new(),
+		..WorldScene::default()
 	};
 	let registry = registry();
 	let view = WorldView {
@@ -160,7 +160,7 @@ fn fog_covers_what_the_mask_keeps() {
 		entities: Vec::new(),
 		extent: (4.0, 4.0),
 		fog_of_war: true,
-		region_texts: Vec::new(),
+		..WorldScene::default()
 	};
 	let view = WorldView {
 		center: [2.0, 2.0],

@@ -46,6 +46,8 @@ pub struct Engine<S: ScriptSource> {
 	sprites: Sprites,
 	/// The video mode the scripts set (no VM handles).
 	video: VideoSettings,
+	/// The world's clock (no VM handles), for the day's lighting.
+	world_clock: crate::native::world_time::Clock,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -119,6 +121,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			ui_client: RefCell::new(crate::ui_client::UiClient::new()),
 			sprites: natives.sprites,
 			video: natives.video,
+			world_clock: natives.world_clock.clone(),
 			time,
 			modules,
 			vm,
@@ -162,6 +165,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			extent: self.world_grid.extent(),
 			fog_of_war: self.world_grid.fog_of_war(),
 			region_texts: self.world_grid.region_texts(),
+			light: {
+				let (color, saturation) = self.world_clock.borrow().ambient();
+				crate::scene::SceneLight { color, saturation }
+			},
 		}
 	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the

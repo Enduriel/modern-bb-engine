@@ -15,7 +15,7 @@ use squirrel_bb::scene::WorldScene;
 use crate::fog::FogPass;
 use crate::gpu::Gpu;
 use crate::labels::{LabelFont, WHITE};
-use crate::sprite::{Quad, SpriteRenderer};
+use crate::sprite::{Quad, SceneUniforms, SpriteRenderer};
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::water::WaterPass;
@@ -215,7 +215,13 @@ impl WorldRenderer {
 		let map = usable(&world.quads[..world.labels_from]);
 		let labels = usable(&world.quads[world.labels_from..]);
 		stats.quads = map.len() + labels.len();
-		let uniforms = view.uniforms();
+		// The day's light: on lit sprites, the water and the fog.
+		let ambient = argb_floats(scene.light.color);
+		let uniforms = SceneUniforms {
+			ambient_color: ambient,
+			ambient_saturation: scene.light.saturation,
+			..view.uniforms()
+		};
 		let water = match self.textures.slot(WATER_TEXTURE) {
 			Some(Slot::Ready(water)) => self.water.draw(
 				gpu,
@@ -225,6 +231,7 @@ impl WorldRenderer {
 				water,
 				scene.extent,
 				self.clock.virtual_time,
+				ambient,
 			),
 			_ => false,
 		};
@@ -241,6 +248,7 @@ impl WorldRenderer {
 					fog_texture,
 					scene.extent,
 					self.clock.real,
+					ambient,
 				);
 			}
 		}
@@ -255,4 +263,10 @@ impl WorldRenderer {
 fn label_font(font: &Option<(BitmapFont, String)>) -> Option<LabelFont<'_>> {
 	font.as_ref()
 		.map(|(font, texture)| LabelFont { font, texture })
+}
+
+/// An ARGB colour as RGBA in `0..=1`.
+fn argb_floats(argb: u32) -> [f32; 4] {
+	let [a, r, g, b] = argb.to_be_bytes();
+	[r, g, b, a].map(|c| f32::from(c) / 255.0)
 }

@@ -3,12 +3,19 @@
 //! original's disassembly (2026-10-13), checked against probed values.
 //!
 //! The day is a fixed table of ten phases whose durations sum to `SecondsPerDay`
-//! (105 s). Each phase carries the `TimeOfDay` and `IsDaytime` scripts read, plus
-//! render lighting, which we don't model. Every `World.update()` adds
+//! (105 s). Each phase carries the `TimeOfDay` and `IsDaytime` scripts read, plus the
+//! world's lighting: an ambient colour and saturation (`0x4e63a0`). Every
+//! `World.update()` adds
 //! `speed * realDelta` (the frame's real delta in seconds) to `Time` and finds the
 //! current phase. `World.setSpeedMult` also sets the `Time` service's virtual speed,
 //! so `Time.getVirtualTime*` advance at the same rate. Arithmetic is `f32`, as in
 //! the original.
+//!
+//! The lighting blends from the phase's towards the next phase's as the phase passes,
+//! every update that isn't paused (`0x4e6990`). The colour blends per channel
+//! (`0x4a65f0`), truncated back to a byte. While the clock is paused nothing is
+//! recomputed, so a new campaign, which starts paused, keeps the scene's neutral
+//! white until the game runs.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,17 +24,29 @@ use squirrel::{ClassBuilder, Number, SQVM, SqStrongRef, SqTable};
 
 use super::world_nav::cvtt_i32;
 
-/// One phase of the day: its duration in seconds, what scripts read during it, and how
-/// well things can be seen (`World.getGlobalVisibilityMult()`).
+/// One phase of the day: its lighting, its duration in seconds, what scripts read
+/// during it, and how well things can be seen (`World.getGlobalVisibilityMult()`).
 struct Phase {
+	/// Ambient colour, ARGB.
+	color: u32,
+	saturation: f32,
 	duration: f32,
 	time_of_day: i64,
 	is_daytime: bool,
 	visibility: f32,
 }
 
-const fn phase(duration: f32, time_of_day: i64, is_daytime: bool, visibility: f32) -> Phase {
+const fn phase(
+	color: u32,
+	saturation: f32,
+	duration: f32,
+	time_of_day: i64,
+	is_daytime: bool,
+	visibility: f32,
+) -> Phase {
 	Phase {
+		color,
+		saturation,
 		duration,
 		time_of_day,
 		is_daytime,
@@ -38,17 +57,31 @@ const fn phase(duration: f32, time_of_day: i64, is_daytime: bool, visibility: f3
 /// The original's day, in order from the start of a day (`Const.World.TimeOfDay`
 /// values). Dusk and Night are each split in two for lighting.
 const PHASES: [Phase; 10] = [
-	phase(3.0, 0, true, 1.0),    // Dawn
-	phase(7.0, 1, true, 1.0),    // Morning
-	phase(30.0, 2, true, 1.0),   // Midday
-	phase(20.0, 3, true, 1.0),   // Afternoon
-	phase(5.0, 4, true, 1.0),    // Evening
-	phase(5.0, 5, true, 0.75),   // Dusk
-	phase(5.0, 5, true, 0.75),   // Dusk
-	phase(18.0, 6, false, 0.5),  // Night
-	phase(6.0, 6, false, 0.5),   // Night
-	phase(6.0, 7, true, 0.75),   // EarlyMorning
+	phase(0xffffa462, 1.0, 3.0, 0, true, 1.0),   // Dawn
+	phase(0xffffb762, 1.0, 7.0, 1, true, 1.0),   // Morning
+	phase(0xffffffff, 1.0, 30.0, 2, true, 1.0),  // Midday
+	phase(0xffffffff, 1.0, 20.0, 3, true, 1.0),  // Afternoon
+	phase(0xffd9e5f1, 1.0, 5.0, 4, true, 1.0),   // Evening
+	phase(0xffeb8c6f, 1.0, 5.0, 5, true, 0.75),  // Dusk
+	phase(0xffeb8c6f, 1.0, 5.0, 5, true, 0.75),  // Dusk
+	phase(0xff7083a8, 0.8, 18.0, 6, false, 0.5), // Night
+	phase(0xff7083a8, 0.8, 6.0, 6, false, 0.5),  // Night
+	phase(0xffb0c7f4, 0.9, 6.0, 7, true, 0.75),  // EarlyMorning
 ];
+
+/// `a` blended towards `b`, `keep` of the way kept at `a` (`0x4a65f0`): per channel
+/// in `f32`, truncated.
+fn blend_color(a: u32, b: u32, keep: f32) -> u32 {
+	if a == b {
+		return a;
+	}
+	let toward = 1.0 - keep;
+	let unit = |c: u32, shift: u32| ((c >> shift) & 0xff) as i32 as f32 * (1.0f32 / 255.0);
+	[0, 8, 16, 24].iter().fold(0, |out, &shift| {
+		let v = (toward * unit(b, shift) + unit(a, shift) * keep) * 255.0;
+		out | (((v as i32) as u32 & 0xff) << shift)
+	})
+}
 
 /// The world's clock state (the original's `WorldTime`).
 pub(crate) struct WorldClock {
@@ -62,6 +95,9 @@ pub(crate) struct WorldClock {
 	/// `World.getGlobalVisibilityMult()`: the phase's visibility, blended towards the
 	/// next phase's as the phase passes.
 	global_visibility: f32,
+	/// The world's ambient colour (ARGB) and saturation, for the renderer.
+	ambient: u32,
+	saturation: f32,
 	/// While set, `World.update` doesn't advance the clock (`IsPaused`).
 	paused: bool,
 	/// `World.getSpeedMult()`: the scale on real time (0 when the game is paused).
@@ -84,9 +120,16 @@ impl WorldClock {
 			phase: 0,
 			into_phase: 0.0,
 			global_visibility: 1.0,
+			ambient: 0xffff_ffff,
+			saturation: 1.0,
 			paused: false,
 			speed: 1.0,
 		}
+	}
+
+	/// The ambient colour (ARGB) and saturation as of the last update.
+	pub(crate) fn ambient(&self) -> (u32, f32) {
+		(self.ambient, self.saturation)
 	}
 
 	/// `World.clearScene()`: Day 1, 2:00, phase reset (it is recomputed on the next
@@ -119,6 +162,8 @@ impl WorldClock {
 		let next = &PHASES[(self.phase + 1) % PHASES.len()];
 		let remaining = 1.0 - self.into_phase / current.duration;
 		let passed = 1.0 - remaining;
+		self.saturation = current.saturation * remaining + next.saturation * passed;
+		self.ambient = blend_color(current.color, next.color, remaining);
 		self.global_visibility = current.visibility * remaining + next.visibility * passed;
 	}
 
@@ -316,6 +361,30 @@ mod tests {
 		// Halfway through the second Dusk phase: halfway from 0.75 to Night's 0.5.
 		c.advance(7.0);
 		assert_eq!(c.global_visibility, 0.625);
+	}
+
+	#[test]
+	fn lighting_blends_between_phases() {
+		let mut c = WorldClock::new();
+		assert_eq!(c.ambient(), (0xffff_ffff, 1.0), "neutral until the clock runs");
+		c.paused = true;
+		c.advance(1.0);
+		assert_eq!(c.ambient(), (0xffff_ffff, 1.0), "paused: nothing recomputed");
+		c.paused = false;
+		// 1.75 s into Dawn (#ffa462), 7/12 of the way to Morning (#ffb762).
+		c.advance(1.0);
+		assert_eq!(c.ambient().0, blend_color(0xffffa462, 0xffffb762, 1.0 - 1.75 / 3.0));
+		assert_eq!(c.ambient().0 & 0xffff_00ff, 0xffff_0062);
+		// Deep night, 3 s into the first Night phase: Night's own colour.
+		c.advance(76.0 - 1.75 - 3.0 + 3.0);
+		assert_eq!(c.ambient(), (0xff7083a8, 0.8));
+	}
+
+	#[test]
+	fn colours_blend_per_channel_and_truncate() {
+		assert_eq!(blend_color(0xff000000, 0xff0000ff, 0.5), 0xff00007f);
+		assert_eq!(blend_color(0xffffffff, 0xffffffff, 0.3), 0xffffffff);
+		assert_eq!(blend_color(0xff102030, 0xff102030, 0.0), 0xff102030);
 	}
 
 	#[test]

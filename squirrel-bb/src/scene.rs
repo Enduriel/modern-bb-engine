@@ -21,6 +21,27 @@ pub struct WorldScene {
 	pub fog_of_war: bool,
 	/// Region names, in spawn order.
 	pub region_texts: Vec<SceneRegionText>,
+	/// The time of day's lighting.
+	pub light: SceneLight,
+}
+
+/// The world's lighting: the day phase's ambient colour and saturation, which lit
+/// sprites, the water and the fog are multiplied by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneLight {
+	/// ARGB.
+	pub color: u32,
+	pub saturation: f32,
+}
+
+impl Default for SceneLight {
+	/// Neutral: white, full saturation.
+	fn default() -> Self {
+		SceneLight {
+			color: 0xffff_ffff,
+			saturation: 1.0,
+		}
+	}
 }
 
 /// A region's name on the map (`World.spawnRegionText`).

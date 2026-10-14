@@ -100,8 +100,9 @@ impl FogPass {
 	}
 
 	/// Draw the fog over `target`: `fog` is `gfx/fow.png`, `map_extent` the world size
-	/// the mask spans, `real_time` (seconds) drives the drift. Nothing is drawn before
-	/// the mask's first patch.
+	/// the mask spans, `real_time` (seconds) drives the drift, `ambient` is the scene's
+	/// light. Nothing is drawn before the mask's first patch.
+	#[allow(clippy::too_many_arguments)]
 	pub fn draw(
 		&self,
 		gpu: &Gpu,
@@ -110,6 +111,7 @@ impl FogPass {
 		fog: &GpuTexture,
 		map_extent: (f32, f32),
 		real_time: f32,
+		ambient: [f32; 4],
 	) {
 		let Some((_, mask)) = &self.mask else { return };
 		if !(map_extent.0 > 0.0 && map_extent.1 > 0.0) {
@@ -121,7 +123,7 @@ impl FogPass {
 			map_extent,
 			texture_size: (size, size),
 			factor: real_time / 100.0,
-			ambient: [1.0; 4],
+			ambient,
 		};
 		self.pass.draw(gpu, target, None, &params, fog, Some(mask));
 	}
