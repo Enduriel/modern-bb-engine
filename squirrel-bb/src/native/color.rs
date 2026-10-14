@@ -57,7 +57,7 @@ impl Color {
 ///   pointer when probed); `None` here, and the caller uses transparent black;
 /// - without `#`, the whole string is a hex `u32` read as RRGGBBAA (vanilla's usual
 ///   form). That read's failure is not checked.
-fn parse_color(text: &str) -> Option<u32> {
+pub(crate) fn parse_color(text: &str) -> Option<u32> {
 	if text.is_empty() {
 		return None;
 	}

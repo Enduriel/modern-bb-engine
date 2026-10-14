@@ -10,7 +10,7 @@
 //! `Properties`, `Items`), so [`clear`](TacticalGrid::clear) it before the VM closes.
 
 mod camera;
-mod detail;
+pub(crate) mod detail;
 mod heat;
 mod picking;
 mod tile;
@@ -28,7 +28,7 @@ use std::rc::Rc;
 use squirrel::{Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
 
 use crate::module::FileReader;
-use crate::native::Sprites;
+use crate::native::{EngineRng, Sprites};
 
 use super::overload::{make_dispatcher, overload_key};
 
@@ -61,8 +61,10 @@ pub(crate) struct TacticalTileData {
 	pub tv_level_disadvantage: i64,
 	pub tv_total: i64,
 	pub brush: String,
-	/// The flags of the details spawned on it (for `clear(flags)`).
-	pub detail_flags: Vec<i64>,
+	/// The details spawned on it, in spawn order (see [`detail`]).
+	pub details: Vec<detail::Detail>,
+	/// `tile.setColor` (ARGB): the tile's tint, white unless a script sets it.
+	pub color: u32,
 	/// Who stands on it (a unit or an object), and whether it is an actor.
 	pub occupant: Option<(SqStrongRef, bool)>,
 	/// `tile.Properties` and `tile.Items`, made on first use.
@@ -88,6 +90,7 @@ impl TacticalTileData {
 			row,
 			q: col,
 			r: row - col / 2,
+			color: 0xffff_ffff,
 			..Default::default()
 		}
 	}
@@ -106,7 +109,9 @@ pub(crate) struct TacticalGridState {
 	/// The current vision update's stamp (`IsVisibleForEntity` compares against it).
 	pub vis_stamp: u32,
 	class: Option<SqClass<TileHandle>>,
-	detail_class: Option<SqClass<detail::DetailData>>,
+	detail_class: Option<SqClass<detail::DetailHandle>>,
+	/// The engine's own random stream: new details' mirroring, rotation and scale.
+	engine_rng: EngineRng,
 	/// Shared script code for `tile.Properties` objects (their `set`/`get`/… methods).
 	properties_delegate: Option<SqStrongRef>,
 	object_spawner: Option<ObjectSpawner>,
@@ -131,6 +136,7 @@ impl TacticalGridState {
 			vis_stamp: 0,
 			class: None,
 			detail_class: None,
+			engine_rng: EngineRng::unseeded(),
 			properties_delegate: None,
 			object_spawner: None,
 			occupant_lookup: None,
@@ -432,6 +438,63 @@ impl TacticalGrid {
 		g.hex_masks = None;
 	}
 
+	/// The battle map as a renderer reads it (`transitions` aside), at real time `now`.
+	pub(crate) fn scene(&self, now: f32) -> crate::scene::tactical::TacticalScene {
+		let g = self.grid.borrow();
+		let tiles = g
+			.tiles
+			.iter()
+			.map(|t| crate::scene::tactical::SceneTacticalTile {
+				col: t.col,
+				row: t.row,
+				pos: tile_pos(t.col, t.row),
+				level: t.level,
+				terrain: t.type_,
+				subtype: t.subtype,
+				blend_priority: t.blend_priority,
+				brush: t.brush.clone(),
+				color: t.color,
+				fogged: t.fogged,
+				details: t
+					.details
+					.iter()
+					.map(|d| {
+						let d = d.borrow();
+						crate::scene::tactical::SceneTacticalDetail {
+							brush: d.brush.clone(),
+							flags: d.flags,
+							mirrored: d.mirrored,
+							offset: d.offset,
+							rotation: d.rotation,
+							scale: d.scale,
+							saturation: d.saturation,
+							brightness: d.brightness,
+							color: d.color.shown(now),
+						}
+					})
+					.collect(),
+			})
+			.collect();
+		let c = &g.camera;
+		crate::scene::tactical::TacticalScene {
+			width: g.width,
+			height: g.height,
+			tiles,
+			transitions: Default::default(),
+			camera: crate::scene::tactical::SceneCamera {
+				pos: c.pos,
+				zoom: c.zoom,
+				level: c.level,
+				flipped: c.flipped,
+			},
+		}
+	}
+
+	/// Draw new details' random looks from `rng`. Call before [`install`](Self::install).
+	pub fn set_engine_rng(&self, rng: EngineRng) {
+		self.grid.borrow_mut().engine_rng = rng;
+	}
+
 	/// Hint `Tactical.addResource` paths to `sprites`. Call before [`install`](Self::install).
 	pub fn set_sprites(&self, sprites: Sprites) {
 		self.grid.borrow_mut().sprites = sprites;
@@ -440,7 +503,8 @@ impl TacticalGrid {
 	/// Install the tile classes, the camera and the map natives on the `Tactical` table.
 	pub fn install(&self, vm: &mut SQVM) {
 		let class = tile::build_class(vm);
-		let detail_class = detail::build_class(vm);
+		let sprites = self.grid.borrow().sprites.clone();
+		let detail_class = detail::build_class(vm, &sprites);
 		let properties_delegate = tile::properties_delegate(vm, &self.grid);
 		let camera_class = camera::build_class(vm);
 		let camera = camera::instance(vm, &camera_class, &self.grid);

@@ -33,15 +33,7 @@ use super::world_layout;
 use super::world_query::{self, Candidate};
 use crate::module::Instantiator;
 use crate::native::Sprites;
-use crate::native::sprite_color::SpriteColor;
-
-/// `Time.getRealTimeF()`: real seconds, the clock sprite fades run on.
-fn real_time(vm: &SQVM) -> f32 {
-	SqTable::root(vm)
-		.get::<SqStrongRef>("Time")
-		.and_then(|t| t.call_method_ret::<Number, _>(vm, "getRealTimeF", ()).ok().flatten())
-		.map_or(0.0, |n| n.0 as f32)
-}
+use crate::native::sprite_color::{SpriteColor, real_time};
 
 mod footprints;
 mod movement;

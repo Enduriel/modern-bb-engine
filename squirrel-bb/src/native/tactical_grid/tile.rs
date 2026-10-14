@@ -185,21 +185,55 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			})
 		})
 		.method("setBrush", |t: &mut TileHandle, brush: String| t.with_mut(|d| d.brush = brush))
-		.method("setColor", |_t: &mut TileHandle, _a: Variadic<Retained>| {})
+		// setColor(r, g, b) with 0–1 channels, or setColor("#rrggbb"): the tile's tint
+		// (`0x4da490`, `0x4da500`).
+		.method("setColor", |t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| {
+			let number = |i: usize| args.get(i).and_then(|a| a.0.get_value::<Number>(vm)).map(|n| n.0 as f32);
+			let color = match (number(0), number(1), number(2)) {
+				(Some(r), Some(g), Some(b)) => {
+					let byte = |v: f32| ((v * 255.0) as i32 as u32) & 0xff;
+					Some(0xff00_0000 | byte(r) << 16 | byte(g) << 8 | byte(b))
+				}
+				_ => {
+					let text = args.first().and_then(|a| a.0.get_value::<String>(vm));
+					text.and_then(|s| crate::native::color::parse_color(&s))
+				}
+			};
+			if let Some(color) = color {
+				t.with_mut(|d| d.color = color);
+			}
+		})
 		// clear(): every detail; clear(flags): those carrying any of `flags`.
 		.method("clear", |t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| {
 			let flags = args.first().and_then(|a| a.0.get_value::<Number>(vm)).map(|n| n.0 as i64);
 			t.with_mut(|d| match flags {
-				None => d.detail_flags.clear(),
-				Some(f) => d.detail_flags.retain(|df| df & f == 0),
+				None => d.details.clear(),
+				Some(f) => d.details.retain(|detail| detail.borrow().flags & f == 0),
 			})
 		})
-		// spawnDetail(brush [, flags [, flipped [, ? [, offset]]]]): a decal handle.
+		// spawnDetail(brush [, flags [, mirrored [, fadeIn [, offset]]]]): see `detail`.
 		.method("spawnDetail", |t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Option<SqStrongRef> {
-			let flags = args.get(1).and_then(|a| a.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i64);
-			t.with_mut(|d| d.detail_flags.push(flags));
-			let class = t.grid.borrow().detail_class.clone()?;
-			Some(class.instantiate(vm, detail::DetailData::fresh()))
+			let brush = args.first()?.0.get_value::<String>(vm)?;
+			let number = |i: usize| args.get(i).and_then(|a| a.0.get_value::<Number>(vm)).map(|n| n.0);
+			let flag = |i: usize| args.get(i).and_then(|a| a.0.get_value::<bool>(vm));
+			let offset = args.get(4).map_or((0.0, 0.0), |a| {
+				let c = |axis: &str| a.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
+				(c("X"), c("Y"))
+			});
+			let spawn = detail::Spawn {
+				brush,
+				flags: number(1).map_or(0, |n| n as i64),
+				mirrored: if args.len() >= 3 { Some(flag(2).unwrap_or(false)) } else { None },
+				fade_in: flag(3).unwrap_or(false),
+				offset,
+			};
+			let now = crate::native::sprite_color::real_time(vm);
+			let (class, sprites, rng) = {
+				let g = t.grid.borrow();
+				(g.detail_class.clone()?, g.sprites.clone(), g.engine_rng.clone())
+			};
+			let detail = t.with_mut(|d| detail::spawn(&mut d.details, spawn, &sprites, &rng, now))?;
+			Some(class.instantiate(vm, detail::DetailHandle(detail)))
 		})
 		.method("hasNextTile", |t: &mut TileHandle, dir: i64| -> bool { t.grid.borrow().neighbour(t.id, dir).is_some() })
 		.method("getNextTile", |t: &mut TileHandle, vm: &SQVM, dir: i64| -> Result<SqStrongRef, String> {

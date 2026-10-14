@@ -20,6 +20,7 @@ pub(crate) struct RostersPart(pub Rc<RefCell<TacticalMachine>>);
 
 fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 	w.str(&s.brush);
+	w.u32(s.color);
 	for v in [s.alpha, s.scale, s.rotation, s.saturation, s.render_anim_start] {
 		w.f64(v);
 	}
@@ -46,6 +47,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 	Ok(UnitSpriteData {
 		brush: r.str()?,
+		color: r.u32()?,
 		alpha: r.f64()?,
 		scale: r.f64()?,
 		rotation: r.f64()?,

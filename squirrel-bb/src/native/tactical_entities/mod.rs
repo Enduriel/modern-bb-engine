@@ -43,12 +43,16 @@ const SURVIVOR_ROSTER_ID: i64 = -4;
 const RETREAT_ROSTER_ID: i64 = -5;
 const TEMPORARY_ROSTER_ID: i64 = -6;
 
-/// An inert render sprite handle for a tactical unit. Richer than the world sprite stub
-/// (units read more back): also `Rotation`, `Color` (no-op), `HasBrush`, `getBrush`,
-/// `varyColor`/`varySaturation`/`setHorizontalFlipping` — all visual no-ops headless.
+/// A render sprite handle for a tactical unit. Richer than the world sprite (units read
+/// more back): also `Rotation`, `Color`, `HasBrush`, `getBrush` and
+/// `setHorizontalFlipping`. `varyColor`/`varySaturation` and the fades are still no-ops
+/// here (the fades' faithful, draw-time semantics live in `SpriteColor`, used by world
+/// sprites and tactical details).
 #[derive(Clone)]
 struct UnitSpriteData {
 	brush: String,
+	/// `Color` (ARGB). Skeletons copy their body's into their blood colour.
+	color: u32,
 	alpha: f64,
 	scale: f64,
 	rotation: f64,
@@ -75,6 +79,7 @@ impl UnitSpriteData {
 	fn fresh() -> Self {
 		UnitSpriteData {
 			brush: String::new(),
+			color: 0xffff_ffff,
 			alpha: 255.0,
 			scale: 1.0,
 			rotation: 0.0,
@@ -312,7 +317,14 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 			|s: &UnitSpriteData| s.lowering_shield,
 			|s: &mut UnitSpriteData, v: bool| s.lowering_shield = v,
 		)
-		.property_noop("Color")
+		.property_obj_rw(
+			"Color",
+			|s: &UnitSpriteData, vm: &SQVM| super::color::color_object(vm, s.color),
+			|s: &mut UnitSpriteData, vm: &SQVM, v: SqStrongRef| {
+				s.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
+				Ok(())
+			},
+		)
 		.method("setBrush", move |s: &mut UnitSpriteData, brush: &str| s.brush = set_with.resolve(brush))
 		// getBrush(): `null` without a brush, else `{ Name, TextureName }`; scripts read
 		// `getBrush().Name + "_top"` and hand `TextureName` to `Tactical.addResource`.

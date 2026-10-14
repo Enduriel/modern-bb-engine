@@ -7,11 +7,9 @@
 //! `setBlendIntoSockets` on it — and hand it to `Tactical.setTransitions`. None of
 //! that can construct without these natives, so the object-graph load needs them.
 //!
-//! What's real vs. pending: the [`TileTransition`] descriptor faithfully records
-//! its configuration, and `Tactical.setTransitions` stores it in a per-VM registry
-//! keyed by tile-brush name. The *consumer* — the tactical renderer that draws the
-//! blended tile borders from this data — is not built yet, so the registry is
-//! written but not yet read.
+//! The [`TileTransition`] descriptor records its configuration, and
+//! `Tactical.setTransitions` stores it in a registry keyed by tile-brush name, which
+//! the tactical scene hands to the renderer.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -21,20 +19,19 @@ use squirrel::{ClassBuilder, Native, Retained, SQVM, SqTable, Variadic};
 
 /// One tile type's transition configuration — the payload behind a
 /// `createTileTransition()` instance, and what `Tactical.setTransitions` caches.
-///
-/// Fields are recorded from script but not yet read: the tactical renderer that
-/// blends tile borders from this data is a later subsystem.
-#[derive(Clone)]
-#[allow(dead_code)] // consumed by the not-yet-built tactical renderer
+#[derive(Clone, Debug, PartialEq)]
 pub struct TileTransition {
 	/// Socket name (`setSocket`) — which transition socket this tile plugs into.
-	socket: Option<String>,
+	pub socket: Option<String>,
 	/// Whether the tile blends into neighbouring sockets (`setBlendIntoSockets`);
 	/// defaults true (only a few tiles, e.g. roads, turn it off).
-	blend_into_sockets: bool,
+	pub blend_into_sockets: bool,
 	/// Per-direction border brushes (`setBrush(direction, name)`), in call order.
-	brushes: Vec<(i64, String)>,
+	pub brushes: Vec<(i64, String)>,
 }
+
+/// The transition registry, by tile-brush name.
+pub(crate) type Transitions = Rc<RefCell<HashMap<String, TileTransition>>>;
 
 impl TileTransition {
 	fn new() -> Self {
@@ -47,8 +44,8 @@ impl TileTransition {
 }
 
 /// Register the tile-transition class, the `createTileTransition` root global, and
-/// the `Tactical` table (currently just `setTransitions`).
-pub(crate) fn install(vm: &mut SQVM) {
+/// the `Tactical` table; returns the transition registry.
+pub(crate) fn install(vm: &mut SQVM) -> Transitions {
 	// The descriptor class: three mutating setters over the payload.
 	let transition = ClassBuilder::<TileTransition>::new("TileTransition")
 		.method("setSocket", |t: &mut TileTransition, name: String| {
@@ -73,12 +70,10 @@ pub(crate) fn install(vm: &mut SQVM) {
 		transition.instantiate(vm, TileTransition::new())
 	});
 
-	// Tactical.setTransitions(tileBrushName, transition): cache the descriptor for
-	// the (future) renderer. The registry holds plain Rust data (no VM handles), so
-	// it has no teardown ordering concerns; it lives for the VM's lifetime via the
-	// closure capture.
-	let registry: Rc<RefCell<HashMap<String, TileTransition>>> =
-		Rc::new(RefCell::new(HashMap::new()));
+	// Tactical.setTransitions(tileBrushName, transition): keep the descriptor for the
+	// renderer. The registry holds plain Rust data (no VM handles), so it has no
+	// teardown ordering concerns.
+	let registry: Transitions = Rc::new(RefCell::new(HashMap::new()));
 	let set_transitions = {
 		let registry = registry.clone();
 		vm.make_closure(move |name: String, transition: Native<TileTransition>| {
@@ -136,4 +131,5 @@ pub(crate) fn install(vm: &mut SQVM) {
 	tactical.set("setVisible", set_visible);
 	tactical.set("isVisible", is_visible);
 	SqTable::root(vm).set("Tactical", tactical);
+	registry
 }

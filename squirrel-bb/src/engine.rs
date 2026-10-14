@@ -51,6 +51,8 @@ pub struct Engine<S: ScriptSource> {
 	/// The world's clouds and waves (no VM handles).
 	clouds: crate::native::world_clouds::Clouds,
 	waves: crate::native::world_waves::Waves,
+	/// The tactical terrain transitions (no VM handles).
+	transitions: crate::native::tactical::Transitions,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -92,6 +94,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let tactical_grid = TacticalGrid::new();
 		tactical_grid.set_file_reader(modules.file_reader());
 		tactical_grid.set_sprites(natives.sprites.clone());
+		tactical_grid.set_engine_rng(natives.engine_rng.clone());
 		tactical_grid.install(&mut vm);
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
@@ -127,6 +130,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			world_clock: natives.world_clock.clone(),
 			clouds: natives.clouds.clone(),
 			waves: natives.waves.clone(),
+			transitions: natives.transitions.clone(),
 			time,
 			modules,
 			vm,
@@ -177,6 +181,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			clouds: self.clouds.borrow().clouds().to_vec(),
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
+		}
+	}
+	/// The battle map as the scripts have set it up, for a renderer.
+	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
+		crate::scene::tactical::TacticalScene {
+			transitions: self.transitions.borrow().clone(),
+			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the
