@@ -1,5 +1,7 @@
-// Frame parity scenes (the original's side): after the intro event, each scene is set up
-// by the scripts (scenes.nut), given time to settle, and screenshotted by the runner.
+// Frame parity scenes (the original's side): once the intro event shows, walk the
+// scripts' ::probeSteps (scenes.nut). Each step's scene is set up by the scripts; its
+// `until` is polled until true; after 3 s to settle, its shot is taken by the runner
+// (BbProbe.shot, which answers once written), and its `click` button is clicked.
 function bbShowsText(text)
 {
 	var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
@@ -27,30 +29,97 @@ function bbClickButton(label)
 	console.error('PROBE js: no visible button ' + label);
 }
 
-var bbScenes = ['world'];
-
-function bbNextScene(index)
+function bbScene(name, then)
 {
-	if (index >= bbScenes.length)
+	SQ.call(Screens.WorldScreen.mSQHandle, 'probeScene', name, then);
+}
+
+// Poll scene `name` until it returns true (up to 180 s), then call `then`.
+function bbUntil(name, then)
+{
+	var waited = 0;
+	var poll = function ()
+	{
+		bbScene(name, function (done)
+		{
+			if (done === true)
+			{
+				then();
+				return;
+			}
+			waited += 500;
+			if (waited > 180000)
+			{
+				console.error('PROBE js: ' + name + ' never came true');
+				then();
+				return;
+			}
+			setTimeout(poll, 500);
+		});
+	};
+	poll();
+}
+
+function bbStep(steps, index)
+{
+	if (index >= steps.length)
 	{
 		BbProbe.done();
 		return;
 	}
-	var scene = bbScenes[index];
-	SQ.call(Screens.WorldScreen.mSQHandle, 'probeScene', scene);
-	// Time for the camera, the sprites' animations and the page to settle.
-	setTimeout(function ()
+	var step = steps[index];
+	var next = function () { bbStep(steps, index + 1); };
+	var finish = function ()
 	{
-		BbProbe.send('page_' + scene, window.innerWidth + 'x' + window.innerHeight + ' dpr ' + window.devicePixelRatio);
-		BbProbe.shot(scene, function (error)
+		if (step.click !== null && step.click !== undefined)
 		{
-			if (error !== null)
+			bbClickButton(step.click);
+			setTimeout(next, 3000);
+		}
+		else
+		{
+			next();
+		}
+	};
+	var shoot = function ()
+	{
+		// Time for the camera, the sprites' animations and the page to settle.
+		setTimeout(function ()
+		{
+			if (step.shot === null || step.shot === undefined)
 			{
-				console.error('PROBE js: shot ' + scene + ' failed: ' + error);
+				finish();
+				return;
 			}
-			bbNextScene(index + 1);
-		});
-	}, 3000);
+			BbProbe.shot(step.shot, function (error)
+			{
+				if (error !== null)
+				{
+					console.error('PROBE js: shot ' + step.shot + ' failed: ' + error);
+				}
+				finish();
+			});
+		}, 3000);
+	};
+	var settle = function ()
+	{
+		if (step.until !== null && step.until !== undefined)
+		{
+			bbUntil(step.until, shoot);
+		}
+		else
+		{
+			shoot();
+		}
+	};
+	if (step.scene !== null && step.scene !== undefined)
+	{
+		bbScene(step.scene, function () { settle(); });
+	}
+	else
+	{
+		settle();
+	}
 }
 
 BbProbe.run = function ()
@@ -60,11 +129,8 @@ BbProbe.run = function ()
 	{
 		if (bbShowsText('Huzzah!'))
 		{
-			setTimeout(function ()
-			{
-				bbClickButton('Huzzah!');
-				setTimeout(function () { bbNextScene(0); }, 3000);
-			}, 3000);
+			BbProbe.send('page', window.innerWidth + 'x' + window.innerHeight + ' dpr ' + window.devicePixelRatio);
+			bbScene('steps', function (steps) { bbStep(steps, 0); });
 			return;
 		}
 		waited += 500;
