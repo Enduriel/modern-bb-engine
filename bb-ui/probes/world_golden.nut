@@ -60,8 +60,19 @@
 	}
 	else if (_step == "combat")
 	{
-		// A bandit ambush as vanilla's events start one, from a fixed generator state:
-		// the steps before may have drawn from it differently.
+		// A bandit ambush as vanilla's events start one, with what would vary between
+		// runs pinned, as the draw-exact battle traces pin it
+		// (bb-engine/tests/combat_trace.rs): idle sounds, which fire on frame timing;
+		// the wall-clock reseed at the end of the spawn; the combat seed (from the C
+		// runtime's rand()); and the generator, which the steps before drew from.
+		::Const.Sound.IdleSoundBaseDelay = 1.0e9;
+		::Const.Sound.IdleSoundMinDelay = 1.0e9;
+		local seedRandom = ::Math.seedRandom;
+		::Math.seedRandom = function ( _s )
+		{
+			return seedRandom(_s == ::Time.getRealTime() ? 999 : _s);
+		};
+		state.m.CombatSeed = 777;
 		::Math.seedRandom(4242);
 		local properties = state.getLocalCombatProperties(state.getPlayer().getPos());
 		properties.CombatID = "Event";
