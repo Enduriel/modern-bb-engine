@@ -44,6 +44,10 @@ impl Front {
 		}
 		harness::prepare_new_campaign(&engine, seed)?;
 		harness::start_new_campaign(&engine)?;
+		// The menu's own Start hides the main menu as the world comes up
+		// (main_menu_state.loading_screen_onScreenShown): without that, quitting to it
+		// would find it still showing, never show it again, and the world would wait on it.
+		engine.run_script("::RootState.get(\"MainMenuState\").hide();", "hide the main menu")?;
 		engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;
 		Ok(Front { engine })
 	}
