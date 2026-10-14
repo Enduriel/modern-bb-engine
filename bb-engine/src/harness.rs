@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use squirrel_bb::{Engine, NativeConfig, installed_dlc};
 
-use crate::assets::load_sprites;
+use crate::assets::{load_fog_stamp, load_sprites};
 use crate::{DatScriptSource, ScriptCache};
 
 /// The data directory of a default Linux Steam install.
@@ -37,7 +37,7 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// `scripts/dlc/` init script). Transcoded scripts are cached on disk as
 /// [`ScriptCache::from_env`] configures (`BB_SCRIPT_CACHE=off` disables it). The sprite
 /// sheets are loaded, as the original does before any script runs; a sheet that fails
-/// to load is reported on stderr. The engine's own random stream is unpredictably
+/// to load is reported on stderr, and so is a missing fog-of-war stamp. The engine's own random stream is unpredictably
 /// seeded like the original's, unless `BB_ENGINE_SEED` gives a seed (for reproducible renders).
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
 	let source = DatScriptSource::open(data_archives(dir)?)?.with_cache(ScriptCache::from_env());
@@ -51,8 +51,13 @@ pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
 		engine_seed: std::env::var("BB_ENGINE_SEED").ok().and_then(|s| s.parse().ok()),
 		..NativeConfig::default()
 	};
+	let fog_stamp = source.with_archives(|archives| load_fog_stamp(archives, &sprites.registry));
 	let engine = Engine::with_config(source, &config);
 	engine.sprites().set(sprites.registry);
+	match fog_stamp {
+		Ok(stamp) => engine.world_grid().set_fog_stamp(stamp),
+		Err(e) => eprintln!("[Error] fog of war: {e}"),
+	}
 	Ok(engine)
 }
 

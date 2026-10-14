@@ -1,7 +1,7 @@
 //! A new campaign's world map as a renderer reads it (`Engine::world_scene`): every
-//! land tile has terrain, decorations sit on their tiles, and the player's party has its
-//! sprites in the order the scripts added them. Skips cleanly when the Steam install
-//! isn't there.
+//! land tile has terrain, decorations sit on their tiles, the player's party has its
+//! sprites in the order the scripts added them, and the fog of war lies where the
+//! original's does. Skips cleanly when the Steam install isn't there.
 
 use std::path::Path;
 
@@ -50,6 +50,22 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	let selection = player.sprites.iter().find(|s| s.name == "selection").expect("selection");
 	assert_eq!(selection.offset, (-30.0, 30.0));
 	assert!(!selection.scaling);
+
+	// Fog of war: the start uncovers the same tiles as the original's (13,560 for this
+	// seed, probed 2026-10-14). The mask spans the map to the tile past its last corner,
+	// is clear around the player and still fogged where nothing was uncovered.
+	assert!(scene.fog.on);
+	assert_eq!(scene.tiles.iter().filter(|t| t.discovered).count(), 13_560);
+	assert_eq!(scene.fog.extent, (25320.0, 20460.0));
+	let mask = engine.world_grid().take_fog_patch().expect("the new map's mask");
+	assert_eq!((mask.x, mask.y, mask.width, mask.height), (0, 0, 2048, 2048));
+	let fog_at = |x: f32, y: f32| {
+		let (i, j) = ((x / 25320.0 * 2048.0) as usize, (y / 20460.0 * 2048.0) as usize);
+		mask.alpha[j * 2048 + i]
+	};
+	assert_eq!(fog_at(14160.0, 16740.0), 0, "clear around the player");
+	assert_eq!(fog_at(16600.0, 18150.0), 255, "fogged off to the north-east");
+	assert!(engine.world_grid().take_fog_patch().is_none(), "unchanged since");
 
 	// Worldgen's brushes queued their atlases for loading.
 	let hints = engine.sprites().take_hints();

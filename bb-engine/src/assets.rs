@@ -6,7 +6,8 @@
 //! skipped; the original logs those as "Not a brush sheet definition" or "Brush sheet
 //! layout version incompatible" and carries on.
 
-use bb_assets::{BrushSheet, SpriteRegistry, brush_load_order};
+use bb_assets::{BrushSheet, SpriteRegistry, brush_load_order, decode_png};
+use squirrel_bb::FogStamp;
 
 use crate::vfs::DatArchive;
 
@@ -35,4 +36,30 @@ pub fn load_sprites(archives: &mut [DatArchive]) -> SpriteLoad {
 		}
 	}
 	SpriteLoad { registry, failures }
+}
+
+/// The brush the original stamps into its fog-of-war mask.
+pub const FOG_STAMP_BRUSH: &str = "fog_of_war_mask";
+
+/// The fog-of-war stamp: [`FOG_STAMP_BRUSH`]'s first frame and its atlas's alpha.
+pub fn load_fog_stamp(archives: &mut [DatArchive], registry: &SpriteRegistry) -> Result<FogStamp, String> {
+	let (sheet, sprite) = registry.get(FOG_STAMP_BRUSH).ok_or("no fog_of_war_mask brush")?;
+	let frame = sprite.frames.first().ok_or("fog_of_war_mask has no frame")?;
+	let path = &sheet.sheet.texture;
+	let bytes = archives
+		.iter_mut()
+		.rev()
+		.find_map(|archive| archive.read(path))
+		.ok_or_else(|| format!("{path}: unreadable"))?;
+	let image = decode_png(&bytes).map_err(|e| format!("{path}: {e}"))?;
+	let [left, right, top, bottom] = frame.rect;
+	let (dx, dy) = (f32::from(sprite.offset_x), f32::from(sprite.offset_y));
+	Ok(FogStamp {
+		alpha: image.rgba.chunks_exact(4).map(|px| px[3]).collect(),
+		width: image.width,
+		height: image.height,
+		uv: frame.uv,
+		// A frame's `top` is its low y edge (see `BrushFrame`).
+		rect: [left + dx, right + dx, top + dy, bottom + dy],
+	})
 }
