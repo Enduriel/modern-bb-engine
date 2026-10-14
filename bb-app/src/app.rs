@@ -186,6 +186,11 @@ impl Running {
 				};
 				if y == 0.0 { Ok(()) } else { self.game.wheel(y > 0.0) }
 			}
+			// A key held as the window loses the keyboard would never see its release.
+			WindowEvent::Focused(false) => {
+				self.game.keyboard_lost();
+				Ok(())
+			}
 			WindowEvent::ModifiersChanged(m) => {
 				self.game.set_modifier(keys::modifier(m.state()));
 				Ok(())

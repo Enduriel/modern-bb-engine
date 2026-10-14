@@ -20,6 +20,7 @@ mod error;
 mod hash;
 mod input_events;
 mod io_table;
+mod key_queue;
 mod module;
 mod native;
 pub mod scene;

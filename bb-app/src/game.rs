@@ -12,7 +12,7 @@ use bb_render::portrait::PortraitRequest;
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer, write_png};
 use squirrel::{SqStrongRef, SqTable};
-use squirrel_bb::{KeyInput, MouseInput};
+use squirrel_bb::MouseInput;
 
 use crate::front::{Front, Key};
 
@@ -118,20 +118,22 @@ impl Game {
 		self.modifier = modifier;
 	}
 
-	/// A key went down or up: to the UI, and to the states unless the UI keeps it. A
-	/// held key's repeats reach the states with `getFire()` 1 (`KeyFire` Repeated).
+	/// A key went down or up: to the UI, and to the states unless the UI keeps it.
+	/// The states get it in the next frame, and a held key every frame until it comes
+	/// up (the engine's key queue, as the original's), so held-key scrolling runs at
+	/// the frame rate rather than the system's key repeat.
 	pub fn key(&mut self, key: &Key) -> Result<(), String> {
 		if !self.front.key(key, self.modifier) {
 			return Ok(());
 		}
 		let Some(code) = key.engine else { return Ok(()) };
-		let input = KeyInput {
-			key: code,
-			state: i64::from(key.down),
-			modifier: self.modifier,
-			fire: i64::from(key.repeat),
-		};
-		self.engine().root_state().key_input(self.engine().vm(), input).map(|_| ())
+		self.engine().queue_key(code, key.down, self.modifier);
+		Ok(())
+	}
+
+	/// The window lost the keyboard: the keys held come up.
+	pub fn keyboard_lost(&mut self) {
+		self.engine().release_keys();
 	}
 
 	fn mouse(&mut self, input: MouseInput) -> Result<(), String> {

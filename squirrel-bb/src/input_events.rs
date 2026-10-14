@@ -8,9 +8,9 @@
 //! 3 `WheelUp`, 4 `WheelDown`; and `getModifier()`, the modifier keys held.
 //! Keys: `getKey()` is the engine's key code (e.g. 41 is Escape); `KeyState`
 //! (`getState()`): 0 `Up`, 1 `Down`, so vanilla's handlers, which test for 0, act when a
-//! key is released and scroll while one is held; `KeyModifier` (`getModifier()`), a
-//! mask: 1 `Shift`, 2 `Control`, 4 `Alt`; `KeyFire` (`getFire()`): 0 `Once`, 1
-//! `Repeated` (a held key repeating).
+//! key is released and scroll while one is held (a held key comes every frame, see
+//! `key_queue`); `KeyModifier` (`getModifier()`), a mask: 1 `Shift`, 2 `Control`, 4
+//! `Alt`; `getFire()`, which the original fills with the same as the state.
 
 use squirrel::{ClassBuilder, SQVM, SqClass, SqStrongRef};
 
@@ -59,7 +59,7 @@ pub struct KeyInput {
 impl KeyInput {
 	/// Key `key` went down (`KeyState.Down`), no modifier held.
 	pub fn pressed(key: i64) -> Self {
-		KeyInput { key, state: 1, modifier: 0, fire: 0 }
+		KeyInput { key, state: 1, modifier: 0, fire: 1 }
 	}
 
 	/// Key `key` came up (`KeyState.Up`), which is when vanilla's key handlers act.

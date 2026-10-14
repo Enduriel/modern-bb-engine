@@ -65,6 +65,8 @@ pub struct Engine<S: ScriptSource> {
 	battle_effects: crate::native::battle_effects::BattleEffectsHandle,
 	/// The game's sound (no VM handles).
 	audio: crate::native::audio::Audio,
+	/// The keys the host reported, dispatched each frame (see [`crate::key_queue`]).
+	keys: crate::key_queue::KeyQueue,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -196,6 +198,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tactical_particles: natives.tactical.particles.clone(),
 			battle_effects: natives.tactical.effects.clone(),
 			audio,
+			keys: Default::default(),
 			time,
 			modules,
 			vm,
@@ -312,6 +315,18 @@ impl<S: ScriptSource + 'static> Engine<S> {
 
 	// ---- convenience ----
 
+	/// A key went down or up (the system's repeats may come in too): the states get it
+	/// from the next frame, and a held key every frame until it's released, as the
+	/// original's input manager does (see [`crate::key_queue`]).
+	pub fn queue_key(&self, key: i64, down: bool, modifier: i64) {
+		self.keys.push(key, down, modifier);
+	}
+
+	/// The window lost the keyboard: every held key comes up.
+	pub fn release_keys(&self) {
+		self.keys.release_all();
+	}
+
 	/// Run a script string in the root scope.
 	pub fn run_script(&self, code: &str, name: &str) -> Result<(), String> {
 		self.vm.run_script(code, name)
@@ -342,9 +357,16 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// Run one frame of the original's main loop with `real_delta_ms` of real time
 	/// (order probed 2026-10-13): advance the clocks and fire due scheduled events, run
 	/// `onUpdate` then `onRender` on every visible state, then the background task once.
+	/// The queued keys reach the states after the clocks, as the original dispatches
+	/// its input before the scene (held keys again every frame, see [`queue_key`]).
 	/// The sprites with a torque turn after the updates, as the scene updates.
+	///
+	/// [`queue_key`]: Self::queue_key
 	pub fn frame(&self, real_delta_ms: f64) -> Result<(), String> {
 		self.time.tick(&self.vm, real_delta_ms);
+		for key in self.keys.take_frame() {
+			self.root_state.key_input(&self.vm, key)?;
+		}
 		self.root_state.update(&self.vm)?;
 		self.move_cameras(real_delta_ms);
 		self.turn_sprites();
