@@ -156,11 +156,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// The world map as the scripts have set it up, for a renderer. The fog of war's
 	/// mask comes separately, as patches ([`WorldGrid::take_fog_patch`]).
 	pub fn world_scene(&self) -> crate::scene::WorldScene {
-		let (on, extent) = self.world_grid.fog_of_war();
 		crate::scene::WorldScene {
 			tiles: self.world_grid.scene_tiles(),
 			entities: self.world_entities.scene_entities(&self.vm),
-			fog: crate::scene::SceneFog { on, extent },
+			extent: self.world_grid.extent(),
+			fog_of_war: self.world_grid.fog_of_war(),
+			region_texts: self.world_grid.region_texts(),
 		}
 	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the

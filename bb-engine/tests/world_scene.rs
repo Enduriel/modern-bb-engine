@@ -54,9 +54,9 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	// Fog of war: the start uncovers the same tiles as the original's (13,560 for this
 	// seed, probed 2026-10-14). The mask spans the map to the tile past its last corner,
 	// is clear around the player and still fogged where nothing was uncovered.
-	assert!(scene.fog.on);
+	assert!(scene.fog_of_war);
 	assert_eq!(scene.tiles.iter().filter(|t| t.discovered).count(), 13_560);
-	assert_eq!(scene.fog.extent, (25320.0, 20460.0));
+	assert_eq!(scene.extent, (25320.0, 20460.0));
 	let mask = engine.world_grid().take_fog_patch().expect("the new map's mask");
 	assert_eq!((mask.x, mask.y, mask.width, mask.height), (0, 0, 2048, 2048));
 	let fog_at = |x: f32, y: f32| {
@@ -66,6 +66,14 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	assert_eq!(fog_at(14160.0, 16740.0), 0, "clear around the player");
 	assert_eq!(fog_at(16600.0, 18150.0), 255, "fogged off to the north-east");
 	assert!(engine.world_grid().take_fog_patch().is_none(), "unchanged since");
+
+	// Region names come from worldgen's seeded stream: the original's screenshot of
+	// this seed shows these three (2026-10-13).
+	let names: Vec<&str> = scene.region_texts.iter().map(|t| t.text.as_str()).collect();
+	for name in ["Clan's Claim", "Dreaded Mire", "Bleakwolds"] {
+		assert!(names.contains(&name), "{name} in {names:?}");
+	}
+	assert!(scene.region_texts.iter().all(|t| [0.5, 0.75, 1.0].contains(&t.scale)));
 
 	// Worldgen's brushes queued their atlases for loading.
 	let hints = engine.sprites().take_hints();

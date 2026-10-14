@@ -102,6 +102,11 @@ impl TimeService {
 		self.state.borrow().real_time / 1000.0
 	}
 
+	/// Virtual (game) time in seconds.
+	pub fn virtual_seconds(&self) -> f64 {
+		self.state.borrow().virtual_time / 1000.0
+	}
+
 	/// The clocks' share of a save: virtual time and the round. (Real time keeps
 	/// running; scheduled events hold script callbacks and are cleared on load by the
 	/// world state.)

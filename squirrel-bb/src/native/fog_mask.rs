@@ -138,6 +138,7 @@ impl FogMask {
 	}
 
 	/// The map extent the mask spans, in world units.
+	#[cfg(test)]
 	pub fn world_size(&self) -> (f32, f32) {
 		self.world
 	}

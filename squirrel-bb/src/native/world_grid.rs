@@ -17,6 +17,7 @@ use squirrel::{
 };
 
 use super::fog_mask::{FogMask, FogPatch, FogStamp};
+use crate::scene::SceneRegionText;
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
 use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
 use crate::native::{EngineRng, Sprites};
@@ -56,9 +57,9 @@ struct TileData {
 	details: Vec<Detail>,
 }
 
-/// The map's share of a save: its size, every tile's gameplay state and the fog of
-/// war's mask (the original saves its mask too). Details (decorations) are visual and
-/// not kept.
+/// The map's share of a save: its size, every tile's gameplay state, the fog of
+/// war's mask (the original saves its mask too) and the region names. Details
+/// (decorations) are visual and not kept.
 struct GridPart(Rc<RefCell<GridState>>);
 
 impl super::save::SavePart for GridPart {
@@ -78,6 +79,13 @@ impl super::save::SavePart for GridPart {
 			w.str(&t.brush);
 		}
 		g.fog.save(&mut w);
+		w.u32(g.region_texts.len() as u32);
+		for t in &g.region_texts {
+			w.str(&t.text);
+			for v in [t.scale, t.rotation, t.pos.0, t.pos.1] {
+				w.f32(v);
+			}
+		}
 		Ok(())
 	}
 
@@ -106,7 +114,19 @@ impl super::save::SavePart for GridPart {
 			tiles.push(t);
 		}
 		g.tiles = tiles;
-		g.fog.load(&mut r)
+		g.fog.load(&mut r)?;
+		let count = r.u32()?;
+		g.region_texts = (0..count)
+			.map(|_| {
+				Ok(SceneRegionText {
+					text: r.str()?,
+					scale: r.f32()?,
+					rotation: r.f32()?,
+					pos: (r.f32()?, r.f32()?),
+				})
+			})
+			.collect::<Result<_, String>>()?;
+		Ok(())
 	}
 }
 
@@ -174,6 +194,8 @@ struct GridState {
 	fog_on: bool,
 	/// Where the fog of war is drawn.
 	fog: FogMask,
+	/// Region names (`spawnRegionText`), in spawn order.
+	region_texts: Vec<SceneRegionText>,
 }
 
 impl GridState {
@@ -251,6 +273,7 @@ impl WorldGrid {
 				engine_rng: EngineRng::unseeded(),
 				fog_on: true,
 				fog: FogMask::default(),
+				region_texts: Vec::new(),
 			})),
 		}
 	}
@@ -297,6 +320,7 @@ impl WorldGrid {
 				};
 				// The original clears its fog mask here too (`0x4efba9`).
 				g.fog.reset(fog_extent(w, h));
+				g.region_texts.clear();
 			})
 		};
 		let clear = {
@@ -582,9 +606,20 @@ impl WorldGrid {
 				},
 			)
 		};
-		// World.spawnRegionText(name, scale, rotation, pos): a region map label — render
-		// only, so a no-op for headless worldgen.
-		let spawn_region_text = vm.make_closure(|_a: Variadic<Retained>| {});
+		// World.spawnRegionText(name, scale, rotation, pos): a region's name on the map,
+		// kept for the renderer (`0x4f0350`; see `SceneRegionText`).
+		let spawn_region_text = {
+			let g = self.grid.clone();
+			vm.make_closure(move |vm: &SQVM, name: &str, scale: Number, rotation: Number, pos: Retained| {
+				let coord = |axis: &str| pos.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
+				g.borrow_mut().region_texts.push(SceneRegionText {
+					text: name.to_string(),
+					scale: scale.0 as f32,
+					rotation: rotation.0 as f32,
+					pos: (coord("X"), coord("Y")),
+				});
+			})
+		};
 
 		// World.getNavigator(): a shared navigator with createSettings() (mutable
 		// {ActionPointCosts, RoadMult, StopAtRoad}) and findPath(from, to, settings,
@@ -744,11 +779,20 @@ impl WorldGrid {
 		self.grid.borrow_mut().fog.take_patch()
 	}
 
-	/// The fog of war: whether it is on, and the map extent its mask spans (world
-	/// units).
-	pub fn fog_of_war(&self) -> (bool, (f32, f32)) {
+	/// The region names, in spawn order.
+	pub fn region_texts(&self) -> Vec<SceneRegionText> {
+		self.grid.borrow().region_texts.clone()
+	}
+
+	/// Fog of war is on (`World.setFogOfWar`).
+	pub fn fog_of_war(&self) -> bool {
+		self.grid.borrow().fog_on
+	}
+
+	/// The map's extent in world units (see [`fog_extent`]); `(0, 0)` with no map.
+	pub fn extent(&self) -> (f32, f32) {
 		let g = self.grid.borrow();
-		(g.fog_on, g.fog.world_size())
+		if g.width > 0 && g.height > 0 { fog_extent(g.width, g.height) } else { (0.0, 0.0) }
 	}
 
 	pub fn clear(&self) {
@@ -759,8 +803,9 @@ impl WorldGrid {
 	}
 }
 
-/// The world extent the fog mask spans on a `w` × `h` map: the centre of the tile at
-/// axial `(w, h - w / 2)`, just past the last corner (`0x4f4ce7`), truncated.
+/// The map's extent on a `w` × `h` map, which the fog mask and the water texture span:
+/// the centre of the tile at axial `(w, h - w / 2)`, just past the last corner
+/// (`0x4f4ce7`), truncated.
 fn fog_extent(w: i64, h: i64) -> (f32, f32) {
 	let (x, y) = world_layout::tile_pos(w, h);
 	(x.trunc() as f32, y.trunc() as f32)

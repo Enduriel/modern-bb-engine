@@ -13,16 +13,26 @@ pub struct WorldScene {
 	pub tiles: Vec<SceneTile>,
 	/// Every live entity, in spawn order.
 	pub entities: Vec<SceneEntity>,
-	pub fog: SceneFog,
+	/// The map's extent in world units, from the origin to the centre of the tile past
+	/// its last corner (`(0, 0)` before there is a map). The fog of war's mask and the
+	/// water texture span it.
+	pub extent: (f32, f32),
+	/// Fog of war is on (`World.setFogOfWar`).
+	pub fog_of_war: bool,
+	/// Region names, in spawn order.
+	pub region_texts: Vec<SceneRegionText>,
 }
 
-/// The fog of war.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SceneFog {
-	/// Fog of war is on (`World.setFogOfWar`).
-	pub on: bool,
-	/// The world extent its mask spans, in world units.
-	pub extent: (f32, f32),
+/// A region's name on the map (`World.spawnRegionText`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneRegionText {
+	pub text: String,
+	/// The scale the script gave (`0.5`, `0.75` or `1` by the region's size).
+	pub scale: f32,
+	/// Degrees, counter-clockwise.
+	pub rotation: f32,
+	/// Where it is centred, in world units.
+	pub pos: (f32, f32),
 }
 
 /// One world tile.
