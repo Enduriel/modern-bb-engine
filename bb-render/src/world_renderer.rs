@@ -8,10 +8,11 @@
 
 use std::sync::Arc;
 
-use bb_assets::{FileSource, ImageLoader, Slot, SpriteRegistry, TextureCache};
+use bb_assets::{BitmapFont, FileSource, Image, ImageLoader, Slot, SpriteRegistry, TextureCache};
 use squirrel_bb::scene::WorldScene;
 
 use crate::gpu::Gpu;
+use crate::labels::{LabelFont, WHITE};
 use crate::sprite::{Quad, SpriteRenderer};
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
@@ -40,14 +41,32 @@ pub struct FrameStats {
 pub struct WorldRenderer {
 	sprites: SpriteRenderer,
 	textures: TextureCache<GpuTexture>,
+	/// The label font and its atlas's path (`None` if the data lacks it).
+	label_font: Option<(BitmapFont, String)>,
+	/// 1×1 white, for solid fills (label plates).
+	white: GpuTexture,
 }
+
+/// The font world labels are drawn in.
+const LABEL_FONT: &str = "gfx/fonts/cinzel_bold_20";
 
 impl WorldRenderer {
 	/// A renderer reading atlases from `files`, decoding on `threads` workers.
 	pub fn new(gpu: &Gpu, files: Arc<dyn FileSource>, threads: usize) -> Self {
+		let label_font = files
+			.read(&format!("{LABEL_FONT}.fnt"))
+			.and_then(|bytes| BitmapFont::parse(&bytes).ok())
+			.map(|font| (font, format!("{LABEL_FONT}.png")));
+		let white = Image {
+			width: 1,
+			height: 1,
+			rgba: vec![255; 4],
+		};
 		WorldRenderer {
 			sprites: SpriteRenderer::new(gpu),
 			textures: TextureCache::new(ImageLoader::new(files, threads)),
+			label_font,
+			white: GpuTexture::upload(gpu, "white", &white),
 		}
 	}
 
@@ -72,8 +91,12 @@ impl WorldRenderer {
 	) -> FrameStats {
 		let upload = |path: &str, image: bb_assets::Image| GpuTexture::upload(gpu, path, &image);
 		self.textures.pump(upload);
-		let (quads, list) = world_quads(scene, registry, view);
-		for path in &list.paths {
+		let font = self
+			.label_font
+			.as_ref()
+			.map(|(font, texture)| LabelFont { font, texture });
+		let (quads, list) = world_quads(scene, registry, view, font);
+		for path in list.paths.iter().filter(|p| *p != WHITE) {
 			match atlases {
 				Atlases::WaitForAll => {
 					let _ = self.textures.get_now(path, upload);
@@ -91,6 +114,10 @@ impl WorldRenderer {
 			.paths
 			.iter()
 			.map(|path| match self.textures.slot(path) {
+				_ if path == WHITE => {
+					ready.push(&self.white);
+					Some(ready.len() - 1)
+				}
 				Some(Slot::Ready(texture)) => {
 					ready.push(texture);
 					Some(ready.len() - 1)

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use bb_assets::{BrushFrame, SpriteRegistry};
 use squirrel_bb::scene::WorldScene;
 
+use crate::labels::{LabelFont, label_quads};
 use crate::sprite::{Quad, SceneUniforms};
 
 /// What part of the world is shown.
@@ -93,13 +94,16 @@ enum Layer {
 	Terrain,
 	Details,
 	Entities,
+	/// Entity labels, above everything.
+	Labels,
 }
 
 /// The quads that draw `scene` in `view`, and the atlases they index.
-pub fn world_quads(
-	scene: &WorldScene,
-	sprites: &SpriteRegistry,
+pub fn world_quads<'a>(
+	scene: &'a WorldScene,
+	sprites: &'a SpriteRegistry,
 	view: &WorldView,
+	labels: Option<LabelFont<'a>>,
 ) -> (Vec<Quad>, AtlasList) {
 	// Tile sprites reach well past their hex (400 x 200 around a 180 x 120 cell).
 	let [left, right, bottom, top] = view.bounds(400.0);
@@ -187,6 +191,32 @@ pub fn world_quads(
 				offset,
 				look,
 			);
+		}
+	}
+
+	if let Some(font) = labels {
+		for entity in scene
+			.entities
+			.iter()
+			.filter(|e| e.shown && on_screen(e.pos))
+		{
+			let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
+			for label in entity
+				.labels
+				.iter()
+				.filter(|l| l.visible && !l.text.is_empty())
+			{
+				for (texture, quad) in label_quads(label, anchor, 1.0 / view.zoom, font) {
+					let order = drawables.len();
+					drawables.push(Drawable {
+						layer: Layer::Labels,
+						key: anchor[1] as i64,
+						order,
+						texture,
+						quad,
+					});
+				}
+			}
 		}
 	}
 

@@ -12,6 +12,7 @@
 //! - [`WorldRenderer`]: draws it frame by frame, loading atlases on demand.
 
 mod gpu;
+pub mod labels;
 mod screenshot;
 pub mod sprite;
 mod target;
