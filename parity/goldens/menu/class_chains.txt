@@ -1,0 +1,13 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE class table has no delegate = bool true
+PROBE class m has no delegate = bool true
+PROBE SuperName = string weapon
+PROBE super slot is a table = string table
+PROBE own copy of the parent level = bool true
+PROBE own copy of the grandparent level = bool true
+PROBE copied parent level delegates to the copied grandparent = bool true
+PROBE copied parent m delegates to the copied grandparent m = bool true
+PROBE copied grandparent level has no delegate = bool true
+PROBE copied parent m own slots = integer 29
+PROBE copied parent keeps its methods = string function
+PROBE write through one class's copy = string 4321 / 1

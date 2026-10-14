@@ -251,4 +251,24 @@ mod tests {
 		)
 		.expect("compiles and runs");
 	}
+
+	/// `foreach` visits a table's slots in the order the original's (Squirrel 3.0's)
+	/// string hash puts them in, which scripts depend on (squirrel-sys `sqstring.h`).
+	/// Orders from the parity golden `menu/table_order`.
+	#[test]
+	fn tables_iterate_in_the_originals_order() {
+		let vm = SQVM::new(1024);
+		vm.run_script(
+			r#"
+			local function keys( _t ) { local s = ""; foreach (k, v in _t) s += (s == "" ? "" : ",") + k; return s; }
+			assert(keys({ Alpha = 1, Beta = 2, Gamma = 3, Delta = 4, Epsilon = 5, Zeta = 6, Eta = 7 }) == "Gamma,Eta,Alpha,Beta,Zeta,Epsilon,Delta");
+			local t = {};
+			foreach (k in ["scripts/skills/perks/perk_quick_hands", "scripts/skills/perks/perk_mastery_swordc", "scripts/items/weapons/named/named_two_handed_mace", "scripts/entity/tactical/humans/bandit_raider", "scripts/entity/world/settlements/small_lumber_village"])
+				t[k] <- 0;
+			assert(keys(t) == "scripts/skills/perks/perk_mastery_swordc,scripts/entity/tactical/humans/bandit_raider,scripts/items/weapons/named/named_two_handed_mace,scripts/entity/world/settlements/small_lumber_village,scripts/skills/perks/perk_quick_hands");
+			"#,
+			"table_order",
+		)
+		.expect("tables iterate in the original's order");
+	}
 }

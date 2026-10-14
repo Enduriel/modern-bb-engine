@@ -1,0 +1,8 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE Const.DLC = string UnholdSupporter,Unhold,WildmenSupporter,isCompatible,Info,Lindwurm,DesertSupporter,Mask,Paladins,Fangshire,Desert,Wildmen
+PROBE Const.Faction = string Bandits,Arena,NobleHouse,None,Orcs,Enemy,PlayerAnimals,Civilian,Zombies,COUNT,Goblins,Beasts,OrientalCityState,Barbarians,Player,OrientalBandits,Undead
+PROBE literal = string Gamma,Eta,Alpha,Beta,Zeta,Epsilon,Delta
+PROBE grown one by one = string Level,MeleeDefense,Name,MeleeSkill,XP,Title,Background,RangedDefense,Hitpoints,Bravery,Fatigue,Stamina,Morale,Initiative,ActionPoints,Talents,Armor,RangedSkill
+PROBE long keys = string scripts/skills/perks/perk_mastery_swordc,scripts/entity/tactical/humans/bandit_raider,scripts/items/weapons/named/named_two_handed_mace,scripts/entity/world/settlements/small_lumber_village,scripts/skills/perks/perk_quick_hands
+PROBE integer keys = string 1024,17,3,250,-4,99,0,65
+PROBE after removals = string a,ccc,eeeee,zz,iiiiiiiii,ggggggg
