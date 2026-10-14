@@ -764,7 +764,6 @@ impl TacticalEntities {
 			"fadeIn",
 			"fadeOut",
 			"setAlpha",
-			"moveSpriteOffset",
 			"clearVisibility",
 			"setZ",
 			"storeSpriteColors",

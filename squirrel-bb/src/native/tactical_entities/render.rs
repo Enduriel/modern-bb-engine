@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{SQVM, SqStrongRef};
+use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::{TacticalMachine, ignore_missing};
 use crate::native::tactical_grid::visibility::PLAYER;
@@ -15,7 +15,16 @@ use crate::native::tactical_grid::zone::faction_bit;
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
-/// The injected unit native `setRenderCallbackEnabled(on)`.
+/// `Time.getVirtualTimeF()`, the clock sprite animations run on.
+fn virtual_seconds(vm: &SQVM) -> Result<f64, String> {
+	let f = SqTable::root(vm)
+		.get::<SqTable>("Time")
+		.and_then(|t| t.get::<SqStrongRef>("getVirtualTimeF"))
+		.ok_or("moveSpriteOffset: no Time.getVirtualTimeF")?;
+	Ok(f.call_ret::<Number, _>(vm, ())?.map_or(0.0, |n| n.0))
+}
+
+/// The injected unit natives `setRenderCallbackEnabled(on)` and `moveSpriteOffset`.
 pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrongRef)> {
 	let set_enabled = {
 		let m = m.clone();
@@ -25,7 +34,27 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 			}
 		})
 	};
-	vec![("setRenderCallbackEnabled", set_enabled)]
+	// moveSpriteOffset(sprite, from, to, duration, start): slides a sprite's offset from
+	// `from` to `to` over `duration` seconds of virtual time since `start`, and says
+	// whether it has arrived (disassembled, 0x4a8be0): t = (f32 virtual time − start) /
+	// duration, arrived at t ≥ 1; a sprite the unit doesn't have counts as arrived.
+	// Scripts end animations on it (raising a shield turns the render callback off) and
+	// ghosts, ghouls and spiders draw their next jitter target then. Headless only the
+	// answer matters; the offset isn't drawn.
+	let move_sprite_offset = {
+		let m = m.clone();
+		vm.make_closure(
+			move |vm: &SQVM, sprite: String, _from: Retained, _to: Retained, duration: Number, start: Number| -> Result<bool, String> {
+				let has = m.borrow().record(vm.this_identity()).is_some_and(|r| r.sprites.contains_key(&sprite));
+				if !has {
+					return Ok(true);
+				}
+				let now = virtual_seconds(vm)? as f32;
+				Ok((now - start.0 as f32) / duration.0 as f32 >= 1.0)
+			},
+		)
+	};
+	vec![("setRenderCallbackEnabled", set_enabled), ("moveSpriteOffset", move_sprite_offset)]
 }
 
 /// `Tactical.render()`.
