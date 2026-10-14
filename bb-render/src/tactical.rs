@@ -26,7 +26,10 @@ use bb_assets::SpriteRegistry;
 use squirrel_bb::scene::tactical::{SceneTacticalEntity, SceneTacticalTile, TacticalScene};
 
 use crate::sprite::Quad;
-use crate::world::{AtlasList, Look, WorldQuads, WorldView, frame_quad};
+use crate::world::{
+	AtlasList, CLOUD_REACH, CLOUD_SHADOW_ALPHA, CLOUD_SHADOW_DROP, CLOUD_SHADOW_SCALE, Look, WorldQuads, WorldView,
+	frame_quad,
+};
 
 /// A hex's height (they are 160 wide).
 const HEX_H: f32 = 80.0;
@@ -289,8 +292,47 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 	}
 }
 
+/// The battle's clouds or fog over everything, each with its shadow, as the world's
+/// (`0x4e3ed0`): back to front by key, a shadow's key 2000 more than its cloud's.
+fn draw_clouds(b: &mut Builder, scene: &TacticalScene, view: &WorldView) {
+	let [left, right, bottom, top] = view.bounds(CLOUD_REACH);
+	let mut layer: Vec<(i64, usize, bool)> = Vec::new();
+	for (i, cloud) in scene.clouds.iter().enumerate() {
+		let (x, y) = cloud.pos;
+		if x >= left && x <= right && y >= bottom && y <= top {
+			layer.push((cloud.key + 2000, i, true));
+			layer.push((cloud.key, i, false));
+		}
+	}
+	layer.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+	// Effects draw sharp, at the camera's level.
+	let level = scene.camera.level.clamp(0, 3) as u32;
+	for (_, i, shadow) in layer {
+		let cloud = &scene.clouds[i];
+		let [_, r, g, b_] = cloud.color.to_be_bytes();
+		let (anchor, look) = if shadow {
+			let look = Look {
+				scale: cloud.scale * CLOUD_SHADOW_SCALE,
+				alpha: cloud.alpha * CLOUD_SHADOW_ALPHA * 255.0,
+				tint: [0; 3],
+				..Look::PLAIN
+			};
+			([cloud.pos.0, cloud.pos.1 + CLOUD_SHADOW_DROP * cloud.scale], look)
+		} else {
+			let look = Look {
+				scale: cloud.scale,
+				alpha: cloud.alpha * 255.0,
+				tint: [r, g, b_],
+				..Look::PLAIN
+			};
+			([cloud.pos.0, cloud.pos.1], look)
+		};
+		b.placed(cloud.brush, anchor, look, 1.0, level);
+	}
+}
+
 /// The quads that draw `scene` in `view`: every tile in the original's order, then the
-/// details and entities.
+/// details and entities, then the weather.
 pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry, view: &WorldView) -> WorldQuads {
 	let [left, right, bottom, top] = view.bounds(SOCKET_W);
 	let raise = LEVEL_H * 3.0;
@@ -327,6 +369,7 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
 		draw_dressing(&mut b, tile, on_it);
 	}
+	draw_clouds(&mut b, scene, view);
 	let labels_from = b.quads.len();
 	WorldQuads {
 		quads: b.quads,

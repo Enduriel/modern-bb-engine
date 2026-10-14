@@ -36,13 +36,13 @@ pub struct WorldFonts<'a> {
 
 /// How far a cloud's centre may be off screen and still show (cloud pictures are
 /// large and scaled up to 1.25, their shadows 1.25 more and 500 units lower).
-const CLOUD_REACH: f32 = 2000.0;
+pub(crate) const CLOUD_REACH: f32 = 2000.0;
 
 /// A cloud's shadow: 1.25 of its scale, a fifth of its alpha, 500 units times its
 /// scale below it (`0x4e3ed0`).
-const CLOUD_SHADOW_SCALE: f32 = 1.25;
-const CLOUD_SHADOW_ALPHA: f32 = 0.2;
-const CLOUD_SHADOW_DROP: f32 = -500.0;
+pub(crate) const CLOUD_SHADOW_SCALE: f32 = 1.25;
+pub(crate) const CLOUD_SHADOW_ALPHA: f32 = 0.2;
+pub(crate) const CLOUD_SHADOW_DROP: f32 = -500.0;
 
 /// Region names: white at alpha `0x66`, at 0.4 of the script's scale (`0x4f0350`).
 const REGION_TEXT_COLOR: [u8; 4] = [255, 255, 255, 0x66];

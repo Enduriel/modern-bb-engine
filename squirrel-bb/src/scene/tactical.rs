@@ -20,6 +20,8 @@ pub struct TacticalScene {
 	pub entities: Vec<SceneTacticalEntity>,
 	/// The battle's light (`Tactical.getWeather().setAmbientLighting*`).
 	pub light: crate::scene::SceneLight,
+	/// The clouds or fog drifting over the battle (`Tactical.getWeather().buildCloudCover`).
+	pub clouds: Vec<crate::scene::SceneCloud>,
 }
 
 /// A unit or map object on the battle map.

@@ -14,7 +14,7 @@ use super::world_waves::Waves;
 
 /// A script's `createCloudSettings()` table as [`CloudSettings`]; fields it doesn't
 /// hold keep the original's defaults.
-fn cloud_settings(vm: &SQVM, table: &SqStrongRef) -> CloudSettings {
+pub(super) fn cloud_settings(vm: &SQVM, table: &SqStrongRef) -> CloudSettings {
 	let d = CloudSettings::default();
 	let f = |key: &str, default: f32| table.get_member::<Number>(vm, key).map_or(default, |n| n.0 as f32);
 	let i = |key: &str, default: i64| table.get_member::<Number>(vm, key).map_or(default, |n| n.0 as i64);

@@ -54,6 +54,7 @@ pub struct Engine<S: ScriptSource> {
 	/// The tactical terrain transitions (no VM handles).
 	transitions: crate::native::tactical::Transitions,
 	tactical_light: crate::native::tactical::TacticalLight,
+	tactical_clouds: crate::native::world_clouds::Clouds,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -100,6 +101,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
 		tactical_navigator.install(&mut vm);
+		crate::native::tactical::move_clouds_on_update(&mut vm, &natives.tactical.clouds);
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.
@@ -131,8 +133,9 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			world_clock: natives.world_clock.clone(),
 			clouds: natives.clouds.clone(),
 			waves: natives.waves.clone(),
-			transitions: natives.transitions.clone(),
-			tactical_light: natives.tactical_light.clone(),
+			transitions: natives.tactical.transitions.clone(),
+			tactical_light: natives.tactical.light.clone(),
+			tactical_clouds: natives.tactical.clouds.clone(),
 			time,
 			modules,
 			vm,
@@ -194,6 +197,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				let (color, saturation) = self.tactical_light.get();
 				crate::scene::SceneLight { color, saturation }
 			},
+			clouds: self.tactical_clouds.borrow().clouds().to_vec(),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}

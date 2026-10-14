@@ -15,7 +15,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Native, Retained, SQVM, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqStrongRef, SqTable, Variadic};
+
+use super::world_clouds::{CloudCover, Clouds, MapSpan};
 
 /// One tile type's transition configuration — the payload behind a
 /// `createTileTransition()` instance, and what `Tactical.setTransitions` caches.
@@ -62,9 +64,58 @@ impl TileTransition {
 	}
 }
 
+/// What the battle's natives keep for the engine.
+pub(crate) struct TacticalParts {
+	pub transitions: Transitions,
+	pub light: TacticalLight,
+	/// The battle's clouds (`Tactical.getWeather().buildCloudCover`), the world's kind
+	/// over the battle map. `Tactical.update` moves them.
+	pub clouds: Clouds,
+}
+
+/// The first and last tile centres of the battle map (`Tactical.getMapSize()`), or
+/// `None` without a map.
+fn battle_span(vm: &SQVM) -> Result<Option<MapSpan>, String> {
+	let tactical = SqTable::root(vm).get::<SqStrongRef>("Tactical").ok_or("Tactical missing")?;
+	let size = tactical.call_method_ret::<SqStrongRef, _>(vm, "getMapSize", ())?;
+	let dim = |axis: &str| size.as_ref().and_then(|s| s.get_member::<Number>(vm, axis)).map_or(0, |n| n.0 as i64);
+	let (w, h) = (dim("X"), dim("Y"));
+	if w <= 0 || h <= 0 {
+		return Ok(None);
+	}
+	let (min, max) = (super::tactical_grid::tile_pos(0, 0), super::tactical_grid::tile_pos(w - 1, h - 1));
+	Ok(Some(MapSpan {
+		min: (min.0 as f32, min.1 as f32),
+		max: (max.0 as f32, max.1 as f32),
+	}))
+}
+
+/// Make `Tactical.update()` also move the battle's clouds, by the frame's real time
+/// while the game runs (as the world's weather moves with `World.update`). Call after
+/// whatever else `Tactical.update` does is installed.
+pub(crate) fn move_clouds_on_update(vm: &mut SQVM, clouds: &Clouds) {
+	let inner = SqTable::root(vm)
+		.get::<SqTable>("Tactical")
+		.and_then(|t| t.get::<SqStrongRef>("update"));
+	let clouds = clouds.clone();
+	let update = vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
+		if let Some(inner) = &inner {
+			inner.call(vm, ())?;
+		}
+		let time = SqTable::root(vm).get::<SqStrongRef>("Time").ok_or("Time missing")?;
+		let delta = time.call_method_ret::<Number, _>(vm, "getDelta", ())?.map_or(0.0, |n| n.0);
+		let speed = time.call_method_ret::<Number, _>(vm, "getVirtualSpeed", ())?.map_or(1.0, |n| n.0);
+		clouds.borrow_mut().advance(delta as f32, speed as f32);
+		Ok(())
+	});
+	if let Some(mut tactical) = SqTable::root(vm).get::<SqTable>("Tactical") {
+		tactical.set("update", update);
+	}
+}
+
 /// Register the tile-transition class, the `createTileTransition` root global, and
-/// the `Tactical` table; returns the transition registry and the battle's light.
-pub(crate) fn install(vm: &mut SQVM) -> (Transitions, TacticalLight) {
+/// the `Tactical` table.
+pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> TacticalParts {
 	// The descriptor class: three mutating setters over the payload.
 	let transition = ClassBuilder::<TileTransition>::new("TileTransition")
 		.method("setSocket", |t: &mut TileTransition, name: String| {
@@ -160,10 +211,28 @@ pub(crate) fn install(vm: &mut SQVM) -> (Transitions, TacticalLight) {
 			}
 		})
 	};
+	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
+	let build_cloud_cover = {
+		let clouds = clouds.clone();
+		vm.make_closure(move |vm: &SQVM, settings: Retained| -> Result<(), String> {
+			let settings = super::world::cloud_settings(vm, &settings.0);
+			match battle_span(vm)? {
+				Some(span) => clouds.borrow_mut().build(settings, span),
+				None => clouds.borrow_mut().clear(),
+			}
+			Ok(())
+		})
+	};
+	let clear = {
+		let clouds = clouds.clone();
+		vm.make_closure(move |Variadic(_a): Variadic<Retained>| clouds.borrow_mut().clear())
+	};
 	for (name, f) in [
 		("setAmbientLightingColor", set_color),
 		("setAmbientLightingSaturation", set_saturation),
 		("setAmbientLightingPreset", set_preset),
+		("buildCloudCover", build_cloud_cover),
+		("clear", clear),
 	] {
 		weather.set_member(vm, name, f).expect("the weather table");
 	}
@@ -178,5 +247,9 @@ pub(crate) fn install(vm: &mut SQVM) -> (Transitions, TacticalLight) {
 	tactical.set("setVisible", set_visible);
 	tactical.set("isVisible", is_visible);
 	SqTable::root(vm).set("Tactical", tactical);
-	(registry, light)
+	TacticalParts {
+		transitions: registry,
+		light,
+		clouds,
+	}
 }
