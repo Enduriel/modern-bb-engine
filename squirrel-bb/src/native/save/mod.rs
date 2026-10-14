@@ -21,7 +21,7 @@
 mod storage;
 pub(crate) mod stream;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -65,6 +65,12 @@ struct Inner {
 	parts: RefCell<Vec<Rc<dyn SavePart>>>,
 	callbacks: RefCell<Callbacks>,
 	classes: RefCell<Option<Rc<StreamClasses>>>,
+	/// A save or load is running (the original's `World+0x2d0`): another one is
+	/// ignored, and `canLoad` says no.
+	busy: Cell<bool>,
+	/// `World.presave()` asked for the save's picture of the world, taken the next time
+	/// the world is drawn (`World+0x2cd`). Until then saves are ignored.
+	presave_pending: Cell<bool>,
 }
 
 /// The save system. Host-owned: [`clear`](Self::clear) it before the VM closes.
@@ -89,6 +95,54 @@ fn now_secs() -> i64 {
 		.map_or(0, |d| d.as_secs() as i64)
 }
 
+/// Write the campaign to save `file`: `onBeforeSave`, each engine part, `onSave`.
+fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String, label: Option<String>) -> Result<(), String> {
+	let meta = Rc::new(RefCell::new(Meta {
+		name: label.unwrap_or_else(|| file.clone()),
+		file_name: file.clone(),
+		created: now_secs(),
+		..Meta::default()
+	}));
+	let writer = Rc::new(RefCell::new(SaveWriter::default()));
+	let stream = classes.out_stream(vm, writer.clone(), meta.clone());
+	let before = inner.callbacks.borrow().before_save.clone();
+	run_callback(vm, before, &stream)?;
+	let parts = inner.parts.borrow().clone();
+	let cx = SaveCx {
+		vm,
+		writer: writer.clone(),
+		stream: stream.clone(),
+	};
+	for part in parts {
+		part.save(&cx)?;
+	}
+	let after = inner.callbacks.borrow().save.clone();
+	run_callback(vm, after, &stream)?;
+	let bytes = storage::encode(&meta.borrow(), &writer.borrow().buf);
+	inner.storage.borrow().write(&file, bytes)
+}
+
+/// Read the campaign back from save `file`, in the order it was written.
+fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String) -> Result<(), String> {
+	let bytes = inner.storage.borrow().read(&file)?;
+	let (meta, reader) = storage::decode(bytes)?;
+	let reader = Rc::new(RefCell::new(reader));
+	let stream = classes.in_stream(vm, reader.clone(), Rc::new(RefCell::new(meta)));
+	let before = inner.callbacks.borrow().before_load.clone();
+	run_callback(vm, before, &stream)?;
+	let parts = inner.parts.borrow().clone();
+	let cx = LoadCx {
+		vm,
+		reader,
+		stream: stream.clone(),
+	};
+	for part in parts {
+		part.load(&cx)?;
+	}
+	let after = inner.callbacks.borrow().load.clone();
+	run_callback(vm, after, &stream)
+}
+
 impl SaveSystem {
 	/// A save system keeping saves in memory until [`set_directory`](Self::set_directory).
 	pub fn new() -> Self {
@@ -98,7 +152,25 @@ impl SaveSystem {
 				parts: RefCell::default(),
 				callbacks: RefCell::default(),
 				classes: RefCell::default(),
+				busy: Cell::new(false),
+				presave_pending: Cell::new(false),
 			}),
+		}
+	}
+
+	/// The world's drawing takes the picture `World.presave()` asked for (the original's
+	/// world scene render, which only runs while the world is shown); saves are allowed
+	/// again after it.
+	pub fn presave_hook(&self) -> impl Fn(&SQVM) -> Result<(), String> + 'static {
+		let inner = self.inner.clone();
+		move |vm: &SQVM| {
+			if inner.presave_pending.get() {
+				let world = SqTable::root(vm).get::<SqStrongRef>("World").ok_or("World missing")?;
+				if world.call_method_ret::<bool, _>(vm, "isVisible", ())?.unwrap_or(true) {
+					inner.presave_pending.set(false);
+				}
+			}
+			Ok(())
 		}
 	}
 
@@ -131,59 +203,46 @@ impl SaveSystem {
 		let set_before_load = setter!(before_load);
 		let set_load = setter!(load);
 
+		// World.save does nothing while a save or load is running, or while a presave's
+		// picture is still to be taken (disassembled, 0x4f4650).
 		let save = {
 			let inner = self.inner.clone();
 			let classes = classes.clone();
 			vm.make_closure(move |vm: &SQVM, file: String, label: Option<String>| -> Result<(), String> {
-				let meta = Rc::new(RefCell::new(Meta {
-					name: label.unwrap_or_else(|| file.clone()),
-					file_name: file.clone(),
-					created: now_secs(),
-					..Meta::default()
-				}));
-				let writer = Rc::new(RefCell::new(SaveWriter::default()));
-				let stream = classes.out_stream(vm, writer.clone(), meta.clone());
-				let before = inner.callbacks.borrow().before_save.clone();
-				run_callback(vm, before, &stream)?;
-				let parts = inner.parts.borrow().clone();
-				let cx = SaveCx {
-					vm,
-					writer: writer.clone(),
-					stream: stream.clone(),
-				};
-				for part in parts {
-					part.save(&cx)?;
+				if inner.busy.get() || inner.presave_pending.get() {
+					return Ok(());
 				}
-				let after = inner.callbacks.borrow().save.clone();
-				run_callback(vm, after, &stream)?;
-				let bytes = storage::encode(&meta.borrow(), &writer.borrow().buf);
-				inner.storage.borrow().write(&file, bytes)
+				inner.busy.set(true);
+				let result = save_campaign(&inner, &classes, vm, file, label);
+				inner.busy.set(false);
+				result
 			})
 		};
+		// World.load does nothing while a save or load is running (0x4f4ac0).
 		let load = {
 			let inner = self.inner.clone();
 			let classes = classes.clone();
 			vm.make_closure(move |vm: &SQVM, file: String| -> Result<(), String> {
-				let bytes = inner.storage.borrow().read(&file)?;
-				let (meta, reader) = storage::decode(bytes)?;
-				let reader = Rc::new(RefCell::new(reader));
-				let stream = classes.in_stream(vm, reader.clone(), Rc::new(RefCell::new(meta)));
-				let before = inner.callbacks.borrow().before_load.clone();
-				run_callback(vm, before, &stream)?;
-				let parts = inner.parts.borrow().clone();
-				let cx = LoadCx {
-					vm,
-					reader,
-					stream: stream.clone(),
-				};
-				for part in parts {
-					part.load(&cx)?;
+				if inner.busy.get() {
+					return Ok(());
 				}
-				let after = inner.callbacks.borrow().load.clone();
-				run_callback(vm, after, &stream)
+				inner.busy.set(true);
+				let result = load_campaign(&inner, &classes, vm, file);
+				inner.busy.set(false);
+				result
 			})
 		};
-
+		// World.presave(): take the save's picture of the world when it's next drawn
+		// (ironman saves on entering a town show the world, not the town screen).
+		let presave = {
+			let inner = self.inner.clone();
+			vm.make_closure(move || inner.presave_pending.set(true))
+		};
+		// World.canLoad(name): no save or load is running and the save exists (0x4f4a90).
+		let can_load = {
+			let inner = self.inner.clone();
+			vm.make_closure(move |name: String| !inner.busy.get() && inner.storage.borrow().exists(&name))
+		};
 		// PersistenceManager: the saves' metadata for the menus, and deleting a save.
 		let query_storages = {
 			let inner = self.inner.clone();
@@ -213,6 +272,8 @@ impl SaveSystem {
 		world.set("setOnBeforeLoadCallback", set_before_load);
 		world.set("setOnLoadCallback", set_load);
 		world.set("save", save);
+		world.set("presave", presave);
+		world.set("canLoad", can_load);
 		world.set("load", load);
 		let mut persistence = SqTable::new(vm);
 		persistence.set("queryStorages", query_storages);

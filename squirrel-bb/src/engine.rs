@@ -107,10 +107,17 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.
 		root_state.set_scene_update(world_entities.scene_update_hook());
-		root_state.set_scene_render(world_entities.scene_render_hook());
 		// Saving and loading, over every stateful part (in load order).
 		let saves = SaveSystem::new();
 		saves.install(&mut vm);
+		// The world scene's drawing: what the player discovers, and the picture a
+		// presave asked for.
+		let render_world = world_entities.scene_render_hook();
+		let take_presave = saves.presave_hook();
+		root_state.set_scene_render(move |vm| {
+			render_world(vm)?;
+			take_presave(vm)
+		});
 		saves.add_part(Rc::new(ClockPart(natives.world_clock.clone())));
 		saves.add_part(time.save_part());
 		saves.add_part(world_grid.save_part());

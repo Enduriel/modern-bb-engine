@@ -46,6 +46,14 @@ impl Storage {
 		}
 	}
 
+	/// Whether save `name` exists.
+	pub fn exists(&self, name: &str) -> bool {
+		match self {
+			Storage::Memory(m) => m.borrow().contains_key(name),
+			Storage::Dir(dir) => Self::path(dir, name).is_file(),
+		}
+	}
+
 	pub fn delete(&self, name: &str) {
 		match self {
 			Storage::Memory(m) => {
