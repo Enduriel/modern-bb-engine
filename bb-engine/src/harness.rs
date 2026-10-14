@@ -63,7 +63,7 @@ pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
 
 /// Run the game's own `scripts/preload`, as the original does before the menu: config
 /// tables, DLC init scripts, then every script under `scripts/` (some define globals at
-/// file level, e.g. the contract negotiation templates).
+/// file level through `getroottable()`, e.g. the contract negotiation templates).
 pub fn load_config(engine: &GameEngine) -> Result<(), String> {
 	engine.run_script("::include(\"scripts/preload\");", "preload")
 }
