@@ -7,7 +7,9 @@
 //!   (`parity/perf/benches.nut`), each run five times, minimum and median.
 //! - campaign (seed `rust-engine-test`, started from the menu as the probe harness
 //!   does): start to `world_state.init()` done; memory; the world benches
-//!   (`benches_world.nut`); save and load times.
+//!   (`benches_world.nut`); save and load times; then the running world: 1,800 frames
+//!   (30 s at 60 fps) unpaused, with the scripted player answering events, timed per
+//!   frame.
 //!
 //! Not comparable one to one: the original's memory includes Wine, the renderer and the
 //! UI (ours is headless), its saves go to disk (ours stay in memory), and it has no
@@ -127,6 +129,24 @@ fn main() {
 	load(&engine, "benches_world.nut");
 	run_benches(&engine, "PerfWorldBenches", "campaign", &mut ours);
 
+	// The running world, frame by frame (ours only: the original paces its frames to
+	// the display, so its frame cost isn't visible from a probe).
+	engine
+		.run_script("::__bootWorldState <- ::World.State;", "state")
+		.expect("the world state");
+	harness::unpause_world(&engine).expect("unpause");
+	let mut frame_ms: Vec<f64> = (0..1800)
+		.map(|_| {
+			let t = Instant::now();
+			harness::run_frame(&engine, 1000.0 / 60.0).expect("a frame");
+			ms(t)
+		})
+		.collect();
+	frame_ms.sort_by(f64::total_cmp);
+	let mean = frame_ms.iter().sum::<f64>() / frame_ms.len() as f64;
+	ours.insert("campaign world_frame mean_ms".into(), format!("{mean:.3}"));
+	ours.insert("campaign world_frame p99_ms".into(), format!("{:.3}", frame_ms[frame_ms.len() * 99 / 100]));
+	ours.insert("campaign world_frame max_ms".into(), format!("{:.3}", frame_ms[frame_ms.len() - 1]));
 	let t = Instant::now();
 	engine
 		.run_script("::World.State.saveCampaign(\"bb_probe_perf\");", "save")
