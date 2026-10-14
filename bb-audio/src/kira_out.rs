@@ -242,7 +242,7 @@ impl<B: Backend> KiraOut<B> {
 	}
 
 	/// What the sound bank holds: see [`SoundBank::memory_use`].
-	pub fn bank_use(&self) -> (usize, usize, usize) {
+	pub fn bank_use(&self) -> (usize, usize, usize, usize) {
 		self.bank.memory_use()
 	}
 

@@ -16,6 +16,10 @@
 //!   about 730 MB for vanilla's.
 //! - Decoded short sounds are kept beyond their play, as a cache, up to [`KEEP_BYTES`]:
 //!   past it the least recently played go (and are read again if they play again).
+//! - A scene the game discards (a battle's end, the campaign left, a load) takes the
+//!   decoded sounds, and the prefetches nothing played: an ambience layer prefetches all
+//!   its sounds and plays some, and the music's next track changes with the scene. Kept,
+//!   those piled up: 75 MB of decoded sound and 76 MB of tracks after 8 battles.
 //!
 //! A sound known to be wanted soon (the next music track, a new ambience layer's
 //! sounds) is [`prefetch`](SoundBank::prefetch)ed: read, and decoded if short, on a
@@ -38,8 +42,14 @@ use squirrel_bb::sound_length_ms;
 /// Files at least this large stream rather than decode whole.
 const STREAM_FROM: usize = 1 << 20;
 
-/// How many bytes of decoded sound the bank keeps at most.
-pub const KEEP_BYTES: usize = 64 << 20;
+/// How many bytes of decoded sound the bank keeps at most: about 95 s of sound, more than
+/// a scene plays (a battle's decoded 27–36 MB over 8 battles; it starts anew at each
+/// discarded scene), and a short sound decodes again in well under a millisecond.
+pub const KEEP_BYTES: usize = 32 << 20;
+
+/// Finished prefetches past this many, nothing having played them, are dropped (oldest
+/// first) when the next one starts: an ambience layer's worth and the next track.
+const KEEP_PREFETCHED: usize = 8;
 
 /// A decoded frame's size (two `f32` channels).
 const FRAME_BYTES: usize = 8;
@@ -73,8 +83,9 @@ pub struct SoundBank {
 	uses: u64,
 	/// Bytes of decoded sound kept.
 	kept: usize,
-	/// Sounds being read on threads of their own.
-	pending: HashMap<String, JoinHandle<Loaded>>,
+	/// Sounds being read (or read, not yet played) on threads of their own, and when each
+	/// was asked for.
+	pending: HashMap<String, (JoinHandle<Loaded>, u64)>,
 }
 
 impl SoundBank {
@@ -139,7 +150,9 @@ impl SoundBank {
 			.spawn(move || load(&*files, &owned));
 		match handle {
 			Ok(handle) => {
-				self.pending.insert(path.to_string(), handle);
+				self.uses += 1;
+				self.pending.insert(path.to_string(), (handle, self.uses));
+				self.trim_prefetched();
 			}
 			// No thread: it loads on first use instead.
 			Err(e) => eprintln!("audio: {path}: no loader thread: {e}"),
@@ -157,11 +170,30 @@ impl SoundBank {
 	pub fn discard_unused(&mut self) {
 		self.entries.retain(|_, (entry, _)| !matches!(entry, Entry::Static(..)));
 		self.kept = 0;
+		// Prefetches still reading finish, and go at the next discard if still unplayed.
+		self.pending.retain(|_, (loading, _)| !loading.is_finished());
 	}
 
-	/// What the bank holds: the sounds it knows, the bytes of decoded sound, and the
-	/// bytes of long sounds the voices playing them hold.
-	pub fn memory_use(&self) -> (usize, usize, usize) {
+	/// Drop the oldest finished prefetches past [`KEEP_PREFETCHED`].
+	fn trim_prefetched(&mut self) {
+		let mut finished: Vec<(u64, String)> = self
+			.pending
+			.iter()
+			.filter(|(_, (loading, _))| loading.is_finished())
+			.map(|(path, (_, asked))| (*asked, path.clone()))
+			.collect();
+		if finished.len() <= KEEP_PREFETCHED {
+			return;
+		}
+		finished.sort();
+		for (_, path) in &finished[..finished.len() - KEEP_PREFETCHED] {
+			self.pending.remove(path);
+		}
+	}
+
+	/// What the bank holds: the sounds it knows, the bytes of decoded sound, the bytes of
+	/// long sounds the voices playing them hold, and the prefetches not yet played.
+	pub fn memory_use(&self) -> (usize, usize, usize, usize) {
 		let streamed = self
 			.entries
 			.values()
@@ -170,7 +202,7 @@ impl SoundBank {
 				_ => None,
 			})
 			.sum();
-		(self.entries.len(), self.kept, streamed)
+		(self.entries.len(), self.kept, streamed, self.pending.len())
 	}
 
 	/// The sound at `path`: kept, or read (the prefetch's if one ran) and remembered.
@@ -189,7 +221,7 @@ impl SoundBank {
 			}
 		}
 		let loaded = match self.pending.remove(path) {
-			Some(loading) => loading.join().unwrap_or(Loaded::Missing),
+			Some((loading, _)) => loading.join().unwrap_or(Loaded::Missing),
 			None => load(&*self.files, path),
 		};
 		let entry = match &loaded {
@@ -312,9 +344,25 @@ mod tests {
 		let playing = bank.get("a.wav");
 		assert_eq!(bank.memory_use().1, 4410 * FRAME_BYTES);
 		bank.discard_unused();
-		assert_eq!(bank.memory_use(), (0, 0, 0));
+		assert_eq!(bank.memory_use(), (0, 0, 0, 0));
 		assert!(matches!(playing, Some(Sound::Static(_))), "the playing voice keeps its copy");
 		assert!(bank.get("a.wav").is_some());
 		assert_eq!(files.0.lock().unwrap().len(), 2, "decoded again for its next play");
+	}
+
+	#[test]
+	fn a_discarded_scene_takes_the_prefetches_nothing_played() {
+		let files = Arc::new(Files(Mutex::new(Vec::new())));
+		let mut bank = SoundBank::new(files.clone());
+		bank.prefetch("long.wav");
+		bank.prefetch("a.wav");
+		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+		while bank.pending.values().any(|(loading, _)| !loading.is_finished()) {
+			assert!(std::time::Instant::now() < deadline, "the loaders never finished");
+			std::thread::yield_now();
+		}
+		assert_eq!(bank.memory_use().3, 2, "read ahead, not yet played");
+		bank.discard_unused();
+		assert_eq!(bank.memory_use(), (0, 0, 0, 0));
 	}
 }
