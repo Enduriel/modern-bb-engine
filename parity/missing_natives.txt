@@ -33,13 +33,8 @@ menu/natives | native WorldWeather.* | not a root global here
 
 # Overloaded natives without their per-arity slots (`__sqrat_ol_ <name>_<N>`). Modern Hooks
 # wraps overloads through these slots.
-campaign/natives | native tile.__sqrat_ol_ clearAllBut_1 | missing overload slot
-campaign/natives | native tile.__sqrat_ol_ clear_0 | missing overload slot
-campaign/natives | native tile.__sqrat_ol_ clear_1 | missing overload slot
 campaign/natives | native tile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
 campaign/natives | native tile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
-campaign/natives | native tile.__sqrat_ol_ setColor_1 | missing overload slot
-campaign/natives | native tile.__sqrat_ol_ setColor_3 | missing overload slot
 campaign/natives | native settlement.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
 campaign/natives | native settlement.__sqrat_ol_ setDiscovered_1 | missing overload slot
 campaign/natives | native settlement.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
@@ -61,43 +56,20 @@ menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_3 | 
 menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_5 | missing overload slot
 menu/natives | native TacticalNavigator.__sqrat_ol_ teleport_5 | missing overload slot
 menu/natives | native TacticalNavigator.__sqrat_ol_ teleport_6 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ clear_0 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ clear_1 | missing overload slot
 menu/natives | native TacticalTile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
 menu/natives | native TacticalTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ setColor_1 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ setColor_3 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_1 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_2 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_3 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_4 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_5 | missing overload slot
 menu/natives | native World.__sqrat_ol_ getEntityAtPos_1 | missing overload slot
 menu/natives | native World.__sqrat_ol_ getEntityAtPos_2 | missing overload slot
 menu/natives | native World.__sqrat_ol_ spawnEntity_1 | missing overload slot
 menu/natives | native World.__sqrat_ol_ spawnLocation_1 | missing overload slot
 menu/natives | native World.__sqrat_ol_ spawnParticleEffect_8 | missing overload slot
 menu/natives | native World.__sqrat_ol_ spawnParticleEffect_9 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ clearAllBut_1 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ clear_0 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ clear_1 | missing overload slot
 menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
 menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ setColor_1 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ setColor_3 | missing overload slot
 
 # Plain natives we don't have.
 campaign/natives | native tile.getPosBetweenThisAnd | missing
 campaign/natives | native tile.getTileBetweenThisAnd | missing
-campaign/natives | native tile.hasDetailType | missing
-campaign/natives | native settlement.getRelativePos | missing
-campaign/natives | native settlement.getSpriteOffset | missing
-campaign/natives | native settlement.insertSprite | missing
-campaign/natives | native settlement.removeSprite | missing
-campaign/natives | native player_party.getRelativePos | missing
-campaign/natives | native player_party.getSpriteOffset | missing
-campaign/natives | native player_party.insertSprite | missing
-campaign/natives | native player_party.removeSprite | missing
 campaign/natives | native player_roster.get | missing
 menu/natives | native root.execute | missing
 menu/natives | native root.split | a table here: our include runs files with this = root, so scripts/skills/actives/split.nut replaces the stdlib split(); the original keeps it (a known Modern Hooks blocker)
@@ -116,7 +88,5 @@ menu/natives | native World.getPlayerPos | missing
 menu/natives | native World.getTemporaryRoster | missing; vanilla calls it 148 times (events, contracts), ours has only Tactical.getTemporaryRoster
 menu/natives | native World.move | missing
 menu/natives | native World.presave | missing
-menu/natives | native World.setAmbientColor | missing
 menu/natives | native WorldTile.getPosBetweenThisAnd | missing
 menu/natives | native WorldTile.getTileBetweenThisAnd | missing
-menu/natives | native WorldTile.hasDetailType | missing

@@ -1192,23 +1192,37 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 
 	// Removing details. `clear()` removes all, `clear(mask)` those with any of the
 	// type bits, `clearAllBut(mask)` those with none; `clearAndFade` removes like
-	// `clear` (the fade is visual). Arguments are read leniently.
+	// `clear` (the fade is visual). `clear` and `clearAllBut` are Sqrat overloads
+	// (`clear_0`/`clear_1`, `clearAllBut_1`). Arguments are read leniently.
+	let clear = |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| clear_details(t, vm, &args.0, false);
+	let clear_all_but = |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| clear_details(t, vm, &args.0, true);
 	b = b
-		.method("clear", |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| {
-			clear_details(t, vm, &args.0, false);
+		.method(&overload_key("clear", 0), clear)
+		.method(&overload_key("clear", 1), clear)
+		.native_method("clear", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
+			dispatch_overload(vm, this, "clear", args)
 		})
-		.method("clearAndFade", |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| {
-			clear_details(t, vm, &args.0, false);
+		.method("clearAndFade", clear)
+		.method(&overload_key("clearAllBut", 1), clear_all_but)
+		.native_method("clearAllBut", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
+			dispatch_overload(vm, this, "clearAllBut", args)
 		})
-		.method("clearAllBut", |t: &mut TileHandle, vm: &SQVM, args: Variadic<Retained>| {
-			clear_details(t, vm, &args.0, true);
+		// hasDetailType(mask): whether one of the tile's details has any of the type
+		// bits (0x4fbd10, which finds them through the scene around the tile).
+		.method("hasDetailType", |t: &mut TileHandle, mask: i64| -> bool {
+			t.with(|d| world_detail::has_type(&d.details, mask))
 		});
 
-	// `setColor` is itself a Sqrat overload; with `onRoadPass` it stays a lenient no-op
-	// (worldgen never reads their result).
-	for name in ["setColor", "onRoadPass"] {
-		b = b.method(name, |_t: &mut TileHandle, _args: Variadic<Retained>| {});
-	}
+	// `setColor` is a Sqrat overload (`setColor_1`, `setColor_3`); it and `onRoadPass`
+	// stay lenient no-ops (worldgen never reads their result).
+	let ignore = |_t: &mut TileHandle, _args: Variadic<Retained>| {};
+	b = b
+		.method(&overload_key("setColor", 1), ignore)
+		.method(&overload_key("setColor", 3), ignore)
+		.native_method("setColor", |vm: &SQVM, this: This, args: Variadic<StackArg>| {
+			dispatch_overload(vm, this, "setColor", args)
+		})
+		.method("onRoadPass", ignore);
 
 	b.build(vm)
 }

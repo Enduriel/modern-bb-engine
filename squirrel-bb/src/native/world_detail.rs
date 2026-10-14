@@ -124,6 +124,11 @@ pub(crate) enum Clear {
 	AllBut(i64),
 }
 
+/// Whether one of `details` has any of `mask`'s type bits (`hasDetailType`).
+pub(crate) fn has_type(details: &[Detail], mask: i64) -> bool {
+	details.iter().any(|d| d.borrow().flags & mask != 0)
+}
+
 /// Remove the details `clear` selects.
 pub(crate) fn clear(details: &mut Vec<Detail>, which: Clear) {
 	details.retain(|d| {
@@ -160,5 +165,14 @@ mod tests {
 		let mut d = all();
 		clear(&mut d, Clear::AllBut(1));
 		assert_eq!(flags(&d), [1, 3]);
+	}
+
+	#[test]
+	fn has_type_matches_any_bit() {
+		let d = vec![detail(0), detail(4)];
+		assert!(has_type(&d, 4));
+		assert!(has_type(&d, 6));
+		assert!(!has_type(&d, 1));
+		assert!(!has_type(&[], 4));
 	}
 }

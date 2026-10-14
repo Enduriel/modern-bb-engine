@@ -545,6 +545,18 @@ impl WorldEntities {
 				Ok(())
 			})
 		};
+		// getRelativePos: the position as stored (0x49c710), which for a world entity is
+		// its world position, as getPos.
+		let get_relative_pos = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
+				let (x, y) = m.borrow().record(vm.this_identity()).map_or((0.0, 0.0), |rec| rec.pos);
+				let create_vec = SqTable::root(vm)
+					.get::<SqStrongRef>("createVec")
+					.ok_or("getRelativePos: createVec missing")?;
+				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
+			})
+		};
 		// getPos: the entity's world pixel position.
 		let get_pos = {
 			let m = self.machine.clone();
@@ -560,15 +572,12 @@ impl WorldEntities {
 				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
 			})
 		};
+		// addSprite(name): a new sprite on top of the others; a name already there gets
+		// that sprite back (the original logs that it already exists, 0x4a7dc0).
 		let add_sprite = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
-				let class = m.borrow().sprite_class.clone()?;
-				let sprite = class.instantiate(vm, SpriteData::fresh());
-				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.sprites.insert(name, sprite.clone());
-				}
-				Some(sprite)
+				sprites::add(&m, vm, name, false)
 			})
 		};
 		let get_sprite = {
@@ -653,6 +662,7 @@ impl WorldEntities {
 			("getID", get_id),
 			("getTile", get_tile),
 			("getPos", get_pos),
+			("getRelativePos", get_relative_pos),
 			("setPos", set_pos),
 			("addSprite", add_sprite),
 			("getSprite", get_sprite),

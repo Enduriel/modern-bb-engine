@@ -575,16 +575,10 @@ impl TacticalEntities {
 				}
 			})
 		};
+		// addSprite(name) / insertSprite(name): see `new_sprite`.
 		let add_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
-				let class = m.borrow().sprite_class.clone()?;
-				let sprite = class.instantiate(vm, UnitSpriteData::fresh());
-				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.sprites.insert(name, sprite.clone());
-				}
-				Some(sprite)
-			})
+			vm.make_closure(move |vm: &SQVM, name: String| new_sprite(&m, vm, name, false))
 		};
 		let get_sprite = {
 			let m = self.machine.clone();
@@ -653,13 +647,8 @@ impl TacticalEntities {
 		};
 		let insert_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String, Variadic(_rest): Variadic<Retained>| -> Option<SqStrongRef> {
-				let class = m.borrow().sprite_class.clone()?;
-				let sprite = class.instantiate(vm, UnitSpriteData::fresh());
-				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.sprites.insert(name, sprite.clone());
-				}
-				Some(sprite)
+			vm.make_closure(move |vm: &SQVM, name: String, Variadic(_rest): Variadic<Retained>| {
+				new_sprite(&m, vm, name, true)
 			})
 		};
 		let remove_sprite = {
@@ -1026,4 +1015,27 @@ impl TacticalEntities {
 		m.sprite_class = None;
 		m.grid = None;
 	}
+}
+
+/// `addSprite(name)` (`first`: `insertSprite`) on the calling unit, as the original's
+/// entity base class (`0x4a7dc0`, `0x4a7a60`): a new sprite on top of the others, or
+/// below them all; a name the unit has gets that sprite back (the original logs that it
+/// already exists).
+fn new_sprite(m: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, name: String, first: bool) -> Option<SqStrongRef> {
+	let class = {
+		let machine = m.borrow();
+		if let Some(there) = machine.record(vm.this_identity()).and_then(|rec| rec.sprites.get(&name)) {
+			return Some(there.clone());
+		}
+		machine.sprite_class.clone()?
+	};
+	let sprite = class.instantiate(vm, UnitSpriteData::fresh());
+	if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+		if first {
+			rec.sprites.insert_first(name, sprite.clone());
+		} else {
+			rec.sprites.insert(name, sprite.clone());
+		}
+	}
+	Some(sprite)
 }

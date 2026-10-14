@@ -26,6 +26,12 @@ impl Slots {
 		}
 	}
 
+	/// Add `name` first, so it's drawn below the others (`insertSprite`). The caller
+	/// checks it isn't there yet.
+	pub(crate) fn insert_first(&mut self, name: String, handle: SqStrongRef) {
+		self.0.insert(0, (name, handle));
+	}
+
 	/// Remove `name`, keeping the others' order.
 	pub(crate) fn remove(&mut self, name: &str) {
 		self.0.retain(|(n, _)| n != name);

@@ -20,7 +20,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, SQVM, SqStrongRef, SqTable};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::world_nav::cvtt_i32;
 
@@ -266,6 +266,17 @@ pub(crate) fn world_entries(
 		vm.make_closure(move || c.borrow_mut().clear_scene())
 	};
 
+	// World.setAmbientColor(color): the world's ambient colour, until the next update
+	// recomputes it from the time of day (0x4d3470 writes the same scene field the
+	// update does, 0x4e6afc).
+	let set_ambient_color = {
+		let c = clock.clone();
+		vm.make_closure(move |vm: &SQVM, color: Retained| -> Result<(), String> {
+			let argb = super::color::color_argb(vm, &color.0).ok_or("setAmbientColor: not a color")?;
+			c.borrow_mut().ambient = argb;
+			Ok(())
+		})
+	};
 	let get_global_visibility_mult = {
 		let c = clock.clone();
 		vm.make_closure(move || f64::from(c.borrow().global_visibility))
@@ -282,6 +293,7 @@ pub(crate) fn world_entries(
 		("getSpeedMult", get_speed_mult),
 		("setSpeedMult", set_speed_mult),
 		("clearScene", clear_scene),
+		("setAmbientColor", set_ambient_color),
 	]
 }
 
