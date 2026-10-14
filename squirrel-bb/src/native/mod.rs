@@ -17,6 +17,7 @@ mod brushes;
 mod color;
 mod engine_rng;
 mod entity_ids;
+mod execute;
 pub use entity_ids::EntityIds;
 pub(crate) mod fog_mask;
 mod display_modes;
@@ -180,6 +181,7 @@ impl NativeConfig {
 		let tactical = tactical::install(vm, &engine_rng);
 		let video = settings::install(vm);
 		audio::install(vm);
+		execute::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
 		InstalledNatives { world_clock, clouds, waves, world_camera, tactical, sprites, engine_rng, video }

@@ -44,12 +44,6 @@ campaign/natives | native player_party.__sqrat_ol_ storeSpriteColors_0 | missing
 campaign/natives | native brother.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
 campaign/natives | native brother.__sqrat_ol_ setDiscovered_1 | missing overload slot
 campaign/natives | native brother.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
-menu/natives | native Music.__sqrat_ol_ setTrackList_2 | missing overload slot
-menu/natives | native Music.__sqrat_ol_ setTrackList_3 | missing overload slot
-menu/natives | native Sound.__sqrat_ol_ play_1 | missing overload slot
-menu/natives | native Sound.__sqrat_ol_ play_2 | missing overload slot
-menu/natives | native Sound.__sqrat_ol_ play_3 | missing overload slot
-menu/natives | native Sound.__sqrat_ol_ play_4 | missing overload slot
 menu/natives | native Tactical.__sqrat_ol_ spawnParticleEffect_8 | missing overload slot
 menu/natives | native Tactical.__sqrat_ol_ spawnParticleEffect_9 | missing overload slot
 menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_3 | missing overload slot
@@ -68,11 +62,8 @@ menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_1 | missing overload s
 menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
 
 # Plain natives we don't have.
-menu/natives | native root.execute | missing
 menu/natives | native root.split | a table here: our include runs files with this = root, so scripts/skills/actives/split.nut replaces the stdlib split(); the original keeps it (a known Modern Hooks blocker)
-menu/natives | native Music.isPlaying | missing
 menu/natives | native PersistenceManager.createStorage | missing
 menu/natives | native PersistenceManager.deleteStorages | missing
 menu/natives | native PersistenceManager.loadStorage | missing
-menu/natives | native Sound.setAmbienceVolume | missing
 menu/natives | native World.getEntityAtPos | missing
