@@ -88,8 +88,8 @@ pub struct NativeConfig {
 	pub version_name: String,
 	/// `GameInfo.getCompany()`.
 	pub company: String,
-	/// Seed of the engine's own random stream ([`EngineRng`]): `None` seeds it from
-	/// the clock, as the original does; a fixed seed makes runs reproducible.
+	/// Seed of the engine's own random stream ([`EngineRng`]): `None` seeds it
+	/// unpredictably, as the original does; a fixed seed makes runs reproducible.
 	pub engine_seed: Option<u64>,
 }
 
@@ -166,7 +166,7 @@ impl NativeConfig {
 		let world_clock = world::install(vm);
 		tactical::install(vm);
 		let sprites = brushes::install(vm);
-		let engine_rng = self.engine_seed.map_or_else(EngineRng::from_clock, EngineRng::seeded);
+		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);

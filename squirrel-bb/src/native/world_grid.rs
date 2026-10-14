@@ -241,7 +241,7 @@ impl WorldGrid {
 				detail_class: None,
 				nav_path_class: None,
 				sprites: Sprites::default(),
-				engine_rng: EngineRng::from_clock(),
+				engine_rng: EngineRng::unseeded(),
 			})),
 		}
 	}

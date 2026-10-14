@@ -2,11 +2,12 @@
 //! `Math.rand` stream.
 //!
 //! The original keeps a `std::mt19937_64` at `0x69f318`, seeded once at startup from
-//! the system clock (`0x480e94`), and draws from it with `uniform_int_distribution`
-//! for engine-side variety, e.g. which world details are mirrored and their random
-//! scale and rotation (`spawnDetail`, `0x4fb5d0`). Because of the clock seed, those
-//! choices differ between any two runs of the original; they never touch the script
-//! stream, which is why seed-exact worldgen doesn't depend on them.
+//! `std::random_device` (`0x480e94`, OS entropy), and draws from it with
+//! `uniform_int_distribution` for engine-side variety, e.g. which world details are
+//! mirrored and their random scale and rotation (`spawnDetail`, `0x4fb5d0`). Those
+//! choices differ between any two runs of the original and can't be recovered; they
+//! never touch the script stream, which is why seed-exact worldgen doesn't depend on
+//! them.
 //!
 //! We draw with `min + x % span` rather than MSVC's `_Rng_from_urng`. The spread is
 //! the same, and no run of the original can be reproduced either way.
@@ -22,8 +23,8 @@ use super::mt64::Mt19937_64;
 pub struct EngineRng(Rc<RefCell<Mt19937_64>>);
 
 impl EngineRng {
-	/// Seeded from the clock, like the original.
-	pub fn from_clock() -> Self {
+	/// Unpredictably seeded (from the clock here; the original uses OS entropy).
+	pub fn unseeded() -> Self {
 		let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
 		Self::seeded(nanos as u64)
 	}
@@ -51,7 +52,7 @@ impl EngineRng {
 
 impl Default for EngineRng {
 	fn default() -> Self {
-		Self::from_clock()
+		Self::unseeded()
 	}
 }
 
