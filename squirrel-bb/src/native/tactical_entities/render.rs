@@ -53,7 +53,22 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 			},
 		)
 	};
-	vec![("setRenderCallbackEnabled", set_enabled), ("moveSpriteOffset", move_sprite_offset)]
+	// setVisibleInFogOfWar(on) (`0x4c2c10`): whether the unit is drawn on a tile the
+	// player can't see now (desaturated). Actors turn it off, so the player never sees
+	// one there.
+	let set_visible_in_fog = {
+		let m = m.clone();
+		vm.make_closure(move |vm: &SQVM, on: bool| {
+			if let Some(r) = m.borrow_mut().record_mut(vm.this_identity()) {
+				r.visible_in_fog = on;
+			}
+		})
+	};
+	vec![
+		("setRenderCallbackEnabled", set_enabled),
+		("moveSpriteOffset", move_sprite_offset),
+		("setVisibleInFogOfWar", set_visible_in_fog),
+	]
 }
 
 /// `Tactical.render()`.

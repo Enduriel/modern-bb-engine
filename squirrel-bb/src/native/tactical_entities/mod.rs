@@ -183,6 +183,9 @@ struct UnitRecord {
 	colors_stored: bool,
 	/// In the air between two tiles (the original's flight layer, flag `0x800000`).
 	flying: bool,
+	/// Drawn on a tile the player can't see now (`setVisibleInFogOfWar`, `+0x18b`;
+	/// true until actors turn it off).
+	visible_in_fog: bool,
 }
 
 /// Shared host state: the rosters, the unit registry, the `this.new` capability, the stub
@@ -284,6 +287,7 @@ fn create_unit(
 			sprites: super::sprite_slots::Slots::default(),
 			colors_stored: false,
 			flying: false,
+			visible_in_fog: true,
 		});
 		idx
 	};
@@ -995,7 +999,6 @@ impl TacticalEntities {
 		for name in [
 			"setDirty",
 			"setVisibility",
-			"setVisibleInFogOfWar",
 			"setPreventOcclusion",
 			"setSpriteScaling",
 			"setSpriteColorization",
@@ -1248,6 +1251,7 @@ impl TacticalEntities {
 				pos: u.pos,
 				tile: u.tile,
 				flying: u.flying,
+				visible_in_fog: u.visible_in_fog,
 				is_actor: u.is_actor,
 				overlay: u.overlay.as_ref().and_then(|o| o.scene(now, shown)),
 				sprites: u

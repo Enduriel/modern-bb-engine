@@ -68,6 +68,11 @@ fn a_battle_map_is_ready_to_draw() {
 		harness::run_frame(&engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("frame {frame}: {e}"));
 	}
 	let unit = unit.expect("a unit with bars");
+	// Units are never drawn on a tile the player can't see now; map objects are.
+	let scene = engine.tactical_scene();
+	assert!(scene.entities.iter().filter(|e| e.is_actor).all(|e| !e.visible_in_fog), "actors hide in the fog");
+	assert!(scene.entities.iter().filter(|e| !e.is_actor).all(|e| e.visible_in_fog), "objects show in it");
+	assert!(scene.entities.iter().any(|e| !e.is_actor), "the map has objects");
 	engine
 		.run_script(
 			&format!(

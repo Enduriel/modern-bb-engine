@@ -77,9 +77,12 @@ pub struct SceneTacticalEntity {
 	pub pos: (f64, f64),
 	/// The index of its tile in [`TacticalScene::tiles`].
 	pub tile: Option<usize>,
-	/// In the air between two tiles: drawn in the original's flight layer, not sorted
-	/// with the units on the map.
+	/// In the air between two tiles: drawn in the original's effects layer, after the
+	/// tiles, not with the units on the map.
 	pub flying: bool,
+	/// Drawn on a tile the player can't see now (desaturated); off for actors, so the
+	/// player never sees a unit there (`setVisibleInFogOfWar`).
+	pub visible_in_fog: bool,
 	/// A unit, rather than a map object.
 	pub is_actor: bool,
 	/// Its bars and status icons (`createOverlay`), as drawn now.
