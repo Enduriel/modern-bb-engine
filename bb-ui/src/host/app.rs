@@ -17,6 +17,14 @@ use crate::coui::SCHEME;
 /// The on-device AI model's performance class is given as "GPU blocked" (8, what
 /// Chrome for Testing assumes): otherwise, three minutes in, Chrome probes the GPU for
 /// it from a utility process and logs "Unable to get gpu adapter".
+///
+/// As few processes as the page allows, so the game shows as one program: the GPU
+/// process and the network service run inside the game's (frames are composited in
+/// software anyway), there is no zygote (there is no sandbox for it to prepare) and no
+/// spare renderer. Left beside the game: the page's renderer and the storage service.
+/// Measured on the idle world map: 8 processes and 772 MB (PSS) before, 3 and 742 MB
+/// after. The renderer stays out of the game's process: `--single-process` isn't
+/// supported upstream, and our page's handlers assume their own process.
 const SWITCHES: &[(&str, Option<&str>)] = &[
 	("ozone-platform", Some("headless")),
 	("disable-gpu", None),
@@ -31,6 +39,10 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("password-store", Some("basic")),
 	("force-device-scale-factor", Some("1")),
 	("optimization-guide-performance-class", Some("8")),
+	("in-process-gpu", None),
+	("no-zygote", None),
+	("enable-features", Some("NetworkServiceInProcess2")),
+	("disable-features", Some("SpareRendererForSitePerProcess")),
 ];
 
 /// Chrome preferences for every page, set on CEF's UI thread once its context exists
