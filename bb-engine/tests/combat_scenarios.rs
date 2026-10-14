@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against twenty-one kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against twenty-four kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -7,7 +7,9 @@
 //! battle's start (count and running hash, as in `combat_trace.rs`) must match the one
 //! captured from the original (2026-10-13) at every checkpoint up to the last draw
 //! before the battle ends, and the battle must end with
-//! the same result.
+//! the same result. Where the capture has it, the return to the world map must match
+//! too: the draws and casualties when the world's `onCombatFinished` has run (after the
+//! result screen's Leave, pressed once, and the loading screen's tip).
 //!
 //! The checkpoints are the original's running hash, recomputed from its logged draws,
 //! plus the end hash it logged itself. A logged bound can hide a float just below an
@@ -15,6 +17,9 @@
 //! checkpoints are left out.
 //!
 //! Pinned as in `combat_trace.rs`: the combat seed, the wall-clock reseed, idle sounds.
+//! And the turn bar learns of the battle's end at once instead of on a 50 ms real-time
+//! event, which otherwise lets the frame rate decide whether it starts another round
+//! after the battle (a draw).
 //! Ghosts also redraw their jitter in `onRender` whenever a sprite animation ends
 //! (virtual time, so frame timing): with `pin_render`, draws made from `onRender` answer
 //! without drawing, in both engines.
@@ -42,6 +47,8 @@ struct Scenario {
 	result: i64,
 	/// Draws from `onRender` don't draw (see above).
 	pin_render: bool,
+	/// `(draw count, running hash, casualties)` once back on the world map, if captured.
+	after: Option<(i64, i64, i64)>,
 }
 
 /// The trace: counts and hashes 2-arg draws and records the checkpoints, pins what
@@ -57,6 +64,7 @@ local origSeed = ::Math.seedRandom;
 	if (vargv.len() == 0) return origRand();
 	local a = vargv[0], b = vargv[1];
 	local t = ::__rng;
+	if (t.on) ::__pinBar();
 	if (t.on && t.pin) { local caller = ::getstackinfos(2); if (caller != null && caller.func == "onRender") return a; }
 	local r = origRand(a, b);
 	t.n++;
@@ -69,6 +77,21 @@ local origSeed = ::Math.seedRandom;
 {
 	if (::__rng.on && _s == ::Time.getRealTime()) _s = 999;
 	return origSeed(_s);
+};
+// The turn bar: told of the battle's end at once. (::Tactical.TurnSequenceBar is a
+// WeakTableRef; the bar is the tactical screen's.)
+::__pinBar <- function()
+{
+	if (!("State" in ::Tactical) || ::Tactical.State == null || ::Tactical.State.m.TacticalScreen == null) return;
+	local bar = ::Tactical.State.m.TacticalScreen.m.TurnSequenceBar;
+	if (bar == null || ("__pinned" in bar)) return;
+	bar.__pinned <- true;
+	local update = bar.update;
+	bar.update <- function()
+	{
+		if (::Tactical.Entities.isCombatFinished()) this.m.IsBattleEnded = true;
+		return update.call(this);
+	};
 };
 ::__combatTrace <- function()
 {
@@ -89,6 +112,16 @@ local origSeed = ::Math.seedRandom;
 		local args = [this];
 		args.extend(vargv);
 		return orig.acall(args);
+	};
+	// Back on the world map.
+	local finished = st.onCombatFinished;
+	st.onCombatFinished <- function( ... )
+	{
+		local args = [this];
+		args.extend(vargv);
+		local r = finished.acall(args);
+		::__rng.after <- [::__rng.n, ::__rng.h, ::Tactical.getCasualtyRoster().getSize()];
+		return r;
 	};
 	foreach (bro in ::World.getPlayerRoster().getAll())
 	{
@@ -173,6 +206,18 @@ fn fight(s: &Scenario) {
 		assert!(ours.contains(expected), "checkpoint {expected:?} (ours: {ours:?})");
 	}
 	assert_eq!(root().get::<i64>("__lastCombatResult"), Some(s.result), "combat result");
+	if let Some(after) = s.after {
+		let back = |_: ()| root().get::<SqTable>("__rng").and_then(|t| t.get::<SqArray>("after"));
+		for frame in 0..2000 {
+			if back(()).is_some() {
+				break;
+			}
+			harness::run_frame(&engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("world frame {frame}: {e}"));
+		}
+		let a = back(()).expect("the world's onCombatFinished ran");
+		let ours = (a.get::<i64>(0).unwrap(), a.get::<i64>(1).unwrap(), a.get::<i64>(2).unwrap());
+		assert_eq!(ours, after, "back on the world map (draws, hash, casualties)");
+	}
 }
 
 #[test]
@@ -204,6 +249,7 @@ fn direwolves_in_a_forest() {
 		],
 		result: 4,
 		pin_render: false,
+		after: Some((34035, 928315, 3)),
 	});
 }
 
@@ -217,6 +263,7 @@ fn zombies_in_a_swamp() {
 		checkpoints: &[(2000, 221684), (4000, 414143), (6000, 490493), (8000, 964468), (10000, 845059), (11012, 654739)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -230,6 +277,7 @@ fn goblin_raiders_in_the_hills() {
 		checkpoints: &[(2000, 816665), (4000, 403605), (6000, 4943), (8000, 79192), (8025, 319982)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -244,6 +292,7 @@ fn bandit_raiders_on_the_plains() {
 		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8217, 683224)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -257,6 +306,7 @@ fn orc_raiders_on_the_steppe() {
 		checkpoints: &[(4000, 233155), (7525, 620450)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -271,6 +321,7 @@ fn nomad_raiders_in_the_desert() {
 		checkpoints: &[(5238, 376116)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -284,6 +335,7 @@ fn alps_in_autumn_leaves() {
 		checkpoints: &[(32254, 39770)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -297,6 +349,7 @@ fn a_lindwurm_in_steppe_hills() {
 		checkpoints: &[(4000, 223370), (7332, 453358)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -310,6 +363,7 @@ fn an_unhold_in_tundra_hills() {
 		checkpoints: &[(4000, 483870), (6646, 590551)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -323,6 +377,7 @@ fn spiders_in_a_forest() {
 		checkpoints: &[(16000, 109235), (34489, 96309)],
 		result: 4,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -336,6 +391,7 @@ fn ghouls_in_autumn() {
 		checkpoints: &[(4000, 779157), (7898, 720896)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -350,6 +406,7 @@ fn a_necromancer_in_the_tundra() {
 		checkpoints: &[(7487, 839311)],
 		result: 4,
 		pin_render: false,
+		after: Some((7492, 208038, 1)),
 	});
 }
 
@@ -363,6 +420,7 @@ fn hexen_in_a_swamp() {
 		checkpoints: &[(4000, 414143), (8000, 964468), (10476, 18822)],
 		result: 4,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -376,6 +434,7 @@ fn a_schrat_in_a_snowy_forest() {
 		checkpoints: &[(4000, 279844), (12000, 197177), (25434, 721833)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -389,6 +448,7 @@ fn serpents_in_the_desert() {
 		checkpoints: &[(4000, 329691), (4824, 57370)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -402,6 +462,7 @@ fn sand_golems_in_desert_hills() {
 		checkpoints: &[(4000, 925438), (4577, 653931)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -415,6 +476,7 @@ fn barbarians_in_the_snow() {
 		checkpoints: &[(4000, 307276), (6046, 206481)],
 		result: 4,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -429,6 +491,7 @@ fn noble_troops_on_the_plains() {
 		checkpoints: &[(8090, 852691)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -443,6 +506,7 @@ fn southern_troops_in_desert_hills() {
 		checkpoints: &[(5081, 584868)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -457,6 +521,7 @@ fn the_undead_army_in_the_tundra() {
 		checkpoints: &[(7086, 834004)],
 		result: 3,
 		pin_render: false,
+		after: None,
 	});
 }
 
@@ -471,5 +536,66 @@ fn ghosts_in_the_snow() {
 		checkpoints: &[(4986, 815848)],
 		result: 3,
 		pin_render: true,
+		after: None,
+	});
+}
+
+#[test]
+fn hyenas_in_the_steppe() {
+	fight(&Scenario {
+		spawn: "Hyenas",
+		resources: 80,
+		faction: "Beasts",
+		terrain: "tactical.steppe",
+		checkpoints: &[(2000, 122648), (4000, 233155), (6000, 962250), (7611, 177069)],
+		result: 4,
+		pin_render: false,
+		after: None,
+	});
+}
+
+#[test]
+fn goblin_scouts_in_autumn_leaves() {
+	fight(&Scenario {
+		spawn: "GoblinScouts",
+		resources: 100,
+		faction: "Goblins",
+		terrain: "tactical.forest_leaves",
+		checkpoints: &[
+			(2000, 765052),
+			(4000, 927748),
+			(6000, 697450),
+			(8000, 107310),
+			(10000, 74867),
+			(12000, 162483),
+			(14000, 801411),
+			(16000, 422200),
+			(18000, 204225),
+			(20000, 74433),
+			(22000, 708625),
+			(24000, 287526),
+			(26000, 895838),
+			(28000, 515631),
+			(30000, 286191),
+			(32000, 730058),
+			(32605, 909804),
+		],
+		result: 3,
+		pin_render: false,
+		after: None,
+	});
+}
+
+#[test]
+fn a_goblin_boss_in_the_hills() {
+	fight(&Scenario {
+		spawn: "GoblinBoss",
+		resources: 150,
+		faction: "Goblins",
+		terrain: "tactical.hills",
+		checkpoints: &[(2000, 816665), (4000, 403605), (6000, 4943), (8000, 342239), (8818, 490959)],
+		result: 3,
+		pin_render: false,
+		after: Some((8824, 941342, 1)),
 	});
 }
