@@ -2,7 +2,7 @@
 //! original's opening view (zoom 1), for comparing with its screenshots.
 //!
 //! ```text
-//! cargo run --release -p bb-render --example render_world -- OUT.png [SEED] [WIDTHxHEIGHT]
+//! cargo run --release -p bb-render --example render_world -- OUT.png [SEED] [WIDTHxHEIGHT] [ZOOM]
 //! ```
 
 use std::path::Path;
@@ -29,13 +29,22 @@ fn main() {
 				.map(|(w, h)| (w.parse().unwrap(), h.parse().unwrap()))
 		})
 		.unwrap_or((2560, 1440));
+	// The original's `World.getCamera().Zoom`: world units per screen pixel.
+	let camera_zoom: f32 = args.next().map_or(1.0, |z| z.parse().expect("zoom"));
 
 	let dir = Path::new(STEAM_DATA_DIR);
 	let engine = harness::open_install(dir).expect("open install");
 	harness::boot_menu(&engine).expect("menu");
 	harness::prepare_new_campaign(&engine, &seed).expect("prepare");
 	harness::start_new_campaign(&engine).expect("start");
-	// Let entities fade in (the original's 300 ms discovery fade).
+	engine
+		.run_script(
+			&format!("::World.getCamera().Zoom = {camera_zoom:?};"),
+			"zoom",
+		)
+		.expect("zoom");
+	// Let entities fade in (the original's 300 ms discovery fade), and scripts react to
+	// the zoom.
 	for _ in 0..40 {
 		engine.frame(16.0).expect("frame");
 	}
@@ -55,7 +64,7 @@ fn main() {
 	let scene = engine.world_scene();
 	let view = WorldView {
 		center: [x, y],
-		zoom: 1.0,
+		zoom: 1.0 / camera_zoom,
 		width,
 		height,
 	};

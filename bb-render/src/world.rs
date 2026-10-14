@@ -117,9 +117,11 @@ pub fn world_quads(
 			let Some(frame) = sprite.frames.first() else {
 				return;
 			};
+			// Offsets scale with the sprite (so an unscaled sprite keeps its screen
+			// offset too).
 			let anchor = [
-				anchor[0] + offset[0] + f32::from(sprite.offset_x),
-				anchor[1] + offset[1] + f32::from(sprite.offset_y),
+				anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
+				anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
 			];
 			let order = drawables.len();
 			drawables.push(Drawable {
@@ -168,8 +170,11 @@ pub fn world_quads(
 			.filter(|s| s.visible && !s.brush.is_empty())
 		{
 			let offset = [sprite.offset.0 as f32, sprite.offset.1 as f32];
+			// `setSpriteScaling(name, false)`: the sprite keeps its screen size at any
+			// zoom (the settlement banner).
+			let zoom_scale = if sprite.scaling { 1.0 } else { 1.0 / view.zoom };
 			let look = Look {
-				scale: sprite.scale as f32,
+				scale: sprite.scale as f32 * zoom_scale,
 				flipped: sprite.flipped,
 				alpha: sprite.alpha as f32,
 				rotation: 0.0,
