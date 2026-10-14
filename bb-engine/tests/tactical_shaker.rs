@@ -60,12 +60,13 @@ fn run(engine: &harness::GameEngine, id: i64) -> Vec<((f64, f64, f64), (u32, f32
 	out
 }
 
-#[test]
-fn units_shake_as_the_originals_do() {
+/// A battle on the map, with a unit of the player's picked ([`SETUP`]); `None` without
+/// the Steam install.
+fn battle() -> Option<harness::GameEngine> {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
 		eprintln!("skipping: {} not present", dir.display());
-		return;
+		return None;
 	}
 	let engine = harness::open_install(dir).expect("open install");
 	harness::boot_menu(&engine).expect("boot the menu");
@@ -84,6 +85,12 @@ fn units_shake_as_the_originals_do() {
 		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
 	}
 	engine.run_script(SETUP, "setup").expect("a unit with a neighbour");
+	Some(engine)
+}
+
+#[test]
+fn units_shake_as_the_originals_do() {
+	let Some(engine) = battle() else { return };
 	let id = player::eval_i64(&engine, "::__u.getID()").unwrap().unwrap();
 	let away = player::eval_string(&engine, "(::__orig.X - ::__src.Pos.X) + \" \" + (::__orig.Y - ::__src.Pos.Y)").unwrap().unwrap();
 	let away: Vec<f64> = away.split(' ').map(|x| x.parse().unwrap()).collect();
@@ -136,4 +143,50 @@ fn units_shake_as_the_originals_do() {
 	engine.run_script("::Tactical.getShaker().cancel(::__u);", "cancel").expect("cancel");
 	let (x, y, _) = sample(&engine);
 	assert!(x.hypot(y) < 1e-6, "cancelled: back where it stood ({x}, {y})");
+}
+
+/// The calling unit's colours as a whole: kept and put back (`isStoringColor` meanwhile,
+/// which a kraken's tentacles wait on), faded to a colour and back to the kept one, its
+/// alpha set and faded, a sprite's scale moved.
+#[test]
+fn units_keep_and_fade_their_colours() {
+	let Some(engine) = battle() else { return };
+	let id = player::eval_i64(&engine, "::__u.getID()").unwrap().unwrap();
+	let body = |engine: &harness::GameEngine| {
+		let scene = engine.tactical_scene();
+		let unit = scene.entities.iter().find(|e| e.id == id).expect("the unit");
+		unit.sprites.iter().find(|s| s.name == "body").expect("a body").color
+	};
+	let storing = |engine: &harness::GameEngine| player::eval_i64(engine, "::__u.isStoringColor() ? 1 : 0").unwrap() == Some(1);
+	let before = body(&engine);
+	assert!(!storing(&engine));
+	engine.run_script("::__u.storeSpriteColors(); ::__u.fadeTo(::createColor(\"ffffff00\"), 0);", "store").unwrap();
+	assert!(storing(&engine), "storing");
+	assert_eq!(body(&engine), 0x00ff_ffff, "faded to clear white at once");
+	engine.run_script("::__u.fadeToStoredColors(100);", "back").unwrap();
+	for _ in 0..12 {
+		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
+	}
+	assert_eq!(body(&engine), before, "faded back to the kept colour");
+	assert!(storing(&engine), "still storing until restored");
+	engine.run_script("::__u.restoreSpriteColors();", "restore").unwrap();
+	assert!(!storing(&engine), "restored");
+
+	engine.run_script("::__u.setAlpha(0);", "alpha").unwrap();
+	assert_eq!(body(&engine) >> 24, 0, "clear at once");
+	engine.run_script("::__u.fadeIn(100);", "fade in").unwrap();
+	for _ in 0..12 {
+		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
+	}
+	assert_eq!(body(&engine) >> 24, 0xff, "faded in");
+
+	let scaled = player::eval_string(
+		&engine,
+		"(function() { local t = ::Time.getVirtualTimeF(); local a = ::__u.moveSpriteScale(\"body\", 1.0, 2.0, 1.0, t - 0.5); \
+		 local b = ::__u.getSprite(\"body\").Scale; local c = ::__u.moveSpriteScale(\"body\", 1.0, 2.0, 1.0, t - 2.0); \
+		 return a + \" \" + b + \" \" + c + \" \" + ::__u.getSprite(\"body\").Scale; })()",
+	)
+	.unwrap()
+	.unwrap();
+	assert_eq!(scaled, "false 1.5 true 2", "halfway, then there");
 }

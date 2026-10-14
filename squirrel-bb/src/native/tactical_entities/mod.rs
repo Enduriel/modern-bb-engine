@@ -26,6 +26,7 @@ use super::inject::inject_natives;
 use super::overload::{make_dispatcher, overload_key, single_overload};
 
 mod persist;
+mod colors;
 mod effects;
 mod original;
 mod overlay;
@@ -91,8 +92,10 @@ struct UnitSpriteData {
 	/// `Highlight` (ARGB), blended over the sprite by `HighlightFactor`: a hit's flash.
 	highlight: u32,
 	highlight_factor: f64,
-	/// The colours a shake keeps to put back (see `shaker`).
-	stored: Option<shaker::Stored>,
+	/// The colours its slot keeps to put back (see `shaker`), and whether they're kept
+	/// now.
+	stored: shaker::Stored,
+	is_stored: bool,
 	finished: bool,
 	fading: bool,
 	/// Its `Torque` (see `spin`).
@@ -127,7 +130,8 @@ impl UnitSpriteData {
 			flipped: false,
 			highlight: 0,
 			highlight_factor: 0.0,
-			stored: None,
+			stored: shaker::Stored::default(),
+			is_stored: false,
 			finished: false,
 			fading: false,
 			spin: Spin::default(),
@@ -994,7 +998,6 @@ impl TacticalEntities {
 			("getRelativePos", get_relative_pos),
 			("insertSprite", insert_sprite),
 			("removeSprite", remove_sprite),
-			("isStoringColor", vm.make_closure(|| false)),
 		];
 		for name in [
 			"setDirty",
@@ -1004,27 +1007,22 @@ impl TacticalEntities {
 			"setSpriteColorization",
 			"addDefaultStatusSprites",
 			"updateOverlay",
-			// Render-only, or map-only while units aren't placed:
-			"fadeIn",
-			"fadeOut",
-			"setAlpha",
+			// A bare `ret` in the original.
 			"clearVisibility",
+			// Only stores an int the original doesn't read back (`entity+0x10`).
 			"setZ",
-			"fadeTo",
-			"fadeToStoredColors",
-			"moveSpriteScale",
-			"copySpritesFrom",
 		] {
 			methods.push((name, noop.clone()));
 		}
-		// One-arity Sqrat overloads in the original; render-only here.
-		for (name, key) in [
-			("storeSpriteColors", "__sqrat_ol_ storeSpriteColors_0"),
-			("restoreSpriteColors", "__sqrat_ol_ restoreSpriteColors_0"),
+		// One-arity Sqrat overloads in the original (see `colors`).
+		let (store, restore) = colors::store_and_restore(vm, &self.machine);
+		for (name, key, leaf) in [
+			("storeSpriteColors", "__sqrat_ol_ storeSpriteColors_0", store),
+			("restoreSpriteColors", "__sqrat_ol_ restoreSpriteColors_0", restore),
 		] {
-			let leaf = vm.make_closure(|| {});
 			methods.extend(single_overload(vm, name, key, leaf));
 		}
+		methods.extend(colors::unit_natives(vm, &self.machine));
 		methods.extend(vision::unit_natives(vm, &self.machine));
 		methods.extend(render::unit_natives(vm, &self.machine));
 		self.machine.borrow_mut().methods = methods;

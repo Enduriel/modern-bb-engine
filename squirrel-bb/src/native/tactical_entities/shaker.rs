@@ -54,13 +54,35 @@ pub(super) struct Shake {
 	mask: u32,
 }
 
-/// The colours a sprite had before a shake changed them.
+/// The colours a sprite's slot keeps (`slot+0x2c..+0x38`) to put back after a shake, or
+/// for `restoreSpriteColors`. A slot always has them (white, none, 0, 1 until first
+/// stored); a restore leaves them.
 #[derive(Clone, Copy)]
 pub(super) struct Stored {
-	color: u32,
+	pub color: u32,
 	highlight: u32,
 	factor: f64,
 	saturation: f64,
+}
+
+impl Default for Stored {
+	fn default() -> Self {
+		Stored {
+			color: 0xffff_ffff,
+			highlight: 0,
+			factor: 0.0,
+			saturation: 1.0,
+		}
+	}
+}
+
+/// Which of a unit's sprites a store or restore covers.
+#[derive(Clone, Copy)]
+pub(super) enum Layers {
+	/// All of them (`storeSpriteColors`, `restoreSpriteColors`).
+	All,
+	/// The `i`th sprite for bit `i % 32` (a shake's layers).
+	Mask(u32),
 }
 
 /// The arguments of a shake.
@@ -214,7 +236,7 @@ fn shake(m: &Machine, vm: &SQVM, entity: &SqStrongRef, tile: &SqStrongRef, a: Ar
 	};
 	if s.color.is_some() || s.factor.is_some() || s.saturation.is_some() {
 		s.mask = layer_mask(&machine, unit, &a.layers);
-		store_colors(&mut machine, vm, unit, s.mask);
+		store_colors(&mut machine, vm, unit, Layers::Mask(s.mask));
 	}
 	machine.shakes.push(s);
 	Ok(())
@@ -230,13 +252,16 @@ fn layer_mask(m: &TacticalMachine, unit: usize, layers: &[String]) -> u32 {
 		.fold(0, |mask, i| mask | 1 << (i % 32))
 }
 
-/// The unit's sprites in `mask`, with their handles.
-fn masked(m: &TacticalMachine, unit: usize, mask: u32) -> Vec<SqStrongRef> {
+/// The unit's sprites in `layers`, with their handles.
+fn masked(m: &TacticalMachine, unit: usize, layers: Layers) -> Vec<SqStrongRef> {
 	m.units[unit]
 		.sprites
 		.iter()
 		.enumerate()
-		.filter(|(i, _)| mask & 1 << (i % 32) != 0)
+		.filter(|(i, _)| match layers {
+			Layers::All => true,
+			Layers::Mask(mask) => mask & 1 << (i % 32) != 0,
+		})
 		.map(|(_, (_, h))| h.clone())
 		.collect()
 }
@@ -245,36 +270,41 @@ fn with_sprite<R>(m: &TacticalMachine, vm: &SQVM, handle: &SqStrongRef, f: impl 
 	m.sprite_class.as_ref()?.with_payload(vm, handle, f)
 }
 
-/// Keep the colours of the sprites in `mask` (`0x4a90c0`), once per unit until they are
-/// put back.
-fn store_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, mask: u32) {
+/// Keep the colours of the sprites in `layers` (`0x4a90c0`; all: `0x4a9180`), once per
+/// unit until they are put back: the unit's colours-stored flag, which
+/// `isStoringColor()` answers, is shared by shakes and the scripts' stores.
+pub(super) fn store_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, layers: Layers) {
 	if m.units[unit].colors_stored {
 		return;
 	}
-	for h in masked(m, unit, mask) {
+	for h in masked(m, unit, layers) {
 		with_sprite(m, vm, &h, |s| {
-			if s.stored.is_none() {
-				s.stored = Some(Stored {
+			if !s.is_stored {
+				s.stored = Stored {
 					color: s.color.color,
 					highlight: s.highlight,
 					factor: s.highlight_factor,
 					saturation: s.saturation,
-				});
+				};
+				s.is_stored = true;
 			}
 		});
 	}
 	m.units[unit].colors_stored = true;
 }
 
-/// Put back the colours of the sprites in `mask` (`0x4a9230`).
-fn restore_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, mask: u32) {
-	for h in masked(m, unit, mask) {
+/// Put back the colours of the sprites in `layers` that were kept (`0x4a9230`; all:
+/// `0x4a92e0`). A fade in progress goes on from the colour put back.
+pub(super) fn restore_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, layers: Layers) {
+	for h in masked(m, unit, layers) {
 		with_sprite(m, vm, &h, |s| {
-			if let Some(st) = s.stored.take() {
+			if s.is_stored {
+				let st = s.stored;
 				s.color.color = st.color;
 				s.highlight = st.highlight;
 				s.highlight_factor = st.factor;
 				s.saturation = st.saturation;
+				s.is_stored = false;
 			}
 		});
 	}
@@ -299,9 +329,9 @@ fn apply(m: &mut TacticalMachine, vm: &SQVM, s: &Shake, t: f32) {
 	if s.color.is_none() && s.factor.is_none() && s.saturation.is_none() {
 		return;
 	}
-	for h in masked(m, s.unit, s.mask) {
+	for h in masked(m, s.unit, Layers::Mask(s.mask)) {
 		with_sprite(m, vm, &h, |sp| {
-			let Some(st) = sp.stored else { return };
+			let st = sp.stored;
 			if let Some(c) = s.color {
 				sp.color.color = lerp_color(st.color, c, t);
 			}
@@ -319,7 +349,7 @@ fn apply(m: &mut TacticalMachine, vm: &SQVM, s: &Shake, t: f32) {
 /// Put the shaken unit back where it started, with its colours.
 fn end(m: &mut TacticalMachine, vm: &SQVM, s: &Shake) {
 	if s.color.is_some() || s.factor.is_some() || s.saturation.is_some() {
-		restore_colors(m, vm, s.unit, s.mask);
+		restore_colors(m, vm, s.unit, Layers::Mask(s.mask));
 	}
 	m.units[s.unit].pos = (f64::from(s.orig.0), f64::from(s.orig.1));
 }
