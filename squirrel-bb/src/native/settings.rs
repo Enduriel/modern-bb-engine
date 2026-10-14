@@ -78,6 +78,11 @@ impl VideoSettings {
 		(mode.width, mode.height, mode.ui_scale)
 	}
 
+	/// The scene's scale (`SceneScale`).
+	pub fn scene_scale(&self) -> f64 {
+		self.0.get().scene_scale
+	}
+
 	/// The size the UI is laid out at: the screen divided by the UI scale, in whole
 	/// pixels (cut down, as the original's 1706 for 2560 / 1.5).
 	pub fn ui_size(&self) -> (i64, i64) {

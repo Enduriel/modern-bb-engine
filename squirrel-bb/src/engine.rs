@@ -86,6 +86,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let world_grid = WorldGrid::new();
 		world_grid.set_sprites(natives.sprites.clone());
 		world_grid.set_engine_rng(natives.engine_rng.clone());
+		world_grid.set_camera(natives.world_camera.clone());
 		world_grid.install(&mut vm);
 		// After the grid natives (entity `getTile` delegates to `World.getTile`).
 		let world_entities = WorldEntities::new(modules.instantiator());
@@ -204,7 +205,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			clouds: self.clouds.borrow().clouds().to_vec(),
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
-			camera: *self.world_camera.borrow(),
+			camera: crate::native::world_camera::view(&self.world_camera),
 			particles: self.world_particles.borrow().scene(),
 		}
 	}
@@ -289,9 +290,22 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn frame(&self, real_delta_ms: f64) -> Result<(), String> {
 		self.time.tick(&self.vm, real_delta_ms);
 		self.root_state.update(&self.vm)?;
+		self.move_cameras(real_delta_ms);
 		self.turn_sprites();
 		self.root_state.render(&self.vm)?;
 		self.root_state.run_background(&self.vm)
+	}
+
+	/// The cameras' glides and zooms, a frame of `real_delta_ms` on (see
+	/// `native::camera_motion`). The world camera's screen is the video mode, and it
+	/// zooms in no closer than 1 / `SceneScale` (`0x4ee9cd`).
+	fn move_cameras(&self, real_delta_ms: f64) {
+		let (width, height, _) = self.video.screen();
+		let mut camera = self.world_camera.borrow_mut();
+		camera.set_screen((width as i32, height as i32));
+		let scale = self.video.scene_scale() as f32;
+		camera.set_zoom_min(if scale != 0.0 { 1.0 / scale } else { 1.0 });
+		camera.update((real_delta_ms / 1000.0) as f32);
 	}
 
 	/// Turn every sprite with a torque to the virtual clock (see `native::spin`).

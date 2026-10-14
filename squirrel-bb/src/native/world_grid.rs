@@ -115,6 +115,7 @@ impl super::save::SavePart for GridPart {
 		}
 		g.tiles = tiles;
 		g.fog.load(&mut r)?;
+		bound_camera(&g);
 		let count = r.u32()?;
 		g.region_texts = (0..count)
 			.map(|_| {
@@ -192,6 +193,8 @@ struct GridState {
 	engine_rng: EngineRng,
 	/// The details that may turn (see `world_detail::Spinning`).
 	spinning: world_detail::Spinning,
+	/// The camera the map keeps in view (see [`bound_camera`]).
+	camera: Option<super::world_camera::WorldCamera>,
 	/// Fog of war is on (`setFogOfWar`).
 	fog_on: bool,
 	/// Where the fog of war is drawn.
@@ -279,6 +282,7 @@ impl WorldGrid {
 				sprites: Sprites::default(),
 				engine_rng: EngineRng::unseeded(),
 				spinning: Rc::default(),
+				camera: None,
 				fog_on: true,
 				fog: FogMask::default(),
 				region_texts: Vec::new(),
@@ -289,6 +293,11 @@ impl WorldGrid {
 	/// Draw new details' random looks from `rng`. Call before [`install`](Self::install).
 	pub fn set_engine_rng(&self, rng: EngineRng) {
 		self.grid.borrow_mut().engine_rng = rng;
+	}
+
+	/// Keep `camera`'s view on the map. Call before [`install`](Self::install).
+	pub(crate) fn set_camera(&self, camera: super::world_camera::WorldCamera) {
+		self.grid.borrow_mut().camera = Some(camera);
 	}
 
 	/// Hint the atlases of brushes set on tiles and details to `sprites`. Call before
@@ -332,6 +341,7 @@ impl WorldGrid {
 				// The original clears its fog mask here too (`0x4efba9`).
 				g.fog.reset(fog_extent(w, h));
 				g.region_texts.clear();
+				bound_camera(&g);
 			})
 		};
 		let clear = {
@@ -854,6 +864,20 @@ impl WorldGrid {
 		let spinning = self.grid.borrow().spinning.clone();
 		world_detail::turn_all(&spinning, now);
 	}
+}
+
+/// Keep the camera's view between the centres of the tile at axial `(0, 0)` and the
+/// one at `(w - 1, h - w / 2 - 1)`, as the original does when the map is sized or
+/// loaded (`0x4ef610`).
+fn bound_camera(g: &GridState) {
+	let (Some(camera), true) = (&g.camera, g.width > 0 && g.height > 0) else { return };
+	let (w, h) = (g.width, g.height);
+	let (q, r) = (w - 1, h - w / 2 - 1);
+	let min = world_layout::tile_pos(0, 0);
+	let max = world_layout::tile_pos(q, r + q / 2);
+	camera
+		.borrow_mut()
+		.set_bounds((min.0 as f32, min.1 as f32), (max.0 as f32, max.1 as f32));
 }
 
 /// The map's extent on a `w` × `h` map, which the fog mask and the water texture span:

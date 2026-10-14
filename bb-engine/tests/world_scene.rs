@@ -258,4 +258,32 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	}
 	let (_, ring3, _) = turned(&engine);
 	assert_eq!(ring2, ring3, "paused, nothing turns");
+
+	// The camera (see `camera_motion`): the map's bounds keep the view on it, moves
+	// glide and zooms ease with the frames.
+	let camera = |engine: &harness::GameEngine, code: &str| {
+		engine
+			.run_script(
+				&format!("local cam = ::World.getCamera(); {code}; local p = cam.getPos(); ::__cam <- [p.X, p.Y, cam.Zoom];"),
+				"camera",
+			)
+			.expect("camera");
+		let c = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__cam").expect("camera");
+		(0..3).map(|i| c.get::<Number>(i).unwrap().0).collect::<Vec<f64>>()
+	};
+	let (w, h, _) = engine.video().screen();
+	let corner = camera(&engine, "cam.Zoom = 1.0; cam.setPos(::createVec(-5000, -5000))");
+	assert_eq!(corner, [120.0 + (w / 2) as f64, 60.0 + (h / 2) as f64, 1.0], "pushed back onto the map");
+	let start = camera(&engine, "cam.setPos(::createVec(5000, 5000)); cam.moveToPos(6000, 5000); cam.zoomTo(2.0, 4.0)");
+	assert_eq!(start, [5000.0, 5000.0, 1.0], "a glide and a zoom start on the next frame");
+	engine.frame(16.0).expect("frame");
+	let step = camera(&engine, "");
+	assert!(step[0] > 5000.0 && step[0] < 6000.0 && step[1] == 5000.0, "gliding: {step:?}");
+	assert!((step[2] - 1.064).abs() < 1e-4, "a 16 ms step of the zoom: {step:?}");
+	for _ in 0..200 {
+		engine.frame(16.0).expect("frame");
+	}
+	let end = camera(&engine, "");
+	// The zoom closes a share of the gap each frame, so it only nears its target.
+	assert!(end[..2] == [6000.0, 5000.0] && (end[2] - 2.0).abs() < 1e-5, "arrived: {end:?}");
 }

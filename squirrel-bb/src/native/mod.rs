@@ -14,6 +14,7 @@
 
 mod audio;
 mod brushes;
+pub(crate) mod camera_motion;
 mod color;
 mod engine_rng;
 mod entity_ids;

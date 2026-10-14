@@ -5,19 +5,20 @@
 //! `World.screenToTile`), and the night lights fade in only for places on screen
 //! (`isInsideScreen`). See [`Screen`] for the pixel rules.
 //!
-//! The original's camera glides: `moveTo`, `moveToPos` and `moveToTile` set a target it
-//! eases towards in its update. Headless, as the battle camera, it arrives at once.
-//! `move(dx, dy)` shifts it by world units, as in the original. `getPos` rounds to whole
-//! units (half away from zero), as the original's does.
-//!
-//! Not yet: the bounds `setPos` keeps the view inside when they're on, zoom easing
-//! (`zoomTo`, `zoomBy`; `Zoom` keeps what scripts set), and `climbBy`.
+//! It moves as the original's camera does (see `camera_motion`): `moveTo`,
+//! `moveToTile` and `moveToPos` glide there, eased, at 4096 units per second
+//! (`moveToPos(x, y, speed)` at that speed, not eased); `jumpTo` and `setPos` are
+//! there at once; `move(dx, dy)` shifts it. `zoomTo` and `zoomBy` ease the zoom
+//! between 1 / `SceneScale` and 12. The map's bounds (`World.resizeScene`) keep the
+//! view on the map. `getPos` rounds to whole units (half away from zero), as the
+//! original's does.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
 
+use super::camera_motion::{Camera, GLIDE_SPEED};
 use super::screen::Screen;
 
 /// What the camera shows.
@@ -39,7 +40,19 @@ impl Default for CameraView {
 }
 
 /// The camera, shared between its script handle and the engine.
-pub(crate) type WorldCamera = Rc<RefCell<CameraView>>;
+pub(crate) type WorldCamera = Rc<RefCell<Camera>>;
+
+/// What `camera` shows now.
+pub(crate) fn view(camera: &WorldCamera) -> CameraView {
+	let c = camera.borrow();
+	CameraView { pos: c.pos, zoom: c.zoom }
+}
+
+/// The furthest the world camera zooms out (`0x4eeaa1`).
+const ZOOM_LIMIT: f32 = 12.0;
+
+/// Where the world camera starts (`0x4ee9c8`).
+const START: (f32, f32) = (2800.0, 2000.0);
 
 struct CameraHandle(WorldCamera);
 
@@ -88,49 +101,64 @@ fn round_half_away(v: f32) -> f32 {
 fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 	let set_pos = |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
 		if let Some(p) = pos_arg(vm, &a) {
-			c.0.borrow_mut().pos = p;
+			c.0.borrow_mut().set_pos(p);
 		}
 	};
-	let to_target = |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
+	let glide_to = |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
 		if let Some(p) = target_pos(vm, &target.0) {
-			c.0.borrow_mut().pos = p;
+			c.0.borrow_mut().glide(p, GLIDE_SPEED, true, 0.0);
 		}
 	};
 	let mut b = ClassBuilder::<CameraHandle>::new("WorldCamera")
 		.property(
 			"Zoom",
 			|c: &CameraHandle| f64::from(c.0.borrow().zoom),
-			|c: &mut CameraHandle, v: f64| c.0.borrow_mut().zoom = v as f32,
+			|c: &mut CameraHandle, v: f64| c.0.borrow_mut().set_zoom(v as f32),
 		)
 		.method("getPos", |c: &mut CameraHandle, vm: &SQVM| {
 			let (x, y) = c.0.borrow().pos;
 			vec(vm, (round_half_away(x), round_half_away(y)))
 		})
 		.method("setPos", set_pos)
+		// (x, y) and (vec) glide eased at the usual speed; (x, y, speed) at that speed.
 		.method("moveToPos", move |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			// (x, y[, speed]) or (vec): the speed only paces the glide.
+			let speed = if a.len() == 3 { a[2].0.get_value::<Number>(vm).map(|n| n.0 as f32) } else { None };
 			let a = if a.len() == 3 { &a[..2] } else { &a[..] };
 			if let Some(p) = pos_arg(vm, a) {
-				c.0.borrow_mut().pos = p;
+				c.0.borrow_mut().glide(p, speed.unwrap_or(GLIDE_SPEED), speed.is_none(), 0.0);
 			}
 		})
+		// (dx, dy) ends a glide where it is; (vec) shifts its target too.
 		.method("move", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			if let Some((dx, dy)) = pos_arg(vm, &a) {
-				let mut view = c.0.borrow_mut();
-				view.pos = (view.pos.0 + dx, view.pos.1 + dy);
+			let Some(d) = pos_arg(vm, &a) else { return };
+			if a.len() == 1 {
+				c.0.borrow_mut().shift_with_target(d);
+			} else {
+				c.0.borrow_mut().shift(d);
 			}
 		})
-		.method("moveTo", to_target)
-		.method("jumpTo", to_target)
-		.method("moveToTile", to_target)
-		.method("isMovingToTile", |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| false)
+		.method("moveTo", glide_to)
+		.method("moveToTile", glide_to)
+		.method("jumpTo", |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
+			if let Some(p) = target_pos(vm, &target.0) {
+				c.0.borrow_mut().set_pos(p);
+			}
+		})
+		.method("isMovingToTile", |c: &mut CameraHandle, vm: &SQVM, tile: Retained| {
+			target_pos(vm, &tile.0).is_some_and(|p| c.0.borrow().target() == p)
+		})
+		.method("zoomTo", |c: &mut CameraHandle, zoom: f64, speed: f64| {
+			c.0.borrow_mut().zoom_to(zoom as f32, speed as f32)
+		})
+		.method("zoomBy", |c: &mut CameraHandle, delta: f64| c.0.borrow_mut().zoom_by(delta as f32))
+		.method("cancelMovement", |c: &mut CameraHandle| c.0.borrow_mut().cancel())
 		.method("screenToWorld", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
 			let (x, y) = pixel_arg(vm, &a).unwrap_or((0, 0));
-			let view = *c.0.borrow();
+			let view = view(&c.0);
 			vec(vm, Screen::of(vm).to_world(view.pos, view.zoom, x, y))
 		})
 		.method("worldToScreen", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
-			let view = *c.0.borrow();
+			let view = view(&c.0);
 			let (x, y) = Screen::of(vm).to_screen(view.pos, view.zoom, xy(vm, &pos.0).unwrap_or((0.0, 0.0)));
 			vec(vm, (x as f32, y as f32))
 		})
@@ -138,11 +166,13 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 			// (pos, margin); the scripts always pass both.
 			let Some(pos) = a.first().and_then(|p| xy(vm, &p.0)) else { return false };
 			let margin = a.get(1).and_then(|m| m.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i32);
-			let view = *c.0.borrow();
+			let view = view(&c.0);
 			let screen = Screen::of(vm);
 			screen.contains(screen.to_screen(view.pos, view.zoom, pos), margin)
 		});
-	for name in ["zoomTo", "zoomBy", "climbBy", "update", "cancelMovement"] {
+	// `update` fires the camera's moved-callbacks (none registered here); the world
+	// camera has no levels to climb.
+	for name in ["climbBy", "update"] {
 		b = b.method(name, |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| {});
 	}
 	b.build(vm)
@@ -151,14 +181,16 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 /// The camera instance for `World.getCamera()`, and the camera it drives.
 pub(crate) fn instance(vm: &mut SQVM) -> (SqStrongRef, WorldCamera) {
 	let class = build_class(vm);
-	let camera = WorldCamera::default();
+	let mut start = Camera::new((1920, 1080), ZOOM_LIMIT);
+	start.shift(START);
+	let camera = Rc::new(RefCell::new(start));
 	(class.instantiate(vm, CameraHandle(camera.clone())), camera)
 }
 
 /// `World.screenToTile(x, y)`: the tile under a pixel, as `World.worldToTile` of the
 /// world point there (`0x4ce080`).
 pub(crate) fn screen_to_tile(vm: &SQVM, camera: &WorldCamera, x: i32, y: i32) -> Result<Option<SqStrongRef>, String> {
-	let view = *camera.borrow();
+	let view = view(camera);
 	let at = vec(vm, Screen::of(vm).to_world(view.pos, view.zoom, x, y))?;
 	let world = SqTable::root(vm).get::<SqStrongRef>("World").ok_or("World missing")?;
 	world.call_method_ret::<SqStrongRef, _>(vm, "worldToTile", (at,))

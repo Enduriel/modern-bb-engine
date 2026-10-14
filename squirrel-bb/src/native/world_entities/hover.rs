@@ -30,7 +30,7 @@ impl Hover {
 		if input.state != MouseInput::moved(0, 0).state {
 			return;
 		}
-		let view = *camera.borrow();
+		let view = crate::native::world_camera::view(camera);
 		let (x, y) = Screen::of(vm).to_world(view.pos, view.zoom, input.x as i32, input.y as i32);
 		let (q, r) = world_to_tile(f64::from(x), f64::from(y), width, height);
 		if (0..width).contains(&q) && (0..height).contains(&(r + q / 2)) {
