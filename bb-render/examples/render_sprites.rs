@@ -13,7 +13,7 @@ use bb_engine::assets::load_sprites;
 use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, STEAM_DATA_DIR};
 use bb_render::sprite::{Quad, SceneUniforms, SpriteRenderer};
-use bb_render::world::frame_quad;
+use bb_render::world::{Look, frame_quad};
 use bb_render::{Gpu, GpuTexture, RenderTarget, save_png};
 
 fn main() {
@@ -59,7 +59,7 @@ fn main() {
 		quads.push(Quad {
 			texture,
 			flags: 1,
-			..frame_quad(frame, anchor, 1.0, false, 255.0)
+			..frame_quad(frame, anchor, Look::PLAIN)
 		});
 		x += width + 16.0;
 		height = height.max(bottom - top);

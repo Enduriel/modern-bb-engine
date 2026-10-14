@@ -1,13 +1,17 @@
 //! Drawing the world map from a [`WorldScene`]: tiles, their details and the
 //! entities' sprites, as quads for the sprite program.
 //!
-//! First pass, to be checked against screenshots of the original:
+//! Checked against screenshots of the original (at zoom 1 the render
+//! lines up at a (0, 0) offset):
 //! - world units are pixels at zoom 1, y up (tile rows grow north);
-//! - a frame's rect is in y-down pixels around the sprite's anchor, so its top edge
-//!   goes up in the world, and the atlas is stored upside down (`v1` is the top);
-//! - brush and sprite offsets are y up;
-//! - draw order: tile terrain, then details by z level (back to front), then
-//!   entities, each layer north to south.
+//! - a frame's rect is y up from the sprite's anchor, and its `top` is the edge at the
+//!   atlas's first rows, which is the picture's bottom: bbrusher packs pictures
+//!   upside down, the way GL reads rows bottom-up;
+//! - brush and sprite offsets are y up; a mirror is about the anchor.
+//!
+//! Not yet the original's: the draw order. This draws tile terrain, then details by z
+//! level (back to front), then entities, each layer north to south. The original sorts
+//! details by `int(y) + depth_bias + z level` (`spawnDetail`, `0x4fb707`).
 
 use std::collections::HashMap;
 
@@ -98,13 +102,7 @@ pub fn world_quads(
 		x >= left && x <= right && y >= bottom && y <= top
 	};
 	let mut drawables: Vec<Drawable> = Vec::new();
-	let mut push = |layer: i64,
-	                brush: &str,
-	                anchor: [f32; 2],
-	                offset: [f32; 2],
-	                scale: f32,
-	                flipped: bool,
-	                alpha: f32| {
+	let mut push = |layer: i64, brush: &str, anchor: [f32; 2], offset: [f32; 2], look: Look| {
 		let Some((sheet, sprite)) = sprites.get(brush) else {
 			return;
 		};
@@ -121,33 +119,23 @@ pub fn world_quads(
 			y: anchor[1],
 			order,
 			texture: &sheet.sheet.texture,
-			quad: frame_quad(frame, anchor, scale, flipped, alpha),
+			quad: frame_quad(frame, anchor, look),
 		});
 	};
 
 	for tile in scene.tiles.iter().filter(|t| on_screen(t.pos)) {
 		let anchor = [tile.pos.0 as f32, tile.pos.1 as f32];
 		if !tile.brush.is_empty() {
-			push(
-				TERRAIN_LAYER,
-				&tile.brush,
-				anchor,
-				[0.0; 2],
-				1.0,
-				false,
-				255.0,
-			);
+			push(TERRAIN_LAYER, &tile.brush, anchor, [0.0; 2], Look::PLAIN);
 		}
 		for detail in &tile.details {
-			push(
-				detail.z_level,
-				&detail.brush,
-				anchor,
-				[0.0; 2],
-				detail.scale as f32,
-				detail.flipped,
-				detail.alpha as f32,
-			);
+			let look = Look {
+				scale: detail.scale as f32,
+				flipped: detail.flipped,
+				alpha: detail.alpha as f32,
+				rotation: detail.rotation as f32,
+			};
+			push(detail.z_level, &detail.brush, anchor, [0.0; 2], look);
 		}
 	}
 	for entity in scene
@@ -162,15 +150,13 @@ pub fn world_quads(
 			.filter(|s| s.visible && !s.brush.is_empty())
 		{
 			let offset = [sprite.offset.0 as f32, sprite.offset.1 as f32];
-			push(
-				ENTITY_LAYER,
-				&sprite.brush,
-				anchor,
-				offset,
-				sprite.scale as f32,
-				sprite.flipped,
-				sprite.alpha as f32,
-			);
+			let look = Look {
+				scale: sprite.scale as f32,
+				flipped: sprite.flipped,
+				alpha: sprite.alpha as f32,
+				rotation: 0.0,
+			};
+			push(ENTITY_LAYER, &sprite.brush, anchor, offset, look);
 		}
 	}
 
@@ -191,26 +177,54 @@ pub fn world_quads(
 	(quads, atlases)
 }
 
+/// How a sprite is drawn, besides where.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+	pub scale: f32,
+	/// Mirrored left to right, about the anchor.
+	pub flipped: bool,
+	/// 0 to 255.
+	pub alpha: f32,
+	/// Degrees, counter-clockwise about the anchor.
+	pub rotation: f32,
+}
+
+impl Look {
+	/// Unscaled, unmirrored, opaque, upright.
+	pub const PLAIN: Look = Look {
+		scale: 1.0,
+		flipped: false,
+		alpha: 255.0,
+		rotation: 0.0,
+	};
+}
+
 /// A frame drawn at `anchor` (world units, y up).
-pub fn frame_quad(
-	frame: &BrushFrame,
-	anchor: [f32; 2],
-	scale: f32,
-	flipped: bool,
-	alpha: f32,
-) -> Quad {
-	let [left, right, top, bottom] = frame.rect;
+pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
+	let [mut left, mut right, top, bottom] = frame.rect;
 	let [mut u0, mut u1, v0, v1] = frame.uv;
-	if flipped {
+	if look.flipped {
+		// Mirrored about the anchor: the rect flips with the picture.
+		(left, right) = (-right, -left);
 		std::mem::swap(&mut u0, &mut u1);
 	}
-	let (x0, x1) = (anchor[0] + left * scale, anchor[0] + right * scale);
-	let (y_top, y_bottom) = (anchor[1] - top * scale, anchor[1] - bottom * scale);
+	let scale = look.scale;
+	let (x0, x1) = (left * scale, right * scale);
+	// The rect is y up from the anchor, and its `top` is the edge at the atlas's first
+	// rows (`v0`): with the picture packed upside down, that is the picture's bottom.
+	let (y_top, y_bottom) = (bottom * scale, top * scale);
+	let (sin, cos) = look.rotation.to_radians().sin_cos();
+	let place = |x: f32, y: f32| [anchor[0] + x * cos - y * sin, anchor[1] + x * sin + y * cos];
 	Quad {
 		texture: 0,
-		corners: [[x0, y_top], [x1, y_top], [x1, y_bottom], [x0, y_bottom]],
+		corners: [
+			place(x0, y_top),
+			place(x1, y_top),
+			place(x1, y_bottom),
+			place(x0, y_bottom),
+		],
 		uv: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
-		color: [255, 255, 255, alpha.clamp(0.0, 255.0) as u8],
+		color: [255, 255, 255, look.alpha.clamp(0.0, 255.0) as u8],
 		overlay: [0; 4],
 		factor: 0.0,
 		saturation: 1.0,
@@ -222,33 +236,54 @@ pub fn frame_quad(
 mod tests {
 	use super::*;
 
-	#[test]
-	fn a_frame_hangs_from_its_anchor_with_the_atlas_flipped() {
-		let frame = BrushFrame {
+	fn frame(rect: [f32; 4]) -> BrushFrame {
+		BrushFrame {
 			name: String::new(),
 			uv: [0.1, 0.2, 0.3, 0.4],
-			rect: [-10.0, 10.0, -20.0, 5.0],
-		};
-		let quad = frame_quad(&frame, [100.0, 50.0], 1.0, false, 255.0);
-		// Top edge 20 px above the anchor, bottom edge 5 px below.
+			rect,
+		}
+	}
+
+	#[test]
+	fn a_frame_sits_on_its_anchor_with_the_atlas_flipped() {
+		let quad = frame_quad(
+			&frame([-10.0, 10.0, -20.0, 5.0]),
+			[100.0, 50.0],
+			Look::PLAIN,
+		);
+		// The rect is y up: the picture spans 20 below the anchor to 5 above, and its
+		// top edge takes the atlas's last rows (`v1`).
 		assert_eq!(
 			quad.corners,
-			[[90.0, 70.0], [110.0, 70.0], [110.0, 45.0], [90.0, 45.0]]
+			[[90.0, 55.0], [110.0, 55.0], [110.0, 30.0], [90.0, 30.0]]
 		);
 		assert_eq!(quad.uv[0], [0.1, 0.4]);
 		assert_eq!(quad.uv[2], [0.2, 0.3]);
 	}
 
 	#[test]
-	fn flipping_mirrors_the_texture_not_the_quad() {
-		let frame = BrushFrame {
-			name: String::new(),
-			uv: [0.1, 0.2, 0.3, 0.4],
-			rect: [-10.0, 10.0, -20.0, 5.0],
+	fn mirroring_flips_the_rect_about_the_anchor() {
+		let look = Look {
+			scale: 2.0,
+			flipped: true,
+			alpha: 128.0,
+			rotation: 0.0,
 		};
-		let quad = frame_quad(&frame, [0.0, 0.0], 2.0, true, 128.0);
-		assert_eq!(quad.corners[0], [-20.0, 40.0]);
+		let quad = frame_quad(&frame([-10.0, 4.0, -20.0, 5.0]), [0.0, 0.0], look);
+		assert_eq!(quad.corners[0], [-8.0, 10.0]);
+		assert_eq!(quad.corners[1], [20.0, 10.0]);
 		assert_eq!(quad.uv[0], [0.2, 0.4]);
 		assert_eq!(quad.color[3], 128);
+	}
+
+	#[test]
+	fn rotation_turns_the_quad_about_the_anchor() {
+		let look = Look {
+			rotation: 90.0,
+			..Look::PLAIN
+		};
+		let quad = frame_quad(&frame([-1.0, 1.0, -1.0, 1.0]), [10.0, 10.0], look);
+		let [x, y] = quad.corners[0]; // top left (-1, 1) turns to bottom left
+		assert!((x - 9.0).abs() < 1e-5 && (y - 9.0).abs() < 1e-5, "{x}, {y}");
 	}
 }

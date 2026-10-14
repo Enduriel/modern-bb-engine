@@ -4,7 +4,7 @@
 
 use bb_assets::{BrushFrame, Image};
 use bb_render::sprite::{SceneUniforms, SpriteRenderer};
-use bb_render::world::frame_quad;
+use bb_render::world::{Look, frame_quad};
 use bb_render::{Gpu, GpuTexture, RenderTarget};
 
 const RED: [u8; 4] = [255, 0, 0, 255];
@@ -40,7 +40,7 @@ fn atlases_draw_right_side_up_and_blend() {
 		uv: [0.0, 1.0, 0.0, 1.0],
 		rect: [-1.0, 1.0, -1.0, 1.0],
 	};
-	let quad = frame_quad(&frame, [0.0, 0.0], 1.0, false, 255.0);
+	let quad = frame_quad(&frame, [0.0, 0.0], Look::PLAIN);
 
 	let renderer = SpriteRenderer::new(&gpu);
 	let target = RenderTarget::new(&gpu, 2, 2);
