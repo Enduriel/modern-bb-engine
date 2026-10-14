@@ -219,8 +219,12 @@ pub struct SceneTacticalTile {
 	pub color: u32,
 	/// The player sees it now (the player's bit in its visibility mask, `tile+0xc0 & 2`).
 	/// Out of sight, a tile and what's on it draw desaturated, and units on it aren't
-	/// drawn; that includes a tile nobody has seen yet.
+	/// drawn.
 	pub visible: bool,
+	/// The player has seen it (`IsDiscovered`, bit 0 of `tile+0x10`). The original's tile
+	/// pass skips a tile not discovered with everything on it (`0x557f93`, under the
+	/// battle tile node's flag `0x20`, always set, `0x4ceee2`), so it stays black.
+	pub discovered: bool,
 	/// The player sees something on it that a tree or boulder in front of it (one to
 	/// three rows down the map) fades for: a unit (`setPreventOcclusion`), items on the
 	/// ground, or a step of the movement path shown (see `native::tactical_unveil`).

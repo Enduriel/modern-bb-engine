@@ -575,7 +575,9 @@ fn draw_clouds(b: &mut Builder, scene: &TacticalScene, view: &WorldView) {
 }
 
 /// The quads that draw `scene` in `view`: every tile in the original's order, then the
-/// details and entities, then the weather.
+/// details and entities, then the weather. A tile the player hasn't discovered isn't
+/// drawn, nor anything on it (see [`SceneTacticalTile::discovered`]): the map stays
+/// black there, but for the edges of discovered tiles' terrain reaching over it.
 pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry, view: &WorldView) -> WorldQuads {
 	let [left, right, bottom, top] = view.bounds(SOCKET_W);
 	let raise = LEVEL_H * 3.0;
@@ -584,7 +586,7 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		.iter()
 		.filter(|t| {
 			let (x, y) = (t.pos.0 as f32, t.pos.1 as f32);
-			!t.brush.is_empty() && x >= left && x <= right && y >= bottom - raise && y <= top + raise
+			t.discovered && !t.brush.is_empty() && x >= left && x <= right && y >= bottom - raise && y <= top + raise
 		})
 		.collect();
 	order.sort_by_key(|t| {
@@ -750,6 +752,7 @@ mod tests {
 			brush: "tile".into(),
 			color: 0xffff_ffff,
 			visible,
+			discovered: true,
 			unveils: false,
 			highlight: None,
 			details: Vec::new(),
@@ -810,6 +813,37 @@ mod tests {
 		let seen: Vec<_> = quads.iter().filter(|q| q.corners[0][0] > 50.0 && q.factor != 0.0).collect();
 		assert_eq!(seen.len(), 1, "the unit in sight is drawn");
 		assert_eq!((seen[0].overlay, seen[0].factor), ([0x60, 0x0a, 0x0a, 0xff], 0.25), "with its hit's flash");
+	}
+
+	#[test]
+	fn an_undiscovered_tile_and_what_is_on_it_are_not_drawn() {
+		let undiscovered = SceneTacticalTile {
+			discovered: false,
+			details: vec![SceneTacticalDetail {
+				brush: "rock".into(),
+				flags: 0,
+				mirrored: false,
+				offset: (0.0, 0.0),
+				rotation: 0.0,
+				scale: 1.0,
+				color: 0xffff_ffff,
+				saturation: 1.0,
+				frame: 0,
+			}],
+			..tile(0, false)
+		};
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![undiscovered, tile(1, false)],
+			entities: vec![entity(1, 0, "rock", true, false), entity(2, 1, "rock", true, false)],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let middle = |q: &Quad| q.corners.iter().map(|c| c[0]).sum::<f32>() / 4.0;
+		assert!(quads.iter().all(|q| middle(q) > 60.0), "nothing on the undiscovered tile");
+		let names: Vec<_> = quads.iter().map(name_of).collect();
+		assert_eq!(names, ["tile", "rock"], "the discovered one out of sight: its terrain and its rock");
 	}
 
 	#[test]

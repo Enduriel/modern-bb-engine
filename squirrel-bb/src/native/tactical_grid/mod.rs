@@ -491,6 +491,7 @@ impl TacticalGrid {
 				brush: t.brush.clone(),
 				color: t.color,
 				visible: t.vis_mask.contains(visibility::PLAYER),
+				discovered: t.is_discovered,
 				// Filled in with the units and the path (see `tactical_unveil`).
 				unveils: false,
 				highlight: t.highlight.look().map(|(brush, color)| (brush.to_string(), color)),

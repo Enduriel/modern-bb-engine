@@ -42,6 +42,7 @@ mod tests {
 			brush: String::new(),
 			color: 0,
 			visible,
+			discovered: true,
 			unveils: false,
 			highlight: None,
 			details: Vec::new(),
