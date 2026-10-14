@@ -11,11 +11,13 @@ use std::sync::Arc;
 use bb_assets::{BitmapFont, FileSource, Image, ImageLoader, Slot, SpriteRegistry, TextureCache};
 use squirrel_bb::FogPatch;
 use squirrel_bb::scene::WorldScene;
+use squirrel_bb::scene::tactical::TacticalScene;
 
 use crate::fog::FogPass;
 use crate::gpu::Gpu;
 use crate::labels::{LabelFont, WHITE};
 use crate::sprite::{Quad, SceneUniforms, SpriteRenderer};
+use crate::tactical::tactical_quads;
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::water::WaterPass;
@@ -255,6 +257,70 @@ impl WorldRenderer {
 
 		self.sprites
 			.draw(gpu, target, &uniforms, None, &labels, &ready);
+		stats
+	}
+
+	/// Draw a battle map's terrain into `target`, clearing it first (see [`crate::tactical`]).
+	pub fn draw_tactical(
+		&mut self,
+		gpu: &Gpu,
+		target: &RenderTarget,
+		scene: &TacticalScene,
+		registry: &SpriteRegistry,
+		view: &WorldView,
+		atlases: Atlases,
+	) -> FrameStats {
+		let upload = |path: &str, image: bb_assets::Image| {
+			if path.starts_with(FONT_DIR) {
+				GpuTexture::upload_flat(gpu, path, &image)
+			} else {
+				GpuTexture::upload(gpu, path, &image)
+			}
+		};
+		self.textures.pump(upload);
+		let map = tactical_quads(scene, registry, view);
+		for path in &map.atlases.paths {
+			match atlases {
+				Atlases::WaitForAll => {
+					let _ = self.textures.get_now(path, upload);
+				}
+				Atlases::DrawReady => {
+					let _ = self.textures.get(path);
+				}
+			}
+		}
+		let mut stats = FrameStats::default();
+		let mut ready: Vec<&GpuTexture> = Vec::new();
+		let slots: Vec<Option<usize>> = map
+			.atlases
+			.paths
+			.iter()
+			.map(|path| match self.textures.slot(path) {
+				Some(Slot::Ready(texture)) => {
+					ready.push(texture);
+					Some(ready.len() - 1)
+				}
+				Some(Slot::Failed(_)) => {
+					stats.failed += 1;
+					None
+				}
+				_ => None,
+			})
+			.collect();
+		let quads: Vec<Quad> = map
+			.quads
+			.iter()
+			.filter_map(|quad| {
+				let slot = slots[quad.texture];
+				if slot.is_none() {
+					stats.waiting += 1;
+				}
+				slot.map(|texture| Quad { texture, ..*quad })
+			})
+			.collect();
+		stats.quads = quads.len();
+		self.sprites
+			.draw(gpu, target, &view.uniforms(), Some(CLEAR), &quads, &ready);
 		stats
 	}
 }

@@ -16,6 +16,7 @@ mod gpu;
 pub mod labels;
 mod screenshot;
 pub mod sprite;
+pub mod tactical;
 mod target;
 mod text;
 mod texture;

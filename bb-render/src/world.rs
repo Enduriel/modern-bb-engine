@@ -70,7 +70,7 @@ impl WorldView {
 	}
 
 	/// The world rectangle on screen, `[left, right, bottom, top]`, grown by `margin`.
-	fn bounds(&self, margin: f32) -> [f32; 4] {
+	pub(crate) fn bounds(&self, margin: f32) -> [f32; 4] {
 		let half_w = self.width as f32 / self.zoom / 2.0 + margin;
 		let half_h = self.height as f32 / self.zoom / 2.0 + margin;
 		[
@@ -102,7 +102,7 @@ pub struct AtlasList {
 }
 
 impl AtlasList {
-	fn index_of(&mut self, path: &str) -> usize {
+	pub(crate) fn index_of(&mut self, path: &str) -> usize {
 		if let Some(&i) = self.index.get(path) {
 			return i;
 		}
