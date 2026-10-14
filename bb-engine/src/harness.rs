@@ -210,12 +210,17 @@ pub fn install_autoplay(engine: &GameEngine) -> Result<(), String> {
 /// units' turns at once (the turn bar's own guards hold the press while the bar is
 /// busy), leaving the fighting to the AI, and leaves the result screen when it's over
 /// (recording `::__lastCombatResult`). With `::__autoplayFight` set, the AI fights for
-/// the player's units too. With `::__autoplayPlayer` set to a function, that function
+/// the player's units too, handed over as a charm hands them (no longer player
+/// controlled). A charmed unit that dies isn't taken off the player's roster, as in the
+/// original; with `::__autoplayDieAsPlayers` set too, a handed-over unit is the
+/// player's again as it dies, so its death is a brother's (off the roster, items
+/// released), as when a player plays the battle. With `::__autoplayPlayer` set to a function, that function
 /// plays the player's turns instead (it is called every frame of the battle).
 const AUTOPLAY: &str = r#"
 ::__autoplayEngage <- false;
 ::__autoplayEngaged <- false;
 ::__autoplayFight <- false;
+::__autoplayDieAsPlayers <- false;
 ::__autoplayPlayer <- null;
 ::__autoplay <- function()
 {
@@ -232,6 +237,16 @@ const AUTOPLAY: &str = r#"
 				agent.setActor(bro);
 				bro.setAIAgent(agent);
 				bro.m.IsControlledByPlayer = false;
+				if (::__autoplayDieAsPlayers)
+				{
+					local kill = bro.kill;
+					bro.kill <- function( ... )
+					{
+						this.m.IsControlledByPlayer = true;
+						vargv.insert(0, this);
+						return kill.acall(vargv);
+					};
+				}
 				// Its turn may already be under way: tell the new agent, as the turn
 				// start does.
 				if (bro.isTurnStarted()) agent.onTurnStarted();

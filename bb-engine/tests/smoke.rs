@@ -20,20 +20,7 @@ use squirrel_bb::KeyInput;
 const KEY_ESCAPE: i64 = 41;
 
 fn frame(engine: &harness::GameEngine) {
-	if let Err(e) = harness::run_frame(engine, 1000.0 / 60.0) {
-		let diag = player::eval_string(engine, r#"(function() {
-			local s = "";
-			foreach (b in ::World.getPlayerRoster().getAll()) {
-				foreach (it in b.getItems().getAllItems()) {
-					local c = it.getContainer();
-					local dead = c == null ? "no container" : (c.m.Actor == null ? "null actor" : (c.m.Actor.isNull() ? "DEAD actor" : (c.m.Actor.get() == b ? "ok" : "OTHER actor " + c.m.Actor.getName())));
-					if (dead != "ok") s += b.getName() + ": " + it.getID() + " (" + it.ClassName + ") " + dead + (c != null && c == b.getItems() ? " [own container]" : " [other container]") + "; ";
-				}
-			}
-			return s;
-		})()"#).ok().flatten().unwrap_or_default();
-		panic!("frame: {e}\nitems whose actor is wrong: {diag}");
-	}
+	harness::run_frame(engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("frame: {e}"));
 }
 
 /// Run frames until `cond` (a Squirrel expression) holds; panics after `max`.
@@ -44,7 +31,26 @@ fn until(engine: &harness::GameEngine, max: u32, what: &str, cond: &str) {
 		}
 		frame(engine);
 	}
-	panic!("{what}: still not true after {max} frames: {cond}");
+	panic!("{what}: still not true after {max} frames: {cond}\nscreen: {}", screen_summary(engine));
+}
+
+/// What the world state has up, for a failure message.
+fn screen_summary(engine: &harness::GameEngine) -> String {
+	player::eval_string(
+		engine,
+		r#"(function() {
+			if (!("State" in ::World) || ::World.State == null) return "no world";
+			local ws = ::World.State, s = "paused " + ws.isPaused() + ", menu stack " + ws.m.MenuStack.hasBacksteps();
+			foreach (name, v in ws.m)
+				if (v != null && typeof v == "table" && "isVisible" in v && name.find("Screen") != null)
+					try { if (v.isVisible()) s += ", " + name + " visible"; } catch (e) {}
+			if ("MSU" in ::getroottable()) s += ", MSU popup " + ::MSU.Popup.isVisible();
+			return s;
+		})()"#,
+	)
+	.ok()
+	.flatten()
+	.unwrap_or_default()
 }
 
 fn script(engine: &harness::GameEngine, what: &str, src: &str) {
@@ -148,7 +154,7 @@ fn smoke(mut engine: harness::GameEngine) {
 		"(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()",
 	);
 
-	// Let the world run (the intro event is answered), then go after the nearest hostile
+	// Let the world run (the intro event is answered), then go after the weakest hostile
 	// party the player can see. A click on it sets the world state's AutoAttack; the
 	// world camera isn't real yet (no position for screenToWorld), so the test sets
 	// that directly and lets the company march and engage.
@@ -164,34 +170,53 @@ fn smoke(mut engine: harness::GameEngine) {
 		&engine,
 		"target",
 		r#"
-		local player = ::World.State.getPlayer();
-		local target = null, best = 0;
-		foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
+		// The weakest hostile party (a lost company ends the game), the nearest of equals.
+		::__smokePickTarget <- function()
 		{
-			if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || !e.isAttackable() || e.getTroops().len() == 0) continue;
-			local d = e.getDistanceTo(player);
-			if (target == null || d < best) { target = e; best = d; }
-		}
-		if (target == null)
-		{
-			local parties = 0, hostile = 0;
+			local player = ::World.State.getPlayer();
+			local target = null, best = 0, weakest = 0;
 			foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
-				if (e.isParty() && e.getID() != player.getID()) { parties++; if (!e.isAlliedWithPlayer()) hostile++; }
-			throw "no hostile party (day " + ::World.getTime().Days + ", time " + ::World.getTime().Time + ", paused "
-				+ ::World.State.isPaused() + ", " + parties + " parties, " + hostile + " not allied, event "
-				+ ::World.State.m.EventScreen.isVisible() + (("MSU" in ::getroottable()) ? ", MSU popup " + ::MSU.Popup.isVisible() : "")
-				+ ", menu stack " + ::World.State.m.MenuStack.hasBacksteps() + ")";
+			{
+				if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || !e.isAttackable() || e.getTroops().len() == 0) continue;
+				local d = e.getDistanceTo(player), strength = e.getStrength();
+				if (target == null || strength < weakest || (strength == weakest && d < best)) { target = e; best = d; weakest = strength; }
+			}
+			if (target == null)
+			{
+				local parties = 0, hostile = 0;
+				foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
+					if (e.isParty() && e.getID() != player.getID()) { parties++; if (!e.isAlliedWithPlayer()) hostile++; }
+				throw "no hostile party (day " + ::World.getTime().Days + ", time " + ::World.getTime().Time + ", paused "
+					+ ::World.State.isPaused() + ", " + parties + " parties, " + hostile + " not allied, event "
+					+ ::World.State.m.EventScreen.isVisible() + (("MSU" in ::getroottable()) ? ", MSU popup " + ::MSU.Popup.isVisible() : "")
+					+ ", menu stack " + ::World.State.m.MenuStack.hasBacksteps() + ")";
+			}
+			::logInfo("smoke: attacking " + target.getName() + " at distance " + best + (target.isHiddenToPlayer() ? " (hidden)" : ""));
+			::__smokeTarget <- ::WeakTableRef(target);
+		};
+		::__smokePickTarget();
+		// Sturdier brothers: the test is about the game's flow, and a company that loses
+		// the battle ends the game (harder with mods such as Reforged).
+		foreach (bro in ::World.getPlayerRoster().getAll())
+		{
+			local b = bro.getBaseProperties();
+			b.Hitpoints += 500;
+			b.MeleeDefense += 40;
+			b.RangedDefense += 40;
+			bro.getSkills().update();
+			bro.setHitpoints(bro.getHitpointsMax());
 		}
-		::logInfo("smoke: attacking " + target.getName() + " at distance " + best + (target.isHiddenToPlayer() ? " (hidden)" : ""));
-		::__smokeTarget <- ::WeakTableRef(target);
 		::__autoplayEngage = true;
 		::__autoplayFight = true;
+		// A brother who falls is a brother lost, as when a player fights the battle.
+		::__autoplayDieAsPlayers = true;
 		// Each second: march toward it as a click on the ground does (a path from the
 		// world's navigator), and once it's in sight, attack it as a click on it does.
 		::__smokeChase <- function()
 		{
+			// One that's gone (destroyed by someone else, or home) is replaced.
+			if (::__smokeTarget.isNull() || !::__smokeTarget.isAlive()) ::__smokePickTarget();
 			local target = ::__smokeTarget;
-			if (target.isNull() || !target.isAlive()) throw "the target is gone";
 			local ws = ::World.State;
 			if (ws.m.AutoAttack != null) return;
 			if (!target.isHiddenToPlayer()) { ws.m.AutoAttack = ::WeakTableRef(target.get()); return; }
@@ -223,10 +248,21 @@ fn smoke(mut engine: harness::GameEngine) {
 	// Escape opens the world menu (no battle is on offer: world parties stand still
 	// while a battle runs, and the ones nearby are stunned after it); Save Campaign,
 	// under a name.
+	// Escape first cancels whatever the company was still doing (a march, an attack), as
+	// in the game; a player presses it again.
 	let root = engine.root_state();
-	root.key_input(engine.vm(), KeyInput::pressed(KEY_ESCAPE)).expect("escape");
-	root.key_input(engine.vm(), KeyInput::released(KEY_ESCAPE)).expect("escape");
-	until(&engine, 60, "the world menu", &format!("{WORLD_MENU}.isVisible() && !{WORLD_MENU}.isAnimating()"));
+	let menu_up = format!("{WORLD_MENU}.isVisible() && !{WORLD_MENU}.isAnimating()");
+	for _ in 0..3 {
+		root.key_input(engine.vm(), KeyInput::pressed(KEY_ESCAPE)).expect("escape");
+		root.key_input(engine.vm(), KeyInput::released(KEY_ESCAPE)).expect("escape");
+		for _ in 0..60 {
+			frame(&engine);
+		}
+		if player::eval_i64(&engine, &format!("({menu_up}) ? 1 : 0")).unwrap() == Some(1) {
+			break;
+		}
+	}
+	until(&engine, 1, "the world menu", &menu_up);
 	script(&engine, "save menu", &format!("{WORLD_MENU}.getMainMenuModule().onSaveCampaignButtonPressed();"));
 	frame(&engine);
 	script(&engine, "save", &format!("{WORLD_MENU}.getSaveCampaignMenuModule().onSaveButtonPressed(\"smoke\");"));
