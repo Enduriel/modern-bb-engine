@@ -1,0 +1,123 @@
+# Natives the original binds that our engine doesn't have yet, found by the coverage
+# probes menu/natives and campaign/natives (captured 2026-10-14): one per line, as
+#   probe | key | reason
+# like divergences.txt (a key with one '*' matches by prefix and suffix). It's a
+# worklist: implementing a native makes its line stale, which fails the parity test until
+# the line is removed.
+
+# Not callable gaps: Sqrat puts a native `constructor` and `weakref` on every class. Ours
+# makes native instances from Rust, and `weakref()` works through the default delegate.
+menu/natives | native *.constructor | Sqrat class member
+menu/natives | native *.weakref | Sqrat class member
+campaign/natives | native *.constructor | Sqrat class member
+campaign/natives | native *.weakref | Sqrat class member
+
+# Natives named `self` and `base` on the original's script objects (Root, Cursor, the
+# screens, settlements, brothers), presumably from its class system. Not yet probed.
+menu/natives | native *.self | class-system native, semantics unknown
+menu/natives | native *.base | class-system native, semantics unknown
+campaign/natives | native *.self | class-system native, semantics unknown
+campaign/natives | native *.base | class-system native, semantics unknown
+
+# Native classes the original exposes as root globals; ours has only their instances
+# (cameras, weather, the highlighter and shaker, settings objects), whose own natives these
+# probes don't cover yet.
+menu/natives | native PersistenceStorageMetaData.* | not a root global here
+menu/natives | native TacticalCameraBridge.* | not a root global here
+menu/natives | native TacticalHighlighter.* | not a root global here
+menu/natives | native TacticalShaker.* | not a root global here
+menu/natives | native TacticalWeather.* | not a root global here
+menu/natives | native WorldCameraBridge.* | not a root global here
+menu/natives | native WorldNavigator.* | not a root global here
+menu/natives | native WorldWeather.* | not a root global here
+
+# Overloaded natives without their per-arity slots (`__sqrat_ol_ <name>_<N>`). Modern Hooks
+# wraps overloads through these slots.
+campaign/natives | native tile.__sqrat_ol_ clearAllBut_1 | missing overload slot
+campaign/natives | native tile.__sqrat_ol_ clear_0 | missing overload slot
+campaign/natives | native tile.__sqrat_ol_ clear_1 | missing overload slot
+campaign/natives | native tile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
+campaign/natives | native tile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
+campaign/natives | native tile.__sqrat_ol_ setColor_1 | missing overload slot
+campaign/natives | native tile.__sqrat_ol_ setColor_3 | missing overload slot
+campaign/natives | native settlement.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
+campaign/natives | native settlement.__sqrat_ol_ setDiscovered_1 | missing overload slot
+campaign/natives | native settlement.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
+campaign/natives | native player_party.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
+campaign/natives | native player_party.__sqrat_ol_ setDiscovered_1 | missing overload slot
+campaign/natives | native player_party.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
+campaign/natives | native brother.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
+campaign/natives | native brother.__sqrat_ol_ setDiscovered_1 | missing overload slot
+campaign/natives | native brother.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
+menu/natives | native Music.__sqrat_ol_ setTrackList_2 | missing overload slot
+menu/natives | native Music.__sqrat_ol_ setTrackList_3 | missing overload slot
+menu/natives | native Sound.__sqrat_ol_ play_1 | missing overload slot
+menu/natives | native Sound.__sqrat_ol_ play_2 | missing overload slot
+menu/natives | native Sound.__sqrat_ol_ play_3 | missing overload slot
+menu/natives | native Sound.__sqrat_ol_ play_4 | missing overload slot
+menu/natives | native Tactical.__sqrat_ol_ spawnParticleEffect_8 | missing overload slot
+menu/natives | native Tactical.__sqrat_ol_ spawnParticleEffect_9 | missing overload slot
+menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_3 | missing overload slot
+menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_5 | missing overload slot
+menu/natives | native TacticalNavigator.__sqrat_ol_ teleport_5 | missing overload slot
+menu/natives | native TacticalNavigator.__sqrat_ol_ teleport_6 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ clear_0 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ clear_1 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ setColor_1 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ setColor_3 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_1 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_2 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_3 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_4 | missing overload slot
+menu/natives | native TacticalTile.__sqrat_ol_ spawnDetail_5 | missing overload slot
+menu/natives | native World.__sqrat_ol_ getEntityAtPos_1 | missing overload slot
+menu/natives | native World.__sqrat_ol_ getEntityAtPos_2 | missing overload slot
+menu/natives | native World.__sqrat_ol_ spawnEntity_1 | missing overload slot
+menu/natives | native World.__sqrat_ol_ spawnLocation_1 | missing overload slot
+menu/natives | native World.__sqrat_ol_ spawnParticleEffect_8 | missing overload slot
+menu/natives | native World.__sqrat_ol_ spawnParticleEffect_9 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ clearAllBut_1 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ clear_0 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ clear_1 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ setColor_1 | missing overload slot
+menu/natives | native WorldTile.__sqrat_ol_ setColor_3 | missing overload slot
+
+# Plain natives we don't have.
+campaign/natives | native tile.getPosBetweenThisAnd | missing
+campaign/natives | native tile.getTileBetweenThisAnd | missing
+campaign/natives | native tile.hasDetailType | missing
+campaign/natives | native settlement.getRelativePos | missing
+campaign/natives | native settlement.getSpriteOffset | missing
+campaign/natives | native settlement.insertSprite | missing
+campaign/natives | native settlement.removeSprite | missing
+campaign/natives | native player_party.getRelativePos | missing
+campaign/natives | native player_party.getSpriteOffset | missing
+campaign/natives | native player_party.insertSprite | missing
+campaign/natives | native player_party.removeSprite | missing
+campaign/natives | native player_roster.get | missing
+menu/natives | native root.execute | missing
+menu/natives | native root.split | a table here: our include runs files with this = root, so scripts/skills/actives/split.nut replaces the stdlib split(); the original keeps it (a known Modern Hooks blocker)
+menu/natives | native Music.isPlaying | missing
+menu/natives | native PersistenceManager.createStorage | missing
+menu/natives | native PersistenceManager.deleteStorages | missing
+menu/natives | native PersistenceManager.loadStorage | missing
+menu/natives | native Sound.setAmbienceVolume | missing
+menu/natives | native UI.getCursorPosition | missing
+menu/natives | native UI.isMouseOver | missing
+menu/natives | native World.canLoad | missing
+menu/natives | native World.getAllRosters | missing
+menu/natives | native World.getAllTilesOfRegion | missing
+menu/natives | native World.getEntityAtPos | missing
+menu/natives | native World.getPlayerPos | missing
+menu/natives | native World.getTemporaryRoster | missing; vanilla calls it 148 times (events, contracts), ours has only Tactical.getTemporaryRoster
+menu/natives | native World.move | missing
+menu/natives | native World.presave | missing
+menu/natives | native World.screenToTile | missing
+menu/natives | native World.setAmbientColor | missing
+menu/natives | native WorldTile.getPosBetweenThisAnd | missing
+menu/natives | native WorldTile.getTileBetweenThisAnd | missing
+menu/natives | native WorldTile.hasDetailType | missing

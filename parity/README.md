@@ -10,6 +10,7 @@ probes/<group>/<name>.nut    the probes
 ui_payloads/<name>.nut, .js  what the scripts send the UI along a walk of the game
 goldens/<group>/<name>.txt   their output in the original
 divergences.txt              known, accepted differences
+missing_natives.txt          natives the original binds that we don't have yet
 capture.py, probes.py        capture from the original
 perf/                        performance baselines, see below
 ```
@@ -57,6 +58,12 @@ Keep the output comparable:
 - Some code crashes the original instead of raising an error, which loses the whole
   launch. Compiling `base++` does (ours reports a compile error).
 
+A probe with a `// compare: subset` line is a coverage check: only the original's lines
+must appear in ours, and our extras are fine. `menu/natives` and `campaign/natives` list
+every native function reachable from each global (through delegate chains and class
+bases) and on the objects the world hands out, so a native the original binds and we
+lack fails by name.
+
 ## UI payloads
 
 The scripts' side of the UI goldens (bb-ui keeps the DOM goldens).
@@ -90,7 +97,10 @@ counterpart yet.
 ## Divergences
 
 When we differ on purpose, or can't match (uninitialized memory, the C runtime's float
-formatting), list the key in `divergences.txt` as `probe | key | reason`. A listed key
-that starts matching again fails the test, so the list stays current.
+formatting), list the key in `divergences.txt` as `probe | key | reason`. Natives we
+haven't implemented yet go in `missing_natives.txt`, in the same format: it's the
+worklist the coverage probes produce. A key with one `*` matches every key with that
+prefix and suffix. A listed key that starts matching again, or a `*` entry that excuses
+nothing, fails the test, so both lists stay current.
 
 Original behavior that is buggy or limiting, but that we match anyway, isn't listed here.

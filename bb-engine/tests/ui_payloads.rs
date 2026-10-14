@@ -123,9 +123,10 @@ fn world_ui_payloads_match_the_original() {
 		std::fs::write(path, ours.join("\n") + "\n").unwrap();
 	}
 	let mut report = Report::default();
+	let allowed = load_divergences();
 	match golden_lines(&parity_dir().join("goldens").join(format!("{PROBE}.txt"))) {
-		Some(golden) => compare(PROBE, &entries(&golden), &entries(&ours), &load_divergences(), &mut report),
+		Some(golden) => compare(PROBE, &entries(&golden), &entries(&ours), &allowed, false, &mut report),
 		None => report.uncaptured.push(PROBE.to_string()),
 	}
-	finish(report);
+	finish(report, &allowed);
 }

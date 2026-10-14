@@ -4,6 +4,9 @@
 //! `PROBE_SECTION` marker), and compares each `PROBE key = value` line with the golden
 //! captured from the original (`parity/goldens/`).
 //!
+//! A probe with a `// compare: subset` line is a coverage check: only the original's
+//! lines must appear in ours.
+//!
 //! A known, accepted difference is listed in `parity/divergences.txt` as
 //! `probe | key | reason`; one that starts matching again fails the test, so the list
 //! stays honest. A probe without a golden is reported (capture it) but does not fail.
@@ -27,6 +30,8 @@ struct Probe {
 	name: String,
 	mode: String,
 	seed: Option<String>,
+	/// `// compare: subset`: only the original's lines must be in ours.
+	subset: bool,
 	body: String,
 }
 
@@ -56,13 +61,14 @@ fn load_probes(root: &Path) -> Vec<Probe> {
 			let mut words = header.split_whitespace();
 			let mode = words.next().unwrap().to_string();
 			let seed = words.find_map(|w| w.strip_prefix("seed=")).map(str::to_string);
+			let subset = body.lines().any(|l| l.trim() == "// compare: subset");
 			let name = path
 				.strip_prefix(root)
 				.unwrap()
 				.with_extension("")
 				.to_string_lossy()
 				.replace('\\', "/");
-			Probe { name, mode, seed, body }
+			Probe { name, mode, seed, subset, body }
 		})
 		.collect();
 	probes.sort_by(|a, b| a.name.cmp(&b.name));
@@ -155,8 +161,8 @@ fn probes_match_the_original() {
 				continue;
 			};
 			let ours = sections.get(&p.name).cloned().unwrap_or_default();
-			compare(&p.name, &entries(&golden), &entries(&ours), &allowed, &mut report);
+			compare(&p.name, &entries(&golden), &entries(&ours), &allowed, p.subset, &mut report);
 		}
 	}
-	finish(report);
+	finish(report, &allowed);
 }
