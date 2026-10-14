@@ -37,11 +37,12 @@ const UNIT_ROUNDS: i64 = 2;
 pub enum ExactClock {
 	/// The frame's real time, like `getRealTimeF`: deterministic, for the harness and
 	/// tests (draw-exact battles depend on it). Work budgeted with it never runs out
-	/// within a frame, so the AI evaluates a whole turn at once.
+	/// within a frame, so the AI's evaluations never yield for time.
 	#[default]
 	Frame,
 	/// A live monotonic clock (seconds since the service started), as the original
-	/// has: the AI's background work then yields after its per-frame budget.
+	/// has: the AI's background work then yields after its per-frame budget (see
+	/// `RootState::run_background`).
 	Live,
 }
 

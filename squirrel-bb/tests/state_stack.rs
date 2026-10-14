@@ -173,3 +173,31 @@ fn background_task_hook() {
 
 	root_state.clear();
 }
+
+/// The host runs the background task inline, suspended from the start, as the
+/// original's main thread wants the VM back at once: a task past its time allotment
+/// yields (`isAllottedTimeReached`). Outside the task the flag is as it was.
+#[test]
+fn background_task_runs_suspended() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let modules = ModuleSystem::new(sources());
+	modules.install(&mut vm);
+	let root_state = RootState::new(modules.instantiator());
+	root_state.install(&mut vm);
+
+	vm.run_script("::log <- []; ::inside <- null;", "setup").expect("setup globals");
+	root_state.boot(&vm, "scripts/root_state").expect("boot");
+	vm.run_script(
+		"::Root.setBackgroundTaskCallback(function () { ::inside = ::Root.isBackgroundTaskSuspended(); });",
+		"bg",
+	)
+	.expect("register the task");
+
+	root_state.run_background(&vm).expect("run the task");
+	assert_eq!(SqTable::root(&vm).get::<bool>("inside"), Some(true), "suspended while it runs");
+	vm.run_script("::outside <- ::Root.isBackgroundTaskSuspended();", "after").expect("poll after");
+	assert_eq!(SqTable::root(&vm).get::<bool>("outside"), Some(false), "as it was afterwards");
+
+	root_state.clear();
+}

@@ -571,9 +571,25 @@ impl RootState {
 	/// Run the registered background task (`Root.setBackgroundTaskCallback`) once, as
 	/// the original does after the states' updates every frame, whether or not the
 	/// state that registered it is visible.
+	///
+	/// The original queues it for a worker thread after the states' updates
+	/// (`0x521a2b`, clearing the flag `isBackgroundTaskSuspended` answers, `+0x11`), so
+	/// it thinks while the frame draws, and suspends it when the next frame starts
+	/// (`0x521910`: sets the flag, then waits for the task to return). The scripts return
+	/// once suspended and past their allotment (`isAllottedTimeReached`:
+	/// `Const.AI.AllottedTimePerEvaluationRun`, 5 ms of `Time.getExactTime`), and go on
+	/// where they were the next time. Run inline, the frame needs the VM back at once, so
+	/// the task runs suspended from the start. Under the live exact clock an AI
+	/// evaluation yields after its 5 ms and spreads over frames, as the original's (which
+	/// gets the rest of its frame on top). Under the frame clock no time passes within a
+	/// call, so nothing yields for time (tests, traces).
 	pub fn run_background(&self, vm: &SQVM) -> Result<(), String> {
 		let callback = self.machine.borrow().bg_callback.clone();
-		callback.map_or(Ok(()), |c| c.call(vm, ()))
+		let Some(callback) = callback else { return Ok(()) };
+		let was = std::mem::replace(&mut self.machine.borrow_mut().bg_suspended, true);
+		let result = callback.call(vm, ());
+		self.machine.borrow_mut().bg_suspended = was;
+		result
 	}
 
 	/// The root state instance, if booted.
