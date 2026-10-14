@@ -138,14 +138,33 @@ fn work(source: &dyn FileSource, queue: &Queue, results: &Sender<Decoded>) {
 pub enum Slot<T> {
 	Loading,
 	Ready(T),
+	/// The path failed to load (why), and holds the fallback image in its place.
+	Missing(T, String),
+	/// The path failed to load (why), and there's no fallback.
 	Failed(String),
+}
+
+impl<T> Slot<T> {
+	/// The texture to draw with: the path's own, or the fallback in its place.
+	pub fn texture(&self) -> Option<&T> {
+		match self {
+			Slot::Ready(texture) | Slot::Missing(texture, _) => Some(texture),
+			Slot::Loading | Slot::Failed(_) => None,
+		}
+	}
 }
 
 /// Textures by path, loaded on first use. `T` is whatever the owner makes from a
 /// decoded image (a GPU texture in the renderer).
+///
+/// A path that fails to load takes the fallback image instead, if there is one, as
+/// the original's textures do (`0x534e95`): it logs
+/// `Failed to load texture from file "<path>".` and loads `error.png` (its
+/// "texture missing" picture) into that texture, which keeps its name (`0x535e20`).
 pub struct TextureCache<T> {
 	loader: ImageLoader,
 	slots: HashMap<String, Slot<T>>,
+	fallback: Option<String>,
 }
 
 impl<T> TextureCache<T> {
@@ -153,6 +172,33 @@ impl<T> TextureCache<T> {
 		TextureCache {
 			loader,
 			slots: HashMap::new(),
+			fallback: None,
+		}
+	}
+
+	/// Load `path` in place of a texture that fails to load (the game's `error.png`).
+	pub fn with_fallback(mut self, path: &str) -> Self {
+		self.fallback = Some(path.to_string());
+		self
+	}
+
+	/// The slot for `path` once its load finished with `result`.
+	fn settle(&self, path: &str, result: Result<Image, String>, upload: &mut impl FnMut(&str, Image) -> T) -> Slot<T> {
+		let err = match result {
+			Ok(image) => return Slot::Ready(upload(path, image)),
+			Err(err) => err,
+		};
+		eprintln!("Failed to load texture from file \"{path}\".");
+		eprintln!("  {err}");
+		let fallback = self.fallback.as_deref().filter(|f| *f != path);
+		match fallback.map(|f| self.loader.load_now(f)) {
+			Some(Ok(image)) => Slot::Missing(upload(path, image), err),
+			Some(Err(fallback_err)) => {
+				eprintln!("Failed to load texture from file \"{}\".", fallback.unwrap_or_default());
+				eprintln!("  {fallback_err}");
+				Slot::Failed(err)
+			}
+			None => Slot::Failed(err),
 		}
 	}
 
@@ -169,44 +215,34 @@ impl<T> TextureCache<T> {
 	/// Call once per frame.
 	pub fn pump(&mut self, mut upload: impl FnMut(&str, Image) -> T) {
 		while let Some((path, result)) = self.loader.try_take() {
-			let Some(slot) = self.slots.get_mut(&path) else {
-				continue;
-			};
-			if !matches!(slot, Slot::Loading) {
-				continue; // already loaded on demand
+			if !matches!(self.slots.get(&path), Some(Slot::Loading)) {
+				continue; // unknown, or already loaded on demand
 			}
-			*slot = match result {
-				Ok(image) => Slot::Ready(upload(&path, image)),
-				Err(err) => Slot::Failed(err),
-			};
+			let slot = self.settle(&path, result, &mut upload);
+			self.slots.insert(path, slot);
 		}
 	}
 
-	/// The texture for `path` if it is ready. The first call for a path starts
-	/// loading it in the background.
+	/// The texture for `path` (or the fallback in its place) if it is ready. The first
+	/// call for a path starts loading it in the background.
 	pub fn get(&mut self, path: &str) -> Option<&T> {
 		self.prefetch(path);
-		match self.slots.get(path) {
-			Some(Slot::Ready(texture)) => Some(texture),
-			_ => None,
-		}
+		self.slots.get(path).and_then(Slot::texture)
 	}
 
-	/// The texture for `path`, decoding it on this thread if it isn't ready yet.
+	/// The texture for `path` (or the fallback in its place), decoding it on this
+	/// thread if it isn't ready yet.
 	pub fn get_now(
 		&mut self,
 		path: &str,
 		mut upload: impl FnMut(&str, Image) -> T,
 	) -> Result<&T, &str> {
-		if !matches!(self.slots.get(path), Some(Slot::Ready(_) | Slot::Failed(_))) {
-			let slot = match self.loader.load_now(path) {
-				Ok(image) => Slot::Ready(upload(path, image)),
-				Err(err) => Slot::Failed(err),
-			};
+		if matches!(self.slots.get(path), None | Some(Slot::Loading)) {
+			let slot = self.settle(path, self.loader.load_now(path), &mut upload);
 			self.slots.insert(path.to_string(), slot);
 		}
 		match &self.slots[path] {
-			Slot::Ready(texture) => Ok(texture),
+			Slot::Ready(texture) | Slot::Missing(texture, _) => Ok(texture),
 			Slot::Failed(err) => Err(err),
 			Slot::Loading => unreachable!("just loaded"),
 		}
@@ -220,7 +256,7 @@ impl<T> TextureCache<T> {
 	/// Forget `path`, returning its texture if it had one. Asking again reloads it.
 	pub fn remove(&mut self, path: &str) -> Option<T> {
 		match self.slots.remove(path)? {
-			Slot::Ready(texture) => Some(texture),
+			Slot::Ready(texture) | Slot::Missing(texture, _) => Some(texture),
 			_ => None,
 		}
 	}
@@ -258,6 +294,10 @@ mod tests {
 			encode(1, 3, png::ColorType::Rgb, &[2; 9], None),
 		);
 		files.insert("gfx/broken.png".to_string(), b"nope".to_vec());
+		files.insert(
+			"error.png".to_string(),
+			encode(3, 2, png::ColorType::Rgba, &[3; 24], None),
+		);
 		Arc::new(Files {
 			files,
 			reads: AtomicUsize::new(0),
@@ -320,6 +360,23 @@ mod tests {
 			cache.get_now("gfx/missing.png", |_, i| (i.width, i.height)),
 			Err("gfx/missing.png: no such file")
 		);
+	}
+
+	#[test]
+	fn a_texture_that_fails_takes_the_fallback_in_its_place() {
+		let mut cache = TextureCache::new(ImageLoader::new(files(), 1)).with_fallback("error.png");
+		cache.prefetch("gfx/missing.png");
+		pump_until(&mut cache, "gfx/missing.png");
+		assert_eq!(
+			cache.slot("gfx/missing.png"),
+			Some(&Slot::Missing((3, 2), "gfx/missing.png: no such file".into()))
+		);
+		assert_eq!(cache.get("gfx/missing.png"), Some(&(3, 2)), "drawn with the fallback");
+		let broken = cache.get_now("gfx/broken.png", |_, i| (i.width, i.height));
+		assert_eq!(broken, Ok(&(3, 2)), "on demand too");
+		// Without its image, the fallback can't stand in: the failure stays one.
+		let mut cache = TextureCache::new(ImageLoader::new(files(), 1)).with_fallback("gone.png");
+		assert!(cache.get_now("gfx/missing.png", |_, i| (i.width, i.height)).is_err());
 	}
 
 	#[test]

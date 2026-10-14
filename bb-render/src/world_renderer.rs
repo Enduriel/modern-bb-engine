@@ -38,7 +38,8 @@ pub struct FrameStats {
 	pub quads: usize,
 	/// Quads skipped because their atlas was still loading.
 	pub waiting: usize,
-	/// Atlases that failed to load (their quads are skipped).
+	/// Atlases that failed to load: drawn with the "texture missing" picture, or
+	/// skipped without it.
 	pub failed: usize,
 }
 
@@ -69,6 +70,10 @@ pub struct Clock {
 
 /// The fog of war's texture.
 const FOG_TEXTURE: &str = "gfx/fow.png";
+
+/// What a texture that fails to load shows instead: the game's "texture missing"
+/// picture (a 128×128 rainbow), as the original's (see `bb_assets::TextureCache`).
+const ERROR_TEXTURE: &str = "error.png";
 
 /// The water's texture.
 const WATER_TEXTURE: &str = "gfx/water.png";
@@ -103,7 +108,7 @@ impl WorldRenderer {
 		};
 		WorldRenderer {
 			sprites: SpriteRenderer::new(gpu),
-			textures: TextureCache::new(ImageLoader::new(files, threads)),
+			textures: TextureCache::new(ImageLoader::new(files, threads)).with_fallback(ERROR_TEXTURE),
 			label_font,
 			region_font,
 			white: GpuTexture::upload(gpu, "white", &white),
@@ -195,6 +200,12 @@ impl WorldRenderer {
 					ready.push(texture);
 					Some(ready.len() - 1)
 				}
+				// Drawn with the fallback, but counted as failed.
+				Some(Slot::Missing(texture, _)) => {
+					stats.failed += 1;
+					ready.push(texture);
+					Some(ready.len() - 1)
+				}
 				Some(Slot::Failed(_)) => {
 					stats.failed += 1;
 					None
@@ -224,8 +235,8 @@ impl WorldRenderer {
 			ambient_saturation: scene.light.saturation,
 			..view.uniforms()
 		};
-		let water = match self.textures.slot(WATER_TEXTURE) {
-			Some(Slot::Ready(water)) => self.water.draw(
+		let water = match self.textures.slot(WATER_TEXTURE).and_then(Slot::texture) {
+			Some(water) => self.water.draw(
 				gpu,
 				target,
 				Some(CLEAR),
@@ -242,7 +253,7 @@ impl WorldRenderer {
 			.draw(gpu, target, &uniforms, clear, &map, &ready);
 
 		if scene.fog_of_war {
-			if let Some(Slot::Ready(fog_texture)) = self.textures.slot(FOG_TEXTURE) {
+			if let Some(fog_texture) = self.textures.slot(FOG_TEXTURE).and_then(Slot::texture) {
 				self.fog.draw(
 					gpu,
 					target,
@@ -361,6 +372,12 @@ impl WorldRenderer {
 			.iter()
 			.map(|path| match self.textures.slot(path) {
 				Some(Slot::Ready(texture)) => {
+					ready.push(texture);
+					Some(ready.len() - 1)
+				}
+				// Drawn with the fallback, but counted as failed.
+				Some(Slot::Missing(texture, _)) => {
+					stats.failed += 1;
 					ready.push(texture);
 					Some(ready.len() - 1)
 				}

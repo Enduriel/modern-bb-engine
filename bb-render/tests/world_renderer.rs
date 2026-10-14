@@ -1,7 +1,7 @@
 //! Atlases load on demand: a live frame skips a sprite whose atlas is
 //! still loading, a frame for a screenshot waits for it, and later frames reuse it.
-//! The fog of war covers what the engine's mask keeps fogged. Skips when no GPU
-//! adapter is available.
+//! A missing atlas draws the "texture missing" picture. The fog of war covers what the
+//! engine's mask keeps fogged. Skips when no GPU adapter is available.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -140,6 +140,50 @@ fn atlases_load_on_first_use() {
 		&[255, 255, 255, 255],
 		"the sprite is drawn"
 	);
+}
+
+/// A missing atlas draws the game's "texture missing" picture (`error.png`) in its
+/// place, as the original does; without that picture, its sprites aren't drawn.
+#[test]
+fn a_missing_atlas_draws_the_texture_missing_picture() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	let scene = WorldScene {
+		tiles: vec![SceneTile {
+			col: 0,
+			row: 0,
+			pos: (0.0, 0.0),
+			terrain: 2,
+			discovered: true,
+			brush: "dot".into(),
+			flipped: false,
+			details: Vec::new(),
+		}],
+		..WorldScene::default()
+	};
+	let registry = registry();
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 4,
+		height: 4,
+	};
+	let red = [255, 0, 0, 255];
+	for (files, drawn) in [(HashMap::from([("error.png".to_string(), solid_png(red))]), 1), (HashMap::new(), 0)] {
+		let mut renderer = WorldRenderer::new(&gpu, Arc::new(Files(files)), 1);
+		let target = RenderTarget::new(&gpu, 4, 4);
+		let stats = renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+		assert_eq!((stats.quads, stats.failed), (drawn, 1), "gfx/test.png is missing");
+		if drawn == 1 {
+			let image = target.read(&gpu).expect("read back");
+			assert_eq!(&image.rgba[(5 * 4)..(5 * 4 + 4)], &red, "drawn with the picture");
+		}
+	}
 }
 
 #[test]

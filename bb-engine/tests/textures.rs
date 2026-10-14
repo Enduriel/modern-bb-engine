@@ -1,5 +1,6 @@
-//! The installed game's atlases load on demand through the texture cache. Skips
-//! cleanly when the Steam install isn't there.
+//! The installed game's atlases load on demand through the texture cache, and a missing
+//! one takes the game's "texture missing" picture. Skips cleanly when the Steam install
+//! isn't there.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -49,4 +50,16 @@ fn every_atlas_decodes_at_its_sheet_size() {
 			loaded.path
 		);
 	}
+}
+
+/// A texture that isn't in the game's files takes the game's own "texture missing"
+/// picture, `error.png` (128×128, at the archives' root), as the original's do.
+#[test]
+fn a_missing_texture_takes_the_games_texture_missing_picture() {
+	let Some(paths) = install() else { return };
+	let files = Arc::new(GameFiles::open(&paths).expect("open archives"));
+	let mut cache: TextureCache<(u32, u32)> = TextureCache::new(ImageLoader::new(files, 1)).with_fallback("error.png");
+	let missing = cache.get_now("gfx/no_such_atlas.png", |_, image| (image.width, image.height));
+	assert_eq!(missing, Ok(&(128, 128)));
+	assert!(matches!(cache.slot("gfx/no_such_atlas.png"), Some(Slot::Missing(..))));
 }
