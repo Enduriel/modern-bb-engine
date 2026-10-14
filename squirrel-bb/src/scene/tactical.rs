@@ -43,6 +43,34 @@ pub struct TacticalScene {
 	/// `HighlightBlockedTiles` setting, in the effects layer (`zone_target_overlay` at
 	/// alpha 0xa8).
 	pub blocked_tiles: Vec<SceneOverlayIcon>,
+	/// The rain's drops (or snow's, or leaves'), in the effects layer: white sprites
+	/// falling through the camera's view.
+	pub rain: Vec<SceneRainDrop>,
+	/// The rain's splats on the ground, each drawn with its tile's entities.
+	pub rain_splats: Vec<SceneRainSplat>,
+}
+
+/// A falling drop (`Tactical.getWeather().buildRain`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneRainDrop {
+	pub brush: String,
+	/// World units, y up.
+	pub pos: (f32, f32),
+	pub scale: f32,
+	/// ARGB: white, its alpha fading in and out.
+	pub color: u32,
+}
+
+/// A drop's splat on the ground.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneRainSplat {
+	/// The tile under it, if on the map.
+	pub tile: Option<usize>,
+	pub brush: String,
+	pub pos: (f32, f32),
+	pub scale: f32,
+	/// ARGB: white, fading out.
+	pub color: u32,
 }
 
 /// An icon over a tile (`Tactical.getHighlighter().addOverlayIcon`).

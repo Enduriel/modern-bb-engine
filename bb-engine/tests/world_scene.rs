@@ -1,7 +1,7 @@
 //! A new campaign's world map as a renderer reads it (`Engine::world_scene`): every
 //! land tile has terrain, decorations sit on their tiles, the player's party has its
-//! sprites in the order the scripts added them, and the fog of war lies where the
-//! original's does. Skips cleanly when the Steam install isn't there.
+//! sprites in the order the scripts added them, the fog of war lies where the
+//! original's does, and birds fly over it. Skips cleanly when the Steam install isn't there.
 
 use std::path::Path;
 
@@ -22,6 +22,9 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	let scene = engine.world_scene();
 
 	assert_eq!(scene.tiles.len(), 140 * 170);
+	// The world state's 12 birds, flying west over the map.
+	assert_eq!(scene.birds.len(), 12, "birds");
+	assert!(scene.birds.iter().all(|b| b.brush.starts_with("world_birds_0") && (45.0..=65.0).contains(&b.velocity)));
 	// Ocean and shore tiles have no terrain brush: the water pass draws them.
 	const OCEAN: i64 = 1;
 	const SHORE: i64 = 16;

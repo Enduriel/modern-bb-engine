@@ -29,6 +29,8 @@ use crate::state_stack::RootState;
 /// Mixed into `NativeConfig::engine_seed` for the audio's own stream, so a seeded run
 /// is reproducible without the audio sharing the engine's stream.
 const AUDIO_SEED: u64 = 0xA0D1_05EE_D000_0001;
+/// Mixed into `NativeConfig::engine_seed` for the battle rain's own stream.
+const RAIN_SEED: u64 = 0x5241_494E_0000_0001;
 
 /// The engine host: the VM plus all stateful services, with correct teardown.
 ///
@@ -44,6 +46,7 @@ pub struct Engine<S: ScriptSource> {
 	tactical_grid: TacticalGrid,
 	tactical_navigator: TacticalNavigator,
 	tactical_highlighter: crate::native::TacticalHighlighter,
+	tactical_rain: crate::native::tactical_rain::TacticalRain,
 	ui: UiBridge,
 	/// The headless browser side answering the UI (see [`crate::ui_client`]).
 	ui_client: RefCell<crate::ui_client::UiClient>,
@@ -55,6 +58,7 @@ pub struct Engine<S: ScriptSource> {
 	world_clock: crate::native::world_time::Clock,
 	/// The world's clouds and waves (no VM handles).
 	clouds: crate::native::world_clouds::Clouds,
+	birds: crate::native::world_birds::Birds,
 	waves: crate::native::world_waves::Waves,
 	/// The tactical terrain transitions (no VM handles).
 	transitions: crate::native::tactical::Transitions,
@@ -132,6 +136,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let tactical_highlighter = crate::native::TacticalHighlighter::new(&tactical_grid, tactical_entities.units());
 		tactical_highlighter.install(&mut vm);
 		crate::native::tactical::install_effects(&mut vm, &natives.tactical);
+		// The battle's rain, last in `Tactical.update` (after the clouds), on its own stream.
+		let tactical_rain = crate::native::tactical_rain::TacticalRain::new(
+			&tactical_grid,
+			natives.video.clone(),
+			config.engine_seed.map_or_else(crate::native::EngineRng::unseeded, |s| crate::native::EngineRng::seeded(s ^ RAIN_SEED)),
+		);
+		tactical_rain.install(&mut vm);
 		// Leaving a campaign empties the world (after every `World` native exists).
 		crate::native::world_clear_scene::install(
 			&mut vm,
@@ -141,6 +152,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				units: tactical_entities.clone(),
 				time: time.clone(),
 				clouds: natives.clouds.clone(),
+				birds: natives.birds.clone(),
 				waves: natives.waves.clone(),
 				particles: natives.world_particles.clone(),
 			},
@@ -194,12 +206,14 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tactical_grid,
 			tactical_navigator,
 			tactical_highlighter,
+			tactical_rain,
 			ui,
 			ui_client: RefCell::new(crate::ui_client::UiClient::new()),
 			sprites: natives.sprites,
 			video: natives.video,
 			world_clock: natives.world_clock.clone(),
 			clouds: natives.clouds.clone(),
+			birds: natives.birds.clone(),
 			waves: natives.waves.clone(),
 			transitions: natives.tactical.transitions.clone(),
 			tactical_light: natives.tactical.light.clone(),
@@ -271,6 +285,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				crate::scene::SceneLight { color, saturation }
 			},
 			clouds: self.clouds.borrow().clouds().to_vec(),
+			birds: self.birds.borrow().birds().to_vec(),
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
 			camera: self.world_camera(),
@@ -300,9 +315,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				|tile| self.tactical_grid.tile_world_pos(tile),
 				|sprite| self.tactical_entities.sprite_look(&self.vm, sprite),
 			);
+		let (rain, rain_splats) = self.tactical_rain.scene(crate::native::sprite_color::real_time(&self.vm));
 		crate::scene::tactical::TacticalScene {
 			effects,
 			pools,
+			rain,
+			rain_splats,
 			transitions: self.transitions.borrow().clone(),
 			entities: self.tactical_entities.scene_entities(&self.vm),
 			light: {
@@ -454,6 +472,7 @@ impl<S: ScriptSource> Drop for Engine<S> {
 		self.tactical_entities.clear();
 		self.tactical_navigator.clear();
 		self.tactical_highlighter.clear();
+		self.tactical_rain.clear();
 		self.tactical_grid.clear();
 		self.world_entities.clear();
 		self.world_grid.clear();

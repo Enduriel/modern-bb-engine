@@ -409,7 +409,8 @@ pub(crate) fn tile_id_of(grid: &Grid, vm: &SQVM, value: &SqStrongRef) -> Option<
 	class.with_payload(vm, value, |t| t.id)
 }
 
-/// The tactical map service.
+/// The tactical map service (cheap to clone; clones share it).
+#[derive(Clone)]
 pub struct TacticalGrid {
 	grid: Grid,
 }
@@ -508,6 +509,8 @@ impl TacticalGrid {
 			overlay_icons: Vec::new(),
 			path: Vec::new(),
 			blocked_tiles: Vec::new(),
+			rain: Vec::new(),
+			rain_splats: Vec::new(),
 		}
 	}
 
@@ -520,6 +523,33 @@ impl TacticalGrid {
 	}
 
 	/// Where the battle camera's centre is, read when called.
+	/// What the battle camera shows on a `screen` of pixels, in world units, inside the
+	/// map's bounds (the tiles at axial `(-2, -2)` and `(width + 1, height - width / 2 +
+	/// 1)`, as the camera keeps to): `[left, right, bottom, top]`.
+	pub(crate) fn view(&self, screen: (i64, i64)) -> [f32; 4] {
+		let g = self.grid.borrow();
+		let (cx, cy) = g.camera.pos();
+		let zoom = g.camera.zoom();
+		let (half_w, half_h) = (screen.0 as f64 * zoom / 2.0, screen.1 as f64 * zoom / 2.0);
+		let at = |q: i64, r: i64| tile_pos(q, r + q / 2);
+		let (min, max) = (at(-2, -2), at(g.width + 1, g.height - g.width / 2 + 1));
+		[
+			(cx - half_w).max(min.0) as f32,
+			(cx + half_w).min(max.0) as f32,
+			(cy - half_h).max(min.1) as f32,
+			(cy + half_h).min(max.1) as f32,
+		]
+	}
+
+	/// The tile drawn at world point `(x, y)` (`Tactical.worldToTile`), if it is on the
+	/// map.
+	pub(crate) fn tile_at(&self, x: f64, y: f64) -> Option<usize> {
+		let mut g = self.grid.borrow_mut();
+		let masks = g.hex_masks()?;
+		let (q, r) = picking::world_to_tile(&g, &masks, g.camera.level, x, y);
+		g.idx_axial(q, r)
+	}
+
 	pub(crate) fn camera_reader(&self) -> impl Fn() -> (f32, f32) + 'static {
 		let grid = self.grid.clone();
 		move || {

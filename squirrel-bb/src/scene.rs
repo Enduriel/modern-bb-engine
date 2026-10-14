@@ -32,6 +32,8 @@ pub struct WorldScene {
 	pub light: SceneLight,
 	/// The clouds drifting over the map (`World.getWeather().buildCloudCover`).
 	pub clouds: Vec<SceneCloud>,
+	/// The birds flying over it (`World.getWeather().buildBirds`), in the effects layer.
+	pub birds: Vec<SceneBird>,
 	/// The footprints shown, oldest first.
 	pub footprints: Vec<SceneFootprint>,
 	/// Waves on the sea (`World.spawnWaveSprite`), oldest first.
@@ -181,4 +183,18 @@ pub struct SceneSprite {
 	pub ignore_ambient: bool,
 	pub scaling: bool,
 	pub colorization: bool,
+}
+
+/// A bird over the world map (see `native::world_birds`). It's drawn white at alpha
+/// 0xa8, with a shadow: the same brush at alpha 0x10 (its colour wasn't read; the
+/// clouds' shadows are black), 1.25 times as large, 150 units below.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneBird {
+	pub brush: &'static str,
+	/// World units, y up.
+	pub pos: (f32, f32),
+	/// Units per second.
+	pub velocity: f32,
+	/// Sort key in the effects layer.
+	pub key: i64,
 }

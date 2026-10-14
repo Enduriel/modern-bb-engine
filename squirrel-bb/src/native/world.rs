@@ -59,10 +59,12 @@ fn map_span(vm: &SQVM) -> Result<Option<MapSpan>, String> {
 pub(crate) fn install(
 	vm: &mut SQVM,
 	engine_rng: &super::EngineRng,
+	bird_rng: &super::EngineRng,
 	sprites: &super::Sprites,
-) -> (super::world_time::Clock, Clouds, Waves, super::world_camera::WorldCamera, super::particles::ParticlesHandle) {
+) -> (super::world_time::Clock, Clouds, super::world_birds::Birds, Waves, super::world_camera::WorldCamera, super::particles::ParticlesHandle) {
 	let world_clock: super::world_time::Clock = Default::default();
 	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
+	let birds: super::world_birds::Birds = Rc::new(RefCell::new(super::world_birds::Flock::new(bird_rng.clone())));
 	let waves: Waves = Rc::default();
 	// Rosters (getRoster/getPlayerRoster/createRoster/deleteRoster) are provided by the
 	// host-owned `TacticalEntities` service (real rosters whose `create` mints units),
@@ -101,6 +103,25 @@ pub(crate) fn install(
 		})
 	};
 	weather.set_member(vm, "buildCloudCover", build_cloud_cover).expect("the weather table");
+	// buildBirds(settings): see `world_birds`.
+	let build_birds = {
+		let birds = birds.clone();
+		vm.make_closure(move |vm: &SQVM, settings: Retained| -> Result<(), String> {
+			let num = |name: &str| settings.0.get_member::<Number>(vm, name).map_or(0.0, |n| n.0);
+			let s = super::world_birds::BirdSettings {
+				min_birds: num("MinBirds") as i64,
+				max_birds: num("MaxBirds") as i64,
+				min_velocity: num("MinVelocity") as f32,
+				max_velocity: num("MaxVelocity") as f32,
+			};
+			match map_span(vm)? {
+				Some(span) => birds.borrow_mut().build(s, span),
+				None => birds.borrow_mut().clear(),
+			}
+			Ok(())
+		})
+	};
+	weather.set_member(vm, "buildBirds", build_birds).expect("the weather table");
 	let get_weather = vm.make_closure(move || weather.clone());
 
 	// Footprints are the world entities' (see `world_entities::footprints`); particle
@@ -108,9 +129,10 @@ pub(crate) fn install(
 	let particles: super::particles::ParticlesHandle =
 		Rc::new(RefCell::new(super::particles::Particles::new(engine_rng.clone())));
 	let on_update: Rc<dyn Fn(&SQVM, f32, f32)> = {
-		let (clouds, waves, particles) = (clouds.clone(), waves.clone(), particles.clone());
+		let (clouds, birds, waves, particles) = (clouds.clone(), birds.clone(), waves.clone(), particles.clone());
 		Rc::new(move |vm: &SQVM, delta, speed| {
 			clouds.borrow_mut().advance(delta, speed);
+			birds.borrow_mut().advance(delta, speed);
 			waves.borrow_mut().advance(delta, speed);
 			super::particles::advance_now(vm, &particles, delta);
 		})
@@ -168,5 +190,5 @@ pub(crate) fn install(
 	}
 	SqTable::root(vm).set("World", world);
 	super::particles::install_on(vm, "World", &particles);
-	(world_clock, clouds, waves, world_camera, particles)
+	(world_clock, clouds, birds, waves, world_camera, particles)
 }

@@ -60,7 +60,9 @@ pub(crate) mod world_detail;
 mod world_grid;
 pub(crate) mod world_clouds;
 pub(crate) mod world_waves;
+pub(crate) mod world_birds;
 pub(crate) mod world_clear_scene;
+pub(crate) mod tactical_rain;
 mod world_layout;
 mod world_query;
 pub(crate) mod world_time;
@@ -130,6 +132,8 @@ pub struct NativeConfig {
 /// Mixed into `NativeConfig::engine_seed` for the texts' own stream
 /// (`buildTextFromTemplate`'s choices), so a seeded run is reproducible.
 const TEXT_SEED: u64 = 0x7E47_5EED_0000_0001;
+/// Mixed into `NativeConfig::engine_seed` for the world's birds' own stream.
+const BIRD_SEED: u64 = 0xB12D_5EED_0000_0001;
 
 /// Each paid DLC's init script and its Steam app ID (the argument the script passes
 /// to `hasDLC`). Every DLC ships its init script in its own `.dat` archive, which
@@ -209,13 +213,14 @@ impl NativeConfig {
 		platform::install(vm, self);
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm);
-		let (world_clock, clouds, waves, world_camera, world_particles) = world::install(vm, &engine_rng, &sprites);
+		let bird_rng = self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ BIRD_SEED));
+		let (world_clock, clouds, birds, waves, world_camera, world_particles) = world::install(vm, &engine_rng, &bird_rng, &sprites);
 		let tactical = tactical::install(vm, &engine_rng, &crt);
 		let video = settings::install(vm);
 		execute::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, clouds, waves, world_camera, world_particles, tactical, sprites, engine_rng, video }
+		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_particles, tactical, sprites, engine_rng, video }
 	}
 }
 
@@ -223,6 +228,7 @@ impl NativeConfig {
 pub struct InstalledNatives {
 	pub(crate) world_clock: world_time::Clock,
 	pub(crate) clouds: world_clouds::Clouds,
+	pub(crate) birds: world_birds::Birds,
 	pub(crate) waves: world_waves::Waves,
 	pub(crate) world_camera: world_camera::WorldCamera,
 	pub(crate) world_particles: particles::ParticlesHandle,

@@ -3,7 +3,8 @@
 //! campaign starts from nothing:
 //!
 //! - every world entity, the thinker list and the footprints;
-//! - the scene's layers (details, entities, effects: clouds, waves, particle effects)
+//! - the scene's layers (details, entities, effects: clouds, birds, waves, particle
+//!   effects)
 //!   and its texts (the region names);
 //! - the player's, the guests' and the temporary rosters, and every roster
 //!   `createRoster` made;
@@ -28,6 +29,7 @@ pub(crate) struct WorldScene {
 	pub units: TacticalEntities,
 	pub time: TimeService,
 	pub clouds: Clouds,
+	pub birds: super::world_birds::Birds,
 	pub waves: Waves,
 	pub particles: ParticlesHandle,
 }
@@ -47,6 +49,7 @@ pub(crate) fn install(vm: &mut SQVM, scene: WorldScene) {
 		scene.units.clear_for_load();
 		scene.time.reset_virtual();
 		scene.clouds.borrow_mut().clear();
+		scene.birds.borrow_mut().clear();
 		scene.waves.borrow_mut().clear();
 		scene.particles.borrow_mut().clear();
 		Ok(())
