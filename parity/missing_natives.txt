@@ -23,3 +23,176 @@ menu/natives | native WorldNavigator.* | not a root global here
 menu/natives | native WorldWeather.* | not a root global here
 
 # Plain natives we don't have.
+
+# The native objects scripts get hold of (campaign/natives_objects, captured 2026-10-14):
+# natives, and properties (`get`/`set`: the keys of a class's __getTable/__setTable).
+campaign/natives_objects | native *.constructor | Sqrat class member
+campaign/natives_objects | native *.weakref | Sqrat class member
+campaign/natives_objects | get world_tile.Properties | missing member
+campaign/natives_objects | get world_tile.Subtype | missing member
+campaign/natives_objects | set world_tile.Subtype | missing member
+campaign/natives_objects | get world_navigator_settings.* | a plain table here, a class instance in the original
+campaign/natives_objects | set world_navigator_settings.* | a plain table here, a class instance in the original
+campaign/natives_objects | native world_sprite.fade | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_sprite.isFlippedHorizontally | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_sprite.setBrightness | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_sprite.varyBrightness | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_sprite.varyColor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_sprite.varySaturation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_sprite.Fading | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_sprite.Finished | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_sprite.Highlight | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_sprite.HighlightFactor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_sprite.IgnoreCameraFlip | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_sprite.Saturation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_sprite.Highlight | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_sprite.HighlightFactor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_sprite.IgnoreCameraFlip | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_sprite.Saturation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_brush.* | a plain table here, a class instance in the original
+campaign/natives_objects | get world_label.BackgroundColor | missing member
+campaign/natives_objects | get world_label.BackgroundVisible | missing member
+campaign/natives_objects | get world_label.HAlign | missing member
+campaign/natives_objects | get world_label.Size | missing member
+campaign/natives_objects | get world_label.VAlign | missing member
+campaign/natives_objects | get world_label.Z | missing member
+campaign/natives_objects | set world_label.BackgroundColor | missing member
+campaign/natives_objects | set world_label.BackgroundVisible | missing member
+campaign/natives_objects | set world_label.HAlign | missing member
+campaign/natives_objects | set world_label.Size | missing member
+campaign/natives_objects | set world_label.VAlign | missing member
+campaign/natives_objects | set world_label.Z | missing member
+campaign/natives_objects | native world_detail.fade | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.fadeIn | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.fadeOut | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.fadeOutAndHide | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.fadeToAlpha | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.finish | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.getBrush | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.isFlippedHorizontally | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.play | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.resetBrush | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.setHorizontalFlipping | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.setOffset | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.stop | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.varyBrightness | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.varyColor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_detail.varySaturation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.Color | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.Fading | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.Finished | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.HasBrush | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.Highlight | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.HighlightFactor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.IgnoreCameraFlip | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.IsFadingDone | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.Rotation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get world_detail.Visible | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_detail.Color | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_detail.Highlight | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_detail.HighlightFactor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_detail.IgnoreCameraFlip | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_detail.Rotation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set world_detail.Visible | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native world_camera.__sqrat_ol_ isInsideScreen_1 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ isInsideScreen_2 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_1 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_2 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ moveToPos_3 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ move_1 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ move_2 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ screenToWorld_1 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ screenToWorld_2 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ setPos_1 | camera: overload slots and members
+campaign/natives_objects | native world_camera.__sqrat_ol_ setPos_2 | camera: overload slots and members
+campaign/natives_objects | native world_camera.addEntityOverlay | camera: overload slots and members
+campaign/natives_objects | native world_camera.isCenteredOnPos | camera: overload slots and members
+campaign/natives_objects | native world_camera.queryEntityOverlays | camera: overload slots and members
+campaign/natives_objects | native world_camera.registerCallbacks | camera: overload slots and members
+campaign/natives_objects | native world_camera.removeEntityOverlay | camera: overload slots and members
+campaign/natives_objects | native world_camera.removeEntityOverlays | camera: overload slots and members
+campaign/natives_objects | native world_camera.render | camera: overload slots and members
+campaign/natives_objects | native world_camera.unregisterCallbacks | camera: overload slots and members
+campaign/natives_objects | native world_camera.updateEntityOverlays | camera: overload slots and members
+campaign/natives_objects | get world_camera.IsFlipped | camera: overload slots and members
+campaign/natives_objects | get world_camera.Level | camera: overload slots and members
+campaign/natives_objects | set world_camera.Level | camera: overload slots and members
+campaign/natives_objects | get world_clouds.* | a plain table here, a class instance in the original
+campaign/natives_objects | set world_clouds.* | a plain table here, a class instance in the original
+campaign/natives_objects | get world_birds.* | a plain table here, a class instance in the original
+campaign/natives_objects | set world_birds.* | a plain table here, a class instance in the original
+campaign/natives_objects | native js_handle.disconnect | UI handle
+campaign/natives_objects | get gameplay_settings.* | a plain table here, a class instance in the original
+campaign/natives_objects | set gameplay_settings.* | a plain table here, a class instance in the original
+campaign/natives_objects | get temp_gameplay_settings.* | a plain table here, a class instance in the original
+campaign/natives_objects | set temp_gameplay_settings.* | a plain table here, a class instance in the original
+campaign/natives_objects | native save_stream.beginRead | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.endRead | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.getFileName | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readBool | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readF32 | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readI16 | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readI32 | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readI8 | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readString | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readU16 | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readU32 | one stream class reads and writes in the original
+campaign/natives_objects | native save_stream.readU8 | one stream class reads and writes in the original
+campaign/natives_objects | native tactical_detail.fade | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.fadeOutAndHide | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.finish | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.getBrush | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.isFlippedHorizontally | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.play | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.resetBrush | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.setHorizontalFlipping | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.setOffset | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.stop | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.varyBrightness | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.varyColor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | native tactical_detail.varySaturation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.Fading | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.Finished | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.HasBrush | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.Highlight | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.HighlightFactor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.IgnoreAmbientColor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.IgnoreCameraFlip | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.Rotation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get tactical_detail.Visible | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set tactical_detail.Highlight | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set tactical_detail.HighlightFactor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set tactical_detail.IgnoreAmbientColor | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set tactical_detail.IgnoreCameraFlip | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set tactical_detail.Rotation | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | set tactical_detail.Visible | the sprite class: details, sprites and head effects are one class in the original
+campaign/natives_objects | get actor_brush.* | a plain table here, a class instance in the original
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ isInsideScreen_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ isInsideScreen_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ jumpTo_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToPos_3 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToTile_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveToTile_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveTo_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ moveTo_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ move_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ move_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ quake_4 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ quake_5 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ screenToWorld_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ screenToWorld_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ setPos_1 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.__sqrat_ol_ setPos_2 | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.isCenteredOnPos | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.moveToPos | camera: overload slots and members
+campaign/natives_objects | native tactical_camera.worldToScreen | camera: overload slots and members
+campaign/natives_objects | get tactical_navigator_settings.IgnoreEntitiesOfFaction | missing member
+campaign/natives_objects | set tactical_navigator_settings.IgnoreEntitiesOfFaction | missing member
+campaign/natives_objects | get tactical_weather.* | missing member
+campaign/natives_objects | get tactical_clouds.* | a plain table here, a class instance in the original
+campaign/natives_objects | set tactical_clouds.* | a plain table here, a class instance in the original
+campaign/natives_objects | get tactical_rain.* | missing member
+campaign/natives_objects | set tactical_rain.* | missing member
+campaign/natives_objects | native tactical_js_handle.disconnect | UI handle

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use bb_engine::harness;
+use bb_engine::{harness, tactical_player};
 use squirrel_bb::LogLevel;
 
 #[path = "support/parity.rs"]
@@ -123,11 +123,24 @@ fn run_group(mode: &str, seed: Option<&str>, probes: &[&Probe]) -> Vec<String> {
 			.expect("set the banner");
 		harness::start_new_campaign(&engine).expect("startNewCampaign");
 	}
+	// As the probe harness: a probe that observes the game over time (the group's last)
+	// sets `BbProbe.DeferDone` and calls `BbProbe.done()` from a scheduled event.
+	engine
+		.run_script("::BbProbe <- { DeferDone = false, Done = false, function done() { this.Done = true; } };", "probe harness")
+		.expect("the probe harness");
 	// Probes are game-style code: single-precision floats, like the original.
 	let vm = engine.vm();
 	let closure = vm.compile(&combined_source(probes), "parity").expect("the probes compile");
 	closure.set_f32_math(vm, true);
 	closure.call(vm, ()).expect("each probe catches its own errors");
+	let deferred = "(::BbProbe.DeferDone && !::BbProbe.Done) ? 1 : 0";
+	let mut frames = 0;
+	while tactical_player::eval_i64(&engine, deferred).expect("the probe harness") == Some(1) {
+		// The original's runner gives a probe 360 s.
+		assert!(frames < 360 * 60, "a deferred probe never called BbProbe.done()");
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("a frame");
+		frames += 1;
+	}
 	let out = lines.borrow().clone();
 	out
 }

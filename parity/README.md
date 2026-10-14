@@ -58,11 +58,17 @@ Keep the output comparable:
 - Some code crashes the original instead of raising an error, which loses the whole
   launch. Compiling `base++` does (ours reports a compile error).
 
+A probe that has to watch the game over time sets `::BbProbe.DeferDone = true` and
+calls `::BbProbe.done()` from a scheduled event, as with the probe harness; the
+runner here then runs frames until it does. Only a group's last probe can defer.
+
 A probe with a `// compare: subset` line is a coverage check: only the original's lines
 must appear in ours, and our extras are fine. `menu/natives` and `campaign/natives` list
 every native function reachable from each global (through delegate chains and class
 bases) and on the objects the world hands out, so a native the original binds and we
-lack fails by name.
+lack fails by name. `campaign/natives_objects` does the same for every other kind of
+native object the scripts get hold of, in the world and in a battle (it defers), and
+lists their properties too (the keys of a class's `__getTable` and `__setTable`).
 
 ## UI payloads
 
