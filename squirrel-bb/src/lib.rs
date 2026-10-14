@@ -19,6 +19,7 @@ mod engine;
 mod error;
 mod hash;
 mod input_events;
+mod io_table;
 mod module;
 mod native;
 pub mod scene;

@@ -1,16 +1,16 @@
 //! The [`ModuleSystem`]: the public handle, the `include` loader, and installing
 //! the native `include` / `inherit` / `new` / `isKindOf` functions plus the `IO`
-//! hash registry into a VM.
+//! table (see `io_table`) into a VM.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Retained, SQVM, SqArray, SqStrongRef, SqTable};
+use squirrel::{Retained, SQVM, SqStrongRef, SqTable};
 
 use crate::class::{inherit, is_kind_of, new_instance, prototype};
 use crate::compile_context::compile_context;
 use crate::error::ScriptError;
-use crate::hash::{class_name_hash, normalize_path};
+use crate::hash::normalize_path;
 use crate::source::{LoadedScript, ScriptSource};
 use crate::state::{SharedState, State};
 
@@ -152,62 +152,7 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 					.is_some_and(|t| is_kind_of(&state, t, name))
 			});
 		}
-		self.install_io(vm);
-	}
-
-	/// Build the `IO` table (`scriptFilenameByHash` / `scriptHashByFilename` /
-	/// `enumerateFiles`) and slot it into the root.
-	fn install_io(&self, vm: &mut SQVM) {
-		let by_hash = {
-			let state = self.state.clone();
-			vm.make_closure(move |hash: i64| -> Option<String> {
-				state.borrow().by_hash.get(&hash).cloned()
-			})
-		};
-		let by_name = {
-			let state = self.state.clone();
-			vm.make_closure(move |path: &str| -> Option<i64> {
-				// Like the original: only an existing script, named by its exact
-				// canonical path, has a hash; anything else (wrong case, a `.nut`
-				// suffix, an unknown path) yields null. Remember the mapping so a later
-				// `scriptFilenameByHash` can reverse it even for an unloaded script.
-				if path != normalize_path(path) {
-					return None;
-				}
-				let known = state.borrow().prototypes.contains_key(path)
-					|| state.borrow().source.load(path).is_some();
-				if !known {
-					return None;
-				}
-				let hash = class_name_hash(path);
-				state
-					.borrow_mut()
-					.by_hash
-					.entry(hash)
-					.or_insert_with(|| path.to_string());
-				Some(hash)
-			})
-		};
-		let enumerate = {
-			let state = self.state.clone();
-			vm.make_closure(move |vm: &SQVM, prefix: &str| -> Option<SqStrongRef> {
-				// `None` (a missing directory) becomes Squirrel `null`, which
-				// `preload.nut`'s DLC sweep guards against. Otherwise return an array
-				// of `include`-able paths.
-				let paths = state.borrow().source.list_prefix(prefix)?;
-				let mut files = SqArray::new(vm);
-				for path in paths {
-					files.push(path);
-				}
-				Some(files.to_strong())
-			})
-		};
-
-		let mut io = SqTable::new(vm);
-		io.set("scriptFilenameByHash", by_hash);
-		io.set("scriptHashByFilename", by_name);
-		io.set("enumerateFiles", enumerate);
-		SqTable::root(vm).set("IO", io);
+		crate::io_table::install(vm, &self.state);
 	}
 
 	/// Load, compile and run the script at `path` (once). Host entry point for the
