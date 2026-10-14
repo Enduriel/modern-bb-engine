@@ -20,6 +20,9 @@ pub enum SqRef<'vm> {
 	Float(f64),
 	Bool(bool),
 	String(String),
+	/// A string whose bytes aren't UTF-8: Squirrel strings are bytes, and scripts can
+	/// build any (`0xE9.tochar()`).
+	Bytes(Vec<u8>),
 	Array(SqArray<'vm>),
 	Table(SqTable<'vm>),
 	/// A reference type we don't wrap yet (class, instance, closure, …).
@@ -37,6 +40,7 @@ impl<'vm> SqValue for SqRef<'vm> {
 			SqRef::Float(f) => vm.push_float(f),
 			SqRef::Bool(b) => vm.push_bool(b),
 			SqRef::String(s) => vm.push_string(&s),
+			SqRef::Bytes(b) => vm.push_bytes(&b),
 			SqRef::Array(a) => a.push_value(vm),
 			SqRef::Table(t) => t.push_value(vm),
 			// Long-term every variant should round-trip; for now `Other` only
@@ -51,7 +55,13 @@ impl<'vm> SqValue for SqRef<'vm> {
 			SqObjectType::Integer => SqRef::Integer(vm.get_integer(idx).ok()?),
 			SqObjectType::Float => SqRef::Float(vm.get_float(idx).ok()?),
 			SqObjectType::Bool => SqRef::Bool(vm.get_bool(idx).ok()?),
-			SqObjectType::String => SqRef::String(vm.get_string(idx).ok()?),
+			SqObjectType::String => {
+				let bytes = vm.get_bytes_ref(idx)?;
+				match std::str::from_utf8(bytes) {
+					Ok(s) => SqRef::String(s.to_owned()),
+					Err(_) => SqRef::Bytes(bytes.to_vec()),
+				}
+			}
 			SqObjectType::Array => SqRef::Array(SqArray::from_stack(vm, idx)?),
 			SqObjectType::Table => SqRef::Table(SqTable::from_stack(vm, idx)?),
 			other => SqRef::Other(other),

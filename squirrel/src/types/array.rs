@@ -461,6 +461,23 @@ mod tests {
 	}
 
 	#[test]
+	fn strings_that_are_not_utf8_read_as_bytes() {
+		let vm = SQVM::new(1024);
+		let mut arr = SqArray::new(&vm);
+		arr.push(SqRef::Bytes(vec![0x61, 0xE9]));
+		arr.push(SqRef::Bytes(vec![0xC3, 0xA9]));
+		match arr.get_ref(0) {
+			Some(SqRef::Bytes(b)) => assert_eq!(b, [0x61, 0xE9]),
+			other => panic!("expected Bytes, got {other:?}"),
+		}
+		// Bytes that happen to be UTF-8 read as a string.
+		match arr.get_ref(1) {
+			Some(SqRef::String(s)) => assert_eq!(s, "é"),
+			other => panic!("expected String, got {other:?}"),
+		}
+	}
+
+	#[test]
 	#[should_panic(expected = "SqRef::Other")]
 	fn pushing_other_is_unimplemented() {
 		let vm = SQVM::new(1024);

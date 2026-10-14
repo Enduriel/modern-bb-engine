@@ -142,6 +142,11 @@ impl SQVM {
 	}
 
 	pub(crate) fn push_string(&self, value: &str) {
+		self.push_bytes(value.as_bytes());
+	}
+
+	/// Push a string of raw bytes (Squirrel strings needn't be UTF-8).
+	pub(crate) fn push_bytes(&self, value: &[u8]) {
 		unsafe {
 			squirrel_sys::sq_pushstring(
 				self.as_ptr(),

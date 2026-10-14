@@ -25,15 +25,21 @@ fn table_hash(table: &SqTable) -> u64 {
 	})
 }
 
+/// FNV-1a over a string's bytes.
+fn bytes_hash(bytes: &[u8]) -> u64 {
+	bytes
+		.iter()
+		.fold(5, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+}
+
 fn value_hash(value: &SqRef) -> u64 {
 	match value {
 		SqRef::Null => mix(1),
 		SqRef::Integer(n) => mix(2 ^ (*n as u64).rotate_left(8)),
 		SqRef::Float(f) => mix(3 ^ f.to_bits().rotate_left(8)),
 		SqRef::Bool(b) => mix(4 ^ (u64::from(*b) << 8)),
-		SqRef::String(s) => mix(s
-			.bytes()
-			.fold(5, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))),
+		SqRef::String(s) => mix(bytes_hash(s.as_bytes())),
+		SqRef::Bytes(b) => mix(bytes_hash(b)),
 		SqRef::Table(t) => mix(6 ^ table_hash(t)),
 		SqRef::Array(a) => mix(a
 			.to_vec::<SqRef>()
