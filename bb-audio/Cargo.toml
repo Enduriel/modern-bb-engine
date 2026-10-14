@@ -13,3 +13,4 @@ squirrel-bb = { path = "../squirrel-bb" }
 
 [dev-dependencies]
 bb-engine = { path = "../bb-engine" }
+squirrel = { path = "../squirrel" }

@@ -10,10 +10,18 @@
 //! The decoded sounds kept are capped: past [`KEEP_BYTES`], the least recently played
 //! go (and are read again if they play again). The original keeps a sound only while
 //! one of its instances plays (`0x5283e0`), so this keeps more, not less.
+//!
+//! A sound known to be wanted soon (the next music track, a new ambience layer's
+//! sounds) is [`prefetch`](SoundBank::prefetch)ed: read, and decoded if short, on a
+//! thread of its own. Its first use then waits only for what's left, as the
+//! original's player waits for a track it loads asynchronously. A first use without
+//! a prefetch reads on the caller's thread (a music track about 30 ms, the biggest
+//! ambience loop 15 ms, an effect well under 1 ms; measured 2026-10-14).
 
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use bb_assets::FileSource;
 use kira::sound::FromFileError;
@@ -50,6 +58,8 @@ pub struct SoundBank {
 	uses: u64,
 	/// Bytes of decoded sound kept.
 	kept: usize,
+	/// Sounds being read on threads of their own.
+	pending: HashMap<String, JoinHandle<Entry>>,
 }
 
 impl SoundBank {
@@ -59,6 +69,7 @@ impl SoundBank {
 			entries: HashMap::new(),
 			uses: 0,
 			kept: 0,
+			pending: HashMap::new(),
 		}
 	}
 
@@ -92,6 +103,25 @@ impl SoundBank {
 		self.entries.contains_key(path)
 	}
 
+	/// Start reading (and, if short, decoding) `path` on a thread of its own, unless
+	/// it's read or being read already.
+	pub fn prefetch(&mut self, path: &str) {
+		if self.entries.contains_key(path) || self.pending.contains_key(path) {
+			return;
+		}
+		let (files, owned) = (self.files.clone(), path.to_string());
+		let handle = std::thread::Builder::new()
+			.name("sound loader".into())
+			.spawn(move || load(&*files, &owned));
+		match handle {
+			Ok(handle) => {
+				self.pending.insert(path.to_string(), handle);
+			}
+			// No thread: it loads on first use instead.
+			Err(e) => eprintln!("audio: {path}: no loader thread: {e}"),
+		}
+	}
+
 	/// Bytes of decoded sound kept.
 	pub fn kept_bytes(&self) -> usize {
 		self.kept
@@ -103,7 +133,10 @@ impl SoundBank {
 		if let Some((_, used)) = self.entries.get_mut(path) {
 			*used = now;
 		} else {
-			let entry = self.load(path);
+			let entry = match self.pending.remove(path) {
+				Some(loading) => loading.join().unwrap_or(Entry::Missing),
+				None => load(&*self.files, path),
+			};
 			self.kept += decoded_bytes(&entry);
 			self.entries.insert(path.to_string(), (entry, now));
 			self.trim(path);
@@ -127,21 +160,23 @@ impl SoundBank {
 		}
 	}
 
-	fn load(&self, path: &str) -> Entry {
-		let Some(bytes) = self.files.read(path) else {
-			eprintln!("audio: {path}: no such file");
-			return Entry::Missing;
-		};
-		let length = sound_length_ms(&bytes).unwrap_or(0);
-		if bytes.len() >= STREAM_FROM {
-			return Entry::Bytes(bytes.into(), length);
-		}
-		match StaticSoundData::from_cursor(Cursor::new(bytes)) {
-			Ok(data) => Entry::Static(data, length),
-			Err(e) => {
-				eprintln!("audio: {path}: {e}");
-				Entry::Missing
-			}
+}
+
+/// Read `path` from `files`, decoding it if short.
+fn load(files: &dyn FileSource, path: &str) -> Entry {
+	let Some(bytes) = files.read(path) else {
+		eprintln!("audio: {path}: no such file");
+		return Entry::Missing;
+	};
+	let length = sound_length_ms(&bytes).unwrap_or(0);
+	if bytes.len() >= STREAM_FROM {
+		return Entry::Bytes(bytes.into(), length);
+	}
+	match StaticSoundData::from_cursor(Cursor::new(bytes)) {
+		Ok(data) => Entry::Static(data, length),
+		Err(e) => {
+			eprintln!("audio: {path}: {e}");
+			Entry::Missing
 		}
 	}
 }
@@ -150,5 +185,46 @@ fn decoded_bytes(entry: &Entry) -> usize {
 	match entry {
 		Entry::Static(data, _) => data.num_frames() * FRAME_BYTES,
 		_ => 0,
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::sync::Mutex;
+
+	use super::*;
+
+	/// A 0.1 s mono wav, and which threads read files.
+	struct Files(Mutex<Vec<String>>);
+
+	impl FileSource for Files {
+		fn read(&self, path: &str) -> Option<Vec<u8>> {
+			let thread = std::thread::current().name().unwrap_or("").to_string();
+			self.0.lock().unwrap().push(format!("{path} on {thread}"));
+			let frames = 4410u32;
+			let mut b = b"RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0".to_vec();
+			b.extend_from_slice(&44_100u32.to_le_bytes());
+			b.extend_from_slice(&88_200u32.to_le_bytes());
+			b.extend_from_slice(&2u16.to_le_bytes());
+			b.extend_from_slice(&16u16.to_le_bytes());
+			b.extend_from_slice(b"data");
+			b.extend_from_slice(&(frames * 2).to_le_bytes());
+			b.resize(b.len() + frames as usize * 2, 0);
+			let riff = (b.len() - 8) as u32;
+			b[4..8].copy_from_slice(&riff.to_le_bytes());
+			(path == "a.wav").then_some(b)
+		}
+	}
+
+	#[test]
+	fn a_prefetched_sound_is_read_once_on_the_loader_thread() {
+		let files = Arc::new(Files(Mutex::new(Vec::new())));
+		let mut bank = SoundBank::new(files.clone());
+		bank.prefetch("a.wav");
+		bank.prefetch("a.wav");
+		assert!(bank.get("a.wav").is_some());
+		assert_eq!(bank.length_ms("a.wav"), 100);
+		assert_eq!(*files.0.lock().unwrap(), ["a.wav on sound loader"]);
+		assert!(bank.get("missing.wav").is_none());
 	}
 }

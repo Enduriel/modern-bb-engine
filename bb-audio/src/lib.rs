@@ -13,4 +13,4 @@ pub mod gains;
 mod kira_out;
 
 pub use bank::{Sound, SoundBank};
-pub use kira_out::KiraOut;
+pub use kira_out::{DEVICE_BUFFER_FRAMES, DeviceStats, KiraOut};

@@ -6,8 +6,10 @@
 //! cargo run --release -p bb-audio --example listen -- [SECONDS] [--menu]
 //! ```
 //!
-//! `--menu` stays on the main menu (its music). To hear nothing and record instead,
-//! point ALSA's default device at a file (`ALSA_CONFIG_PATH`).
+//! `--menu` stays on the main menu (its music). Each line also says how the device's
+//! audio thread did (buffers filled, their load, underruns). To hear nothing, send it
+//! to a null sink (`PIPEWIRE_NODE=<sink>`), or record it by pointing ALSA's default
+//! device at a file (`ALSA_CONFIG_PATH`).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -51,7 +53,8 @@ fn main() -> Result<(), String> {
 				.iter()
 				.map(|p| format!("{}[{}]{:.2}{}", p.file, p.channel, p.volume, if p.paused { " paused" } else { "" }))
 				.collect();
-			println!("{:>3}s {}", start.elapsed().as_secs(), playing.join("  "));
+			let status = engine.audio().output_status().unwrap_or_default();
+			println!("{:>3}s [{status}] {}", start.elapsed().as_secs(), playing.join("  "));
 		}
 		std::thread::sleep(frame.saturating_sub(now.elapsed()));
 	}

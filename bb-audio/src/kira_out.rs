@@ -24,6 +24,13 @@ use crate::gains::{self, Listener};
 /// kira's silence: anything quieter plays as nothing.
 const FLOOR_DB: f32 = -60.0;
 
+/// The device's buffer size (about 43 ms at 48 kHz). The audio thread runs at normal
+/// priority, so a buffer is the most it can fall behind before the sound gaps; the
+/// device's default on PipeWire is 512 frames (10.7 ms), and stalls of 30–120 ms lost
+/// every buffer they covered at 512 and 1024 frames, while 2048 absorbed stalls up to
+/// about its length (measured 2026-10-14).
+pub const DEVICE_BUFFER_FRAMES: u32 = 2048;
+
 enum Handle {
 	Static(StaticSoundHandle),
 	Streaming(StreamingSoundHandle<FromFileError>),
@@ -104,13 +111,92 @@ pub struct KiraOut<B: Backend> {
 	next: Voice,
 	listener: Listener,
 	rolloff: f32,
+	/// The backend's report (only the device has one).
+	status: fn(&mut AudioManager<B>) -> Option<String>,
 }
 
 impl KiraOut<DefaultBackend> {
-	/// On the system's default output device.
-	pub fn device(files: Arc<dyn FileSource>, rolloff: f32) -> Result<Self, String> {
-		Self::new(AudioManagerSettings::default(), files, rolloff).map_err(|e| e.to_string())
+	/// On the system's default output device, with buffers of `buffer_frames` frames
+	/// (`None`: the device's default), or `BB_AUDIO_BUFFER` frames if that's set.
+	pub fn device_with(files: Arc<dyn FileSource>, rolloff: f32, buffer_frames: Option<u32>) -> Result<Self, String> {
+		use kira::backend::cpal::cpal;
+		use kira::backend::cpal::cpal::traits::{DeviceTrait, HostTrait};
+		let buffer_frames = std::env::var("BB_AUDIO_BUFFER").ok().and_then(|v| v.parse().ok()).or(buffer_frames);
+		let mut settings = AudioManagerSettings::<DefaultBackend>::default();
+		if let Some(frames) = buffer_frames {
+			let device = cpal::default_host().default_output_device().ok_or("no default output device")?;
+			let mut config = device.default_output_config().map_err(|e| e.to_string())?.config();
+			config.buffer_size = cpal::BufferSize::Fixed(frames);
+			settings.backend_settings.config = Some(config);
+		}
+		let mut out = Self::new(settings, files, rolloff).map_err(|e| e.to_string())?;
+		out.status = |manager| Some(device_stats(manager).to_string());
+		Ok(out)
 	}
+
+	/// On the system's default output device, with [`DEVICE_BUFFER_FRAMES`]-frame
+	/// buffers, or the device's own if it won't take those.
+	pub fn device(files: Arc<dyn FileSource>, rolloff: f32) -> Result<Self, String> {
+		Self::device_with(files.clone(), rolloff, Some(DEVICE_BUFFER_FRAMES)).or_else(|e| {
+			eprintln!("audio: {DEVICE_BUFFER_FRAMES}-frame buffers refused ({e}); using the device's");
+			Self::device_with(files, rolloff, None)
+		})
+	}
+
+	/// What the device's audio thread reported since the last call.
+	pub fn device_stats(&mut self) -> DeviceStats {
+		device_stats(&mut self.manager)
+	}
+}
+
+fn device_stats(manager: &mut AudioManager<DefaultBackend>) -> DeviceStats {
+	{
+		let backend = manager.backend_mut();
+		let mut stats = DeviceStats::default();
+		let mut total = 0.0;
+		while let Some(load) = backend.pop_cpu_usage() {
+			stats.callbacks += 1;
+			total += load;
+			stats.max_load = stats.max_load.max(load);
+		}
+		if stats.callbacks > 0 {
+			stats.mean_load = total / stats.callbacks as f32;
+		}
+		while let Some(e) = backend.pop_error() {
+			if e.kind() == kira::backend::cpal::cpal::ErrorKind::Xrun {
+				stats.xruns += 1;
+			} else {
+				stats.errors.push(e.to_string());
+			}
+		}
+		stats
+	}
+}
+
+impl std::fmt::Display for DeviceStats {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(
+			f,
+			"{} buffers, load mean {:.2} max {:.2}, {} underruns",
+			self.callbacks, self.mean_load, self.max_load, self.xruns
+		)?;
+		for e in &self.errors {
+			write!(f, "; {e}")?;
+		}
+		Ok(())
+	}
+}
+
+/// The device's audio thread over a stretch of time: how many buffers it filled, how
+/// much of each buffer's time filling it took (1 or more is too late: a gap), and the
+/// underruns the driver reported.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeviceStats {
+	pub callbacks: usize,
+	pub mean_load: f32,
+	pub max_load: f32,
+	pub xruns: usize,
+	pub errors: Vec<String>,
 }
 
 impl<B: Backend> KiraOut<B> {
@@ -124,6 +210,7 @@ impl<B: Backend> KiraOut<B> {
 			next: 1,
 			listener: Listener::Default,
 			rolloff,
+			status: |_| None,
 		})
 	}
 
@@ -262,7 +349,7 @@ impl<B: Backend> AudioOut for KiraOut<B> {
 	}
 
 	fn preload(&mut self, file: &str) {
-		self.bank.length_ms(file);
+		self.bank.prefetch(file);
 	}
 
 	fn set_listener(&mut self, at: (f32, f32)) {
@@ -278,4 +365,8 @@ impl<B: Backend> AudioOut for KiraOut<B> {
 	}
 
 	fn update(&mut self, _now_ms: u32) {}
+
+	fn status(&mut self) -> Option<String> {
+		(self.status)(&mut self.manager)
+	}
 }
