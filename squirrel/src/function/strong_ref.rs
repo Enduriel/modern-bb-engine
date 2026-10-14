@@ -137,6 +137,27 @@ impl SqStrongRef {
 		}
 	}
 
+	/// Call the referenced closure with `this` bound to `this_obj`, discarding any
+	/// return value (e.g. running a script file in its own scope table). Returns the
+	/// thrown error text if the closure raises.
+	pub fn call_with_this<A: CallArgs>(&self, vm: &SQVM, this_obj: &SqStrongRef, args: A) -> Result<(), String> {
+		self.debug_check_vm(vm);
+		let ptr = vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [closure]
+			squirrel_sys::sq_pushobject(ptr, this_obj.obj); // [closure, this]
+			let n = args.push_all(vm); // [closure, this, args..]
+			if squirrel_sys::sq_call(ptr, n + 1, 0, 1) == SQ_OK {
+				squirrel_sys::sq_pop(ptr, 1);
+				Ok(())
+			} else {
+				let error = read_last_error(vm);
+				squirrel_sys::sq_pop(ptr, 1);
+				Err(error)
+			}
+		}
+	}
+
 	/// Call a method `method` on this reference's object (a table/instance) with
 	/// `this` bound to the object itself — i.e. `obj.method(args)`. Discards the
 	/// return value. Errors if `method` is not found or the call raises.
