@@ -1,0 +1,17 @@
+[package]
+name = "bb-app"
+version = "0.1.0"
+edition = "2024"
+
+# The game in a window: the engine, the renderer and the player's input.
+[[bin]]
+name = "bb"
+path = "src/main.rs"
+
+[dependencies]
+bb-engine = { path = "../bb-engine" }
+bb-render = { path = "../bb-render" }
+squirrel = { path = "../squirrel" }
+squirrel-bb = { path = "../squirrel-bb" }
+wgpu = "30.0.1"
+winit = "0.30.13"
