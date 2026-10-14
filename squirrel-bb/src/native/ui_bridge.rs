@@ -74,6 +74,12 @@ struct BridgeState {
 	pending_connects: Vec<(String, Option<String>)>,
 	class: Option<SqClass<JsHandle>>,
 	frontend: Option<Rc<dyn UiFrontend>>,
+	/// The cursor's screen position, as last set (`UI.setCursorPosition`, or the host's
+	/// mouse handling).
+	cursor: (i64, i64),
+	/// Whether the cursor is over the UI rather than the game view, as the UI host last
+	/// hit-tested it. With no host the UI covers everything.
+	over_ui: bool,
 }
 
 impl BridgeState {
@@ -86,6 +92,8 @@ impl BridgeState {
 			pending_connects: Vec::new(),
 			class: None,
 			frontend: None,
+			cursor: (0, 0),
+			over_ui: true,
 		}
 	}
 
@@ -270,12 +278,35 @@ impl UiBridge {
 			})
 		};
 
-		// Cursor natives (no windowing headless). `setCursorPosition` answers whether the
-		// cursor is over the UI: headless there is no world view to hover, so it always is.
+		// The cursor (the original's `0x53a050`, `0x53a100`, `0x539fe0`): its position
+		// as last set, and whether it is over the UI, which the UI host decides.
+		// `setCursorPosition` stores the position and answers that; `isMouseOver` reads
+		// it. Without a host the UI covers everything.
 		let set_cursor = vm.make_closure(|_name: String| {});
 		let set_cursor_hardware = vm.make_closure(|value: bool| value);
 		let is_cursor_hardware = vm.make_closure(|| false);
-		let set_cursor_position = vm.make_closure(|_x: Number, _y: Number| true);
+		let set_cursor_position = {
+			let state = self.state.clone();
+			vm.make_closure(move |x: Number, y: Number| {
+				let mut st = state.borrow_mut();
+				st.cursor = (x.0 as i64, y.0 as i64);
+				st.over_ui
+			})
+		};
+		let get_cursor_position = {
+			let state = self.state.clone();
+			vm.make_closure(move |vm: &SQVM| -> SqStrongRef {
+				let (x, y) = state.borrow().cursor;
+				let mut t = SqTable::new(vm);
+				t.set("X", x);
+				t.set("Y", y);
+				t.to_strong()
+			})
+		};
+		let is_mouse_over = {
+			let state = self.state.clone();
+			vm.make_closure(move || state.borrow().over_ui)
+		};
 		let get_cursor_size = vm.make_closure(|vm: &SQVM| -> SqStrongRef {
 			let mut t = SqTable::new(vm);
 			t.set("Width", 0i64);
@@ -296,9 +327,24 @@ impl UiBridge {
 		ui.set("setCursorHardware", set_cursor_hardware);
 		ui.set("isCursorHardware", is_cursor_hardware);
 		ui.set("setCursorPosition", set_cursor_position);
+		ui.set("getCursorPosition", get_cursor_position);
+		ui.set("isMouseOver", is_mouse_over);
 		ui.set("getCursorSize", get_cursor_size);
 		ui.set("getCursorOffsets", get_cursor_offsets);
 		SqTable::root(vm).set("UI", ui);
+	}
+
+	/// The host's cursor: its screen position and whether it is over the UI (what
+	/// `UI.getCursorPosition`, `UI.isMouseOver` and `UI.setCursorPosition` report).
+	pub fn set_cursor(&self, x: i64, y: i64, over_ui: bool) {
+		let mut st = self.state.borrow_mut();
+		st.cursor = (x, y);
+		st.over_ui = over_ui;
+	}
+
+	/// The cursor's screen position, as last set.
+	pub fn cursor(&self) -> (i64, i64) {
+		self.state.borrow().cursor
 	}
 
 	/// Send every SQ→JS call to `frontend` from now on (instead of the call log).

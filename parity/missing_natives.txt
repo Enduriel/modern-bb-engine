@@ -78,8 +78,6 @@ menu/natives | native PersistenceManager.createStorage | missing
 menu/natives | native PersistenceManager.deleteStorages | missing
 menu/natives | native PersistenceManager.loadStorage | missing
 menu/natives | native Sound.setAmbienceVolume | missing
-menu/natives | native UI.getCursorPosition | missing
-menu/natives | native UI.isMouseOver | missing
 menu/natives | native World.canLoad | missing
 menu/natives | native World.getAllRosters | missing
 menu/natives | native World.getAllTilesOfRegion | missing
