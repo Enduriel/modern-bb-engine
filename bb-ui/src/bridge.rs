@@ -26,6 +26,10 @@
 //! - `asyncCallSQ(handle, method[, arg])`: the same, but the original never resolves the
 //!   promise, nor those of the other void calls;
 //! - `openURL(url)`: logged, never opened.
+//!
+//! **Timing.** With `BB_UI_SLOW_CALLS=<ms>` in the environment, every call either way
+//! that takes at least that long is logged to stderr with its time, for profiling the
+//! game's frames (`0` logs them all). A call's time includes the calls it caused.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -40,6 +44,9 @@ use crate::sq_json::{from_json, strong_to_json, to_json};
 /// The date the original's root version label shows next to the version: the build
 /// date of the 1.5.2.3 executable (probed).
 const BUILD_DATE: &str = "2026-06-22 15:00:00";
+
+/// The environment variable that turns on logging slow calls (see the module docs).
+const SLOW_CALLS: &str = "BB_UI_SLOW_CALLS";
 
 /// Coherent's error code for a call to a handler that doesn't exist
 /// (`engine._Errors[2]`).
@@ -96,6 +103,8 @@ pub struct UiProtocol<T: Transport> {
 	screens: RefCell<Vec<String>>,
 	registration_finished: Cell<bool>,
 	stats: Cell<CallStats>,
+	/// Calls this slow are logged ([`SLOW_CALLS`]).
+	slow_calls: Option<Duration>,
 	log: Box<dyn Fn(&str)>,
 }
 
@@ -115,6 +124,10 @@ impl<T: Transport + 'static> UiProtocol<T> {
 			screens: RefCell::new(Vec::new()),
 			registration_finished: Cell::new(false),
 			stats: Cell::new(CallStats::default()),
+			slow_calls: std::env::var(SLOW_CALLS)
+				.ok()
+				.and_then(|ms| ms.trim().parse::<f64>().ok())
+				.map(|ms| Duration::from_secs_f64(ms.max(0.0) / 1000.0)),
 			log: Box::new(log),
 		})
 	}
@@ -165,6 +178,7 @@ impl<T: Transport> UiProtocol<T> {
 		stats.calls += 1;
 		stats.time += start.elapsed();
 		self.stats.set(stats);
+		self.note_time("game → page", start, || describe(&entry));
 		if let Err(error) = result {
 			(self.log)(&format!(
 				"ui: {} failed in the page: {error}",
@@ -175,6 +189,29 @@ impl<T: Transport> UiProtocol<T> {
 
 	/// Handle one `engine.call` from the page: `[name, requestId, args...]`.
 	pub fn handle_message(&self, vm: &SQVM, bridge: &UiBridge, message: &Json) -> Reply {
+		let start = Instant::now();
+		let reply = self.dispatch(vm, bridge, message);
+		self.note_time("page → game", start, || describe_message(message));
+		reply
+	}
+
+	/// Log a call that started at `start` if it was slow ([`SLOW_CALLS`]).
+	fn note_time(&self, direction: &str, start: Instant, what: impl FnOnce() -> String) {
+		let Some(threshold) = self.slow_calls else {
+			return;
+		};
+		let time = start.elapsed();
+		if time >= threshold {
+			eprintln!(
+				"bb-ui: {direction} {:.3} ms {}",
+				time.as_secs_f64() * 1000.0,
+				what()
+			);
+		}
+	}
+
+	/// [`handle_message`](Self::handle_message), untimed.
+	fn dispatch(&self, vm: &SQVM, bridge: &UiBridge, message: &Json) -> Reply {
 		let Some(items) = message.as_array().filter(|items| items.len() >= 2) else {
 			(self.log)(&format!(
 				"ui: malformed message from the page: {}",
@@ -303,6 +340,17 @@ fn describe(entry: &Json) -> String {
 		.filter(|s| !s.is_empty())
 		.collect::<Vec<_>>()
 		.join(".")
+}
+
+/// `name method` of a message from the page (`[name, requestId, handle, method, ...]`
+/// for `callSQ`), for messages.
+fn describe_message(message: &Json) -> String {
+	let items = message.as_array().unwrap_or_default();
+	let name = items.first().and_then(Json::as_str).unwrap_or("?");
+	match items.get(3).and_then(Json::as_str) {
+		Some(method) => format!("{name} {method}"),
+		None => name.to_string(),
+	}
 }
 
 /// The module argument of `callFromSQ`: the original sends `""` for a screen.
