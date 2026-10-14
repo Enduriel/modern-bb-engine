@@ -22,7 +22,7 @@ use super::screen::Screen;
 
 /// What the camera shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct CameraView {
+pub struct CameraView {
 	/// The world point at the centre of the screen.
 	pub pos: (f32, f32),
 	/// World units per screen pixel.

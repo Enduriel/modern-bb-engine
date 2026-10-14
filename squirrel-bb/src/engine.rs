@@ -55,6 +55,7 @@ pub struct Engine<S: ScriptSource> {
 	transitions: crate::native::tactical::Transitions,
 	tactical_light: crate::native::tactical::TacticalLight,
 	tactical_clouds: crate::native::world_clouds::Clouds,
+	world_camera: crate::native::world_camera::WorldCamera,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -136,6 +137,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			transitions: natives.tactical.transitions.clone(),
 			tactical_light: natives.tactical.light.clone(),
 			tactical_clouds: natives.tactical.clouds.clone(),
+			world_camera: natives.world_camera.clone(),
 			time,
 			modules,
 			vm,
@@ -186,6 +188,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			clouds: self.clouds.borrow().clouds().to_vec(),
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
+			camera: *self.world_camera.borrow(),
 		}
 	}
 	/// The battle map as the scripts have set it up, for a renderer.

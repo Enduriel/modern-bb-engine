@@ -60,7 +60,7 @@ pub(crate) fn install(
 	vm: &mut SQVM,
 	engine_rng: &super::EngineRng,
 	sprites: &super::Sprites,
-) -> (super::world_time::Clock, Clouds, Waves) {
+) -> (super::world_time::Clock, Clouds, Waves, super::world_camera::WorldCamera) {
 	let world_clock: super::world_time::Clock = Default::default();
 	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
 	let waves: Waves = Rc::default();
@@ -153,5 +153,5 @@ pub(crate) fn install(
 		world.set(name, closure);
 	}
 	SqTable::root(vm).set("World", world);
-	(world_clock, clouds, waves)
+	(world_clock, clouds, waves, world_camera)
 }

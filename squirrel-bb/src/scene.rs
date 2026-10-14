@@ -6,6 +6,7 @@
 
 pub mod tactical;
 
+pub use crate::native::world_camera::CameraView as SceneWorldCamera;
 pub use crate::native::world_clouds::SceneCloud;
 pub use crate::native::world_waves::SceneWave;
 pub use crate::native::world_detail::DetailData as SceneDetail;
@@ -33,6 +34,8 @@ pub struct WorldScene {
 	pub footprints: Vec<SceneFootprint>,
 	/// Waves on the sea (`World.spawnWaveSprite`), oldest first.
 	pub waves: Vec<SceneWave>,
+	/// The camera (`World.getCamera()`): where the screen's centre is and its zoom.
+	pub camera: SceneWorldCamera,
 }
 
 /// A footprint (`World.spawnFootprint`).

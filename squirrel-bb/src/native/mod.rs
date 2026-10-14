@@ -42,7 +42,7 @@ mod time;
 mod ui_bridge;
 mod vec;
 mod world;
-mod world_camera;
+pub(crate) mod world_camera;
 mod world_entities;
 pub(crate) mod world_detail;
 mod world_grid;
@@ -174,13 +174,13 @@ impl NativeConfig {
 		platform::install(vm, self);
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm);
-		let (world_clock, clouds, waves) = world::install(vm, &engine_rng, &sprites);
+		let (world_clock, clouds, waves, world_camera) = world::install(vm, &engine_rng, &sprites);
 		let tactical = tactical::install(vm, &engine_rng);
 		let video = settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, clouds, waves, tactical, sprites, engine_rng, video }
+		InstalledNatives { world_clock, clouds, waves, world_camera, tactical, sprites, engine_rng, video }
 	}
 }
 
@@ -189,6 +189,7 @@ pub struct InstalledNatives {
 	pub(crate) world_clock: world_time::Clock,
 	pub(crate) clouds: world_clouds::Clouds,
 	pub(crate) waves: world_waves::Waves,
+	pub(crate) world_camera: world_camera::WorldCamera,
 	pub(crate) tactical: tactical::TacticalParts,
 	pub(crate) sprites: Sprites,
 	pub(crate) engine_rng: EngineRng,
