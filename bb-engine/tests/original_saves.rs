@@ -197,19 +197,19 @@ fn a_new_campaign_is_the_one_the_original_saved() {
 }
 
 /// The round trip: the original's save, loaded here and saved in the original's format,
-/// is the save the original writes after loading it (`new_campaign_reloaded`, which the
-/// capture probe made by loading `new_campaign` and saving it at once). The same bytes,
-/// but for the header's times and the order of the scene's quadtree layers, which the
-/// original's own load doesn't keep either (`compare_original_saves`).
+/// is the save the original writes after loading it (`new_campaign_reloaded_seeded`: a
+/// probe seeded the gameplay stream with 12345, loaded `new_campaign` and saved it at
+/// once; the stream matters, as a trait draws its order when it's created on load).
+/// The same bytes, but for the header's times and the order of the scene's quadtree
+/// layers, which the original's own load doesn't keep either (`compare_original_saves`).
 #[test]
-#[ignore = "needs the reference save the original writes after a seeded load"]
 fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
 	let Some((engine, dir)) = loads_in("round_trip", "new_campaign") else { return };
 	engine.saves().set_format(squirrel_bb::SaveFormat::Original);
 	// The capture ran with Modern Hooks.
 	engine.saves().set_modified(true);
-	// As the capture probe made it: load, and save at once (the world state ignores a
-	// load within 4 s of the last), under the name its metadata records.
+	// As the probe made it: seed, load, and save at once (the world state ignores a load
+	// within 4 s of the last), under the name its metadata records.
 	for _ in 0..300 {
 		frame(&engine);
 	}
@@ -218,12 +218,8 @@ fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
 		"load and save",
 		"::Math.seedRandom(12345); ::World.State.loadCampaign(\"new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
 	);
-	if std::env::var("BB_RESAVE_DEBUG").is_ok() {
-		let skills = player::eval_string(&engine, "(function() { local s = \"\"; foreach (b in ::World.getPlayerRoster().getAll()) { s += b.getName() + \":\"; foreach (k in b.getSkills().m.Skills) s += \" \" + k.getID() + \"/\" + k.getOrder(); s += \"\\n\"; } return s; })()");
-		eprintln!("{}", skills.unwrap().unwrap());
-	}
 	let ours = std::fs::read(dir.join("bb_probe_resave.sav")).expect("our save");
-	let original = std::fs::read(dir.join("new_campaign_reloaded.sav")).unwrap();
+	let original = std::fs::read(dir.join("new_campaign_reloaded_seeded.sav")).unwrap();
 	let differences = squirrel_bb::compare_original_saves(&ours, &original).expect("both read");
 	assert!(differences.is_empty(), "ours vs the original's:\n{}", differences.join("\n"));
 }

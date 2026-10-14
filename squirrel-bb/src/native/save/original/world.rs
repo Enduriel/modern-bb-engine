@@ -47,6 +47,10 @@ pub(crate) trait OriginalWorld {
 	/// Append a loaded unit to `roster`.
 	fn add_unit(&self, roster: Roster, unit: SqStrongRef);
 
+	/// Make roster `roster` exist (empty), as the original's load does for every roster
+	/// it reads (`createRoster`, which gets an existing one).
+	fn create_roster(&self, roster: Roster);
+
 	/// Every world entity's id and script, by id descending.
 	fn entity_scripts(&self) -> Vec<(u32, SqStrongRef)>;
 

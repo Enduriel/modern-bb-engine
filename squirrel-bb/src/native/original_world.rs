@@ -72,6 +72,10 @@ impl OriginalWorld for EngineWorld {
 		self.units.add_loaded(roster, unit);
 	}
 
+	fn create_roster(&self, roster: Roster) {
+		self.units.ensure_roster(roster);
+	}
+
 	fn entity_scripts(&self) -> Vec<(u32, SqStrongRef)> {
 		self.entities.scripts_by_id_descending()
 	}

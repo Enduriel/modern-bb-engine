@@ -15,9 +15,9 @@ use crate::{DatScriptSource, ScriptCache};
 pub const STEAM_DATA_DIR: &str = "~/.local/share/Steam/steamapps/common/Battle Brothers/data";
 
 /// Saves the original wrote, for the tests of loading and writing its format: its
-/// campaigns as its capture probe (`capture_probe.nut` there) saved them, with its own
-/// dumps of their state. Not in the repository (each save is ~6.7 MB); tests skip
-/// without them.
+/// campaigns as capture probes saved them, with its own dumps of their state (see the
+/// README there). Not in the repository (each save is ~6.7 MB); tests skip without
+/// them.
 pub const ORIGINAL_SAVES_DIR: &str = "original-saves";
 
 /// An engine over a real install.

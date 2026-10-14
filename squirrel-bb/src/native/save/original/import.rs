@@ -91,6 +91,7 @@ pub(crate) fn load(
 			let mut r = cx.reader.borrow_mut();
 			(r.u32()?, r.u16()?)
 		};
+		world.create_roster(Roster::Created(id));
 		load_roster(world, cx, Roster::Created(id), count)?;
 	}
 	// The world entities' scripts, by id descending, as they were saved. Each saved id

@@ -178,6 +178,11 @@ impl TacticalEntities {
 		})
 	}
 
+	/// Make `roster` exist, empty if it's new.
+	pub(crate) fn ensure_roster(&self, roster: Roster) {
+		self.machine.borrow_mut().rosters.entry(our_roster_id(roster)).or_default();
+	}
+
 	/// Add a loaded unit to `roster` (the original appends it once its record, script
 	/// data included, is read).
 	pub(crate) fn add_loaded(&self, roster: Roster, unit: SqStrongRef) {
