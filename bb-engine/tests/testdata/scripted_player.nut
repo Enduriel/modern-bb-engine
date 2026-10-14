@@ -73,7 +73,7 @@
 	});
 	return out;
 };
-::__bot <- { turn = "", moves = 0, acted = 0, waited = {}, why = "", unpacked = {}, opening = false };
+::__bot <- { turn = "", moves = 0, acted = 0, waited = {}, why = "", unpacked = {}, opening = false, landing = false };
 ::__botLog <- function( _e, _what ) { ::logInfo("RNG BOT n=" + ::__rng.n + " " + _e.getName() + "@" + _e.getTile().SquareCoords.X + "," + _e.getTile().SquareCoords.Y + " ap=" + _e.getActionPoints() + " " + _what); };
 ::__botTick <- function()
 {
@@ -93,6 +93,8 @@
 	else if (::Tactical.getNavigator().isTravelling(e)) why = "travelling";
 	else if (st.m.CurrentActionState == ::Const.Tactical.ActionState.TravelPath || st.m.CurrentActionState == ::Const.Tactical.ActionState.ExecuteSkill) why = "action " + st.m.CurrentActionState;
 	else if (st.isInCharacterScreen() && !::__bot.opening) why = "inventory closing";
+	// A bomb's effect lands on a real-time timer (its skill's onApply): wait for it.
+	else if (::__bot.landing) why = "bomb landing";
 	if (why != "")
 	{
 		if (::__bot.why != why) { ::__bot.why = why; ::__botLog(e, "hold: " + why); }
@@ -144,6 +146,12 @@
 			if (!sk.isUsableOn(en.getTile())) continue;
 			::__botLog(e, "skill " + sk.getID() + " -> " + en.getName() + "@" + en.getTile().SquareCoords.X + "," + en.getTile().SquareCoords.Y);
 			bar.onEntitySkillClicked({ entityId = e.getID(), skillId = sk.getID() });
+			if (sk.getID().find("bomb") != null)
+			{
+				::__bot.landing = true;
+				local apply = sk.onApply;
+				sk.onApply <- function( _data ) { ::__bot.landing = false; return apply.call(this, _data); };
+			}
 			if (sk.isTargeted()) ::__clickTile(en.getTile());
 			return;
 		}
