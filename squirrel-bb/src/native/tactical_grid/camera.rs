@@ -16,6 +16,9 @@ pub(crate) struct CameraState {
 	pub level: i64,
 	pub zoom: f64,
 	pub flipped: bool,
+	/// The entities with an orientation overlay (the arrow the UI shows for a unit off
+	/// screen), by id, in the order they were added.
+	pub overlays: Vec<i64>,
 }
 
 impl Default for CameraState {
@@ -24,8 +27,31 @@ impl Default for CameraState {
 			level: 0,
 			zoom: 1.0,
 			flipped: false,
+			overlays: Vec::new(),
 		}
 	}
+}
+
+/// `entity.getID()`, if it has one.
+fn entity_id(vm: &SQVM, entity: &SqStrongRef) -> Option<i64> {
+	entity.call_method_ret::<i64, _>(vm, "getID", ()).ok().flatten()
+}
+
+/// `queryEntityOverlays()`: what the orientation overlays show, in the UI's fields
+/// (`TacticalScreenIdentifier.OrientationOverlay`). Headless, every unit is on screen,
+/// so no arrow is visible; the original places those at (0, 0) (the UI golden of a
+/// battle, `bb-ui/tests/goldens/world_combat.json`).
+fn overlay_states(vm: &SQVM, overlays: &[i64]) -> SqStrongRef {
+	let mut list = SqArray::new(vm);
+	for &id in overlays {
+		let mut overlay = SqTable::new(vm);
+		overlay.set("id", id);
+		overlay.set("x", 0i64);
+		overlay.set("y", 0i64);
+		overlay.set("visible", false);
+		list.push(overlay.to_strong());
+	}
+	list.to_strong()
 }
 
 /// The lowest and highest camera levels.
@@ -111,14 +137,34 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 		.method("isMoving", |_c: &mut CameraHandle| false)
 		.method("isMovingToTile", |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| false)
 		.method("getPos", |_c: &mut CameraHandle, vm: &SQVM| super::vec(vm, (0.0, 0.0)))
-		.method("queryEntityOverlays", |_c: &mut CameraHandle, vm: &SQVM, Variadic(_a): Variadic<Retained>| {
-			SqArray::new(vm).to_strong()
+		// The orientation overlays (orientation_overlay.nut): `addEntityOverlay` gets
+		// `{ entity, image }`, `removeEntityOverlay` the entity.
+		.method("addEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, overlay: Retained| {
+			let entity = overlay.0.as_table(vm).and_then(|t| t.get::<SqStrongRef>("entity"));
+			if let Some(id) = entity.and_then(|e| entity_id(vm, &e)) {
+				let overlays = &mut c.0.borrow_mut().camera.overlays;
+				if !overlays.contains(&id) {
+					overlays.push(id);
+				}
+			}
+		})
+		.method("removeEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, entity: Retained| {
+			if let Some(id) = entity_id(vm, &entity.0) {
+				c.0.borrow_mut().camera.overlays.retain(|&o| o != id);
+			}
+		})
+		.method("removeEntityOverlays", |c: &mut CameraHandle| {
+			c.0.borrow_mut().camera.overlays.clear();
+		})
+		.method("queryEntityOverlays", |c: &mut CameraHandle, vm: &SQVM, Variadic(_a): Variadic<Retained>| {
+			let overlays = c.0.borrow().camera.overlays.clone();
+			overlay_states(vm, &overlays)
 		});
-	// Moves, zoom, shakes and overlays: visual only.
+	// Moves, zoom, shakes and the overlays' screen positions: visual only.
 	for name in [
 		"registerCallbacks", "unregisterCallbacks", "quake", "zoomBy", "zoomTo", "move", "moveToExactly",
-		"climbBy", "update", "render", "updateEntityOverlays", "addEntityOverlay", "removeEntityOverlay",
-		"removeEntityOverlays", "cancelMovement", "setPos", "moveTo", "jumpTo", "moveToTile", "moveToTileSlowly",
+		"climbBy", "update", "render", "updateEntityOverlays", "cancelMovement", "setPos", "moveTo", "jumpTo",
+		"moveToTile", "moveToTileSlowly",
 	] {
 		b = b.method(name, |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| {});
 	}
