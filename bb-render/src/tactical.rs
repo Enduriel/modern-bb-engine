@@ -23,7 +23,7 @@
 //! after all the tiles.
 
 use bb_assets::SpriteRegistry;
-use squirrel_bb::scene::tactical::{SceneOverlay, SceneTacticalEntity, SceneTacticalTile, TacticalScene};
+use squirrel_bb::scene::tactical::{SceneEffect, SceneOverlay, ScenePool, SceneTacticalEntity, SceneTacticalTile, TacticalScene};
 
 use crate::sprite::Quad;
 use crate::world::{
@@ -332,6 +332,7 @@ impl Fade {
 fn draw_dressing(
 	b: &mut Builder,
 	tile: &SceneTacticalTile,
+	pools: &[&ScenePool],
 	standing: &[&SceneTacticalEntity],
 	fade: Fade,
 	overlay_level: u32,
@@ -350,6 +351,18 @@ fn draw_dressing(
 		};
 		let anchor = [x + detail.offset.0, y + detail.offset.1];
 		b.placed(&detail.brush, anchor, look, detail.saturation * hidden, level);
+	}
+	// The pools on the ground (`spawnPoolEffect`), under what stands there.
+	for pool in pools {
+		let [a, r, g, b_] = pool.color.to_be_bytes();
+		let look = Look {
+			scale: pool.scale,
+			flipped: pool.mirrored,
+			alpha: f32::from(a),
+			rotation: pool.rotation,
+			tint: [r, g, b_],
+		};
+		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, hidden, level);
 	}
 	for entity in standing {
 		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
@@ -435,6 +448,25 @@ fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, overlay: &SceneOv
 	}
 }
 
+/// One of the battle's effects (see `battle_effects`). Icons, attacks and sprite effects
+/// sit where they are without their brush's offset, as the original flags them.
+fn draw_effect(b: &mut Builder, effect: &SceneEffect, level: u32) {
+	let [a, r, g, b_] = effect.color.to_be_bytes();
+	let look = Look {
+		scale: effect.scale,
+		flipped: effect.mirrored,
+		alpha: f32::from(a),
+		rotation: effect.rotation,
+		tint: [r, g, b_],
+	};
+	let mut at = [effect.pos.0, effect.pos.1];
+	if !effect.brush_offset {
+		let offset = b.brush_offset(&effect.brush);
+		at = [at[0] - offset[0] * effect.scale, at[1] - offset[1] * effect.scale];
+	}
+	b.placed(&effect.brush, at, look, 1.0, level);
+}
+
 /// The battle's clouds or fog over everything, each with its shadow, as the world's
 /// (`0x4e3ed0`): back to front by key, a shadow's key 2000 more than its cloud's.
 fn draw_clouds(b: &mut Builder, scene: &TacticalScene, view: &WorldView) {
@@ -492,6 +524,10 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		(std::cmp::Reverse(r), std::cmp::Reverse(q))
 	});
 
+	let mut pools: std::collections::HashMap<usize, Vec<&ScenePool>> = Default::default();
+	for pool in &scene.pools {
+		pools.entry(pool.tile).or_default().push(pool);
+	}
 	let mut standing: std::collections::HashMap<usize, Vec<&SceneTacticalEntity>> = Default::default();
 	for entity in &scene.entities {
 		if let Some(tile) = entity.tile {
@@ -515,7 +551,8 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	for tile in &order {
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
-		draw_dressing(&mut b, tile, on_it, Fade::of(scene, tile, &unit_tiles), overlay_level);
+		let pooled = pools.get(&index).map_or(&[][..], |v| &v[..]);
+		draw_dressing(&mut b, tile, pooled, on_it, Fade::of(scene, tile, &unit_tiles), overlay_level);
 	}
 	// Particle effects, then the weather over everything.
 	for particle in &scene.particles {
@@ -529,6 +566,10 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		};
 		let level = scene.camera.level.clamp(0, 3) as u32;
 		b.placed(&particle.brush, [particle.pos.0, particle.pos.1], look, particle.saturation, level);
+	}
+	// Icons, attacks, sprite effects and projectiles, sharp at the camera's level.
+	for effect in &scene.effects {
+		draw_effect(&mut b, effect, overlay_level);
 	}
 	draw_clouds(&mut b, scene, view);
 	let labels_from = b.quads.len();
