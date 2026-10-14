@@ -1115,6 +1115,10 @@ impl TacticalEntities {
 
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
 		let now = real_time(vm);
+		let shown = overlay::Shown {
+			always: crate::native::temp_gameplay_flag(vm, "ShowOverlayStats"),
+			after_change: crate::native::gameplay_flag(vm, "ShowOverlayStats"),
+		};
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return Vec::new() };
 		m.units
@@ -1125,7 +1129,7 @@ impl TacticalEntities {
 				pos: u.pos,
 				tile: u.tile,
 				is_actor: u.is_actor,
-				overlay: u.overlay.as_ref().map(|o| o.scene(now)),
+				overlay: u.overlay.as_ref().and_then(|o| o.scene(now, shown)),
 				sprites: u
 					.sprites
 					.iter()

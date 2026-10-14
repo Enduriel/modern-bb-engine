@@ -55,6 +55,9 @@ pub struct SceneOverlay {
 	pub lost: [Option<(i32, u32)>; 3],
 	/// The status icons (`setOverlayIcons`), brush names in order.
 	pub icons: Vec<String>,
+	/// How much the frame, bars and icons show, 0 to 1 (with the stats toggle off, it
+	/// fades in and out after a change).
+	pub alpha: f32,
 }
 
 /// One of a battle entity's named sprites.

@@ -391,21 +391,26 @@ fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, overlay: &SceneOv
 			sprite(b, &brush, [anchor[0], anchor[1] + drop], color);
 		}
 	};
-	sprite(b, "entityoverlay_bottom", anchor, 0xffff_ffff);
+	// The frame, bars and icons show by the overlay's alpha; the twins by their own.
+	let shown = |color: u32| {
+		let alpha = ((color >> 24) as f32 * overlay.alpha) as u32;
+		(color & 0x00ff_ffff) | (alpha.min(255) << 24)
+	};
+	sprite(b, "entityoverlay_bottom", anchor, shown(0xffff_ffff));
 	for ((steps, lost), (drop, color)) in overlay.bars.iter().zip(&overlay.lost).zip(OVERLAY_BARS) {
 		if let Some((before, lost_color)) = lost {
 			bar(b, *before, drop, *lost_color);
 		}
-		bar(b, *steps, drop, color);
+		bar(b, *steps, drop, shown(color));
 	}
-	sprite(b, "entityoverlay_top", anchor, 0xffff_ffff);
+	sprite(b, "entityoverlay_top", anchor, shown(0xffff_ffff));
 	for (i, icon) in overlay.icons.iter().enumerate() {
 		let (column, row) = ((i % 4) as f32, (i / 4) as f32);
 		let at = [
 			anchor[0] + OVERLAY_ICONS[0] + column * OVERLAY_ICON_STEP,
 			anchor[1] + OVERLAY_ICONS[1] + row * OVERLAY_ICON_STEP,
 		];
-		sprite(b, icon, at, 0xffff_ffff);
+		sprite(b, icon, at, shown(0xffff_ffff));
 	}
 }
 
