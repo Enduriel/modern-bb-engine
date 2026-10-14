@@ -30,6 +30,9 @@ pub(crate) struct State<S: ScriptSource> {
 	pub(crate) prototypes: HashMap<String, SqStrongRef>,
 	/// Scripts already compiled+run, so `include` runs each at most once.
 	pub(crate) included: HashSet<String>,
+	/// Each included file's own scope: the table it ran with as `this`, where its
+	/// file-scope definitions (a base class's literal, its helper functions) live.
+	pub(crate) scopes: HashMap<String, SqStrongRef>,
 	/// Inheritance links: child path → parent path, recorded at `inherit` time so
 	/// `new` can walk the chain to clone every ancestor.
 	pub(crate) parents: HashMap<String, String>,
@@ -47,6 +50,7 @@ impl<S: ScriptSource> State<S> {
 			source,
 			prototypes: HashMap::new(),
 			included: HashSet::new(),
+			scopes: HashMap::new(),
 			parents: HashMap::new(),
 			by_hash: HashMap::new(),
 			load_stack: Vec::new(),

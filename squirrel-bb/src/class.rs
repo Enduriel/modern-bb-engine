@@ -44,8 +44,9 @@ use crate::state::SharedState;
 /// Resolve the class prototype for `path`, loading the script if needed.
 ///
 /// A derived class is registered by [`inherit`] while its script runs; a base
-/// class is a plain root-table literal under its basename, which we adopt
-/// (stamping `ClassNameHash`) the first time it is requested.
+/// class is a plain literal under its basename in the file's own scope (see
+/// `include`), which we adopt (stamping `ClassNameHash`) the first time it is
+/// requested.
 pub(crate) fn prototype<'vm, S: ScriptSource>(
 	vm: &'vm SQVM,
 	state: &SharedState<S>,
@@ -70,9 +71,12 @@ pub(crate) fn prototype<'vm, S: ScriptSource>(
 		}
 	}
 
-	// Base class: a plain literal in the root under its basename. Adopt it.
-	let mut proto = SqTable::root(vm)
-		.get::<SqTable>(basename(&norm))
+	// Base class: a plain literal under its basename in the file's scope. Adopt it.
+	let scope = state.borrow().scopes.get(&norm).cloned();
+	let mut proto = scope
+		.as_ref()
+		.and_then(|s| s.as_table(vm))
+		.and_then(|s| s.get::<SqTable>(basename(&norm)))
 		.ok_or_else(|| {
 			ScriptError::Runtime(format!(
 				"script '{norm}' did not register a class named '{}'",

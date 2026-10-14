@@ -85,13 +85,12 @@ pub fn boot_menu(engine: &GameEngine) -> Result<(), String> {
 /// The state is left in `::__bootWorldState`.
 pub fn prepare_new_campaign(engine: &GameEngine, seed: &str) -> Result<(), String> {
 	let script = r#"
-		this.include("scripts/states/world_state");
-		this.world_state.init = function() {};
-
 		// Its onInit (run once it has its settings, see below) stands up the 11 managers,
-		// the UI and the disabled init.
+		// the UI and the disabled init (patched on the state itself: the class isn't a
+		// global, its file runs in its own scope).
 		this.RootState.add("WorldState", "scripts/states/world_state");
 		local ws = this.RootState.get("WorldState");
+		ws.init <- function() {};
 		ws.setNewCampaignSettings({
 			Name = "Boot Test Company",
 			Banner = "banner_04",

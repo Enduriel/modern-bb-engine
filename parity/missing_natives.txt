@@ -62,7 +62,6 @@ menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_1 | missing overload s
 menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
 
 # Plain natives we don't have.
-menu/natives | native root.split | a table here: our include runs files with this = root, so scripts/skills/actives/split.nut replaces the stdlib split(); the original keeps it (a known Modern Hooks blocker)
 menu/natives | native PersistenceManager.createStorage | missing
 menu/natives | native PersistenceManager.deleteStorages | missing
 menu/natives | native PersistenceManager.loadStorage | missing

@@ -211,8 +211,9 @@ fn include_runs_each_script_at_most_once() {
 	let (vm, modules) = vm_with(&[(
 		"scripts/counted",
 		r#"
-		if (!("counted" in this)) { this.counted <- 0; }
-		this.counted = this.counted + 1;
+		local gt = this.getroottable();
+		if (!("counted" in gt)) { gt.counted <- 0; }
+		gt.counted = gt.counted + 1;
 		"#,
 	)]);
 
@@ -229,6 +230,41 @@ fn include_runs_each_script_at_most_once() {
 
 	vm.run_script(r#"assert(this.counted == 1);"#, "once_test")
 		.expect("the script ran exactly once");
+}
+
+/// Each included file runs in a scope of its own (probed in the original): a fresh
+/// table as `this`, so its definitions stay there and a class named like a global
+/// (vanilla's `skills/actives/split`) doesn't replace it; globals are still read
+/// through the root fallback, and a base class is adopted from the file's scope.
+#[test]
+fn include_runs_each_file_in_its_own_scope() {
+	let (vm, modules) = vm_with(&[
+		(
+			"scripts/skills/actives/split",
+			r#"
+			::__sawScope <- this != this.getroottable();
+			::__readsGlobals <- typeof this.getroottable == "function" && this.Shared == 7;
+			this.split <- { m = { Hits = 3 } };
+			function helper() { return this; }
+			::__helperThisIsScope <- helper() != this.getroottable();
+			"#,
+		),
+	]);
+	vm.run_script("::Shared <- 7; ::__stdSplit <- ::split;", "setup").expect("setup");
+	modules.include(&vm, "scripts/skills/actives/split").expect("include");
+	vm.run_script(
+		r#"
+		assert(::__sawScope);
+		assert(::__readsGlobals);
+		assert(::__helperThisIsScope);
+		assert(::split == ::__stdSplit);               // the stdlib split survives
+		assert(!("helper" in this.getroottable()));    // file-scope functions stay put
+		local s = this.new("scripts/skills/actives/split"); // adopted from the scope
+		assert(s.m.Hits == 3);
+		"#,
+		"scope_test",
+	)
+	.expect("the file ran in its own scope");
 }
 
 #[test]

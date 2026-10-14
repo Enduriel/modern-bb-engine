@@ -44,10 +44,16 @@ pub(crate) fn include<S: ScriptSource>(
 		st.load_stack.push(norm.clone());
 	}
 
-	// Source is compiled, bytecode loaded; either way the closure runs with `this` =
-	// root. Game (and mod) scripts compute floats in single precision like the
-	// original 32-bit-float engine — required for seed-exact worldgen (see
-	// `SqStrongRef::set_f32_math`). No state borrow is held across the run.
+	// Source is compiled, bytecode loaded; either way the closure runs in a scope of
+	// its own: a fresh, empty table without a delegate as `this` (probed: so a file's
+	// `this.X <- …` and file-scope functions stay in it, and `skills/actives/split.nut`
+	// doesn't replace the stdlib `split`). Reads like `this.Const` still find the
+	// globals through the VM's root fallback, and vanilla makes its globals through
+	// `getroottable()`. Hook frameworks find a file's class in its scope (Modern Hooks
+	// reads the file's `this` when its `main` returns). Game (and mod) scripts compute
+	// floats in single precision like the original 32-bit-float engine, required for
+	// seed-exact worldgen (see `SqStrongRef::set_f32_math`). No state borrow is held
+	// across the run.
 	let closure = match script {
 		LoadedScript::Source(bytes) => {
 			let before = caches_compiles.then(|| compile_context(vm));
@@ -64,9 +70,11 @@ pub(crate) fn include<S: ScriptSource>(
 		}
 		LoadedScript::Bytecode(bytes) => vm.load_closure(&bytes),
 	};
+	let scope = SqTable::new(vm).to_strong();
+	state.borrow_mut().scopes.insert(norm.clone(), scope.clone());
 	let result = closure.and_then(|closure| {
 		closure.set_f32_math(vm, true);
-		closure.call(vm, ())
+		closure.call_with_this(vm, &scope, ())
 	});
 
 	state.borrow_mut().load_stack.pop();
@@ -267,5 +275,6 @@ impl<S: ScriptSource> ModuleSystem<S> {
 		st.parents.clear();
 		st.by_hash.clear();
 		st.included.clear();
+		st.scopes.clear();
 	}
 }
