@@ -154,7 +154,7 @@ impl App {
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
 		let options = &self.options;
-		let game = Game::boot(
+		let mut game = Game::boot(
 			&gpu,
 			&options.data_dir,
 			&options.seed,
@@ -164,6 +164,9 @@ impl App {
 			options.devtools,
 		)?;
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
+		if std::env::var_os("BB_TEXTURE_USAGE").is_some_and(|v| v != "0") {
+			game.track_texture_usage();
+		}
 		let size = window.inner_size();
 		eprintln!(
 			"video: {}x{} {placement:?} on a {}x{} monitor, the window {}x{} (scale {})",
@@ -247,6 +250,9 @@ impl Running {
 	/// `xdg_toplevel.destroy`), and the window's teardown then crashes on the freed
 	/// object in libwayland. The window can't go first: the surface must not outlive it.
 	fn close(self) {
+		if let Some(usage) = self.game.texture_usage() {
+			report_usage(&usage, &self.game.renderer_memory());
+		}
 		let Running { window, surface, game, .. } = self;
 		drop(game);
 		std::mem::forget(surface);
@@ -489,4 +495,39 @@ impl ApplicationHandler for App {
 			}
 		}
 	}
+}
+
+/// With `BB_TEXTURE_USAGE=1`, at the end: how much of each atlas the session drew (in
+/// RGBA8 bytes, without mips) and whether its mips were sampled, and the atlases loaded
+/// but never drawn (for the texture residency design).
+fn report_usage(usage: &[bb_render::AtlasUse], memory: &bb_render::RendererMemory) {
+	let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+	let (mut drawn, mut whole) = (0, 0);
+	for atlas in usage {
+		let full = u64::from(atlas.width) * u64::from(atlas.height) * 4;
+		let part = atlas.drawn_texels * 4;
+		drawn += part;
+		whole += full;
+		eprintln!(
+			"texture usage: {} {}x{}: {:.1}% drawn, {:.1} of {:.1} MiB, mips {}",
+			atlas.path,
+			atlas.width,
+			atlas.height,
+			part as f64 * 100.0 / full as f64,
+			mib(part),
+			mib(full),
+			if atlas.mips { "sampled" } else { "never sampled" }
+		);
+	}
+	for texture in memory.textures.iter().filter(|t| !usage.iter().any(|a| a.path == t.path)) {
+		// The water and the fog of war are drawn by passes of their own, tiled, the whole
+		// picture; the fonts' and others' quads would have counted.
+		let how = if ["gfx/water.png", "gfx/fow.png"].contains(&texture.path.as_str()) {
+			"drawn whole by its own pass"
+		} else {
+			"loaded, never drawn"
+		};
+		eprintln!("texture usage: {} {}x{}: {how} ({:.1} MiB)", texture.path, texture.width, texture.height, mib(texture.bytes));
+	}
+	eprintln!("texture usage: in all {:.1} of {:.1} MiB drawn (RGBA8, without mips)", mib(drawn), mib(whole));
 }

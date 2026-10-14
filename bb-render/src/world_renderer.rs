@@ -59,6 +59,8 @@ pub struct WorldRenderer {
 	clock: Clock,
 	/// Whether a battle draws with the depth of field (see [`WorldRenderer::set_depth_of_field`]).
 	depth_of_field: bool,
+	/// Which parts of the atlases are drawn, when tracked ([`WorldRenderer::track_usage`]).
+	usage: Option<crate::usage::TextureUsage>,
 }
 
 /// The game's clocks, in seconds.
@@ -118,6 +120,7 @@ impl WorldRenderer {
 			water: WaterPass::new(gpu),
 			clock: Clock::default(),
 			depth_of_field: false,
+			usage: None,
 		}
 	}
 
@@ -133,6 +136,25 @@ impl WorldRenderer {
 		memory.fog_mask = self.fog.bytes();
 		memory.own = self.white.bytes() + self.sprites.bytes();
 		memory
+	}
+
+	/// Track which parts of the atlases the draws sample from now on (for the texture
+	/// residency design; a cost per quad, so off by default).
+	pub fn track_usage(&mut self) {
+		self.usage.get_or_insert_with(Default::default);
+	}
+
+	/// The atlases' use since tracking started, the most drawn first.
+	pub fn usage(&self) -> Option<Vec<crate::AtlasUse>> {
+		self.usage.as_ref().map(crate::usage::TextureUsage::report)
+	}
+
+	fn record_usage(&mut self, map: &crate::world::WorldQuads, zoom: f32, dof_below: Option<u32>) {
+		let Some(usage) = self.usage.as_mut() else { return };
+		let textures = &self.textures;
+		usage.record(map, zoom, dof_below, |path| {
+			textures.slot(path).and_then(Slot::texture).map(|t| (t.width, t.height))
+		});
 	}
 
 	/// The game's clocks: the fog drifts with real time, the water with virtual time.
@@ -183,6 +205,7 @@ impl WorldRenderer {
 			region: label_font(&self.region_font),
 		};
 		let world = world_quads(scene, registry, view, fonts);
+		self.record_usage(&world, view.zoom, None);
 		let mut needed: Vec<&str> = world
 			.atlases
 			.paths
@@ -303,6 +326,8 @@ impl WorldRenderer {
 		atlases: Atlases,
 	) -> FrameStats {
 		let map = tactical_quads(scene, registry, view);
+		let camera_level = scene.camera.level.clamp(0, 3) as u32;
+		self.record_usage(&map, view.zoom, self.depth_of_field.then_some(camera_level));
 		// The battle's light (the weather's `setAmbientLighting*`), and the depth of
 		// field below the camera's level.
 		let uniforms = SceneUniforms {
@@ -329,6 +354,7 @@ impl WorldRenderer {
 			return Ok(None);
 		}
 		let map = crate::portrait::portrait_quads(portrait, hidden, registry);
+		self.record_usage(&map, 1.0, None);
 		let target = RenderTarget::new(gpu, width, height);
 		let uniforms = SceneUniforms::centered([0.0, 0.0], width as f32, height as f32);
 		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll);
@@ -353,6 +379,7 @@ impl WorldRenderer {
 			return FrameStats::default();
 		};
 		let uniforms = SceneUniforms::centered([0.0, 0.0], target.width as f32, target.height as f32);
+		self.record_usage(&map, 1.0, None);
 		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady)
 	}
 

@@ -31,6 +31,7 @@ mod test_sprites;
 mod text;
 mod texture;
 mod ui_layer;
+mod usage;
 mod water;
 pub mod world;
 mod world_pass;
@@ -38,6 +39,7 @@ mod world_renderer;
 
 pub use gpu::Gpu;
 pub use memory::{RendererMemory, TextureMemory};
+pub use usage::AtlasUse;
 pub use present::Presenter;
 pub use screenshot::{save_png, write_png};
 pub use target::{RenderTarget, TARGET_FORMAT};

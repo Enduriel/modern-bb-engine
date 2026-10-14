@@ -84,6 +84,17 @@ impl Game {
 		self.engine().run_script(code, "script")
 	}
 
+	/// Track which parts of the atlases are drawn from now on (see
+	/// [`bb_render::WorldRenderer::track_usage`]).
+	pub fn track_texture_usage(&mut self) {
+		self.renderer.track_usage();
+	}
+
+	/// The atlases' use since tracking started.
+	pub fn texture_usage(&self) -> Option<Vec<bb_render::AtlasUse>> {
+		self.renderer.usage()
+	}
+
 	/// What the renderer and the UI page hold on the GPU.
 	pub fn renderer_memory(&self) -> bb_render::RendererMemory {
 		let mut memory = self.renderer.memory();
