@@ -48,6 +48,18 @@ pub struct KeyInput {
 	pub modifier: i64,
 }
 
+impl KeyInput {
+	/// Key `key` went down, no modifier held.
+	pub fn pressed(key: i64) -> Self {
+		KeyInput { key, state: 0, modifier: 0 }
+	}
+
+	/// Key `key` came up.
+	pub fn released(key: i64) -> Self {
+		KeyInput { key, state: 1, modifier: 0 }
+	}
+}
+
 /// The two event classes, built once.
 pub(crate) struct InputClasses {
 	mouse: SqClass<MouseInput>,
