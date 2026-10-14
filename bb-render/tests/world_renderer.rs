@@ -140,6 +140,12 @@ fn atlases_load_on_first_use() {
 		&[255, 255, 255, 255],
 		"the sprite is drawn"
 	);
+
+	// What it holds: the 2×2 atlas and its 1×1 mip, besides its own textures.
+	let memory = renderer.memory();
+	let atlas = memory.textures.iter().find(|t| t.path == "gfx/test.png").expect("the atlas counted");
+	assert_eq!((atlas.width, atlas.height, atlas.bytes, atlas.stand_in), (2, 2, 20, false));
+	assert!(memory.own > 0 && memory.total() >= memory.texture_bytes() + memory.own);
 }
 
 /// A missing atlas draws the game's "texture missing" picture (`error.png`) in its
@@ -179,6 +185,12 @@ fn a_missing_atlas_draws_the_texture_missing_picture() {
 		let target = RenderTarget::new(&gpu, 4, 4);
 		let stats = renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
 		assert_eq!((stats.quads, stats.failed), (drawn, 1), "gfx/test.png is missing");
+		let memory = renderer.memory();
+		let stand_in = memory.textures.iter().find(|t| t.path == "gfx/test.png");
+		assert_eq!(stand_in.map(|t| t.stand_in), (drawn == 1).then_some(true), "counted as a stand-in");
+		// The water's picture is missing here too.
+		let failed = if drawn == 1 { 0 } else { 2 };
+		assert_eq!(memory.failed, failed, "or as failed, with nothing in its place");
 		if drawn == 1 {
 			let image = target.read(&gpu).expect("read back");
 			assert_eq!(&image.rgba[(5 * 4)..(5 * 4 + 4)], &red, "drawn with the picture");

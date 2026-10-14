@@ -119,6 +119,11 @@ pub struct SpriteRenderer {
 }
 
 impl SpriteRenderer {
+	/// The bytes of its own textures on the GPU.
+	pub fn bytes(&self) -> u64 {
+		self.blank.bytes()
+	}
+
 	pub fn new(gpu: &Gpu) -> Self {
 		let device = &gpu.device;
 		let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {

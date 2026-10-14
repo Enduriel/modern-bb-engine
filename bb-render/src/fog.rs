@@ -47,6 +47,11 @@ impl FogPass {
 		}
 	}
 
+	/// The bytes the fog mask takes on the GPU (none before its first patch).
+	pub fn bytes(&self) -> u64 {
+		self.mask.as_ref().map_or(0, |(texture, _, _)| crate::texture::texture_bytes(texture))
+	}
+
 	/// Copy a changed part of the engine's fog mask to the GPU.
 	/// A mask of another size (another map's) replaces the texture.
 	pub fn update_mask(&mut self, gpu: &Gpu, patch: &FogPatch) {

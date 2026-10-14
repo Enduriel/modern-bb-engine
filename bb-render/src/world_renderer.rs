@@ -126,6 +126,15 @@ impl WorldRenderer {
 		self.fog.update_mask(gpu, patch);
 	}
 
+	/// What it holds on the GPU: every texture loaded by path, the fog mask and its own
+	/// (for the memory inventory).
+	pub fn memory(&self) -> crate::RendererMemory {
+		let mut memory = crate::RendererMemory::of_cache(&self.textures);
+		memory.fog_mask = self.fog.bytes();
+		memory.own = self.white.bytes() + self.sprites.bytes();
+		memory
+	}
+
 	/// The game's clocks: the fog drifts with real time, the water with virtual time.
 	pub fn set_clock(&mut self, clock: Clock) {
 		self.clock = clock;

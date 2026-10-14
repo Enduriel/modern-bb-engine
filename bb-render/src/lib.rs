@@ -19,6 +19,7 @@ mod fog;
 pub mod frame_diff;
 mod gpu;
 pub mod labels;
+mod memory;
 pub mod portrait;
 mod present;
 mod screenshot;
@@ -36,6 +37,7 @@ mod world_pass;
 mod world_renderer;
 
 pub use gpu::Gpu;
+pub use memory::{RendererMemory, TextureMemory};
 pub use present::Presenter;
 pub use screenshot::{save_png, write_png};
 pub use target::{RenderTarget, TARGET_FORMAT};

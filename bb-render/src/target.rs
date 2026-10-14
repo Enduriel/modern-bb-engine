@@ -18,6 +18,11 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
+	/// The bytes it takes on the GPU.
+	pub fn bytes(&self) -> u64 {
+		crate::texture::texture_bytes(&self.texture)
+	}
+
 	pub fn new(gpu: &Gpu, width: u32, height: u32) -> Self {
 		let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
 			label: Some("render target"),

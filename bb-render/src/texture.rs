@@ -17,6 +17,22 @@ use crate::gpu::Gpu;
 /// The format atlases are uploaded in.
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// The bytes a 2D `texture` takes on the GPU, every mip level counted (what its
+/// texels need; the driver's padding and alignment aren't known here).
+pub fn texture_bytes(texture: &wgpu::Texture) -> u64 {
+	let size = texture.size();
+	let texel = u64::from(texture.format().block_copy_size(None).unwrap_or(4));
+	mip_bytes(size.width, size.height, texture.mip_level_count(), texel)
+}
+
+/// The bytes of a `width` × `height` image of `texel`-byte texels with `levels` mip
+/// levels (each half the last, rounded down, at least 1).
+fn mip_bytes(width: u32, height: u32, levels: u32, texel: u64) -> u64 {
+	(0..levels)
+		.map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * texel)
+		.sum()
+}
+
 /// A sampled texture on the GPU.
 pub struct GpuTexture {
 	pub texture: wgpu::Texture,
@@ -26,6 +42,11 @@ pub struct GpuTexture {
 }
 
 impl GpuTexture {
+	/// The bytes it takes on the GPU (see [`texture_bytes`]).
+	pub fn bytes(&self) -> u64 {
+		texture_bytes(&self.texture)
+	}
+
 	/// Upload `image` with every mip level down to 1×1.
 	pub fn upload(gpu: &Gpu, label: &str, image: &Image) -> GpuTexture {
 		Self::upload_levels(gpu, label, &mip_chain(image))
@@ -123,6 +144,13 @@ fn halve(src: &Image) -> Image {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn mips_add_about_a_third() {
+		assert_eq!(mip_bytes(2, 2, 2, 4), 20, "2×2 and 1×1");
+		assert_eq!(mip_bytes(4, 1, 3, 4), 28, "4×1, 2×1, 1×1");
+		assert_eq!(mip_bytes(2048, 2048, 12, 4), 22_369_620, "an atlas: 16 MiB and a third");
+	}
 
 	#[test]
 	fn chain_halves_down_to_one_texel() {

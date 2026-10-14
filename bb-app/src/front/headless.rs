@@ -87,4 +87,9 @@ impl Front {
 
 	/// Draw the UI over `target`: nothing to draw.
 	pub fn draw(&mut self, _gpu: &Gpu, _target: &RenderTarget) {}
+
+	/// No page, so no page texture.
+	pub fn layer_bytes(&self) -> u64 {
+		0
+	}
 }

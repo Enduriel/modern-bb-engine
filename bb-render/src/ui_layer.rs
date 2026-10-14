@@ -42,6 +42,13 @@ pub struct UiLayer {
 	page: Option<Page>,
 }
 
+impl UiLayer {
+	/// The bytes the page's texture takes on the GPU (none before its first frame).
+	pub fn bytes(&self) -> u64 {
+		self.page.as_ref().map_or(0, |page| crate::texture::texture_bytes(&page.texture))
+	}
+}
+
 struct Page {
 	texture: wgpu::Texture,
 	group: wgpu::BindGroup,

@@ -172,6 +172,11 @@ impl Front {
 		}
 	}
 
+	/// The bytes the page's texture takes on the GPU.
+	pub fn layer_bytes(&self) -> u64 {
+		self.layer.bytes()
+	}
+
 	/// Draw the page's latest paint over `target`.
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
 		let (layer, painted) = (&mut self.layer, &mut self.painted);

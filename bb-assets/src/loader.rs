@@ -253,6 +253,11 @@ impl<T> TextureCache<T> {
 		self.slots.get(path)
 	}
 
+	/// Every path ever asked for, and its state.
+	pub fn slots(&self) -> impl Iterator<Item = (&str, &Slot<T>)> {
+		self.slots.iter().map(|(path, slot)| (path.as_str(), slot))
+	}
+
 	/// Forget `path`, returning its texture if it had one. Asking again reloads it.
 	pub fn remove(&mut self, path: &str) -> Option<T> {
 		match self.slots.remove(path)? {

@@ -84,6 +84,13 @@ impl Game {
 		self.engine().run_script(code, "script")
 	}
 
+	/// What the renderer and the UI page hold on the GPU.
+	pub fn renderer_memory(&self) -> bb_render::RendererMemory {
+		let mut memory = self.renderer.memory();
+		memory.ui_page = self.front.layer_bytes();
+		memory
+	}
+
 	/// Advance the game by `ms` of real time.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
 		self.front.step(ms.clamp(0.0, MAX_FRAME_MS))
