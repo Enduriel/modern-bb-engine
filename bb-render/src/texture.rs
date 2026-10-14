@@ -4,6 +4,11 @@
 //! (`textureLod(.., 2)` in `sprite_dof.fs`), so atlases need mips. They are built on
 //! the CPU with a 2×2 box filter over the stored (straight-alpha) RGBA, the usual
 //! `glGenerateMipmap` result.
+//!
+//! Bitmap fonts have none: region names drawn at half size match the original's
+//! stroke brightness only when sampled from the full-size atlas (screenshot: the
+//! text's 95th-percentile brightness 138 in the original, 120 with
+//! mips, 138 without).
 
 use bb_assets::Image;
 
@@ -23,7 +28,17 @@ pub struct GpuTexture {
 impl GpuTexture {
 	/// Upload `image` with every mip level down to 1×1.
 	pub fn upload(gpu: &Gpu, label: &str, image: &Image) -> GpuTexture {
-		let levels = mip_chain(image);
+		Self::upload_levels(gpu, label, &mip_chain(image))
+	}
+
+	/// Upload `image` without mips.
+	pub fn upload_flat(gpu: &Gpu, label: &str, image: &Image) -> GpuTexture {
+		Self::upload_levels(gpu, label, std::slice::from_ref(image))
+	}
+
+	/// Upload a texture whose mip levels are `levels`, the first full size.
+	fn upload_levels(gpu: &Gpu, label: &str, levels: &[Image]) -> GpuTexture {
+		let image = &levels[0];
 		let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
 			label: Some(label),
 			size: wgpu::Extent3d {

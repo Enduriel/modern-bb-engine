@@ -2,8 +2,12 @@
 //! original's opening view (zoom 1), for comparing with its screenshots.
 //!
 //! ```text
-//! cargo run --release -p bb-render --example render_world -- OUT.png [SEED] [WIDTHxHEIGHT] [ZOOM]
+//! cargo run --release -p bb-render --example render_world -- OUT.png [SEED] [WIDTHxHEIGHT] [ZOOM] [X,Y]
 //! ```
+//!
+//! `X,Y` centres the view there instead of on the player. `BB_NO_FOG=1` turns fog of
+//! war off first, and the nearest shore tiles to the view are listed (for finding
+//! water to compare).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -11,7 +15,7 @@ use std::sync::Arc;
 use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, STEAM_DATA_DIR};
 use bb_render::world::WorldView;
-use bb_render::{Atlases, Gpu, RenderTarget, WorldRenderer, save_png};
+use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer, save_png};
 use squirrel::{Number, SqStrongRef, SqTable};
 
 fn main() {
@@ -31,6 +35,10 @@ fn main() {
 		.unwrap_or((2560, 1440));
 	// The original's `World.getCamera().Zoom`: world units per screen pixel.
 	let camera_zoom: f32 = args.next().map_or(1.0, |z| z.parse().expect("zoom"));
+	let at: Option<[f32; 2]> = args.next().map(|s| {
+		let (x, y) = s.split_once(',').expect("X,Y");
+		[x.parse().expect("x"), y.parse().expect("y")]
+	});
 
 	let dir = Path::new(STEAM_DATA_DIR);
 	let engine = harness::open_install(dir).expect("open install");
@@ -61,9 +69,26 @@ fn main() {
 	let y = pos.get_member::<Number>(engine.vm(), "Y").expect("y").0 as f32;
 	eprintln!("player at {x}, {y}");
 
+	if std::env::var_os("BB_NO_FOG").is_some() {
+		engine
+			.run_script("::World.setFogOfWar(false);", "fog")
+			.expect("fog off");
+	}
 	let scene = engine.world_scene();
+	let center = at.unwrap_or([x, y]);
+	let mut shores: Vec<_> = scene
+		.tiles
+		.iter()
+		.filter(|t| t.terrain == 16)
+		.map(|t| {
+			let d = (t.pos.0 - f64::from(center[0])).hypot(t.pos.1 - f64::from(center[1]));
+			(d as i64, t.pos)
+		})
+		.collect();
+	shores.sort_by_key(|s| s.0);
+	eprintln!("nearest shore tiles: {:?}", &shores[..shores.len().min(5)]);
 	let view = WorldView {
-		center: [x, y],
+		center,
 		zoom: 1.0 / camera_zoom,
 		width,
 		height,
@@ -74,7 +99,10 @@ fn main() {
 	if let Some(patch) = engine.world_grid().take_fog_patch() {
 		renderer.update_fog(&gpu, &patch);
 	}
-	renderer.set_real_time(engine.time().real_seconds() as f32);
+	renderer.set_clock(Clock {
+		real: engine.time().real_seconds() as f32,
+		virtual_time: engine.time().virtual_seconds() as f32,
+	});
 	// The atlases the scripts' brushes asked for start loading now, as in a live game.
 	let hints = engine.sprites().take_hints();
 	eprintln!("{} atlases hinted", hints.len());

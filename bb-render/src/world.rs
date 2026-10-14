@@ -13,6 +13,8 @@
 //! original keeps one quadtree per scene layer). Details sort back to front on the
 //! original's key, `int(y) + depth_bias + z level` (`spawnDetail`, `0x4fb707`); ties
 //! keep spawn order, and entities sort north to south, which is not yet checked.
+//! Region names are text nodes in the details layer whose key stays 0 (`0x4f0350`),
+//! so they draw over the details.
 
 use std::collections::HashMap;
 
@@ -21,6 +23,20 @@ use squirrel_bb::scene::WorldScene;
 
 use crate::labels::{LabelFont, label_quads};
 use crate::sprite::{Quad, SceneUniforms};
+use crate::text::{TextRun, glyph_quads, text_scale};
+
+/// The bitmap fonts world text draws in (`None` where the data lacks one).
+#[derive(Clone, Copy, Default)]
+pub struct WorldFonts<'a> {
+	/// Entity labels (`gfx/fonts/cinzel_bold_20`).
+	pub label: Option<LabelFont<'a>>,
+	/// Region names (`gfx/fonts/cinzel_bold_100`, `0x47dcbc`).
+	pub region: Option<LabelFont<'a>>,
+}
+
+/// Region names: white at alpha `0x66`, at 0.4 of the script's scale (`0x4f0350`).
+const REGION_TEXT_COLOR: [u8; 4] = [255, 255, 255, 0x66];
+const REGION_TEXT_SCALE: f32 = 0.4;
 
 /// What part of the world is shown.
 #[derive(Clone, Copy, Debug)]
@@ -111,7 +127,7 @@ pub fn world_quads<'a>(
 	scene: &'a WorldScene,
 	sprites: &'a SpriteRegistry,
 	view: &WorldView,
-	labels: Option<LabelFont<'a>>,
+	fonts: WorldFonts<'a>,
 ) -> WorldQuads {
 	// Tile sprites reach well past their hex (400 x 200 around a 180 x 120 cell).
 	let [left, right, bottom, top] = view.bounds(400.0);
@@ -202,7 +218,36 @@ pub fn world_quads<'a>(
 		}
 	}
 
-	if let Some(font) = labels {
+	if let Some(font) = fonts.region {
+		let zoom = 1.0 / view.zoom;
+		for region in &scene.region_texts {
+			let text = region.text.as_bytes();
+			let width = font.font.text_width(text) as f32;
+			let height = font.font.cell_height as f32;
+			let run = TextRun {
+				text,
+				font,
+				pos: [region.pos.0, region.pos.1],
+				// Centred both ways.
+				offset: [-width / 2.0, height / 2.0],
+				scale: text_scale(zoom, region.scale * REGION_TEXT_SCALE, true),
+				rotation: region.rotation,
+				color: REGION_TEXT_COLOR,
+			};
+			for (texture, quad) in glyph_quads(&run) {
+				let order = drawables.len();
+				drawables.push(Drawable {
+					layer: Layer::Details,
+					key: 0,
+					order,
+					texture,
+					quad,
+				});
+			}
+		}
+	}
+
+	if let Some(font) = fonts.label {
 		for entity in scene
 			.entities
 			.iter()

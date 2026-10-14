@@ -17,12 +17,15 @@ pub mod labels;
 mod screenshot;
 pub mod sprite;
 mod target;
+mod text;
 mod texture;
+mod water;
 pub mod world;
+mod world_pass;
 mod world_renderer;
 
 pub use gpu::Gpu;
 pub use screenshot::{save_png, write_png};
 pub use target::{RenderTarget, TARGET_FORMAT};
 pub use texture::{GpuTexture, TEXTURE_FORMAT, mip_chain};
-pub use world_renderer::{Atlases, FrameStats, WorldRenderer};
+pub use world_renderer::{Atlases, Clock, FrameStats, WorldRenderer};

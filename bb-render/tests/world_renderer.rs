@@ -11,7 +11,7 @@ use bb_assets::{
 };
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Gpu, RenderTarget, WorldRenderer};
-use squirrel_bb::scene::{SceneFog, SceneTile, WorldScene};
+use squirrel_bb::scene::{SceneTile, WorldScene};
 use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
 struct Files(HashMap<String, Vec<u8>>);
@@ -104,7 +104,9 @@ fn atlases_load_on_first_use() {
 			details: Vec::new(),
 		}],
 		entities: Vec::new(),
-		fog: SceneFog::default(),
+		extent: (0.0, 0.0),
+		fog_of_war: false,
+		region_texts: Vec::new(),
 	};
 	let registry = registry();
 	let view = WorldView {
@@ -156,10 +158,9 @@ fn fog_covers_what_the_mask_keeps() {
 	let scene = WorldScene {
 		tiles: Vec::new(),
 		entities: Vec::new(),
-		fog: SceneFog {
-			on: true,
-			extent: (4.0, 4.0),
-		},
+		extent: (4.0, 4.0),
+		fog_of_war: true,
+		region_texts: Vec::new(),
 	};
 	let view = WorldView {
 		center: [2.0, 2.0],
@@ -195,10 +196,7 @@ fn fog_covers_what_the_mask_keeps() {
 	assert_eq!(pixel(&image, 3, 1), [0, 0, 0, 255], "uncovered");
 
 	let off = WorldScene {
-		fog: SceneFog {
-			on: false,
-			..scene.fog
-		},
+		fog_of_war: false,
 		..scene
 	};
 	renderer.draw(&gpu, &target, &off, &registry, &view, Atlases::WaitForAll);

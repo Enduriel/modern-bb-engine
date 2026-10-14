@@ -18,7 +18,8 @@ use crate::labels::{LabelFont, WHITE};
 use crate::sprite::{Quad, SpriteRenderer};
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
-use crate::world::{WorldView, world_quads};
+use crate::water::WaterPass;
+use crate::world::{WorldFonts, WorldView, world_quads};
 
 /// Whether a frame waits for atlases that are still loading.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,28 +44,56 @@ pub struct FrameStats {
 pub struct WorldRenderer {
 	sprites: SpriteRenderer,
 	textures: TextureCache<GpuTexture>,
-	/// The label font and its atlas's path (`None` if the data lacks it).
+	/// The label and region-name fonts and their atlases' paths (`None` if the data
+	/// lacks one).
 	label_font: Option<(BitmapFont, String)>,
+	region_font: Option<(BitmapFont, String)>,
 	/// 1×1 white, for solid fills (label plates).
 	white: GpuTexture,
 	fog: FogPass,
-	/// Seconds of real time, for the fog's drift.
-	real_time: f32,
+	water: WaterPass,
+	/// Seconds of real and virtual time, for the fog's and the water's drift.
+	clock: Clock,
+}
+
+/// The game's clocks, in seconds.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Clock {
+	/// `Time.getRealTimeF()`.
+	pub real: f32,
+	/// The virtual clock, which runs at the game's speed.
+	pub virtual_time: f32,
 }
 
 /// The fog of war's texture.
 const FOG_TEXTURE: &str = "gfx/fow.png";
 
+/// The water's texture.
+const WATER_TEXTURE: &str = "gfx/water.png";
+
+/// What shows where nothing is drawn.
+const CLEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+
+/// Where the bitmap fonts are; their atlases have no mips (see [`GpuTexture`]).
+const FONT_DIR: &str = "gfx/fonts/";
+
 /// The font world labels are drawn in.
 const LABEL_FONT: &str = "gfx/fonts/cinzel_bold_20";
+
+/// The font region names are drawn in.
+const REGION_FONT: &str = "gfx/fonts/cinzel_bold_100";
 
 impl WorldRenderer {
 	/// A renderer reading atlases from `files`, decoding on `threads` workers.
 	pub fn new(gpu: &Gpu, files: Arc<dyn FileSource>, threads: usize) -> Self {
-		let label_font = files
-			.read(&format!("{LABEL_FONT}.fnt"))
-			.and_then(|bytes| BitmapFont::parse(&bytes).ok())
-			.map(|font| (font, format!("{LABEL_FONT}.png")));
+		let load_font = |path: &str| {
+			files
+				.read(&format!("{path}.fnt"))
+				.and_then(|bytes| BitmapFont::parse(&bytes).ok())
+				.map(|font| (font, format!("{path}.png")))
+		};
+		let label_font = load_font(LABEL_FONT);
+		let region_font = load_font(REGION_FONT);
 		let white = Image {
 			width: 1,
 			height: 1,
@@ -74,9 +103,11 @@ impl WorldRenderer {
 			sprites: SpriteRenderer::new(gpu),
 			textures: TextureCache::new(ImageLoader::new(files, threads)),
 			label_font,
+			region_font,
 			white: GpuTexture::upload(gpu, "white", &white),
 			fog: FogPass::new(gpu),
-			real_time: 0.0,
+			water: WaterPass::new(gpu),
+			clock: Clock::default(),
 		}
 	}
 
@@ -85,9 +116,9 @@ impl WorldRenderer {
 		self.fog.update_mask(gpu, patch);
 	}
 
-	/// The real time in seconds (`Time.getRealTimeF()`): the fog drifts with it.
-	pub fn set_real_time(&mut self, seconds: f32) {
-		self.real_time = seconds;
+	/// The game's clocks: the fog drifts with real time, the water with virtual time.
+	pub fn set_clock(&mut self, clock: Clock) {
+		self.clock = clock;
 	}
 
 	/// Start loading `paths` (the scripts' hints) in the background. Only images are
@@ -99,9 +130,9 @@ impl WorldRenderer {
 		}
 	}
 
-	/// Draw `scene` into `target`, clearing it first: the map, then the fog of war
-	/// where its mask has it (once [`update_fog`](Self::update_fog) gave one), then the
-	/// labels.
+	/// Draw `scene` into `target`, clearing it first: the water, the map, then the fog
+	/// of war where its mask has it (once [`update_fog`](Self::update_fog) gave one),
+	/// then the labels.
 	pub fn draw(
 		&mut self,
 		gpu: &Gpu,
@@ -111,13 +142,19 @@ impl WorldRenderer {
 		view: &WorldView,
 		atlases: Atlases,
 	) -> FrameStats {
-		let upload = |path: &str, image: bb_assets::Image| GpuTexture::upload(gpu, path, &image);
+		let upload = |path: &str, image: bb_assets::Image| {
+			if path.starts_with(FONT_DIR) {
+				GpuTexture::upload_flat(gpu, path, &image)
+			} else {
+				GpuTexture::upload(gpu, path, &image)
+			}
+		};
 		self.textures.pump(upload);
-		let font = self
-			.label_font
-			.as_ref()
-			.map(|(font, texture)| LabelFont { font, texture });
-		let world = world_quads(scene, registry, view, font);
+		let fonts = WorldFonts {
+			label: label_font(&self.label_font),
+			region: label_font(&self.region_font),
+		};
+		let world = world_quads(scene, registry, view, fonts);
 		let mut needed: Vec<&str> = world
 			.atlases
 			.paths
@@ -125,7 +162,8 @@ impl WorldRenderer {
 			.map(String::as_str)
 			.filter(|p| *p != WHITE)
 			.collect();
-		if scene.fog.on {
+		needed.push(WATER_TEXTURE);
+		if scene.fog_of_war {
 			needed.push(FOG_TEXTURE);
 		}
 		for path in needed {
@@ -178,24 +216,31 @@ impl WorldRenderer {
 		let labels = usable(&world.quads[world.labels_from..]);
 		stats.quads = map.len() + labels.len();
 		let uniforms = view.uniforms();
-		self.sprites.draw(
-			gpu,
-			target,
-			&uniforms,
-			Some([0.0, 0.0, 0.0, 1.0]),
-			&map,
-			&ready,
-		);
+		let water = match self.textures.slot(WATER_TEXTURE) {
+			Some(Slot::Ready(water)) => self.water.draw(
+				gpu,
+				target,
+				Some(CLEAR),
+				view,
+				water,
+				scene.extent,
+				self.clock.virtual_time,
+			),
+			_ => false,
+		};
+		let clear = (!water).then_some(CLEAR);
+		self.sprites
+			.draw(gpu, target, &uniforms, clear, &map, &ready);
 
-		if scene.fog.on {
+		if scene.fog_of_war {
 			if let Some(Slot::Ready(fog_texture)) = self.textures.slot(FOG_TEXTURE) {
 				self.fog.draw(
 					gpu,
 					target,
 					view,
 					fog_texture,
-					scene.fog.extent,
-					self.real_time,
+					scene.extent,
+					self.clock.real,
 				);
 			}
 		}
@@ -204,4 +249,10 @@ impl WorldRenderer {
 			.draw(gpu, target, &uniforms, None, &labels, &ready);
 		stats
 	}
+}
+
+/// A loaded font as the world quads take it.
+fn label_font(font: &Option<(BitmapFont, String)>) -> Option<LabelFont<'_>> {
+	font.as_ref()
+		.map(|(font, texture)| LabelFont { font, texture })
 }
