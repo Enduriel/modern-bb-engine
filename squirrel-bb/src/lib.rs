@@ -36,4 +36,4 @@ pub use native::{
 };
 pub use source::{LoadedScript, ScriptSource};
 pub use state_stack::RootState;
-pub use native::{EngineRng, Sprites};
+pub use native::{EngineRng, FOG_MASK_SIZE, FogPatch, FogStamp, Sprites};

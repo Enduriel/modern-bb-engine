@@ -13,6 +13,16 @@ pub struct WorldScene {
 	pub tiles: Vec<SceneTile>,
 	/// Every live entity, in spawn order.
 	pub entities: Vec<SceneEntity>,
+	pub fog: SceneFog,
+}
+
+/// The fog of war.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SceneFog {
+	/// Fog of war is on (`World.setFogOfWar`).
+	pub on: bool,
+	/// The world extent its mask spans, in world units.
+	pub extent: (f32, f32),
 }
 
 /// One world tile.
@@ -24,6 +34,8 @@ pub struct SceneTile {
 	pub pos: (f64, f64),
 	/// Its `Const.World.TerrainType` (1 is ocean).
 	pub terrain: i64,
+	/// Uncovered from the fog of war (every tile is when fog of war is off).
+	pub discovered: bool,
 	/// The terrain brush (`""` if unset).
 	pub brush: String,
 	/// Its decorations, in spawn order.

@@ -16,6 +16,7 @@ use squirrel::{
 	Variadic,
 };
 
+use super::fog_mask::{FogMask, FogPatch, FogStamp};
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
 use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
 use crate::native::{EngineRng, Sprites};
@@ -55,8 +56,9 @@ struct TileData {
 	details: Vec<Detail>,
 }
 
-/// The map's share of a save: its size and every tile's gameplay state. Details
-/// (decorations) are visual and not kept.
+/// The map's share of a save: its size, every tile's gameplay state and the fog of
+/// war's mask (the original saves its mask too). Details (decorations) are visual and
+/// not kept.
 struct GridPart(Rc<RefCell<GridState>>);
 
 impl super::save::SavePart for GridPart {
@@ -75,6 +77,7 @@ impl super::save::SavePart for GridPart {
 			}
 			w.str(&t.brush);
 		}
+		g.fog.save(&mut w);
 		Ok(())
 	}
 
@@ -103,7 +106,7 @@ impl super::save::SavePart for GridPart {
 			tiles.push(t);
 		}
 		g.tiles = tiles;
-		Ok(())
+		g.fog.load(&mut r)
 	}
 }
 
@@ -167,6 +170,10 @@ struct GridState {
 	sprites: Sprites,
 	/// The engine's random stream: new details' mirroring, scale and rotation.
 	engine_rng: EngineRng,
+	/// Fog of war is on (`setFogOfWar`).
+	fog_on: bool,
+	/// Where the fog of war is drawn.
+	fog: FogMask,
 }
 
 impl GridState {
@@ -242,6 +249,8 @@ impl WorldGrid {
 				nav_path_class: None,
 				sprites: Sprites::default(),
 				engine_rng: EngineRng::unseeded(),
+				fog_on: true,
+				fog: FogMask::default(),
 			})),
 		}
 	}
@@ -286,6 +295,8 @@ impl WorldGrid {
 				} else {
 					Vec::new()
 				};
+				// The original clears its fog mask here too (`0x4efba9`).
+				g.fog.reset(fog_extent(w, h));
 			})
 		};
 		let clear = {
@@ -448,7 +459,8 @@ impl WorldGrid {
 		// original (disassembly, 2026-10-13; verified on 8 probed shapes): with
 		// rt = radius / 100, every tile within hex distance trunc(rt) + 3 of the tile
 		// under `pos`, clipped to columns [q - trunc(rt/2) - 3, q + trunc(rt/2) + 4) and
-		// rows [row - trunc(rt) - 3, row + trunc(rt) + 3).
+		// rows [row - trunc(rt) - 3, row + trunc(rt) + 3). Then it stamps the fog
+		// mask at `pos` with scale rt (see `fog_mask`).
 		let uncover_fog_of_war = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| {
@@ -472,23 +484,23 @@ impl WorldGrid {
 						}
 					}
 				}
+				grid.fog.stamp((px as f32, py as f32), rt);
 			})
 		};
 		// Fog-of-war switches. setFogOfWar(false) reveals the whole map, as the original
 		// does. (The player's view, `setPlayerPos`/`setPlayerVisionRadius`, lives with the
 		// entities: it decides `isHiddenToPlayer`.)
-		let fog_on = Rc::new(std::cell::Cell::new(true));
 		let is_using_fog_of_war = {
-			let f = fog_on.clone();
-			vm.make_closure(move || f.get())
+			let g = self.grid.clone();
+			vm.make_closure(move || g.borrow().fog_on)
 		};
 		let set_fog_of_war = {
-			let f = fog_on.clone();
 			let g = self.grid.clone();
 			vm.make_closure(move |on: bool| {
-				f.set(on);
+				let mut g = g.borrow_mut();
+				g.fog_on = on;
 				if !on {
-					for t in &mut g.borrow_mut().tiles {
+					for t in &mut g.tiles {
 						t.is_discovered = true;
 					}
 				}
@@ -715,10 +727,28 @@ impl WorldGrid {
 				row: t.row,
 				pos: world_layout::tile_pos(t.col, t.row),
 				terrain: t.type_,
+				discovered: t.is_discovered,
 				brush: t.brush.clone(),
 				details: t.details.iter().map(|d| d.borrow().clone()).collect(),
 			})
 			.collect()
+	}
+
+	/// The brush that uncovering stamps into the fog mask (`fog_of_war_mask`).
+	pub fn set_fog_stamp(&self, stamp: FogStamp) {
+		self.grid.borrow_mut().fog.set_stamp(stamp);
+	}
+
+	/// The fog mask's texels changed since the last call, for a renderer to upload.
+	pub fn take_fog_patch(&self) -> Option<FogPatch> {
+		self.grid.borrow_mut().fog.take_patch()
+	}
+
+	/// The fog of war: whether it is on, and the map extent its mask spans (world
+	/// units).
+	pub fn fog_of_war(&self) -> (bool, (f32, f32)) {
+		let g = self.grid.borrow();
+		(g.fog_on, g.fog.world_size())
 	}
 
 	pub fn clear(&self) {
@@ -727,6 +757,13 @@ impl WorldGrid {
 		g.detail_class = None;
 		g.nav_path_class = None;
 	}
+}
+
+/// The world extent the fog mask spans on a `w` × `h` map: the centre of the tile at
+/// axial `(w, h - w / 2)`, just past the last corner (`0x4f4ce7`), truncated.
+fn fog_extent(w: i64, h: i64) -> (f32, f32) {
+	let (x, y) = world_layout::tile_pos(w, h);
+	(x.trunc() as f32, y.trunc() as f32)
 }
 
 /// Mint a `WorldTile` instance at square `(col,row)`, or `None` if off-grid.

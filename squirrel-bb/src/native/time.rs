@@ -97,6 +97,11 @@ impl TimeService {
 		fire_all(vm, due);
 	}
 
+	/// Real time since boot in seconds (`Time.getRealTimeF()`).
+	pub fn real_seconds(&self) -> f64 {
+		self.state.borrow().real_time / 1000.0
+	}
+
 	/// The clocks' share of a save: virtual time and the round. (Real time keeps
 	/// running; scheduled events hold script callbacks and are cleared on load by the
 	/// world state.)

@@ -16,6 +16,7 @@ mod audio;
 mod brushes;
 mod color;
 mod engine_rng;
+pub(crate) mod fog_mask;
 mod display_modes;
 mod identity;
 mod inject;
@@ -61,6 +62,7 @@ pub use vec::{Vec2f, Vec2i};
 pub use world_entities::WorldEntities;
 pub use save::SaveSystem;
 pub use world_grid::WorldGrid;
+pub use fog_mask::{FogPatch, FogStamp, MASK_SIZE as FOG_MASK_SIZE};
 
 use squirrel::SQVM;
 
