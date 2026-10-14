@@ -138,7 +138,12 @@ const STALL: &str = r#"(function() {
 	try {
 		local bar = ::Tactical.TurnSequenceBar;
 		local a = bar.getActiveEntity();
-		s += "round " + bar.getCurrentRound() + ", battle ended " + ::Tactical.State.isBattleEnded();
+		local st = ::Tactical.State;
+		s += "round " + bar.getCurrentRound() + ", battle ended " + st.isBattleEnded();
+		// After the end, the results screen comes from a real-time event (onBattleEnded ->
+		// onBattleEndedDelayed), which waits while the menu stack has backsteps.
+		s += ", menu backsteps " + st.m.MenuStack.hasBacksteps() + ", real-time events " + ::Time.hasEventScheduled(::TimeUnit.Real)
+			+ ", results " + (st.m.TacticalCombatResultScreen != null && st.m.TacticalCombatResultScreen.isVisible());
 		if (a == null) return s + ", no active entity";
 		s += ", active " + a.getName() + " (" + a.getID() + ") turn started " + a.isTurnStarted() + ", done " + a.isTurnDone()
 			+ ", placed " + a.isPlacedOnMap() + ", hp " + a.getHitpoints() + ", AP " + a.getActionPoints()

@@ -38,12 +38,7 @@ fn budget_yields(clock: ExactClock) -> (i64, i64, u32) {
 	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare the campaign");
 	harness::start_new_campaign(&engine).expect("startNewCampaign");
 	harness::install_autoplay(&engine).expect("autoplay");
-	// The scenario's intro event comes 1 s (real time) in; in a battle, its pause would
-	// stop the battle's clock.
-	harness::unpause_world(&engine).expect("unpause");
-	for _ in 0..120 {
-		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
-	}
+	harness::run_past_intro(&engine).expect("past the intro");
 	engine
 		.run_script(
 			r#"

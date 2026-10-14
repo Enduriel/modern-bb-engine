@@ -22,11 +22,8 @@ fn a_webknechts_corpse_twitches() {
 	harness::boot_menu(&engine).expect("boot the menu");
 	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare the campaign");
 	harness::start_new_campaign(&engine).expect("startNewCampaign");
-	harness::unpause_world(&engine).expect("unpause");
-	// Past the scenario's intro event (1 s of real time in).
-	for _ in 0..120 {
-		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
-	}
+	harness::install_autoplay(&engine).expect("autoplay");
+	harness::run_past_intro(&engine).expect("past the intro");
 	engine
 		.run_script(
 			r#"

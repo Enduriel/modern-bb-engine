@@ -246,6 +246,27 @@ pub fn start_new_campaign(engine: &GameEngine) -> Result<(), String> {
 	engine.run_script("::__bootWorldState.startNewCampaign();", "start")
 }
 
+/// Run a new campaign's world past its origin's intro event, if it hasn't shown yet:
+/// every origin shows one 1 s of real time in (`Time.scheduleEvent(Real, 1000, …)`),
+/// and the world pause it brings, were it to come during a battle, stops the battle's
+/// clock (the world's speed is `Time`'s virtual speed), which a player can't be in that
+/// soon. Runs frames until no real-time event is pending and the event screen is
+/// closed, pressing its first button. Does nothing past the intro, so a test that
+/// waited already keeps its timing. [`engage_nearest_hostile`] runs it; a test starting
+/// a battle itself should too (the scripted player refuses a battle so stopped).
+pub fn run_past_intro(engine: &GameEngine) -> Result<(), String> {
+	const PENDING: &str = "(::Time.hasEventScheduled(::TimeUnit.Real) || ::World.State.getEventScreen().isVisible()) ? 1 : 0";
+	const ANSWER: &str = "local s = ::World.State.getEventScreen(); if (s.isVisible() && !s.isAnimating()) s.onButtonPressed(0);";
+	for _ in 0..600 {
+		if crate::tactical_player::eval_i64(engine, PENDING)? != Some(1) {
+			return Ok(());
+		}
+		engine.run_script(ANSWER, "answer the intro")?;
+		run_frame(engine, 1000.0 / 60.0)?;
+	}
+	Err("the origin's intro event was still to come or answer after 10 s".into())
+}
+
 /// Let the world run, as a player does after starting a campaign: unpause, and from
 /// then on let [`run_frame`]'s scripted player answer events.
 pub fn unpause_world(engine: &GameEngine) -> Result<(), String> {
@@ -318,6 +339,10 @@ const AUTOPLAY: &str = r#"
 		}
 		if (!st.isBattleEnded())
 		{
+			// Stopped by a world pause (speed 0, the battle not paused): the origin's intro
+			// event, when the battle began within its 1 s (see `run_past_intro`).
+			if (::Time.getVirtualSpeed() == 0 && !st.isPaused())
+				throw "the battle's clock was stopped by a world pause (the origin's intro event, if the battle began within 1 s of the campaign: run harness::run_past_intro first)";
 			if (::__autoplayPlayer != null)
 			{
 				::__autoplayPlayer();
@@ -372,7 +397,9 @@ const AUTOPLAY: &str = r#"
 /// Put the player next to the nearest hostile party and offer its battle; the
 /// autoplay (installed by [`unpause_world`]) engages, after which the loading screen
 /// shows and the world state starts the combat and hides itself. Run frames to fight.
+/// The world runs past the origin's intro first (see [`run_past_intro`]).
 pub fn engage_nearest_hostile(engine: &GameEngine) -> Result<(), String> {
+	run_past_intro(engine)?;
 	engine.run_script(ENGAGE_NEAREST_HOSTILE, "engage")
 }
 
