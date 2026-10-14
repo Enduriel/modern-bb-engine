@@ -1,0 +1,15 @@
+[package]
+name = "bb-audio"
+version = "0.1.0"
+edition = "2024"
+
+# The game's sound through kira: sounds read from
+# the game's files on first use, played on the device, or for tests on kira's mock
+# backend. Only the codecs the game ships: PCM wav (sounds) and Ogg Vorbis (music).
+[dependencies]
+bb-assets = { path = "../bb-assets" }
+kira = { version = "0.12.5", default-features = false, features = ["cpal", "wav", "pcm", "ogg", "vorbis"] }
+squirrel-bb = { path = "../squirrel-bb" }
+
+[dev-dependencies]
+bb-engine = { path = "../bb-engine" }

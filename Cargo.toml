@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["squirrel", "squirrel-bb", "bb-engine", "bb-assets", "bb-ui", "bb-render", "bb-app"]
+members = ["squirrel", "squirrel-bb", "bb-engine", "bb-assets", "bb-ui", "bb-render", "bb-audio", "bb-app"]
 
 # The Squirrel VM (C, built by cmake) runs every script; unoptimized it makes the
 # real-data integration tests ~5x slower. Optimize just it in dev builds.
