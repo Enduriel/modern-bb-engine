@@ -239,9 +239,11 @@ pub fn world_quads<'a>(
 				[0.0; 2],
 				look,
 			);
-			// Its `Saturation` (the steppe's brush is 0.8).
+			// Its `Saturation` (the steppe's brush is 0.8), and `IgnoreAmbientColor` (a
+			// house's lit windows at night, see [`unlit`]).
 			if let Some(d) = drawables.get_mut(pushed) {
 				d.quad.saturation = detail.saturation as f32;
+				d.quad.flags = unlit(detail.ignore_ambient);
 			}
 		}
 	}
@@ -270,6 +272,7 @@ pub fn world_quads<'a>(
 					[r, g, b]
 				},
 			};
+			let pushed = drawables.len();
 			push(
 				&mut drawables,
 				Layer::Entities,
@@ -280,6 +283,9 @@ pub fn world_quads<'a>(
 				offset,
 				look,
 			);
+			if let Some(d) = drawables.get_mut(pushed) {
+				d.quad.flags = unlit(sprite.ignore_ambient);
+			}
 		}
 	}
 
@@ -527,6 +533,13 @@ impl Look {
 	};
 }
 
+/// The quad flags for a sprite's `IgnoreAmbientColor` (sprite flag bit 27): the original
+/// writes vertex flag 1 for it (`0x52cd82`), and the sprite program leaves a quad with
+/// flags out of the ambient colour (the night's blue, the dawn's orange).
+pub fn unlit(ignore_ambient: bool) -> u32 {
+	u32::from(ignore_ambient)
+}
+
 /// A frame drawn at `anchor` (world units, y up).
 pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
 	let [mut left, mut right, top, bottom] = frame.rect;
@@ -609,6 +622,39 @@ mod tests {
 		let ((s_at, s_width), (b_at, b_width)) = (middle_and_width(shadow), middle_and_width(bird));
 		assert_eq!(s_width, b_width * BIRD_SHADOW_SCALE);
 		assert_eq!(s_at[1], b_at[1] - BIRD_SHADOW_DROP * BIRD_SHADOW_SCALE, "below it, the offset scaled");
+	}
+
+	#[test]
+	fn a_detail_that_ignores_the_ambient_is_unlit() {
+		use squirrel_bb::scene::{SceneDetail, SceneTile};
+		let detail = |brush: &str, ignore_ambient| {
+			let mut detail = SceneDetail::default();
+			detail.brush = brush.into();
+			detail.ignore_ambient = ignore_ambient;
+			detail
+		};
+		let scene = WorldScene {
+			tiles: vec![SceneTile {
+				col: 0,
+				row: 0,
+				pos: (0.0, 0.0),
+				terrain: 2,
+				discovered: true,
+				brush: String::new(),
+				flipped: false,
+				details: vec![detail("rock", false), detail("mark", true)],
+			}],
+			..WorldScene::default()
+		};
+		let view = WorldView {
+			center: [0.0, 0.0],
+			zoom: 1.0,
+			width: 800,
+			height: 600,
+		};
+		let quads = world_quads(&scene, &registry(), &view, WorldFonts::default()).quads;
+		let flags: Vec<_> = quads.iter().map(|q| (crate::test_sprites::name_of(q), q.flags)).collect();
+		assert_eq!(flags, [("rock", 0), ("mark", 1)], "the house's lit windows keep their colour at night");
 	}
 
 	fn frame(rect: [f32; 4]) -> BrushFrame {

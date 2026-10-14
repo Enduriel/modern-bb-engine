@@ -448,6 +448,9 @@ fn draw_entity_sprites(b: &mut Builder, entity: &SceneTacticalEntity, fade: Opti
 		let at = [anchor[0] + sprite.offset.0 * sprite.scale, anchor[1] + sprite.offset.1 * sprite.scale];
 		let before = b.quads.len();
 		b.placed_frame(&sprite.brush, sprite.frame, at, look, sprite.saturation * saturation, level);
+		for quad in &mut b.quads[before..] {
+			quad.flags = crate::world::unlit(sprite.ignore_ambient);
+		}
 		if sprite.highlight_factor != 0.0 {
 			let [ha, hr, hg, hb] = sprite.highlight.to_be_bytes();
 			for quad in &mut b.quads[before..] {
