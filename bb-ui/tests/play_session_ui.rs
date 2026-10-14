@@ -92,30 +92,98 @@ fn new_campaign(p: &Play) -> Result<(), String> {
 	Ok(())
 }
 
-/// Walk the company to the nearest town and into it.
-fn enter_town(p: &Play) -> Result<String, String> {
-	p.script(
-		r#"
-		local player = ::World.State.getPlayer(), best = null, d = 0;
-		foreach (s in ::World.EntityManager.getSettlements())
-		{
-			local dist = s.getTile().getDistanceTo(player.getTile());
-			if (s.isEnterable() && (best == null || dist < d)) { best = s; d = dist; }
+/// Walk the company to the nearest town (with `building`, if given) and into it,
+/// answering what comes up on the way. A town it's in already is left first.
+fn enter_town(p: &Play, building: Option<&str>) -> Result<String, String> {
+	if let Some(b) = building {
+		let here = format!("::World.State.m.WorldTownScreen.isVisible() && ::World.State.getCurrentTown().hasBuilding(\"{b}\") ? 1 : 0");
+		if p.int(&here)? == 1 {
+			return p.text("::World.State.getCurrentTown().getName()");
 		}
+	}
+	if p.int("::World.State.m.WorldTownScreen.isVisible() ? 1 : 0")? == 1 {
+		during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+		p.until("!::World.State.m.WorldTownScreen.isVisible()", STEP)?;
+	}
+	let wanted = building.map_or("null".to_string(), |b| format!("\"{b}\""));
+	p.script(&format!(
+		r#"
+		local player = ::World.State.getPlayer(), best = null, d = 0, wanted = {wanted};
+		foreach (s in ::World.EntityManager.getSettlements())
+		{{
+			if (!s.isEnterable() || (wanted != null && !s.hasBuilding(wanted))) continue;
+			local dist = s.getTile().getDistanceTo(player.getTile());
+			if (best == null || dist < d) {{ best = s; d = dist; }}
+		}}
+		if (best == null) throw "no town with " + wanted;
 		::__town <- best;
-		::World.State.m.AutoEnterLocation = ::WeakTableRef(best);
-		player.setDestination(best.getPos());
-		::World.State.setPause(false);
-		"#,
-	)?;
+		"#
+	))?;
 	let town = p.text("::__town.getName()")?;
-	during(
-		&format!("travelling to {town}"),
-		p.until("::World.State.m.LastEnteredTown != null && ::World.State.m.WorldTownScreen.isVisible()", STEP),
-	)?;
+	let go = r#"
+		local player = ::World.State.getPlayer();
+		::World.State.m.AutoEnterLocation = ::WeakTableRef(::__town);
+		player.setDestination(::__town.getPos());
+		::World.State.setPause(false);
+	"#;
+	let deadline = std::time::Instant::now() + STEP * 3;
+	let mut last = String::new();
+	loop {
+		ensure(std::time::Instant::now() < deadline, format!("still travelling to {town} (facing {last})"))?;
+		if p.int("::World.State.m.LastEnteredTown != null && ::World.State.m.WorldTownScreen.isVisible() && ::World.State.getCurrentTown().getID() == ::__town.getID() ? 1 : 0")? == 1 {
+			break;
+		}
+		let facing = p.text(FACING)?;
+		// Entered, the town screen on its way: head nowhere (a destination set now would
+		// take the company straight back in when it leaves).
+		let entered = p.int("::World.State.m.LastEnteredTown != null ? 1 : 0")? == 1;
+		match facing.as_str() {
+			"map" | "done" if !entered => {
+				p.script(go)?;
+				p.session.step(1000.0 / 60.0)?;
+			}
+			"event" => answer_event(p)?,
+			"town" => {
+				// A town on the way (or the one just left, again): leave it.
+				let here = p.text("::World.State.getCurrentTown() == null ? \"(none)\" : ::World.State.getCurrentTown().getName()")?;
+				p.shot(&format!("passing-{here}"));
+				during(&format!("leaving {here} on the way to {town}"), p.session.click_when_ready("Leave", Duration::from_secs(20)))?;
+				p.until("!::World.State.m.WorldTownScreen.isVisible()", STEP)?;
+			}
+			_ => p.session.step(1000.0 / 60.0)?,
+		}
+		last = facing;
+	}
 	p.session.pump_until(Duration::from_secs(5), |s| !s.animating().unwrap_or(true));
 	p.shot("town");
 	Ok(town)
+}
+
+/// The centre of the `n`th element matching the CSS `css` that the player can see.
+fn nth(p: &Play, css: &str, n: usize) -> Result<(i32, i32), String> {
+	let found = p.session.eval(&format!(
+		r#"(function () {{
+			var seen = [];
+			document.querySelectorAll({css:?}).forEach(function (el) {{
+				if (el.offsetParent === null) return;
+				var r = el.getBoundingClientRect();
+				if (r.width > 0 && r.height > 0) seen.push([Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]);
+			}});
+			return seen.length > {n} ? seen[{n}] : null;
+		}})()"#
+	))?;
+	let v = found.as_array().filter(|a| a.len() == 2).ok_or_else(|| format!("no element {n} of {css:?} on the page"))?;
+	Ok((v[0].as_i64().unwrap_or(0) as i32, v[1].as_i64().unwrap_or(0) as i32))
+}
+
+/// Wait for the crowns to move from `before`, and check they moved by `-cost`.
+fn paid(p: &Play, before: i64, cost: i64, what: &str) -> Result<(), String> {
+	let money = || p.int("::World.Assets.getMoney()");
+	let moved = p.session.pump_until(Duration::from_secs(10), |_| money().is_ok_and(|m| m != before));
+	ensure(moved, format!("{what}: the crowns didn't move"))?;
+	ensure(money()? == before - cost, format!("{what}: {before} - {cost} != {}", money()?))?;
+	println!("{what}: {cost} crowns");
+	Ok(())
 }
 
 /// Where the first item of `owner` ("shop" or "stash") is on the page, and its index.
@@ -162,12 +230,14 @@ fn open_building(p: &Play, id: &str) -> Result<(), String> {
 	during(&format!("clicking the {id}"), p.session.click_when_ready(&format!("css:img.slot{slot}:not(.no-pointer-events)"), STEP))
 }
 
-/// The marketplace: buy the first item on sale, then sell the first item of the
-/// company's, each with a right-click; the crowns move by the item's price.
-fn market(p: &Play) -> Result<(), String> {
-	open_building(p, "building.marketplace")?;
-	during("waiting for the market's goods", settled(p, |p| item_at(p, "shop").is_ok()))?;
-	p.shot("market");
+/// A shop (the marketplace, a weaponsmith, an armourer…): buy the first item on sale,
+/// then sell the first item of the company's, each with a right-click; the crowns move
+/// by the item's price.
+fn shop(p: &Play, building: &str) -> Result<(), String> {
+	enter_town(p, Some(building))?;
+	open_building(p, building)?;
+	during("waiting for the shop's goods", settled(p, |p| item_at(p, "shop").is_ok()))?;
+	p.shot(building);
 	let money = || p.int("::World.Assets.getMoney()");
 	let (x, y, idx) = item_at(p, "shop")?;
 	let price = p.int(&format!("::World.State.getTownScreen().getShopDialogModule().getShop().getStash().getItemAtIndex({idx}).item.getBuyPrice()"))?;
@@ -188,8 +258,70 @@ fn market(p: &Play) -> Result<(), String> {
 	ensure(money()? == before + price, format!("sold {name}: {before} + {price} != {}", money()?))?;
 	p.shot("sold");
 	println!("sold {name} for {price}");
-	during("leaving the market", p.session.click_when_ready("Leave", STEP))?;
+	during("leaving the shop", p.session.click_when_ready("Leave", STEP))?;
 	Ok(())
+}
+
+/// The tavern: pay for a rumour, then for a round; each costs what its building says.
+fn tavern(p: &Play) -> Result<(), String> {
+	enter_town(p, Some("building.tavern"))?;
+	open_building(p, "building.tavern")?;
+	during("waiting for the tavern", settled(p, |p| nth(p, ".l-tavern-button .ui-control", 1).is_ok()))?;
+	p.shot("tavern");
+	let money = || p.int("::World.Assets.getMoney()");
+	let tavern = "::World.State.getCurrentTown().getBuilding(\"building.tavern\")";
+	let rumour = p.int(&format!("{tavern}.getRumorPrice()"))?;
+	let before = money()?;
+	let (x, y) = nth(p, ".l-tavern-button .ui-control", 0)?;
+	p.session.click_at(x, y)?;
+	paid(p, before, rumour, "a rumour")?;
+	p.session.pump_until(Duration::from_secs(1), |_| false);
+	p.shot("rumour");
+	let round = p.int(&format!("{tavern}.getDrinkPrice()"))?;
+	let before = money()?;
+	let (x, y) = nth(p, ".l-tavern-button .ui-control", 1)?;
+	p.session.click_at(x, y)?;
+	paid(p, before, round, "a round")?;
+	p.session.pump_until(Duration::from_secs(1), |_| false);
+	p.shot("round");
+	during("leaving the tavern", p.session.click_when_ready("Leave", STEP))?;
+	Ok(())
+}
+
+/// Pick the first brother in a building's roster list, then the first option for him
+/// (a training, an injury's treatment), which costs `price` (a script expression over
+/// `b`, the brother).
+fn roster_option(p: &Play, building: &str, price: &str, what: &str) -> Result<(), String> {
+	open_building(p, building)?;
+	during("waiting for the roster", settled(p, |p| nth(p, ".list-entry", 0).is_ok()))?;
+	during("picking a brother", p.session.click_when_ready("css:.list-entry", STEP))?;
+	during("waiting for the options", settled(p, |p| nth(p, ".is-injury-row .is-button .ui-control", 0).is_ok()))?;
+	p.shot(building);
+	let id = p.session.eval("jQuery('.list-entry.is-selected').data('entry').ID")?.as_i64().ok_or("no brother selected")?;
+	let cost = p.int(&format!("(function() {{ local b = ::Tactical.getEntityByID({id}); return {price}; }})()"))?;
+	let before = p.int("::World.Assets.getMoney()")?;
+	let (x, y) = nth(p, ".is-injury-row .is-button .ui-control", 0)?;
+	p.session.click_at(x, y)?;
+	paid(p, before, cost, what)?;
+	p.shot(&format!("{building}-done"));
+	during("leaving", p.session.click_when_ready("Leave", STEP))?;
+	Ok(())
+}
+
+/// The training hall: the first brother's sparring fight (80 + 50 per level), after
+/// which he's trained.
+fn training(p: &Play) -> Result<(), String> {
+	enter_town(p, Some("building.training_hall"))?;
+	roster_option(p, "building.training_hall", "::Math.round(80 + 50 * b.getLevel())", "a sparring fight")?;
+	ensure(p.int("(function() { foreach (b in ::World.getPlayerRoster().getAll()) if (b.getSkills().hasSkill(\"effects.trained\")) return 1; return 0; })()")? == 1, "nobody is trained")
+}
+
+/// The temple: a brother with a cut arm has it treated for its price.
+fn temple(p: &Play) -> Result<(), String> {
+	enter_town(p, Some("building.temple"))?;
+	p.script("::World.getPlayerRoster().getAll()[0].getSkills().add(::new(\"scripts/skills/injury/cut_arm_injury\"));")?;
+	roster_option(p, "building.temple", "b.getSkills().getSkillByID(\"injury.cut_arm\").getPrice()", "treating a cut arm")?;
+	ensure(p.int("::World.getPlayerRoster().getAll()[0].getSkills().getSkillByID(\"injury.cut_arm\").isTreated() ? 1 : 0")? == 1, "the cut arm isn't treated")
 }
 
 /// The recruits: pick the first, try them out, then hire them; the crowns go down by
@@ -259,6 +391,15 @@ fn contract(p: &Play) -> Result<(), String> {
 	ensure(money()? == start + advance, format!("the advance: {start} + {advance} != {}", money()?))?;
 	let name = p.text("::World.Contracts.getActiveContract().getName()")?;
 	println!("took {name}, {advance} in advance");
+	Ok(())
+}
+
+/// Answer the event on screen with its first option, as a player in a hurry does.
+fn answer_event(p: &Play) -> Result<(), String> {
+	let event = p.text("::World.Events.hasActiveEvent() ? ::World.Events.m.ActiveEvent.getID() : \"(none)\"")?;
+	let option = p.session.eval("(function () { var b = jQuery('[id^=\"button-\"] .ui-control:visible').first(); return b.length ? b.text().trim() : ''; })()")?.to_text();
+	during(&format!("answering {event} with {option}"), p.session.click_when_ready("css:[id^=\"button-\"] .ui-control", STEP))?;
+	println!("event {event}: {option}");
 	Ok(())
 }
 
@@ -337,7 +478,7 @@ fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), S
 			}
 			p.until("!((\"State\" in ::Tactical) && ::Tactical.State != null)", STEP)?;
 		}
-		"event" => during("answering an event", p.session.click_when_ready("css:[id^=\"button-\"] .ui-control", STEP))?,
+		"event" => answer_event(p)?,
 		"combat" => {
 			// "Engage!" when the company attacks, "To Arms!" when it is attacked.
 			let button = if p.session.shows_text("To Arms!")? { "To Arms!" } else { "Engage!" };
@@ -360,7 +501,8 @@ fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), S
 /// what comes up (see [`answer`]). Ends when the contract is paid.
 fn adventure(p: &Play) -> Result<(), String> {
 	bb_engine::harness::install_autoplay(p.session.engine())?;
-	p.script("::__autoplayFight = true;")?;
+	// The fallen die as the player's (off the roster), as when a player plays the battle.
+	p.script("::__autoplayFight = true; ::__autoplayDieAsPlayers = true;")?;
 	during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
 	let money = || p.int("::World.Assets.getMoney()");
 	let start = money()?;
@@ -424,15 +566,85 @@ fn battle(p: &Play) -> Result<(), String> {
 	Ok(())
 }
 
+/// What the town screen is, as the scripts and the page see it: one line.
+fn town_state(p: &Play) -> String {
+	let sq = p
+		.text(r#"(function() {
+			local w = ::World.State, t = w.m.WorldTownScreen;
+			return "sq town visible " + t.isVisible() + " animating " + t.isAnimating() + " entered "
+				+ (w.m.LastEnteredTown == null ? "none" : w.getCurrentTown().getName()) + " backsteps " + w.m.MenuStack.hasBacksteps()
+				+ " world screen " + w.m.WorldScreen.isVisible();
+		})()"#)
+		.unwrap_or_else(|e| e);
+	let page = p
+		.session
+		.eval("(function () { var t = jQuery('.world-town-screen'); return 'page town display ' + t.css('display') + ' opacity ' + t.css('opacity') + ', velocity ticking ' + (jQuery.Velocity && jQuery.Velocity.State.isTicking) + ' calls ' + (jQuery.Velocity ? jQuery.Velocity.State.calls.filter(function (c) { return !!c; }).length : -1) + ', buttons ' + jQuery('.ui-control:visible').length; })()")
+		.map(|v| v.to_text())
+		.unwrap_or_else(|e| e);
+	format!("{sq}; {page}")
+}
+
+/// Print the town screen's state each frame for `frames` frames.
+fn trace_town(p: &Play, what: &str, frames: u32) -> Result<(), String> {
+	for f in 0..frames {
+		println!("[{what} +{f}] {}", town_state(p));
+		p.session.step(1000.0 / 60.0)?;
+	}
+	Ok(())
+}
+
+/// For the page owner: enter a town, leave it, and on the next frame head straight back
+/// in, as a player clicking the town again does. The town screen should show again.
+fn town_reentry(p: &Play) -> Result<(), String> {
+	let town = enter_town(p, None)?;
+	println!("[reentry] in {town}: {}", town_state(p));
+	during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+	trace_town(p, "left", 3)?;
+	p.script("local pl = ::World.State.getPlayer(); ::World.State.m.AutoEnterLocation = ::WeakTableRef(::__town); pl.setDestination(::__town.getPos()); ::World.State.setPause(false);")?;
+	trace_town(p, "back", 120)?;
+	p.shot("reentered");
+	during("the town again", p.session.click_when_ready("Leave", Duration::from_secs(20)))
+}
+
+/// Enter a town, open the tavern and leave it, then leave the town, tracing the town
+/// screen frame by frame: the town screen should go and stay gone.
+fn town_leave(p: &Play) -> Result<(), String> {
+	enter_town(p, Some("building.tavern"))?;
+	open_building(p, "building.tavern")?;
+	during("waiting for the tavern", settled(p, |p| nth(p, ".l-tavern-button .ui-control", 1).is_ok()))?;
+	during("leaving the tavern", p.session.click_when_ready("Leave", STEP))?;
+	trace_town(p, "tavern left", 30)?;
+	during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+	trace_town(p, "town left", 120)?;
+	ensure(p.int("::World.State.m.WorldTownScreen.isVisible() || ::World.State.m.LastEnteredTown != null ? 1 : 0")? == 0, "still in town")
+}
+
 fn play(p: &Play) -> Result<(), String> {
+	match std::env::var("PLAY_ONLY").as_deref() {
+		Ok("town_reentry") => {
+			new_campaign(p)?;
+			return town_reentry(p);
+		}
+		Ok("town_leave") => {
+			new_campaign(p)?;
+			return town_leave(p);
+		}
+		_ => {}
+	}
 	new_campaign(p)?;
-	let town = enter_town(p)?;
+	// No battles until the page's result screen stops stalling (the Velocity stall):
+	// nobody attacks the company.
+	p.script("local pl = ::World.State.getPlayer(); pl.m.IsAttackable = false; pl.m.IsAttackableByAI = false;")?;
+	let town = enter_town(p, None)?;
 	println!("entered {town}");
-	market(p)?;
+	shop(p, "building.marketplace")?;
 	hire(p)?;
-	contract(p)?;
-	adventure(p)?;
-	battle(p)?;
+	tavern(p)?;
+	training(p)?;
+	temple(p)?;
+	for smith in ["building.weaponsmith", "building.armorsmith"] {
+		shop(p, smith)?;
+	}
 	let problems: Vec<String> = p
 		.session
 		.log()
