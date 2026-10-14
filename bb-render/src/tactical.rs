@@ -197,7 +197,7 @@ fn draw_tile(b: &mut Builder, scene: &TacticalScene, tile: &SceneTacticalTile) {
 	let (px, py) = (tile.pos.0 as f32, tile.pos.1 as f32);
 	// The hex's base, from which the original lays out its quads.
 	let base = py - HEX_H / 2.0;
-	let saturation = if tile.fogged { FOGGED_SATURATION } else { 1.0 };
+	let saturation = if tile.visible { 1.0 } else { FOGGED_SATURATION };
 	let (q, r) = axial(tile);
 	let neighbour = |(_, (dq, dr)): (i64, (i64, i64))| {
 		tile_at(scene, q + dq, r + dr).filter(|t| !t.brush.is_empty())
@@ -341,7 +341,7 @@ fn draw_dressing(
 ) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
-	let hidden = if tile.fogged { FOGGED_SATURATION } else { 1.0 };
+	let hidden = if tile.visible { 1.0 } else { FOGGED_SATURATION };
 	for detail in &tile.details {
 		let [a, r, g, b_] = detail.color.to_be_bytes();
 		let look = Look {
@@ -366,7 +366,7 @@ fn draw_dressing(
 		};
 		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
-	for entity in standing.iter().filter(|e| !tile.fogged || e.visible_in_fog) {
+	for entity in standing.iter().filter(|e| tile.visible || e.visible_in_fog) {
 		draw_entity_sprites(b, entity, Some(fade), hidden, level);
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
@@ -677,7 +677,7 @@ mod tests {
 		registry
 	}
 
-	fn tile(col: i64, fogged: bool) -> SceneTacticalTile {
+	fn tile(col: i64, visible: bool) -> SceneTacticalTile {
 		SceneTacticalTile {
 			col,
 			row: 0,
@@ -688,7 +688,7 @@ mod tests {
 			blend_priority: 0,
 			brush: "tile".into(),
 			color: 0xffff_ffff,
-			fogged,
+			visible,
 			details: Vec::new(),
 		}
 	}
@@ -736,7 +736,7 @@ mod tests {
 		let scene = TacticalScene {
 			width: 2,
 			height: 1,
-			tiles: vec![tile(0, true), tile(1, false)],
+			tiles: vec![tile(0, false), tile(1, true)],
 			entities: vec![entity(1, 0, "unit", false, false), entity(2, 0, "rock", true, false), entity(3, 1, "unit", false, false)],
 			..TacticalScene::default()
 		};
@@ -753,7 +753,7 @@ mod tests {
 		let scene = TacticalScene {
 			width: 2,
 			height: 1,
-			tiles: vec![tile(0, true), tile(1, false)],
+			tiles: vec![tile(0, false), tile(1, true)],
 			entities: vec![entity(1, 0, "unit", false, true), entity(2, 1, "rock", true, false)],
 			..TacticalScene::default()
 		};

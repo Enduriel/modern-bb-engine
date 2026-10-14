@@ -73,6 +73,20 @@ fn a_battle_map_is_ready_to_draw() {
 	assert!(scene.entities.iter().filter(|e| e.is_actor).all(|e| !e.visible_in_fog), "actors hide in the fog");
 	assert!(scene.entities.iter().filter(|e| !e.is_actor).all(|e| e.visible_in_fog), "objects show in it");
 	assert!(scene.entities.iter().any(|e| !e.is_actor), "the map has objects");
+	// The player sees the tiles its units stand on, and not the whole map.
+	engine
+		.run_script(
+			"::__ids <- \"\"; \
+			 foreach (a in ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player)) ::__ids += a.getID() + \",\";",
+			"player units",
+		)
+		.expect("player units");
+	let ids = squirrel::SqTable::root(engine.vm()).get::<String>("__ids").expect("ids");
+	let ids: Vec<i64> = ids.split(',').filter(|s| !s.is_empty()).map(|s| s.parse().expect("id")).collect();
+	let player_tiles: Vec<usize> = scene.entities.iter().filter(|e| ids.contains(&e.id)).filter_map(|e| e.tile).collect();
+	assert!(!player_tiles.is_empty(), "the player's units are on the map");
+	assert!(player_tiles.iter().all(|&t| scene.tiles[t].visible), "the player sees its units' tiles");
+	assert!(scene.tiles.iter().any(|t| !t.visible), "some of the map is out of sight");
 	engine
 		.run_script(
 			&format!(

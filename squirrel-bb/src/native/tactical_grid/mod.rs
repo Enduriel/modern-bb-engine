@@ -463,7 +463,7 @@ impl TacticalGrid {
 				blend_priority: t.blend_priority,
 				brush: t.brush.clone(),
 				color: t.color,
-				fogged: t.fogged,
+				visible: t.vis_mask.contains(visibility::PLAYER),
 				details: t
 					.details
 					.iter()

@@ -148,8 +148,10 @@ pub struct SceneTacticalTile {
 	pub brush: String,
 	/// ARGB (`tile.setColor`).
 	pub color: u32,
-	/// Seen before by the player but not now.
-	pub fogged: bool,
+	/// The player sees it now (the player's bit in its visibility mask, `tile+0xc0 & 2`).
+	/// Out of sight, a tile and what's on it draw desaturated, and units on it aren't
+	/// drawn; that includes a tile nobody has seen yet.
+	pub visible: bool,
 	/// Its details, in spawn order.
 	pub details: Vec<SceneTacticalDetail>,
 }
