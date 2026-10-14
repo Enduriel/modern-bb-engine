@@ -57,6 +57,8 @@ pub struct WorldRenderer {
 	water: WaterPass,
 	/// Seconds of real and virtual time, for the fog's and the water's drift.
 	clock: Clock,
+	/// Whether a battle draws with the depth of field (see [`WorldRenderer::set_depth_of_field`]).
+	depth_of_field: bool,
 }
 
 /// The game's clocks, in seconds.
@@ -115,6 +117,7 @@ impl WorldRenderer {
 			fog: FogPass::new(gpu),
 			water: WaterPass::new(gpu),
 			clock: Clock::default(),
+			depth_of_field: false,
 		}
 	}
 
@@ -126,6 +129,15 @@ impl WorldRenderer {
 	/// The game's clocks: the fog drifts with real time, the water with virtual time.
 	pub fn set_clock(&mut self, clock: Clock) {
 		self.clock = clock;
+	}
+
+	/// Draw battles with the depth of field (off until set, as the original's default):
+	/// the video mode's `DepthOfField`. The original draws a battle's tiles with its `SpriteDOF`
+	/// program while it's on, and with the plain `Sprite` program while it's off (the
+	/// tile layer's flag 4, which `setVideoMode` sets, `0x500905`, and the draw reads,
+	/// `0x557cc0`). Its default is off (`0x499d93`).
+	pub fn set_depth_of_field(&mut self, on: bool) {
+		self.depth_of_field = on;
 	}
 
 	/// Start loading `paths` (the scripts' hints) in the background. Only images are
@@ -288,7 +300,7 @@ impl WorldRenderer {
 			ambient_color: argb_floats(scene.light.color),
 			ambient_saturation: scene.light.saturation,
 			camera_level: scene.camera.level.clamp(0, 3) as f32,
-			dof_strength: crate::tactical::DOF_STRENGTH,
+			dof_strength: crate::tactical::dof_strength(self.depth_of_field),
 			..view.uniforms()
 		};
 		self.draw_quads(gpu, target, &map, &uniforms, Some(CLEAR), atlases)

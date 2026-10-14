@@ -165,6 +165,7 @@ impl Game {
 			real: engine.time().real_seconds() as f32,
 			virtual_time: engine.time().virtual_seconds() as f32,
 		});
+		self.renderer.set_depth_of_field(engine.video().mode().depth_of_field);
 		let (width, height) = (target.width, target.height);
 		// The screen the scripts think in maps onto the frame.
 		let fit = width as f32 / self.screen().0 as f32;

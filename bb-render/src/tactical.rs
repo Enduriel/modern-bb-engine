@@ -53,6 +53,12 @@ const LEVEL_SHADE: f32 = 0.1;
 const WALL_TOP_GRACE: f32 = 2.6;
 /// The depth of field's strength (`sprite_dof.vs`, `DOF_STRENGTH`).
 pub const DOF_STRENGTH: f32 = 0.25;
+
+/// The depth of field's strength with it on or off: off, the plain sprite program,
+/// which draws every level sharp.
+pub fn dof_strength(on: bool) -> f32 {
+	if on { DOF_STRENGTH } else { 0.0 }
+}
 /// The saturation of a tile the player doesn't see now, and of everything on it: its
 /// details and what stands there (the original's tile, detail and entity draws,
 /// `0x4b94bf`, `0x4bc8df`, `0x4c3379`, by the tile's player visibility bit).
@@ -696,6 +702,12 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_depth_of_field_is_on_or_off() {
+		assert_eq!(dof_strength(true), DOF_STRENGTH);
+		assert_eq!(dof_strength(false), 0.0, "the plain sprite program: every level sharp");
+	}
 
 	#[test]
 	fn shading_keeps_alpha_and_truncates() {
