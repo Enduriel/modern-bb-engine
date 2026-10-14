@@ -319,10 +319,13 @@ impl WorldRenderer {
 			})
 			.collect();
 		stats.quads = quads.len();
-		// The battle's light (the weather's `setAmbientLighting*`).
+		// The battle's light (the weather's `setAmbientLighting*`), and the depth of
+		// field below the camera's level.
 		let uniforms = SceneUniforms {
 			ambient_color: argb_floats(scene.light.color),
 			ambient_saturation: scene.light.saturation,
+			camera_level: scene.camera.level.clamp(0, 3) as f32,
+			dof_strength: crate::tactical::DOF_STRENGTH,
 			..view.uniforms()
 		};
 		self.sprites
