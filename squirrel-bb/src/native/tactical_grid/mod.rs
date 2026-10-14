@@ -468,6 +468,21 @@ impl TacticalGrid {
 			})
 		};
 
+		// Tactical.screenToTile(x, y): the tile under a screen pixel (clicks).
+		let screen_to_tile = {
+			let g = self.grid.clone();
+			vm.make_closure(move |vm: &SQVM, x: Number, y: Number| -> Result<SqStrongRef, String> {
+				let mut g = g.borrow_mut();
+				let (wx, wy) = camera::screen_to_world(&g.camera, vm, x.0, y.0);
+				let masks = g.hex_masks().ok_or("screenToTile: the game data has no gfx/masks/hex_mask.0-3")?;
+				let (q, r) = picking::world_to_tile(&g, &masks, g.camera.level, wx, wy);
+				let mut t = SqTable::new(vm);
+				t.set("X", q);
+				t.set("Y", r);
+				Ok(t.to_strong())
+			})
+		};
+
 		let resize = {
 			let g = self.grid.clone();
 			vm.make_closure(move |w: i64, h: i64| g.borrow_mut().reset(w, h))
@@ -569,6 +584,7 @@ impl TacticalGrid {
 		tactical.set(&overload_key("tileToWorld", 2), tile_to_world_2);
 		tactical.set("tileToWorld", tile_to_world_dispatch);
 		tactical.set("worldToTile", world_to_tile);
+		tactical.set("screenToTile", screen_to_tile);
 		tactical.set("getCamera", get_camera);
 		tactical.set("calculateTacticalValuesForTerrain", calculate_tv);
 		for (name, f) in queries {

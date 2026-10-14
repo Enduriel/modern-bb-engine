@@ -1,13 +1,14 @@
 //! `Tactical.getCamera()`: the battle camera, headless. It moves instantly, so the AI's
 //! waits on it (`agent.IsCameraReady`) always pass: it is never moving, always centred,
-//! and everything is on screen.
+//! and everything is on screen. Its position (what's at the centre of the screen) is
+//! real, for `screenToWorld` and `Tactical.screenToTile`, which turn clicks into tiles.
 //!
 //! Its `Level` (how many height levels are drawn raised) is logic, not just looks:
 //! picking (`Tactical.worldToTile`) treats tiles above it as lower. Scripts set it
 //! from `getBestLevelForTile` as the action moves, and the battle starts with
 //! `setLevelToHighestOnMap`; both are the original's, disassembled.
 
-use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::{Grid, TacticalGridState, TileHandle};
 
@@ -16,6 +17,8 @@ pub(crate) struct CameraState {
 	pub level: i64,
 	pub zoom: f64,
 	pub flipped: bool,
+	/// The world position at the centre of the screen.
+	pub pos: (f64, f64),
 	/// The entities with an orientation overlay (the arrow the UI shows for a unit off
 	/// screen), by id, in the order they were added.
 	pub overlays: Vec<i64>,
@@ -27,6 +30,7 @@ impl Default for CameraState {
 			level: 0,
 			zoom: 1.0,
 			flipped: false,
+			pos: (0.0, 0.0),
 			overlays: Vec::new(),
 		}
 	}
@@ -52,6 +56,32 @@ fn overlay_states(vm: &SQVM, overlays: &[i64]) -> SqStrongRef {
 		list.push(overlay.to_strong());
 	}
 	list.to_strong()
+}
+
+/// The screen size (`Settings.getVideoMode()`), 1920x1080 if unreadable.
+fn screen_size(vm: &SQVM) -> (f64, f64) {
+	let mode = SqTable::root(vm)
+		.get::<SqTable>("Settings")
+		.and_then(|s| s.get::<SqStrongRef>("getVideoMode"))
+		.and_then(|f| f.call_ret::<SqStrongRef, _>(vm, ()).ok().flatten());
+	let dim = |name: &str| mode.as_ref().and_then(|m| m.get_member::<Number>(vm, name)).map(|n| n.0);
+	(dim("Width").unwrap_or(1920.0), dim("Height").unwrap_or(1080.0))
+}
+
+/// `screenToWorld(x, y)`: the world point under screen pixel `(x, y)`, the camera's
+/// position being the centre of the screen.
+pub(super) fn screen_to_world(camera: &CameraState, vm: &SQVM, x: f64, y: f64) -> (f64, f64) {
+	let (w, h) = screen_size(vm);
+	(camera.pos.0 + (x - w / 2.0) * camera.zoom, camera.pos.1 + (h / 2.0 - y) * camera.zoom)
+}
+
+/// A position read from a vector or from `entity.getPos()`.
+fn pos_of(vm: &SQVM, value: &SqStrongRef) -> Option<(f64, f64)> {
+	let v = match value.call_method_ret::<SqStrongRef, _>(vm, "getPos", ()) {
+		Ok(Some(p)) => p,
+		_ => value.clone(),
+	};
+	Some((v.get_member::<Number>(vm, "X")?.0, v.get_member::<Number>(vm, "Y")?.0))
 }
 
 /// The lowest and highest camera levels.
@@ -136,7 +166,25 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 		.method("isInsideScreen", |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| true)
 		.method("isMoving", |_c: &mut CameraHandle| false)
 		.method("isMovingToTile", |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| false)
-		.method("getPos", |_c: &mut CameraHandle, vm: &SQVM| super::vec(vm, (0.0, 0.0)))
+		.method("getPos", |c: &mut CameraHandle, vm: &SQVM| super::vec(vm, c.0.borrow().camera.pos))
+		// Moves are instant: to a position, a tile or an entity.
+		.method("setPos", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
+			if let Some(p) = pos_of(vm, &pos.0) {
+				c.0.borrow_mut().camera.pos = p;
+			}
+		})
+		.method("moveToTile", |c: &mut CameraHandle, tile: Native<TileHandle>| {
+			let p = c.0.borrow().tiles[tile.0.id].world_pos();
+			c.0.borrow_mut().camera.pos = p;
+		})
+		.method("moveToTileSlowly", |c: &mut CameraHandle, tile: Native<TileHandle>| {
+			let p = c.0.borrow().tiles[tile.0.id].world_pos();
+			c.0.borrow_mut().camera.pos = p;
+		})
+		.method("screenToWorld", |c: &mut CameraHandle, vm: &SQVM, x: Number, y: Number| {
+			let p = screen_to_world(&c.0.borrow().camera, vm, x.0, y.0);
+			super::vec(vm, p)
+		})
 		// The orientation overlays (orientation_overlay.nut): `addEntityOverlay` gets
 		// `{ entity, image }`, `removeEntityOverlay` the entity.
 		.method("addEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, overlay: Retained| {
@@ -160,11 +208,17 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 			let overlays = c.0.borrow().camera.overlays.clone();
 			overlay_states(vm, &overlays)
 		});
+	for name in ["jumpTo", "moveTo", "moveToExactly"] {
+		b = b.method(name, |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
+			if let Some(p) = a.first().and_then(|e| pos_of(vm, &e.0)) {
+				c.0.borrow_mut().camera.pos = p;
+			}
+		});
+	}
 	// Moves, zoom, shakes and the overlays' screen positions: visual only.
 	for name in [
-		"registerCallbacks", "unregisterCallbacks", "quake", "zoomBy", "zoomTo", "move", "moveToExactly",
-		"climbBy", "update", "render", "updateEntityOverlays", "cancelMovement", "setPos", "moveTo", "jumpTo",
-		"moveToTile", "moveToTileSlowly",
+		"registerCallbacks", "unregisterCallbacks", "quake", "zoomBy", "zoomTo", "move", "climbBy", "update",
+		"render", "updateEntityOverlays", "cancelMovement",
 	] {
 		b = b.method(name, |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| {});
 	}
