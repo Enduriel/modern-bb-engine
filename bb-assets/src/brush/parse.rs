@@ -54,7 +54,7 @@ fn read_sprite(r: &mut Reader) -> Result<BrushSprite, String> {
 	let height = r.i32("height")?;
 	let offset_x = r.i16("offset x")?;
 	let offset_y = r.i16("offset y")?;
-	let unknown_level = r.i8("level")?;
+	let depth_bias = r.i8("level")?;
 	let frame_time_ms = r.u32("frame time")?;
 	let unknown_pause = [r.u16("pause")?, r.u16("pause")?];
 	let rotation_speed = r.f32("rotation speed")?;
@@ -85,7 +85,7 @@ fn read_sprite(r: &mut Reader) -> Result<BrushSprite, String> {
 		height,
 		offset_x,
 		offset_y,
-		unknown_level,
+		depth_bias,
 		frame_time_ms,
 		unknown_pause,
 		rotation_speed,
@@ -109,7 +109,7 @@ mod tests {
 		let mut original = sprite("bust_head_01");
 		original.offset_x = -3;
 		original.offset_y = 7;
-		original.unknown_level = -16;
+		original.depth_bias = -16;
 		original.frame_time_ms = 200;
 		original.unknown_pause = [800, 9000];
 		original.rotation_speed = 12.5;

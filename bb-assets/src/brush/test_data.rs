@@ -13,7 +13,7 @@ pub(crate) fn sprite(name: &str) -> BrushSprite {
 		height: 10,
 		offset_x: 0,
 		offset_y: 0,
-		unknown_level: 0,
+		depth_bias: 0,
 		frame_time_ms: 100,
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,
@@ -77,7 +77,7 @@ impl SheetBuilder {
 			out.extend_from_slice(&s.height.to_le_bytes());
 			out.extend_from_slice(&s.offset_x.to_le_bytes());
 			out.extend_from_slice(&s.offset_y.to_le_bytes());
-			out.push(s.unknown_level as u8);
+			out.push(s.depth_bias as u8);
 			out.extend_from_slice(&s.frame_time_ms.to_le_bytes());
 			for value in s.unknown_pause {
 				out.extend_from_slice(&value.to_le_bytes());

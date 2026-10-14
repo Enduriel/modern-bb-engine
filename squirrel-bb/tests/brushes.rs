@@ -25,7 +25,7 @@ fn sprite(name: &str) -> BrushSprite {
 		height: 1,
 		offset_x: 0,
 		offset_y: 0,
-		unknown_level: 0,
+		depth_bias: 0,
 		frame_time_ms: 100,
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,

@@ -90,9 +90,10 @@ pub struct BrushSprite {
 	pub offset_x: i16,
 	/// Vertical draw offset in pixels.
 	pub offset_y: i16,
-	/// Unknown. 0 on most sprites, -16 to -1 on corpse parts (`*_dead`), 3 to 32 on
-	/// ground details.
-	pub unknown_level: i8,
+	/// Added to a detail's draw-order key, `int(y) + depth_bias + z level`
+	/// (`spawnDetail`, `0x4fb707`). 0 on most sprites, -16 to -1 on corpse parts
+	/// (`*_dead`), 3 to 32 on ground details.
+	pub depth_bias: i8,
 	/// Time per animation frame in ms: 100 by default, 50 on the 10-frame attack
 	/// cursor, 200 on the 3-frame birds.
 	pub frame_time_ms: u32,
