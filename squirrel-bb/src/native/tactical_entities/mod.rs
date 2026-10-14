@@ -33,7 +33,8 @@ mod render;
 mod vision;
 use crate::module::Instantiator;
 use crate::native::spin::Spin;
-use crate::native::sprite_color::real_time;
+use crate::native::prng::Prng;
+use crate::native::sprite_color::{self, SpriteColor, real_time};
 use crate::native::{EntityIds, Sprites};
 
 /// The player company roster's id (real faction/settlement roster ids are >= 0).
@@ -63,18 +64,17 @@ fn roster_id(vm: &SQVM, id: &Retained) -> i64 {
 
 /// A render sprite handle for a tactical unit. Richer than the world sprite (units read
 /// more back): also `Rotation`, `Color`, `HasBrush`, `getBrush` and
-/// `setHorizontalFlipping`. `varyColor`/`varySaturation` and the fades are still no-ops
-/// here (the fades' faithful, draw-time semantics live in `SpriteColor`, used by world
-/// sprites and tactical details).
+/// `setHorizontalFlipping`. Its colour and fades are a [`SpriteColor`], as the world's
+/// sprites' are, and `Tactical.render()` draws them (see `render`).
 #[derive(Clone)]
 struct UnitSpriteData {
 	brush: String,
-	/// `Color` (ARGB). Skeletons copy their body's into their blood colour.
-	color: u32,
+	/// `Color` (ARGB; `Alpha` is its top byte) and its fade. Skeletons copy their body's
+	/// into their blood colour.
+	color: SpriteColor,
 	/// From the unit's position, in world units with y up (`setSpriteOffset`, the
 	/// sprite's `setOffset`).
 	offset: (f64, f64),
-	alpha: f64,
 	scale: f64,
 	rotation: f64,
 	saturation: f64,
@@ -90,7 +90,6 @@ struct UnitSpriteData {
 	highlight_factor: f64,
 	finished: bool,
 	fading: bool,
-	fading_done: bool,
 	/// Its `Torque` (see `spin`).
 	spin: Spin,
 	ignore_ambient: bool,
@@ -106,9 +105,8 @@ impl UnitSpriteData {
 	fn fresh() -> Self {
 		UnitSpriteData {
 			brush: String::new(),
-			color: 0xffff_ffff,
+			color: SpriteColor::default(),
 			offset: (0.0, 0.0),
-			alpha: 255.0,
 			scale: 1.0,
 			rotation: 0.0,
 			saturation: 1.0,
@@ -123,7 +121,6 @@ impl UnitSpriteData {
 			highlight_factor: 0.0,
 			finished: false,
 			fading: false,
-			fading_done: true,
 			spin: Spin::default(),
 			ignore_ambient: false,
 			ignore_camera_flip: false,
@@ -300,14 +297,15 @@ fn spawn(machine: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, path: &str) -> Resul
 }
 
 /// Build the unit sprite class. Brushes resolve through `sprites` (see
-/// [`Sprites::resolve`]).
-fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteData> {
+/// [`Sprites::resolve`]); `vary…` draw from the C runtime's `rand()`, `crt`.
+fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<UnitSpriteData> {
 	let (set_with, get_with) = (sprites.clone(), sprites.clone());
+	let (crt_color, crt_brightness, crt_saturation) = (crt.clone(), crt.clone(), crt);
 	ClassBuilder::<UnitSpriteData>::new("TacticalUnitSprite")
 		.property(
 			"Alpha",
-			|s: &UnitSpriteData| s.alpha,
-			|s: &mut UnitSpriteData, v: f64| s.alpha = v,
+			|s: &UnitSpriteData| s.color.alpha(),
+			|s: &mut UnitSpriteData, v: i64| s.color.set_alpha(v),
 		)
 		.property(
 			"Scale",
@@ -356,9 +354,9 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 		)
 		.property_obj_rw(
 			"Color",
-			|s: &UnitSpriteData, vm: &SQVM| super::color::color_object(vm, s.color),
+			|s: &UnitSpriteData, vm: &SQVM| super::color::color_object(vm, s.color.color),
 			|s: &mut UnitSpriteData, vm: &SQVM, v: SqStrongRef| {
-				s.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
+				s.color.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
 				Ok(())
 			},
 		)
@@ -384,7 +382,7 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 		.property("HighlightFactor", |s: &UnitSpriteData| s.highlight_factor, |s: &mut UnitSpriteData, v: f64| s.highlight_factor = v)
 		.property("Finished", |s: &UnitSpriteData| s.finished, |s: &mut UnitSpriteData, v: bool| s.finished = v)
 		.property("Fading", |s: &UnitSpriteData| s.fading, |s: &mut UnitSpriteData, v: bool| s.fading = v)
-		.property("IsFadingDone", |s: &UnitSpriteData| s.fading_done, |s: &mut UnitSpriteData, v: bool| s.fading_done = v)
+		.property("IsFadingDone", |s: &UnitSpriteData| s.color.is_fading_done(), |_s: &mut UnitSpriteData, _v: bool| {})
 		.property(
 			"Torque",
 			|s: &UnitSpriteData| f64::from(s.spin.torque),
@@ -392,32 +390,41 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 		)
 		.property("IgnoreAmbientColor", |s: &UnitSpriteData| s.ignore_ambient, |s: &mut UnitSpriteData, v: bool| s.ignore_ambient = v)
 		.property("IgnoreCameraFlip", |s: &UnitSpriteData| s.ignore_camera_flip, |s: &mut UnitSpriteData, v: bool| s.ignore_camera_flip = v)
-		// Animation and fades are visual; a fade that hides does so at once headless.
-		.method("fadeOutAndHide", |s: &mut UnitSpriteData, _a: Variadic<Retained>| s.visible = false)
+		// Fades run on real time and finish when the sprite is drawn (see `SpriteColor`).
+		.method("fadeIn", |s: &mut UnitSpriteData, vm: &SQVM, ms: i64| s.color.fade_in(ms, real_time(vm)))
+		.method("fadeOut", |s: &mut UnitSpriteData, vm: &SQVM, ms: i64| {
+			s.color.fade_out(ms, real_time(vm), false)
+		})
+		.method("fadeOutAndHide", |s: &mut UnitSpriteData, vm: &SQVM, ms: i64| {
+			s.color.fade_out(ms, real_time(vm), true)
+		})
+		.method("fadeToAlpha", |s: &mut UnitSpriteData, vm: &SQVM, alpha: i64, ms: i64| {
+			s.color.fade_to_alpha(alpha, ms, real_time(vm))
+		})
+		.method("fade", |s: &mut UnitSpriteData, vm: &SQVM, color: SqStrongRef, ms: i64| -> Result<(), String> {
+			let target = super::color::color_argb(vm, &color).ok_or("fade: not a color")?;
+			s.color.fade_to(target, ms, real_time(vm), false);
+			Ok(())
+		})
 		.method("play", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method("stop", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method("finish", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("fade", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("fadeIn", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("fadeOut", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("fadeToAlpha", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method("setOffset", |s: &mut UnitSpriteData, vm: &SQVM, offset: Retained| {
 			let c = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
 			s.offset = (c("X"), c("Y"));
 		})
-		.method("varyColor", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method(
-			"varySaturation",
-			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| {},
-		)
-		.method(
-			"varyBrightness",
-			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| {},
-		)
-		.method(
-			"setBrightness",
-			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| {},
-		)
+		// The colour changes once (see `sprite_color`): nothing is kept to draw with.
+		.method("varyColor", move |s: &mut UnitSpriteData, r: f64, g: f64, b: f64| {
+			let rand = [crt_color.rand_default(), crt_color.rand_default(), crt_color.rand_default()];
+			s.color.color = sprite_color::vary_color(s.color.color, [r as f32, g as f32, b as f32], rand);
+		})
+		.method("varySaturation", move |s: &mut UnitSpriteData, v: f64| {
+			s.saturation = f64::from(sprite_color::vary_saturation(s.saturation as f32, v as f32, crt_saturation.rand_default()));
+		})
+		.method("varyBrightness", move |s: &mut UnitSpriteData, v: f64| {
+			s.color.color = sprite_color::vary_brightness(s.color.color, v as f32, crt_brightness.rand_default());
+		})
+		.method("setBrightness", |s: &mut UnitSpriteData, b: f64| s.color.color = sprite_color::brighten(s.color.color, b as f32))
 		.build(vm)
 }
 
@@ -613,7 +620,9 @@ impl TacticalEntities {
 	/// `&mut SQVM`, after the `World` table exists.
 	pub fn install(&self, vm: &mut SQVM) {
 		let sprites = self.machine.borrow().sprites.clone();
-		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites));
+		// The C runtime's rand(), which the battle's pools also draw.
+		let crt = self.machine.borrow().effects.as_ref().map_or_else(Prng::new, |e| e.borrow().crt());
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites, crt));
 
 		// --- injected unit methods (recover the record via this_identity) ---
 		let get_id = {
@@ -1144,7 +1153,7 @@ impl TacticalEntities {
 		class
 			.with_payload(vm, handle, |s| crate::native::battle_effects::LayerLook {
 				brush: s.brush.clone(),
-				color: (s.color & 0x00ff_ffff) | ((s.alpha.clamp(0.0, 255.0) as u32) << 24),
+				color: s.color.shown(real_time(vm)),
 				saturation: s.saturation as f32,
 				scale: s.scale as f32,
 				flipped: s.flipped,
@@ -1177,7 +1186,7 @@ impl TacticalEntities {
 						class.with_payload(vm, handle, |s| crate::scene::tactical::SceneTacticalSprite {
 							name: name.clone(),
 							brush: s.brush.clone(),
-							color: (s.color & 0x00ff_ffff) | ((s.alpha.clamp(0.0, 255.0) as u32) << 24),
+							color: s.color.shown(now),
 							scale: s.scale as f32,
 							rotation: s.rotation as f32,
 							saturation: s.saturation as f32,
@@ -1206,7 +1215,7 @@ impl TacticalEntities {
 				class.with_payload(vm, handle, |s| crate::scene::PortraitSprite {
 					name: name.clone(),
 					brush: s.brush.clone(),
-					color: s.color,
+					color: s.color.color,
 					scale: s.scale as f32,
 					rotation: s.rotation as f32,
 					saturation: s.saturation as f32,

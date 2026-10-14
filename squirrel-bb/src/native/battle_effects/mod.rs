@@ -147,6 +147,11 @@ impl BattleEffects {
 		self.rng.clone()
 	}
 
+	/// The C runtime's `rand()`, which sprites' `vary…` also draw.
+	pub fn crt(&self) -> Prng {
+		self.crt.clone()
+	}
+
 	pub fn spawn_projectile(&mut self, projectile: Projectile) {
 		self.projectiles.push(projectile);
 	}

@@ -41,7 +41,6 @@ pub(crate) struct DetailData {
 	pub spin: Spin,
 	pub scale: f32,
 	pub saturation: f32,
-	pub brightness: f32,
 	pub color: SpriteColor,
 }
 
@@ -108,7 +107,6 @@ pub(super) fn spawn(details: &mut Vec<Detail>, spawn: Spawn, sprites: &Sprites, 
 		spin: Spin::new(rotation_speed),
 		scale,
 		saturation: 1.0,
-		brightness: 1.0,
 		color,
 	}));
 	details.push(detail.clone());
@@ -151,7 +149,12 @@ pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHan
 				Ok(())
 			},
 		)
-		.method("setBrightness", |d: &mut DetailHandle, v: f64| d.0.borrow_mut().brightness = v as f32)
+		// A one-time change to its colour (see `sprite_color::brighten`); a fade in
+		// progress still ends at the colour it set out for, as the original's does.
+		.method("setBrightness", |d: &mut DetailHandle, v: f64| {
+			let mut d = d.0.borrow_mut();
+			d.color.color = crate::native::sprite_color::brighten(d.color.color, v as f32);
+		})
 		.method("setBrush", move |d: &mut DetailHandle, brush: String| {
 			let brush = sprites.resolve(&brush);
 			let mut d = d.0.borrow_mut();

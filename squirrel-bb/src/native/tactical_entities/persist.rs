@@ -15,15 +15,16 @@ use squirrel::{SQVM, SqStrongRef};
 use super::{TacticalMachine, UnitSpriteData, create_unit};
 use crate::native::save::stream::{SaveReader, SaveWriter};
 use crate::native::save::{LoadCx, SaveCx, SavePart};
+use crate::native::sprite_color::SpriteColor;
 
 pub(crate) struct RostersPart(pub Rc<RefCell<TacticalMachine>>);
 
 fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 	w.str(&s.brush);
-	w.u32(s.color);
+	w.u32(s.color.color);
 	w.f64(s.offset.0);
 	w.f64(s.offset.1);
-	for v in [s.alpha, s.scale, s.rotation, s.saturation, s.render_anim_start] {
+	for v in [s.color.alpha() as f64, s.scale, s.rotation, s.saturation, s.render_anim_start] {
 		w.f64(v);
 	}
 	w.f64(s.highlight_factor);
@@ -38,7 +39,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 		s.highlight,
 		s.finished,
 		s.fading,
-		s.fading_done,
+		s.color.is_fading_done(),
 		s.ignore_ambient,
 		s.ignore_camera_flip,
 	] {
@@ -53,12 +54,16 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 	}
 }
 
+/// A sprite's fade isn't kept: it loads with the colour it had.
 fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
+	let brush = r.str()?;
+	let mut color = SpriteColor::new(r.u32()?);
+	let offset = (r.f64()?, r.f64()?);
+	color.set_alpha(r.f64()? as i64);
 	Ok(UnitSpriteData {
-		brush: r.str()?,
-		color: r.u32()?,
-		offset: (r.f64()?, r.f64()?),
-		alpha: r.f64()?,
+		brush,
+		color,
+		offset,
 		scale: r.f64()?,
 		rotation: r.f64()?,
 		saturation: r.f64()?,
@@ -74,8 +79,10 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		highlight: r.bool()?,
 		finished: r.bool()?,
 		fading: r.bool()?,
-		fading_done: r.bool()?,
-		ignore_ambient: r.bool()?,
+		ignore_ambient: {
+			r.bool()?; // IsFadingDone, which follows the colour
+			r.bool()?
+		},
 		ignore_camera_flip: r.bool()?,
 		in_portrait: r.bool()?,
 		occlusion: if r.bool()? { Some((r.i64()?, r.i64()?, r.i64()?)) } else { None },

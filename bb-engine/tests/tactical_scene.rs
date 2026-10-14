@@ -131,4 +131,33 @@ fn a_battle_map_is_ready_to_draw() {
 	assert!(scene.effects.iter().all(|e| e.brush != layer), "landed after 0.75 s");
 	assert!(scene.pools.iter().any(|p| p.brush == "bust_head_dead_bloodpool"), "its blood pool");
 	assert!(scene.pools.iter().any(|p| p.brush == layer), "the head on the ground");
+
+	// A unit's sprite: `setBrightness` changes its colour once, and `fadeOutAndHide`
+	// hides it when a draw (`Tactical.render()`) finishes the fade.
+	engine
+		.run_script(
+			&format!(
+				"local s = ::Tactical.getEntityByID({unit}).getSprite(\"body\"); \
+				 s.Color = ::createColor(\"#ff8020\"); s.setBrightness(0.5); s.fadeOutAndHide(200); \
+				 ::__visible <- s.Visible;"
+			),
+			"body",
+		)
+		.expect("body");
+	assert_eq!(squirrel::SqTable::root(engine.vm()).get::<bool>("__visible"), Some(true), "still shown while it fades");
+	let body = |engine: &harness::GameEngine| {
+		engine
+			.tactical_scene()
+			.entities
+			.into_iter()
+			.find(|e| e.id == unit)
+			.and_then(|e| e.sprites.into_iter().find(|s| s.name == "body"))
+			.expect("the body")
+	};
+	assert_eq!(body(&engine).color & 0x00ff_ffff, 0x007f_4010, "half as bright");
+	for _ in 0..30 {
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	}
+	let body = body(&engine);
+	assert!(!body.visible && body.color >> 24 == 0, "faded out and hidden: {body:?}");
 }

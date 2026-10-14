@@ -477,7 +477,6 @@ impl TacticalGrid {
 							rotation: d.rotation,
 							scale: d.scale,
 							saturation: d.saturation,
-							brightness: d.brightness,
 							color: d.color.shown(now),
 						}
 					})

@@ -38,7 +38,9 @@ pub struct DetailData {
 	pub rotation: f64,
 	pub saturation: f64,
 	pub scale: f64,
-	pub brightness: f64,
+	/// Red, green and blue (RGB), which `setBrightness` darkens; `alpha` is the rest of
+	/// the original's colour.
+	pub tint: u32,
 	pub ignore_ambient: bool,
 }
 
@@ -54,7 +56,7 @@ impl Default for DetailData {
 			rotation: 0.0,
 			saturation: 1.0,
 			scale: 1.0,
-			brightness: 1.0,
+			tint: 0x00ff_ffff,
 			ignore_ambient: false,
 		}
 	}
@@ -149,7 +151,14 @@ pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites, spinning: &Spinning)
 			note_spin(&spin_brush, &d.0);
 			sprites.hint(&sprites.texture_of(brush));
 		})
-		.method("setBrightness", |d: &mut DetailHandle, v: f64| d.set(|d| d.brightness = v))
+		// A one-time change to its colour (see `sprite_color::brighten`).
+		.method("setBrightness", |d: &mut DetailHandle, v: f64| {
+			d.set(|d| {
+				let c = crate::native::sprite_color::brighten(d.tint | ((d.alpha as u32 & 0xff) << 24), v as f32);
+				d.tint = c & 0x00ff_ffff;
+				d.alpha = i64::from(c >> 24);
+			})
+		})
 		.method("setDirty", |_d: &mut DetailHandle, _flag: bool| {})
 		.build(vm)
 }

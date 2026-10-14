@@ -82,5 +82,29 @@ fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 	for e in drawn {
 		ignore_missing(e.call_method(vm, "onRender", ()))?;
 	}
+	draw_sprites(m, vm);
 	Ok(())
+}
+
+/// Draw the units the player sees: what a draw does to their sprites is finish their
+/// fades (see `SpriteColor`), which may hide them.
+fn draw_sprites(m: &Machine, vm: &SQVM) {
+	let now = crate::native::sprite_color::real_time(vm);
+	let machine = m.borrow();
+	let (Some(grid), Some(class)) = (machine.grid.clone(), machine.sprite_class.clone()) else { return };
+	let g = grid.borrow();
+	let seen = machine
+		.units
+		.iter()
+		.filter(|u| !u.dead)
+		.filter(|u| u.tile.is_some_and(|t| g.tiles[t].vis_mask.contains(PLAYER)));
+	for u in seen {
+		for (_, handle) in u.sprites.iter() {
+			class.with_payload(vm, handle, |s| {
+				if s.visible && s.color.draw(now).hide {
+					s.visible = false;
+				}
+			});
+		}
+	}
 }

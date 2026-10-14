@@ -157,9 +157,69 @@ fn blend(from: u32, to: u32, t: f32) -> u32 {
 	})
 }
 
+/// The colour's channels in the order the original keeps them in memory (red, green,
+/// blue, alpha), as shifts into our ARGB.
+const CHANNELS: [u32; 4] = [16, 8, 0, 24];
+
+/// Channel `i` (see [`CHANNELS`]) of `color` as the original reads it: `c · (1 / 255)`.
+fn channel(color: u32, i: usize) -> f32 {
+	((color >> CHANNELS[i]) & 0xff) as f32 * (1.0f32 / 255.0)
+}
+
+/// The channels back into a colour as the original writes them: `trunc(v · 255)`,
+/// its low byte.
+fn pack(v: [f32; 4]) -> u32 {
+	(0..4).fold(0, |out, i| out | ((((v[i] * 255.0) as i32) as u32 & 0xff) << CHANNELS[i]))
+}
+
+/// `setBrightness(b)` (`0x5048c0`): scales the red, green and blue the sprite has now
+/// by `b`, at most 1. It changes `Color` once; nothing is kept to draw with.
+pub(crate) fn brighten(color: u32, b: f32) -> u32 {
+	let c = |i| (channel(color, i) * b).min(1.0);
+	pack([c(0), c(1), c(2), channel(color, 3)])
+}
+
+/// `varyBrightness(v)` (`0x4bc4b0`): moves red, green and blue `v` of the way to one
+/// random grey, `rand` the C runtime's `rand()`, drawn once.
+pub(crate) fn vary_brightness(color: u32, v: f32, rand: i64) -> u32 {
+	let k = 1.0 - v;
+	let grey = (rand & 0xff) as f32 * (1.0f32 / 255.0) * v;
+	let c = |i| k * channel(color, i) + grey;
+	pack([c(0), c(1), c(2), channel(color, 3)])
+}
+
+/// `varyColor(r, g, b)` (`0x504760`): moves each of red, green and blue its own share
+/// of the way to a random level, `rand` the C runtime's three `rand()`s, in that order.
+pub(crate) fn vary_color(color: u32, v: [f32; 3], rand: [i64; 3]) -> u32 {
+	let c = |i: usize| (rand[i] & 0xff) as f32 * (1.0f32 / 255.0) * v[i] + (1.0 - v[i]) * channel(color, i);
+	pack([c(0), c(1), c(2), channel(color, 3)])
+}
+
+/// `varySaturation(v)` (`0x504bd0`): moves the saturation `v` of the way to a random
+/// one in `[0.001, 1]`, `rand` the C runtime's `rand()`.
+pub(crate) fn vary_saturation(saturation: f32, v: f32, rand: i64) -> f32 {
+	(1.0 - v) * saturation + ((rand % 1000) as f32 * 0.001 + 0.001) * v
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn brightness_scales_the_colour_once() {
+		assert_eq!(brighten(0xff80_ff20, 0.9), 0xff73_e51c, "alpha kept");
+		assert_eq!(brighten(0x8080_8080, 4.0), 0x80ff_ffff, "at most 1");
+	}
+
+	#[test]
+	fn varying_moves_towards_the_random_levels() {
+		// v = 0 keeps the colour; v = 1 is the random level.
+		assert_eq!(vary_brightness(0xff20_4060, 0.0, 77), 0xff20_4060);
+		assert_eq!(vary_brightness(0xff20_4060, 1.0, 0x1_80), 0xff80_8080, "the low byte");
+		assert_eq!(vary_color(0x7f00_0000, [1.0, 0.0, 1.0], [255, 9, 16]), 0x7fff_0010, "red, green, blue");
+		assert_eq!(vary_saturation(0.5, 0.0, 3), 0.5);
+		assert!((vary_saturation(0.5, 1.0, 1999) - 1.0).abs() < 1e-6, "999 is the top");
+	}
 
 	#[test]
 	fn a_fade_shows_progress_but_commits_on_a_finished_draw() {

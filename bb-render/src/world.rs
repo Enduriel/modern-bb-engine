@@ -206,7 +206,7 @@ pub fn world_quads<'a>(
 				flipped: detail.flipped,
 				alpha: detail.alpha as f32,
 				rotation: detail.rotation as f32,
-				tint: [255; 3],
+				tint: [(detail.tint >> 16) as u8, (detail.tint >> 8) as u8, detail.tint as u8],
 			};
 			// The original's detail key: int(y) + depth bias + z level (`0x4fb707`).
 			let key = anchor[1] as i64 + detail.z_level;

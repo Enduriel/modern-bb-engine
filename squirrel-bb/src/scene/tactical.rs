@@ -156,7 +156,6 @@ pub struct SceneTacticalDetail {
 	pub rotation: f32,
 	pub scale: f32,
 	pub saturation: f32,
-	pub brightness: f32,
 	/// ARGB as drawn now (a fade in progress included).
 	pub color: u32,
 }
