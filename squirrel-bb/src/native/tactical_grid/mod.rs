@@ -11,6 +11,7 @@
 
 mod camera;
 mod detail;
+mod heat;
 mod picking;
 mod tile;
 #[cfg(test)]
@@ -532,6 +533,7 @@ impl TacticalGrid {
 		let tile_to_world_2 = vm.make_closure(|vm: &SQVM, q: i64, r: i64| vec(vm, tile_pos(q, r + q / 2)));
 		let tile_to_world_dispatch = make_dispatcher(vm, "tileToWorld");
 		let queries = query::natives(vm, &self.grid);
+		let heat_natives = heat::natives(vm, &self.grid);
 		let query_tiles_dispatch = make_dispatcher(vm, "queryTilesInRange");
 		let calculate_tv = {
 			let g = self.grid.clone();
@@ -573,6 +575,9 @@ impl TacticalGrid {
 			tactical.set(&name, f);
 		}
 		tactical.set("queryTilesInRange", query_tiles_dispatch);
+		for (name, f) in heat_natives {
+			tactical.set(name, f);
+		}
 		tactical.set("addResource", add_resource);
 		for name in ["createBlockedTileHighlights", "clearBlockedTileHighlights", "setBlockedTileHighlightsVisibility", "loadResources", "setAmbientColor"] {
 			tactical.set(name, noop.clone());
