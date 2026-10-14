@@ -11,6 +11,7 @@ ui_payloads/<name>.nut, .js  what the scripts send the UI along a walk of the ga
 goldens/<group>/<name>.txt   their output in the original
 divergences.txt              known, accepted differences
 capture.py, probes.py        capture from the original
+perf/                        performance baselines, see below
 ```
 
 ## Running
@@ -67,6 +68,24 @@ frames between them. Each distinct payload is logged once per step, one line per
 with tables in sorted key order. Values that can't match between runs are normalized in
 the recorder, the same way in both engines: numeric ids become first-seen ordinals, and
 portraits' content ids (from the unseeded C runtime `rand()`) become `rand`.
+
+## Performance baselines
+
+```bash
+python3 parity/perf/perf.py                  # the original: writes perf/original.txt
+cargo run --release -p bb-engine --example perf_baseline    # ours, next to it
+```
+
+`perf.py` takes two launches. In menu mode it records the time to the menu, the memory
+there and the script benches (`perf/benches.nut`, timed with the game's live clock
+`Time.getExactTime`). In campaign mode it records the new campaign's time, the world
+benches (`perf/benches_world.nut`), the frame rate on the running map, and save/load
+times. Memory is the game process's resident set, sampled from outside while the run
+holds the game. The save is `bb_probe_perf` and is deleted afterwards.
+
+They aren't all like for like: the original's memory includes Wine, the renderer and the
+UI, its saves go to disk (ours stay in memory), and its frame rate has no headless
+counterpart yet.
 
 ## Divergences
 
