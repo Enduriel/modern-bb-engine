@@ -268,11 +268,15 @@ pub fn install_autoplay(engine: &GameEngine) -> Result<(), String> {
 /// units' turns at once (the turn bar's own guards hold the press while the bar is
 /// busy), leaving the fighting to the AI, and leaves the result screen when it's over
 /// (recording `::__lastCombatResult`). With `::__autoplayFight` set, the AI fights for
-/// the player's units too, handed over as a charm hands them (no longer player
-/// controlled). A charmed unit that dies isn't taken off the player's roster, as in the
-/// original; with `::__autoplayDieAsPlayers` set too, a handed-over unit is the
+/// the player's units too, handed over by clearing `IsControlledByPlayer`. That isn't a
+/// charm: a handed-over unit that dies stays on the player's roster with its items'
+/// container cleared, and the world's `onCombatFinished` then fails on it, in the
+/// original's scripts as in ours (a real charm's `onDeath` gives the unit back to the
+/// player first; `tests/battle_deaths.rs`). The draw-exact traces keep that, as their
+/// probe runs did. With `::__autoplayDieAsPlayers` set too, a handed-over unit is the
 /// player's again as it dies, so its death is a brother's (off the roster, items
-/// released), as when a player plays the battle. With `::__autoplayPlayer` set to a function, that function
+/// released), as when a player plays the battle: set it for any battle that goes back
+/// to the world. With `::__autoplayPlayer` set to a function, that function
 /// plays the player's turns instead (it is called every frame of the battle).
 const AUTOPLAY: &str = r#"
 ::__autoplayEngage <- false;
