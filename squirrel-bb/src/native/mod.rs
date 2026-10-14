@@ -68,6 +68,7 @@ pub(crate) mod tactical_unveil;
 pub mod stubs;
 mod world_layout;
 mod world_query;
+pub(crate) mod world_size;
 pub(crate) mod world_time;
 pub(crate) mod save;
 mod world_nav;

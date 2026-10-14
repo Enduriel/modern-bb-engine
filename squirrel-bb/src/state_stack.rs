@@ -455,6 +455,8 @@ impl RootState {
 		});
 		SqTable::root(vm).set("RootState", root.clone());
 		root.call_method(vm, "onInit", ())?;
+		// MapGen exists now: the world generator follows the size settings.
+		crate::native::world_size::follow_settings(vm)?;
 		// The engine's first update would run the states the root added.
 		init_pending(&self.machine, vm)?;
 		Ok(root)
