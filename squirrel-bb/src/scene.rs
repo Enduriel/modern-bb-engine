@@ -5,6 +5,7 @@
 //! plain values once per frame, so a renderer never touches the VM.
 
 pub use crate::native::world_clouds::SceneCloud;
+pub use crate::native::world_waves::SceneWave;
 pub use crate::native::world_detail::DetailData as SceneDetail;
 
 /// The world map as last set by the scripts.
@@ -26,6 +27,20 @@ pub struct WorldScene {
 	pub light: SceneLight,
 	/// The clouds drifting over the map (`World.getWeather().buildCloudCover`).
 	pub clouds: Vec<SceneCloud>,
+	/// The footprints shown, oldest first.
+	pub footprints: Vec<SceneFootprint>,
+	/// Waves on the sea (`World.spawnWaveSprite`), oldest first.
+	pub waves: Vec<SceneWave>,
+}
+
+/// A footprint (`World.spawnFootprint`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneFootprint {
+	pub brush: String,
+	pub pos: (f32, f32),
+	pub scale: f32,
+	/// 0 to 255.
+	pub alpha: f32,
 }
 
 /// The world's lighting: the day phase's ambient colour and saturation, which lit

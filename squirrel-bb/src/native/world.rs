@@ -10,6 +10,7 @@ use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable, Variadic};
 
 use super::world_clouds::{CloudCover, CloudSettings, Clouds, MapSpan};
 use super::world_layout::tile_pos;
+use super::world_waves::Waves;
 
 /// A script's `createCloudSettings()` table as [`CloudSettings`]; fields it doesn't
 /// hold keep the original's defaults.
@@ -55,9 +56,14 @@ fn map_span(vm: &SQVM) -> Result<Option<MapSpan>, String> {
 
 /// Register the `World` table (clock, save hooks, camera, weather) into the root, and
 /// return the world clock.
-pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> (super::world_time::Clock, Clouds) {
+pub(crate) fn install(
+	vm: &mut SQVM,
+	engine_rng: &super::EngineRng,
+	sprites: &super::Sprites,
+) -> (super::world_time::Clock, Clouds, Waves) {
 	let world_clock: super::world_time::Clock = Default::default();
 	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
+	let waves: Waves = Rc::default();
 	// Rosters (getRoster/getPlayerRoster/createRoster/deleteRoster) are provided by the
 	// host-owned `TacticalEntities` service (real rosters whose `create` mints units),
 	// installed after this — see native/tactical_entities.rs.
@@ -111,11 +117,32 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> (super::w
 	weather.set_member(vm, "buildCloudCover", build_cloud_cover).expect("the weather table");
 	let get_weather = vm.make_closure(move || weather.clone());
 
-	// Footprints only feed the hover tooltip (and expire after 60 s); headless they are
-	// not kept. Particle effects are visual, and no script uses the returned effect.
-	let spawn_footprint = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	// Footprints are the world entities' (see `world_entities::footprints`). Particle
+	// effects are visual, and no script uses the returned effect.
 	let spawn_particle_effect = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let clock = super::world_time::world_entries(vm, &world_clock, &clouds);
+	let on_update: Rc<dyn Fn(f32, f32)> = {
+		let (clouds, waves) = (clouds.clone(), waves.clone());
+		Rc::new(move |delta, speed| {
+			clouds.borrow_mut().advance(delta, speed);
+			waves.borrow_mut().advance(delta, speed);
+		})
+	};
+	let clock = super::world_time::world_entries(vm, &world_clock, on_update);
+	// World.spawnWaveSprite(brush, pos, drift, lifetime): see `world_waves`. An unknown
+	// brush spawns nothing.
+	let spawn_wave_sprite = {
+		let (waves, sprites) = (waves.clone(), sprites.clone());
+		vm.make_closure(move |vm: &SQVM, brush: &str, pos: Retained, drift: Retained, lifetime: Number| {
+			if !sprites.with(|r| r.contains(brush)) {
+				return;
+			}
+			let xy = |v: &SqStrongRef| {
+				let c = |axis: &str| v.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
+				(c("X"), c("Y"))
+			};
+			waves.borrow_mut().spawn(brush, xy(&pos.0), xy(&drift.0), lifetime.0 as f32);
+		})
+	};
 	// World.setVisible/isVisible: whether the campaign map is drawn (the world state
 	// hides it during a battle).
 	let visible = std::rc::Rc::new(std::cell::Cell::new(true));
@@ -129,7 +156,7 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> (super::w
 	world.set("setVisible", set_visible);
 	world.set("isVisible", is_visible);
 	world.set("getWeather", get_weather);
-	world.set("spawnFootprint", spawn_footprint);
+	world.set("spawnWaveSprite", spawn_wave_sprite);
 	world.set("spawnParticleEffect", spawn_particle_effect);
 	world.set("setOnLoadCallback", set_on_load);
 	world.set("setOnBeforeLoadCallback", set_on_before_load);
@@ -139,5 +166,5 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> (super::w
 		world.set(name, closure);
 	}
 	SqTable::root(vm).set("World", world);
-	(world_clock, clouds)
+	(world_clock, clouds, waves)
 }

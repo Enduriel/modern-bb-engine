@@ -75,6 +75,34 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	}
 	assert!(scene.region_texts.iter().all(|t| [0.5, 0.75, 1.0].contains(&t.scale)));
 
+	// Footprints and waves, as scripts make and query them.
+	engine
+		.run_script(
+			r#"
+			local p = ::World.State.getPlayer().getPos();
+			// The view the player's party sets each update (none has run yet).
+			::World.setPlayerPos(p);
+			::World.setPlayerVisionRadius(500.0);
+			local at = ::createVec(p.X + 40, p.Y);
+			::World.spawnFootprint(at, "world_footprints_human_01_01", 1.0, 30.0, 1.0, 2);
+			local seen = ::World.getAllFootprintsAtPos(at, ::Const.World.FootprintsType.COUNT);
+			::__tracks <- [seen.len(), seen[2], seen[1], ::World.getDirection8FromTo(p, at), ::World.getDirection8FromTo(at, p)];
+			::World.spawnWaveSprite("waves_01", p, ::createVec(-15, -15), 1.25);
+			::World.spawnWaveSprite("no_such_brush", p, ::createVec(-15, -15), 1.25);
+			"#,
+			"tracks",
+		)
+		.expect("footprints");
+	let tracks = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__tracks").expect("tracks");
+	let count = tracks.get::<Number>(0).expect("count").0 as usize;
+	assert!(count > 2);
+	assert_eq!((tracks.get::<bool>(1), tracks.get::<bool>(2)), (Some(true), Some(false)));
+	// East is 2 and west 6 of the 8 directions.
+	assert_eq!((tracks.get::<Number>(3).map(|n| n.0), tracks.get::<Number>(4).map(|n| n.0)), (Some(2.0), Some(6.0)));
+	let scene = engine.world_scene();
+	assert_eq!(scene.footprints.len(), 1);
+	assert_eq!(scene.waves.len(), 1, "an unknown brush makes no wave");
+
 	// Worldgen's brushes queued their atlases for loading.
 	let hints = engine.sprites().take_hints();
 	for atlas in ["gfx/world_tiles.png", "gfx/world_detail.png", "gfx/world_entity_0.png", "gfx/world_settlement.png"] {

@@ -34,6 +34,7 @@ use super::world_query::{self, Candidate};
 use crate::module::Instantiator;
 use crate::native::Sprites;
 
+mod footprints;
 mod movement;
 mod persist;
 mod render;
@@ -149,6 +150,7 @@ struct EntityMachine {
 	by_identity: HashMap<i64, usize>,
 	methods: Vec<(&'static str, SqStrongRef)>,
 	player_view: view::PlayerView,
+	footprints: footprints::Footprints,
 	thinkers: think::Thinkers,
 	/// Resolves sprite brushes (set by the host before `install`).
 	sprites: Sprites,
@@ -460,6 +462,7 @@ impl WorldEntities {
 				by_identity: HashMap::new(),
 				methods: Vec::new(),
 				player_view: view::PlayerView::default(),
+				footprints: footprints::Footprints::default(),
 				thinkers: think::Thinkers::default(),
 				sprites: Sprites::default(),
 			})),
@@ -787,6 +790,7 @@ impl WorldEntities {
 		slots.push(("getAllEntitiesVisibleAtPos".to_string(), all_visible_at_pos));
 		slots.extend(view::world_methods(&self.machine, vm));
 		slots.extend(render::world_methods(&self.machine, vm));
+		slots.extend(footprints::world_methods(&self.machine, vm));
 
 		let mut world = SqTable::root(vm)
 			.get::<SqTable>("World")
@@ -817,6 +821,33 @@ impl WorldEntities {
 	/// Number of spawned entities (host/test inspection).
 	pub fn count(&self) -> usize {
 		self.machine.borrow().entities.len()
+	}
+
+	/// The footprints drawn now: none unless `ShowTracking` is on (`0x4e49a0`).
+	pub(crate) fn scene_footprints(&self, vm: &SQVM) -> Vec<crate::scene::SceneFootprint> {
+		let tracking = SqTable::root(vm)
+			.get::<SqStrongRef>("Settings")
+			.and_then(|s| s.call_method_ret::<SqStrongRef, _>(vm, "getTempGameplaySettings", ()).ok().flatten())
+			.and_then(|t| t.get_member::<bool>(vm, "ShowTracking"))
+			.unwrap_or(true);
+		if !tracking {
+			return Vec::new();
+		}
+		let now = footprints::virtual_time(vm);
+		let mut m = self.machine.borrow_mut();
+		m.footprints.expire(now);
+		let view = &m.player_view;
+		let (pos, vision) = ((view.pos.0 as f32, view.pos.1 as f32), view.vision_radius);
+		m.footprints
+			.drawn(now, pos, vision)
+			.into_iter()
+			.map(|(f, alpha)| crate::scene::SceneFootprint {
+				brush: f.brush,
+				pos: f.pos,
+				scale: f.scale,
+				alpha,
+			})
+			.collect()
 	}
 
 	/// Every live entity and its sprites as the renderer sees them.

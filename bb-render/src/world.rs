@@ -149,35 +149,41 @@ pub fn world_quads<'a>(
 	};
 	let mut drawables: Vec<Drawable> = Vec::new();
 	// `key`: the sort key without the brush's depth bias, which is added here.
-	let mut push =
-		|layer: Layer, key: i64, brush: &str, anchor: [f32; 2], offset: [f32; 2], look: Look| {
-			let Some((sheet, sprite)) = sprites.get(brush) else {
-				return;
-			};
-			let Some(frame) = sprite.frames.first() else {
-				return;
-			};
-			// Offsets scale with the sprite (so an unscaled sprite keeps its screen
-			// offset too).
-			let anchor = [
-				anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
-				anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
-			];
-			let order = drawables.len();
-			drawables.push(Drawable {
-				layer,
-				key: key + i64::from(sprite.depth_bias),
-				order,
-				texture: &sheet.sheet.texture,
-				quad: frame_quad(frame, anchor, look),
-			});
+	let push = |drawables: &mut Vec<Drawable<'a>>,
+	            layer: Layer,
+	            key: i64,
+	            brush: &str,
+	            anchor: [f32; 2],
+	            offset: [f32; 2],
+	            look: Look| {
+		let Some((sheet, sprite)) = sprites.get(brush) else {
+			return;
 		};
+		let Some(frame) = sprite.frames.first() else {
+			return;
+		};
+		// Offsets scale with the sprite (so an unscaled sprite keeps its screen
+		// offset too).
+		let anchor = [
+			anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
+			anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
+		];
+		let order = drawables.len();
+		drawables.push(Drawable {
+			layer,
+			key: key + i64::from(sprite.depth_bias),
+			order,
+			texture: &sheet.sheet.texture,
+			quad: frame_quad(frame, anchor, look),
+		});
+	};
 
 	for tile in scene.tiles.iter().filter(|t| on_screen(t.pos)) {
 		let anchor = [tile.pos.0 as f32, tile.pos.1 as f32];
 		if !tile.brush.is_empty() {
 			let key = anchor[1] as i64;
 			push(
+				&mut drawables,
 				Layer::Terrain,
 				key,
 				&tile.brush,
@@ -196,7 +202,15 @@ pub fn world_quads<'a>(
 			};
 			// The original's detail key: int(y) + depth bias + z level (`0x4fb707`).
 			let key = anchor[1] as i64 + detail.z_level;
-			push(Layer::Details, key, &detail.brush, anchor, [0.0; 2], look);
+			push(
+				&mut drawables,
+				Layer::Details,
+				key,
+				&detail.brush,
+				anchor,
+				[0.0; 2],
+				look,
+			);
 		}
 	}
 	for entity in scene
@@ -222,6 +236,7 @@ pub fn world_quads<'a>(
 				tint: [255; 3],
 			};
 			push(
+				&mut drawables,
 				Layer::Entities,
 				anchor[1] as i64,
 				&sprite.brush,
@@ -249,6 +264,7 @@ pub fn world_quads<'a>(
 		};
 		let below = [anchor[0], anchor[1] + CLOUD_SHADOW_DROP * cloud.scale];
 		push(
+			&mut drawables,
 			Layer::Effects,
 			cloud.key + 2000,
 			cloud.brush,
@@ -263,6 +279,7 @@ pub fn world_quads<'a>(
 			..Look::PLAIN
 		};
 		push(
+			&mut drawables,
 			Layer::Effects,
 			cloud.key,
 			cloud.brush,
@@ -299,6 +316,49 @@ pub fn world_quads<'a>(
 				});
 			}
 		}
+	}
+
+	// Footprints: key 0 in the details layer, after the region names (`0x4e49a0`).
+	for footprint in scene
+		.footprints
+		.iter()
+		.filter(|f| on_screen((f.pos.0.into(), f.pos.1.into())))
+	{
+		let look = Look {
+			scale: footprint.scale,
+			alpha: footprint.alpha,
+			..Look::PLAIN
+		};
+		let anchor = [footprint.pos.0, footprint.pos.1];
+		push(
+			&mut drawables,
+			Layer::Details,
+			0,
+			&footprint.brush,
+			anchor,
+			[0.0; 2],
+			look,
+		);
+	}
+	// Waves: key 0 in the effects layer, under the clouds.
+	for wave in scene
+		.waves
+		.iter()
+		.filter(|w| on_screen((w.pos.0.into(), w.pos.1.into())))
+	{
+		let look = Look {
+			alpha: wave.alpha,
+			..Look::PLAIN
+		};
+		push(
+			&mut drawables,
+			Layer::Effects,
+			0,
+			&wave.brush,
+			[wave.pos.0, wave.pos.1],
+			[0.0; 2],
+			look,
+		);
 	}
 
 	if let Some(font) = fonts.label {

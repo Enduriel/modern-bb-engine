@@ -48,8 +48,9 @@ pub struct Engine<S: ScriptSource> {
 	video: VideoSettings,
 	/// The world's clock (no VM handles), for the day's lighting.
 	world_clock: crate::native::world_time::Clock,
-	/// The world's clouds (no VM handles).
+	/// The world's clouds and waves (no VM handles).
 	clouds: crate::native::world_clouds::Clouds,
+	waves: crate::native::world_waves::Waves,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -125,6 +126,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			video: natives.video,
 			world_clock: natives.world_clock.clone(),
 			clouds: natives.clouds.clone(),
+			waves: natives.waves.clone(),
 			time,
 			modules,
 			vm,
@@ -173,6 +175,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				crate::scene::SceneLight { color, saturation }
 			},
 			clouds: self.clouds.borrow().clouds().to_vec(),
+			footprints: self.world_entities.scene_footprints(&self.vm),
+			waves: self.waves.borrow().scene(),
 		}
 	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the
