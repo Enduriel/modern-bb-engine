@@ -238,4 +238,17 @@ mod tests {
 		assert!(!reported.get(), "the handler was called too");
 		assert!(vm.compile_capturing("return 1;", "ok").is_ok());
 	}
+
+	/// An if's single statement keeps its ';' even when it ends with a '}' (a table
+	/// literal), so an `else` can follow, as in Squirrel 3.0 (legacy mod_hooks needs it).
+	#[test]
+	fn an_if_statement_ending_in_a_table_literal_takes_its_else() {
+		let vm = SQVM::new(1024);
+		vm.run_script(
+			"local c = false, a; if (c) a = {}; else a = 1; assert(a == 1);\n\
+			 local b; if (!c) b = { x = 1 }; else b = 2; assert(b.x == 1);",
+			"ifelse",
+		)
+		.expect("compiles and runs");
+	}
 }
