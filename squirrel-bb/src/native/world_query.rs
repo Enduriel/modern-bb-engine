@@ -20,7 +20,22 @@
 //! history. We return them by ascending id instead. Locations, the common case,
 //! come back in exactly the original order.
 
-/// What a query needs to know about one live entity.
+/// What a query reads from one entity. The world's entity records implement it, so a
+/// query scans them in place and the caller takes references only to the hits.
+pub(crate) trait QueryEntity {
+	fn id(&self) -> i64;
+	fn pos(&self) -> (f64, f64);
+	fn rendered_top(&self) -> bool;
+	/// Axial tile coords.
+	fn tile(&self) -> (i64, i64);
+	/// `getVisibility()`: the multiplier on how far away it can be seen.
+	fn visibility(&self) -> f32;
+	/// Dead entities stay in the registry until it's cleared; queries skip them.
+	fn alive(&self) -> bool;
+}
+
+/// A free-standing [`QueryEntity`], for tests.
+#[cfg(test)]
 pub(crate) struct Candidate {
 	pub id: i64,
 	pub pos: (f64, f64),
@@ -29,6 +44,28 @@ pub(crate) struct Candidate {
 	pub tile: (i64, i64),
 	/// `getVisibility()`: the multiplier on how far away it can be seen.
 	pub visibility: f32,
+}
+
+#[cfg(test)]
+impl QueryEntity for Candidate {
+	fn id(&self) -> i64 {
+		self.id
+	}
+	fn pos(&self) -> (f64, f64) {
+		self.pos
+	}
+	fn rendered_top(&self) -> bool {
+		self.rendered_top
+	}
+	fn tile(&self) -> (i64, i64) {
+		self.tile
+	}
+	fn visibility(&self) -> f32 {
+		self.visibility
+	}
+	fn alive(&self) -> bool {
+		true
+	}
 }
 
 /// Extra radius on the quadtree (rendered-top) part of `getAllEntitiesAtPos`.
@@ -83,68 +120,61 @@ pub(crate) fn direction8(from: (f64, f64), to: (f64, f64)) -> i64 {
 	}
 }
 
-/// The rendered-top entities within `radius + slack` of `center`.
-fn rendered_top_near(center: (f64, f64), radius: f32, slack: f32, cands: &[Candidate]) -> Vec<usize> {
-	let reach = radius + slack;
-	let mut hits: Vec<usize> = (0..cands.len())
-		.filter(|&i| cands[i].rendered_top && distance(center, cands[i].pos) <= reach)
-		.collect();
-	hits.sort_by_key(|&i| cands[i].id);
+/// The live entities that pass `keep`, by ascending id (the hits only are sorted: the
+/// original walks its id-ordered map, and ids are unique).
+fn hits_by_id<E: QueryEntity>(ents: &[E], keep: impl Fn(&E) -> bool) -> Vec<usize> {
+	let mut hits: Vec<usize> = (0..ents.len()).filter(|&i| ents[i].alive() && keep(&ents[i])).collect();
+	hits.sort_unstable_by_key(|&i| ents[i].id());
 	hits
 }
 
-/// The candidates in id order, skipping the rendered-top ones.
-fn ground_by_id(cands: &[Candidate]) -> Vec<usize> {
-	let mut ids: Vec<usize> = (0..cands.len()).filter(|&i| !cands[i].rendered_top).collect();
-	ids.sort_by_key(|&i| cands[i].id);
-	ids
+/// The rendered-top entities within `radius + slack` of `center`, by id.
+fn rendered_top_near<E: QueryEntity>(center: (f64, f64), radius: f32, slack: f32, ents: &[E]) -> Vec<usize> {
+	let reach = radius + slack;
+	hits_by_id(ents, |e| e.rendered_top() && distance(center, e.pos()) <= reach)
 }
 
-/// `getAllEntitiesAtPos(center, radius)`: indices into `cands`, in result order.
-pub(crate) fn all_at_pos(center: (f64, f64), radius: f64, cands: &[Candidate]) -> Vec<usize> {
+/// `getAllEntitiesAtPos(center, radius)`: indices into `ents`, in result order.
+pub(crate) fn all_at_pos<E: QueryEntity>(center: (f64, f64), radius: f64, ents: &[E]) -> Vec<usize> {
 	let radius = radius as f32;
-	let mut out = rendered_top_near(center, radius, ALL_AT_POS_SLACK, cands);
-	out.extend(
-		ground_by_id(cands)
-			.into_iter()
-			.filter(|&i| distance(center, cands[i].pos) <= radius),
-	);
+	let mut out = rendered_top_near(center, radius, ALL_AT_POS_SLACK, ents);
+	out.extend(hits_by_id(ents, |e| !e.rendered_top() && distance(center, e.pos()) <= radius));
 	out
 }
 
 /// `getAllEntitiesVisibleAtPos(center, radius)`: like [`all_at_pos`] (quadtree reach
 /// `radius + 32`), keeping only entities with a non-zero visibility that are within
 /// `visibility * radius`.
-pub(crate) fn all_visible_at_pos(center: (f64, f64), radius: f64, cands: &[Candidate]) -> Vec<usize> {
+pub(crate) fn all_visible_at_pos<E: QueryEntity>(center: (f64, f64), radius: f64, ents: &[E]) -> Vec<usize> {
 	let radius = radius as f32;
-	let seen = |i: usize| {
-		let vis = cands[i].visibility;
-		vis != 0.0 && distance(center, cands[i].pos) <= vis * radius
+	let seen = |e: &E| {
+		let vis = e.visibility();
+		vis != 0.0 && distance(center, e.pos()) <= vis * radius
 	};
-	let mut out: Vec<usize> = rendered_top_near(center, radius, ONE_LOCATION_SLACK, cands)
-		.into_iter()
-		.filter(|&i| seen(i))
-		.collect();
-	out.extend(ground_by_id(cands).into_iter().filter(|&i| seen(i)));
+	let reach = radius + ONE_LOCATION_SLACK;
+	let mut out = hits_by_id(ents, |e| e.rendered_top() && distance(center, e.pos()) <= reach && seen(e));
+	out.extend(hits_by_id(ents, |e| !e.rendered_top() && seen(e)));
 	out
 }
 
 /// `getEntityAtTile(coords)`: the first entity by id that isn't rendered-top (a
 /// location) on axial tile `tile`.
-pub(crate) fn entity_at_tile(tile: (i64, i64), cands: &[Candidate]) -> Option<usize> {
-	ground_by_id(cands).into_iter().find(|&i| cands[i].tile == tile)
+pub(crate) fn entity_at_tile<E: QueryEntity>(tile: (i64, i64), ents: &[E]) -> Option<usize> {
+	(0..ents.len())
+		.filter(|&i| ents[i].alive() && !ents[i].rendered_top() && ents[i].tile() == tile)
+		.min_by_key(|&i| ents[i].id())
 }
 
 /// `getAllEntitiesAndOneLocationAtPos(center, radius)`, where `center_tile` is the
 /// axial tile under `center`.
-pub(crate) fn all_and_one_location_at_pos(
+pub(crate) fn all_and_one_location_at_pos<E: QueryEntity>(
 	center: (f64, f64),
 	radius: f64,
 	center_tile: (i64, i64),
-	cands: &[Candidate],
+	ents: &[E],
 ) -> Vec<usize> {
-	let mut out = rendered_top_near(center, radius as f32, ONE_LOCATION_SLACK, cands);
-	out.extend(entity_at_tile(center_tile, cands));
+	let mut out = rendered_top_near(center, radius as f32, ONE_LOCATION_SLACK, ents);
+	out.extend(entity_at_tile(center_tile, ents));
 	out
 }
 

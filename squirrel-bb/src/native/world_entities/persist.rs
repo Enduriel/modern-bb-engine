@@ -176,6 +176,7 @@ impl SavePart for EntitiesPart {
 			let mut m = self.0.borrow_mut();
 			m.entities.clear();
 			m.by_identity.clear();
+			m.by_id.clear();
 			m.thinkers = think::Thinkers::default();
 		}
 		let count = cx.reader.borrow_mut().u32()?;

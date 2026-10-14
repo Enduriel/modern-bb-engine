@@ -30,7 +30,7 @@ use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, 
 use super::inject::inject_natives;
 use super::overload::{make_dispatcher, overload_key};
 use super::world_layout;
-use super::world_query::{self, Candidate};
+use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
 use crate::native::Sprites;
 use crate::native::sprite_color::{SpriteColor, real_time};
@@ -149,6 +149,8 @@ struct EntityMachine {
 	entities: Vec<EntityRecord>,
 	/// Every class-level identity of every entity → its record index in `entities`.
 	by_identity: HashMap<i64, usize>,
+	/// Entity id → its record index in `entities` (`getEntityByID`).
+	by_id: HashMap<i64, usize>,
 	methods: Vec<(&'static str, SqStrongRef)>,
 	player_view: view::PlayerView,
 	footprints: footprints::Footprints,
@@ -159,23 +161,6 @@ struct EntityMachine {
 
 impl EntityMachine {
 	/// The live entities as query candidates, with their instances at the same indices.
-	fn candidates(&self) -> (Vec<Candidate>, Vec<SqStrongRef>) {
-		self.entities
-			.iter()
-			.filter(|rec| rec.alive)
-			.map(|rec| {
-				let cand = Candidate {
-					id: rec.id,
-					pos: rec.pos,
-					rendered_top: rec.rendered_top,
-					tile: (rec.q, rec.r),
-					visibility: rec.visibility,
-				};
-				(cand, rec.entity.clone())
-			})
-			.unzip()
-	}
-
 	fn record(&self, identity: i64) -> Option<&EntityRecord> {
 		self.by_identity.get(&identity).map(|&i| &self.entities[i])
 	}
@@ -244,6 +229,7 @@ fn create_entity(
 	let record_idx = {
 		let mut m = machine.borrow_mut();
 		let idx = m.entities.len();
+		m.by_id.insert(id, idx);
 		m.entities.push(EntityRecord {
 			id,
 			path: path.to_string(),
@@ -354,12 +340,34 @@ fn tile_under(vm: &SQVM, pos: &SqStrongRef) -> Result<(i64, i64), String> {
 }
 
 /// A script array of the entities at `hits` (indices into `refs`).
-fn entity_array(vm: &SQVM, refs: &[SqStrongRef], hits: Vec<usize>) -> SqStrongRef {
+/// The hits of a spatial query (indices into `records`) as a script array.
+fn entity_array(vm: &SQVM, records: &[EntityRecord], hits: Vec<usize>) -> SqStrongRef {
 	let mut arr = SqArray::new(vm);
 	for i in hits {
-		arr.push(refs[i].clone());
+		arr.push(records[i].entity.clone());
 	}
 	arr.to_strong()
+}
+
+impl QueryEntity for EntityRecord {
+	fn id(&self) -> i64 {
+		self.id
+	}
+	fn pos(&self) -> (f64, f64) {
+		self.pos
+	}
+	fn rendered_top(&self) -> bool {
+		self.rendered_top
+	}
+	fn tile(&self) -> (i64, i64) {
+		(self.q, self.r)
+	}
+	fn visibility(&self) -> f32 {
+		self.visibility
+	}
+	fn alive(&self) -> bool {
+		self.alive
+	}
 }
 
 /// `World.getTile(q, r).IsOccupied = occupied`.
@@ -488,6 +496,7 @@ impl WorldEntities {
 				next_id: 1,
 				entities: Vec::new(),
 				by_identity: HashMap::new(),
+				by_id: HashMap::new(),
 				methods: Vec::new(),
 				player_view: view::PlayerView::default(),
 				footprints: footprints::Footprints::default(),
@@ -762,8 +771,8 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
 				let center = vec_xy(vm, &pos.0);
-				let (cands, refs) = m.borrow().candidates();
-				entity_array(vm, &refs, world_query::all_at_pos(center, radius.0, &cands))
+				let machine = m.borrow();
+				entity_array(vm, &machine.entities, world_query::all_at_pos(center, radius.0, &machine.entities))
 			})
 		};
 		let all_and_one_location_at_pos = {
@@ -772,9 +781,9 @@ impl WorldEntities {
 				move |vm: &SQVM, pos: Retained, radius: Number| -> Result<SqStrongRef, String> {
 					let center = vec_xy(vm, &pos.0);
 					let tile = tile_under(vm, &pos.0)?;
-					let (cands, refs) = m.borrow().candidates();
-					let hits = world_query::all_and_one_location_at_pos(center, radius.0, tile, &cands);
-					Ok(entity_array(vm, &refs, hits))
+					let machine = m.borrow();
+					let hits = world_query::all_and_one_location_at_pos(center, radius.0, tile, &machine.entities);
+					Ok(entity_array(vm, &machine.entities, hits))
 				},
 			)
 		};
@@ -782,8 +791,9 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
 				let center = vec_xy(vm, &pos.0);
-				let (cands, refs) = m.borrow().candidates();
-				entity_array(vm, &refs, world_query::all_visible_at_pos(center, radius.0, &cands))
+				let machine = m.borrow();
+				let hits = world_query::all_visible_at_pos(center, radius.0, &machine.entities);
+				entity_array(vm, &machine.entities, hits)
 			})
 		};
 		// getPlayerEntity(): the first entity by id in the player's faction (from the
@@ -805,19 +815,16 @@ impl WorldEntities {
 			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Option<SqStrongRef> {
 				let q = coords.0.get_member::<i64>(vm, "X")?;
 				let r = coords.0.get_member::<i64>(vm, "Y")?;
-				let (cands, refs) = m.borrow().candidates();
-				world_query::entity_at_tile((q, r), &cands).map(|i| refs[i].clone())
+				let machine = m.borrow();
+				world_query::entity_at_tile((q, r), &machine.entities).map(|i| machine.entities[i].entity.clone())
 			})
 		};
 		let get_entity_by_id = {
 			let m = self.machine.clone();
 			vm.make_closure(move |id: i64| -> Option<SqStrongRef> {
 				let machine = m.borrow();
-				machine
-					.entities
-					.iter()
-					.find(|rec| rec.alive && rec.id == id)
-					.map(|rec| rec.entity.clone())
+				let rec = &machine.entities[*machine.by_id.get(&id)?];
+				rec.alive.then(|| rec.entity.clone())
 			})
 		};
 		slots.push(("getAllEntitiesAtPos".to_string(), all_at_pos));
@@ -943,6 +950,7 @@ impl WorldEntities {
 		let mut m = self.machine.borrow_mut();
 		m.entities.clear();
 		m.by_identity.clear();
+		m.by_id.clear();
 		m.thinkers = think::Thinkers::default();
 		m.methods.clear();
 		m.sprite_class = None;
