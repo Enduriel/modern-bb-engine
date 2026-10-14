@@ -46,51 +46,88 @@ mod tests {
 	use super::camera::{Camera, Clock};
 	use super::scene::Scene;
 
-	/// The original's saves in its Steam (Proton) install (read only; skipped where there
-	/// are none).
-	const SAVES: &str = concat!(
-		env!("HOME"),
-		"/.local/share/Steam/steamapps/compatdata/365360/pfx/drive_c/users/steamuser/Documents/Battle Brothers/savegames"
-	);
+	/// Read save `bytes` (named `name`) through the scene, the camera and the clock and
+	/// write those back: `Ok(true)` if they come out the same, `Ok(false)` if it isn't a
+	/// campaign save of the current format, `Err` if it fails to read or writes back
+	/// differently.
+	fn round_trip(name: &str, bytes: Vec<u8>) -> Result<bool, String> {
+		let stem = name.strip_suffix(".sav").unwrap_or(name);
+		let Ok((meta, mut r)) = container::decode(bytes.clone(), stem) else { return Ok(false) };
+		// Storages (mods' data) aren't campaigns, and engine builds before 2020-09-13 wrote
+		// the virtual time and the tiles differently (the current original can't read
+		// those either).
+		if meta.version < 63 || !meta.has_data("days") || meta.created < 1_599_955_200 {
+			return Ok(false);
+		}
+		let start = r.pos();
+		r.f64()?;
+		let scene = Scene::read(&mut r)?;
+		let camera = Camera::read(&mut r)?;
+		let clock = Clock::read(&mut r)?;
+		let end = r.pos();
+		let mut w = SaveWriter {
+			strings: StrLen::U16,
+			..SaveWriter::default()
+		};
+		w.buf.extend_from_slice(&bytes[start..start + 8]);
+		scene.write(&mut w);
+		camera.write(&mut w);
+		clock.write(&mut w);
+		if w.buf != bytes[start..end] {
+			return Err("written back differently".into());
+		}
+		if !(clock.phase < 10 && camera.zoom > 0.0) {
+			return Err(format!("camera {camera:?} clock {clock:?}"));
+		}
+		Ok(true)
+	}
+
+	/// The `.sav` files in `dir`, by name.
+	fn saves_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+		let mut all: Vec<_> = std::fs::read_dir(dir)
+			.into_iter()
+			.flatten()
+			.flatten()
+			.map(|e| e.path())
+			.filter(|p| p.extension().is_some_and(|e| e == "sav"))
+			.collect();
+		all.sort();
+		all
+	}
 
 	/// Every campaign save the original wrote (from version 63 on) reads, and writes
-	/// back the same bytes, through the scene, the camera and the clock.
+	/// back the same bytes, through the scene, the camera and the clock: the kept
+	/// fixtures, and whatever is in the original's savegames folder at the time.
 	#[test]
 	fn the_originals_saves_read_and_write_back_exactly() {
-		let Ok(dir) = std::fs::read_dir(SAVES) else {
-			eprintln!("skipping: no saves at {SAVES}");
+		let fixtures = crate::platform::original_save_fixtures().filter(|d| d.is_dir());
+		let mut checked = 0;
+		for path in fixtures.as_deref().map(saves_in).unwrap_or_default() {
+			let name = path.file_name().unwrap().to_string_lossy().into_owned();
+			let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+			if round_trip(&name, bytes).unwrap_or_else(|e| panic!("{name}: {e}")) {
+				checked += 1;
+			}
+		}
+		eprintln!("{checked} kept saves");
+		// More coverage: the saves in the original's savegames folder. The game and the
+		// probes write and delete files there meanwhile, so a file that changes or goes
+		// while it's read is passed over; one that stays the same must read.
+		let Some(live) = crate::platform::original_savegames_dir().filter(|d| d.is_dir()) else {
+			eprintln!("no savegames folder of the original's");
 			return;
 		};
-		let mut checked = 0;
-		for entry in dir.flatten() {
-			let name = entry.file_name().to_string_lossy().into_owned();
-			let Some(stem) = name.strip_suffix(".sav") else { continue };
-			let bytes = std::fs::read(entry.path()).unwrap();
-			let Ok((meta, mut r)) = container::decode(bytes.clone(), stem) else { continue };
-			// Storages (mods' data) aren't campaigns, and engine builds before 2020-09-13 wrote
-			// the virtual time and the tiles differently (the current original can't read
-			// those either).
-			if meta.version < 63 || !meta.has_data("days") || meta.created < 1_599_955_200 {
-				continue;
+		let mut live_checked = 0;
+		for path in saves_in(&live) {
+			let name = path.file_name().unwrap().to_string_lossy().into_owned();
+			let Ok(bytes) = std::fs::read(&path) else { continue };
+			match round_trip(&name, bytes.clone()) {
+				Ok(true) => live_checked += 1,
+				Ok(false) => {}
+				Err(e) if std::fs::read(&path).is_ok_and(|again| again == bytes) => panic!("{name}: {e}"),
+				Err(_) => eprintln!("{name}: changed while read, passed over"),
 			}
-			let start = r.pos();
-			r.f64().unwrap();
-			let scene = Scene::read(&mut r).unwrap_or_else(|e| panic!("{name}: {e}"));
-			let camera = Camera::read(&mut r).unwrap();
-			let clock = Clock::read(&mut r).unwrap();
-			let end = r.pos();
-			let mut w = SaveWriter {
-				strings: StrLen::U16,
-				..SaveWriter::default()
-			};
-			w.buf.extend_from_slice(&bytes[start..start + 8]);
-			scene.write(&mut w);
-			camera.write(&mut w);
-			clock.write(&mut w);
-			assert!(w.buf == bytes[start..end], "{name}: written back differently");
-			assert!(clock.phase < 10 && camera.zoom > 0.0, "{name}: camera {camera:?} clock {clock:?}");
-			checked += 1;
 		}
-		eprintln!("{checked} saves");
+		eprintln!("{live_checked} saves in {}", live.display());
 	}
 }

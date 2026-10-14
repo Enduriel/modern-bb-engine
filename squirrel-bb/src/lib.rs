@@ -24,6 +24,7 @@ mod io_table;
 mod key_queue;
 mod module;
 mod native;
+pub mod platform;
 pub mod scene;
 mod source;
 mod state;
