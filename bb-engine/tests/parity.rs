@@ -10,17 +10,18 @@
 //! `PARITY_DUMP=<dir>` also writes our engine's output per probe there, for review.
 //! Skips if the Steam install is missing.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::cell::RefCell;
 
 use bb_engine::harness;
 use squirrel_bb::LogLevel;
 
-fn parity_dir() -> PathBuf {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity")
-}
+#[path = "support/parity.rs"]
+mod common;
+
+use common::{Report, compare, entries, finish, golden_lines, load_divergences, normalize, parity_dir};
 
 struct Probe {
 	name: String,
@@ -80,11 +81,6 @@ fn combined_source(probes: &[&Probe]) -> String {
 	out
 }
 
-/// As the probe runner prints log rows: whitespace runs collapsed, trimmed.
-fn normalize(line: &str) -> String {
-	line.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 fn split_sections(lines: &[String]) -> BTreeMap<String, Vec<String>> {
 	let mut sections = BTreeMap::new();
 	let mut current: Option<String> = None;
@@ -99,21 +95,6 @@ fn split_sections(lines: &[String]) -> BTreeMap<String, Vec<String>> {
 		}
 	}
 	sections
-}
-
-/// `PROBE key = value` lines as an ordered key → value list (a section failure keeps its
-/// whole text as the key).
-fn entries(lines: &[String]) -> Vec<(String, String)> {
-	lines
-		.iter()
-		.map(|l| {
-			let l = l.strip_prefix("PROBE ").unwrap_or(l);
-			match l.split_once(" = ") {
-				Some((k, v)) => (k.to_string(), v.to_string()),
-				None => (l.to_string(), String::new()),
-			}
-		})
-		.collect()
 }
 
 /// Run one (mode, seed) group in our engine; the PROBE lines in order.
@@ -145,52 +126,6 @@ fn run_group(mode: &str, seed: Option<&str>, probes: &[&Probe]) -> Vec<String> {
 	out
 }
 
-#[derive(Default)]
-struct Report {
-	mismatches: Vec<String>,
-	stale: Vec<String>,
-	uncaptured: Vec<String>,
-	checked: usize,
-	diverged: usize,
-}
-
-fn load_divergences() -> BTreeMap<(String, String), String> {
-	let text = std::fs::read_to_string(parity_dir().join("divergences.txt")).unwrap_or_default();
-	text.lines()
-		.filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-		.map(|l| {
-			// " | " with spaces: a probe key may contain a bare '|'.
-			let parts: Vec<&str> = l.splitn(3, " | ").map(str::trim).collect();
-			assert_eq!(parts.len(), 3, "divergences.txt: expected 'probe | key | reason': {l}");
-			((parts[0].to_string(), parts[1].to_string()), parts[2].to_string())
-		})
-		.collect()
-}
-
-fn compare(probe: &str, golden: &[(String, String)], ours: &[(String, String)], allowed: &BTreeMap<(String, String), String>, report: &mut Report) {
-	let ours_map: BTreeMap<&str, &str> = ours.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-	let golden_map: BTreeMap<&str, &str> = golden.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-	for (key, want) in golden {
-		report.checked += 1;
-		let got = ours_map.get(key.as_str()).copied();
-		let known = allowed.contains_key(&(probe.to_string(), key.clone()));
-		match (got == Some(want.as_str()), known) {
-			(true, false) => {}
-			(true, true) => report.stale.push(format!("{probe} | {key}: listed as a divergence but now matches")),
-			(false, true) => report.diverged += 1,
-			(false, false) => report.mismatches.push(format!(
-				"{probe} | {key}\n    original: {want}\n    ours:     {}",
-				got.unwrap_or("<missing>")
-			)),
-		}
-	}
-	for (key, value) in ours {
-		if !golden_map.contains_key(key.as_str()) {
-			report.mismatches.push(format!("{probe} | {key}\n    original: <missing>\n    ours:     {value}"));
-		}
-	}
-}
-
 #[test]
 fn probes_match_the_original() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
@@ -215,25 +150,13 @@ fn probes_match_the_original() {
 		}
 		for p in group {
 			let golden_path = parity_dir().join("goldens").join(format!("{}.txt", p.name));
-			let Ok(golden) = std::fs::read_to_string(&golden_path) else {
+			let Some(golden) = golden_lines(&golden_path) else {
 				report.uncaptured.push(p.name.clone());
 				continue;
 			};
-			let golden: Vec<String> = golden.lines().filter(|l| !l.starts_with('#')).map(normalize).collect();
 			let ours = sections.get(&p.name).cloned().unwrap_or_default();
 			compare(&p.name, &entries(&golden), &entries(&ours), &allowed, &mut report);
 		}
 	}
-	eprintln!(
-		"parity: {} checks, {} known divergences, {} mismatches, {} uncaptured probes",
-		report.checked,
-		report.diverged,
-		report.mismatches.len(),
-		report.uncaptured.len()
-	);
-	for name in &report.uncaptured {
-		eprintln!("  no golden for {name} (run parity/capture.py)");
-	}
-	let problems: Vec<String> = report.mismatches.into_iter().chain(report.stale).collect();
-	assert!(problems.is_empty(), "parity differences:\n{}", problems.join("\n"));
+	finish(report);
 }
