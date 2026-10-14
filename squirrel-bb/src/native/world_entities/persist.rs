@@ -156,6 +156,9 @@ impl SavePart for EntitiesPart {
 						.with_payload(vm, &handle, |l| {
 							w.str(&l.text);
 							w.bool(l.visible);
+							w.u32(l.color);
+							w.f64(l.offset.0);
+							w.f64(l.offset.1);
 						})
 						.ok_or("save: not a label")?;
 				}
@@ -240,11 +243,18 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 	}
 	let label_count = cx.reader.borrow_mut().u32()?;
 	for _ in 0..label_count {
-		let (name, text, visible) = {
+		let data;
+		let name = {
 			let mut rd = cx.reader.borrow_mut();
-			(rd.str()?, rd.str()?, rd.bool()?)
+			let name = rd.str()?;
+			data = LabelData {
+				text: rd.str()?,
+				visible: rd.bool()?,
+				color: rd.u32()?,
+				offset: (rd.f64()?, rd.f64()?),
+			};
+			name
 		};
-		let data = LabelData { text, visible };
 		let existing = m.borrow().entities[idx].labels.get(&name).cloned();
 		match existing {
 			Some(handle) => {

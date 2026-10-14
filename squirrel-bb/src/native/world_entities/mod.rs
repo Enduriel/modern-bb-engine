@@ -80,11 +80,27 @@ impl SpriteData {
 	}
 }
 
-/// A text label handle (`entity.addLabel(name)`). Inert, like [`SpriteData`].
-#[derive(Clone, Default)]
+/// A text label (`entity.addLabel(name)`): what scripts set on it, which the
+/// renderer reads through the world scene.
+#[derive(Clone)]
 struct LabelData {
 	text: String,
 	visible: bool,
+	/// ARGB (`Color`, set from a `color` object).
+	color: u32,
+	/// From the entity's position, in world units with y up (`Offset`).
+	offset: (f64, f64),
+}
+
+impl Default for LabelData {
+	fn default() -> Self {
+		LabelData {
+			text: String::new(),
+			visible: false,
+			color: 0xffff_ffff,
+			offset: (0.0, 0.0),
+		}
+	}
 }
 
 /// One registered world entity: its native id, the instance, its tile coords (axial),
@@ -403,8 +419,25 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 			|l: &LabelData| l.visible,
 			|l: &mut LabelData, v: bool| l.visible = v,
 		)
-		.property_noop("Color") // render color: set by updatePlayerRelation, unread headless
-		.property_noop("Offset") // render offset vec: set by party.onInit, unread headless
+		.property_obj_rw(
+			"Color",
+			|l: &LabelData, vm: &SQVM| super::color::color_object(vm, l.color),
+			|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
+				l.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
+				Ok(())
+			},
+		)
+		.property_obj_rw(
+			"Offset",
+			|l: &LabelData, vm: &SQVM| {
+				let create = SqTable::root(vm).get::<SqStrongRef>("createVec")?;
+				create.call_ret::<SqStrongRef, _>(vm, l.offset).ok().flatten()
+			},
+			|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
+				l.offset = vec_xy(vm, &v);
+				Ok(())
+			},
+		)
 		.build(vm)
 }
 
@@ -789,7 +822,7 @@ impl WorldEntities {
 	/// Every live entity and its sprites as the renderer sees them.
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::SceneEntity> {
 		let m = self.machine.borrow();
-		let Some(class) = m.sprite_class.clone() else {
+		let (Some(class), Some(label_class)) = (m.sprite_class.clone(), m.label_class.clone()) else {
 			return Vec::new();
 		};
 		m.entities
@@ -814,6 +847,19 @@ impl WorldEntities {
 							ignore_ambient: s.ignore_ambient,
 							scaling: s.scaling,
 							colorization: s.colorization,
+						})
+					})
+					.collect(),
+				labels: rec
+					.labels
+					.iter()
+					.filter_map(|(name, handle)| {
+						label_class.with_payload(vm, handle, |l| crate::scene::SceneLabel {
+							name: name.clone(),
+							text: l.text.clone(),
+							visible: l.visible,
+							color: l.color,
+							offset: l.offset,
 						})
 					})
 					.collect(),

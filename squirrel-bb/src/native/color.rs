@@ -8,7 +8,7 @@
 //!
 //! `varyRGB(rf, gf, bf)` randomly perturbs the color in place — see [`Color::vary`].
 
-use squirrel::{ClassBuilder, Number, SQVM};
+use squirrel::{ClassBuilder, Number, SQVM, SqStrongRef, SqTable};
 
 use super::prng::Prng;
 
@@ -87,6 +87,20 @@ fn read_hex_u32(text: &str) -> Result<u32, u32> {
 		return Err(0);
 	}
 	u32::from_str_radix(&digits, 16).map_err(|_| 0)
+}
+
+/// The ARGB of a `color` object, read through its channels, or `None` if `value` isn't
+/// one. Lets render state keep plain values instead of VM references.
+pub(crate) fn color_argb(vm: &SQVM, value: &SqStrongRef) -> Option<u32> {
+	let channel = |name: &str| value.get_member::<i64>(vm, name).map(|v| (v & 0xff) as u32);
+	Some((channel("A")? << 24) | (channel("R")? << 16) | (channel("G")? << 8) | channel("B")?)
+}
+
+/// A new `color` object for `argb`, made with the scripts' `createColor`.
+pub(crate) fn color_object(vm: &SQVM, argb: u32) -> Option<SqStrongRef> {
+	let create = SqTable::root(vm).get::<SqStrongRef>("createColor")?;
+	let (a, rgb) = (argb >> 24, argb & 0x00ff_ffff);
+	create.call_ret::<SqStrongRef, _>(vm, (format!("{rgb:06x}{a:02x}"),)).ok().flatten()
 }
 
 /// Register the `color` class and its three factory functions, sharing `prng`

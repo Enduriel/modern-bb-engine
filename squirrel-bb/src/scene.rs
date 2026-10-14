@@ -40,6 +40,20 @@ pub struct SceneEntity {
 	pub shown: bool,
 	/// Its sprites, in the order they were added (back to front).
 	pub sprites: Vec<SceneSprite>,
+	/// Its text labels (e.g. a settlement's name).
+	pub labels: Vec<SceneLabel>,
+}
+
+/// One of an entity's text labels.
+#[derive(Clone, Debug)]
+pub struct SceneLabel {
+	pub name: String,
+	pub text: String,
+	pub visible: bool,
+	/// ARGB.
+	pub color: u32,
+	/// From the entity's position, in world units with y up.
+	pub offset: (f64, f64),
 }
 
 /// One of an entity's named sprites.
