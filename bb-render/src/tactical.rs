@@ -292,6 +292,39 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 	}
 }
 
+/// Where a unit's bars sit from it (fitted to the original's screenshot to the pixel,
+/// three units agreeing), and each
+/// bar's drop and colour: head armour, body armour, hitpoints (`0x4b3250`). Each bar has
+/// a lighter twin under it (`#d0d3e5`, `#ffadad`) that shows what was just lost and
+/// fades; at rest only the bars show.
+const OVERLAY_OFFSET: [f32; 2] = [-1.0, 55.0];
+const OVERLAY_BARS: [(f32, u32); 3] = [(0.0, 0xff70_8090), (-7.0, 0xff70_8090), (-14.0, 0xffb3_1f1f)];
+
+/// A unit's bars (`createOverlay`): the frame's bottom, a bar per value
+/// (`entityoverlay_bar_N`, N the value in 24ths, none at 0), the frame's top. They are
+/// lit by the battle's light and lie under its clouds, as in the original's screenshot.
+fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, values: [f32; 3], level: u32) {
+	let anchor = [entity.pos.0 as f32 + OVERLAY_OFFSET[0], entity.pos.1 as f32 + OVERLAY_OFFSET[1]];
+	let sprite = |b: &mut Builder, brush: &str, at: [f32; 2], color: u32| {
+		let [a, r, g, b_] = color.to_be_bytes();
+		let look = Look {
+			tint: [r, g, b_],
+			alpha: f32::from(a),
+			..Look::PLAIN
+		};
+		b.placed(brush, at, look, 1.0, level);
+	};
+	sprite(b, "entityoverlay_bottom", anchor, 0xffff_ffff);
+	for (value, (drop, color)) in values.iter().zip(OVERLAY_BARS) {
+		let steps = (value * 24.0 + 0.5) as i32;
+		if steps > 0 {
+			let brush = format!("entityoverlay_bar_{}", steps.min(24));
+			sprite(b, &brush, [anchor[0], anchor[1] + drop], color);
+		}
+	}
+	sprite(b, "entityoverlay_top", anchor, 0xffff_ffff);
+}
+
 /// The battle's clouds or fog over everything, each with its shadow, as the world's
 /// (`0x4e3ed0`): back to front by key, a shadow's key 2000 more than its cloud's.
 fn draw_clouds(b: &mut Builder, scene: &TacticalScene, view: &WorldView) {
@@ -368,6 +401,13 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
 		draw_dressing(&mut b, tile, on_it);
+	}
+	// The units' bars, then the weather over everything.
+	let level = scene.camera.level.clamp(0, 3) as u32;
+	for entity in &scene.entities {
+		if let Some(values) = entity.overlay {
+			draw_overlay(&mut b, entity, values, level);
+		}
 	}
 	draw_clouds(&mut b, scene, view);
 	let labels_from = b.quads.len();

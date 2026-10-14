@@ -133,6 +133,9 @@ struct UnitRecord {
 	discovered: bool,
 	/// `isBlockingSight`/`setBlockSight`.
 	blocks_sight: bool,
+	/// The bars over a unit (`createOverlay`): head armour, body armour and hitpoints,
+	/// each 0 to 1, as `setOverlayValues` last set them (`0x4c2ec0`, `0x4c2f60`).
+	overlay: Option<[f32; 3]>,
 	/// `getPos`/`setPos` world position (0,0 while off any map, like the original).
 	pos: (f64, f64),
 	/// The battle tile it stands on, if placed.
@@ -230,6 +233,7 @@ fn create_unit(
 			entity: entity.clone(),
 			faction: 0,
 			initialized: false,
+			overlay: None,
 			discovered: false,
 			blocks_sight: false,
 			pos: (0.0, 0.0),
@@ -613,12 +617,27 @@ impl TacticalEntities {
 					.is_some_and(|rec| rec.sprites.contains_key(&name))
 			})
 		};
-		// createOverlay returns an (inert) sprite too; updateOverlay/etc. are no-ops.
+		// createOverlay(): the unit gets its bars (empty until setOverlayValues). It also
+		// returns an inert sprite, which no script reads.
 		let create_overlay = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, _a: Variadic<Retained>| -> Option<SqStrongRef> {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.overlay.get_or_insert([0.0; 3]);
+				}
 				let class = m.borrow().sprite_class.clone()?;
 				Some(class.instantiate(vm, UnitSpriteData::fresh()))
+			})
+		};
+		// setOverlayValues(headArmor, bodyArmor, hitpoints): what the bars show.
+		let set_overlay_values = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, head: Number, body: Number, hitpoints: Number| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					if let Some(overlay) = rec.overlay.as_mut() {
+						*overlay = [head.0 as f32, body.0 as f32, hitpoints.0 as f32];
+					}
+				}
 			})
 		};
 		let is_initialized = {
@@ -781,6 +800,7 @@ impl TacticalEntities {
 			("getSpriteOffset", get_sprite_offset),
 			("setSpriteOffset", set_sprite_offset),
 			("createOverlay", create_overlay),
+			("setOverlayValues", set_overlay_values),
 			("isInitialized", is_initialized),
 			("isPlacedOnMap", is_placed_on_map),
 			("getTile", get_tile),
@@ -807,7 +827,6 @@ impl TacticalEntities {
 			"setSpriteColorization",
 			"addDefaultStatusSprites",
 			"updateOverlay",
-			"setOverlayValues",
 			"setOverlayIcons",
 			// Render-only, or map-only while units aren't placed:
 			"fadeIn",
@@ -1014,6 +1033,7 @@ impl TacticalEntities {
 				pos: u.pos,
 				tile: u.tile,
 				is_actor: u.is_actor,
+				overlay: u.overlay,
 				sprites: u
 					.sprites
 					.iter()

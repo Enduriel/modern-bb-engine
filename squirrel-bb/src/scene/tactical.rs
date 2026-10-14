@@ -34,6 +34,8 @@ pub struct SceneTacticalEntity {
 	pub tile: Option<usize>,
 	/// A unit, rather than a map object.
 	pub is_actor: bool,
+	/// Its bars (`setOverlayValues`): head armour, body armour, hitpoints, each 0 to 1.
+	pub overlay: Option<[f32; 3]>,
 	/// Its sprites, back to front.
 	pub sprites: Vec<SceneTacticalSprite>,
 }

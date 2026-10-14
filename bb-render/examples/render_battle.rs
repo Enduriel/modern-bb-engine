@@ -6,6 +6,8 @@
 //! ```text
 //! cargo run --release -p bb-render --example render_battle -- OUT.png [WIDTHxHEIGHT] [ZOOM]
 //! ```
+//!
+//! `BB_LIST_UNITS=1` lists the units with their screen positions and bars.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -89,6 +91,13 @@ fn main() {
 		scene.camera,
 		scene.tiles.iter().map(|t| t.details.len()).sum::<usize>()
 	);
+	if std::env::var_os("BB_LIST_UNITS").is_some() {
+		for e in scene.entities.iter().filter(|e| e.is_actor) {
+			let sx = (e.pos.0 as f32 - scene.camera.pos.0 as f32) * camera_zoom + width as f32 / 2.0;
+			let sy = height as f32 / 2.0 - (e.pos.1 as f32 - scene.camera.pos.1 as f32) * camera_zoom;
+			eprintln!("unit {} at {:?}, screen {sx},{sy}, overlay {:?}", e.id, e.pos, e.overlay);
+		}
+	}
 	let view = WorldView {
 		center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
 		zoom: 1.0 / camera_zoom,
