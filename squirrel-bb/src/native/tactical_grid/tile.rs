@@ -4,7 +4,7 @@ use squirrel::{
 	ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, StackArgs, This, Variadic,
 };
 
-use super::{Grid, TacticalTileData, detail, hex_distance, picking, tile_handle, vec};
+use super::{Grid, TacticalTileData, detail, hex_distance, hex_distance_to, picking, tile_handle, vec};
 use crate::native::overload::{Overload, overload_key};
 use crate::native::world_query;
 
@@ -285,9 +285,17 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			};
 			tile_handle(&t.grid, vm, id).ok_or_else(|| "getTileBetweenThisAnd: no tile class".to_string())
 		})
-		.method("getDistanceTo", |t: &mut TileHandle, other: Native<TileHandle>| -> i64 {
+		// getDistanceTo(tile) or (x, y) in axial coords: Sqrat overloads.
+		.method(&overload_key("getDistanceTo", 1), |t: &mut TileHandle, other: Native<TileHandle>| -> i64 {
 			let g = t.grid.borrow();
 			hex_distance(&g.tiles[t.id], &g.tiles[other.0.id])
+		})
+		.method(&overload_key("getDistanceTo", 2), |t: &mut TileHandle, x: i64, y: i64| -> i64 {
+			hex_distance_to(&t.grid.borrow().tiles[t.id], x, y)
+		})
+		.native_method("getDistanceTo", {
+			let overload = Overload::new("getDistanceTo");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		.method("getDirectionTo", |t: &mut TileHandle, other: Native<TileHandle>| -> i64 {
 			super::direction_between(&t.grid.borrow(), t.id, other.0.id) as i64

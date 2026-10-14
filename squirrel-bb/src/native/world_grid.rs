@@ -239,9 +239,14 @@ fn xy_table(vm: &SQVM, x: i64, y: i64) -> SqStrongRef {
 
 /// Hex distance between two tiles (axial cube distance).
 fn hex_distance(a: &TileHandle, b: &TileHandle) -> i64 {
-	let (aq, ar) = a.with(|d| (d.q, d.r));
 	let (bq, br) = b.with(|d| (d.q, d.r));
-	let (dq, dr) = (aq - bq, ar - br);
+	hex_distance_to(a, bq, br)
+}
+
+/// Hex distance from a tile to axial coords `(q, r)` (`getDistanceTo(x, y)`, `0x4fa950`).
+fn hex_distance_to(a: &TileHandle, q: i64, r: i64) -> i64 {
+	let (aq, ar) = a.with(|d| (d.q, d.r));
+	let (dq, dr) = (aq - q, ar - r);
 	(dq.abs() + dr.abs() + (dq + dr).abs()) / 2
 }
 
@@ -765,6 +770,15 @@ impl WorldGrid {
 		(g.width, g.height)
 	}
 
+	/// [`dims`](Self::dims) for a host hook that outlives this borrow.
+	pub(crate) fn dims_reader(&self) -> impl Fn() -> (i64, i64) + 'static {
+		let grid = self.grid.clone();
+		move || {
+			let g = grid.borrow();
+			(g.width, g.height)
+		}
+	}
+
 	/// Read a tile's `Type` by square coords (host/test inspection).
 	pub fn tile_type(&self, col: i64, row: i64) -> Option<i64> {
 		let g = self.grid.borrow();
@@ -1108,10 +1122,18 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		.method("hasNextTile", |t: &mut TileHandle, dir: i64| -> bool {
 			t.neighbour_id(dir).is_some()
 		})
+		// getDistanceTo(tile) or (x, y) in axial coords: Sqrat overloads.
 		.method(
-			"getDistanceTo",
+			&overload_key("getDistanceTo", 1),
 			|t: &mut TileHandle, other: Native<TileHandle>| -> i64 { hex_distance(t, &other.0) },
 		)
+		.method(&overload_key("getDistanceTo", 2), |t: &mut TileHandle, x: i64, y: i64| -> i64 {
+			hex_distance_to(t, x, y)
+		})
+		.native_method("getDistanceTo", {
+			let overload = Overload::new("getDistanceTo");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
+		})
 		.method(
 			"isSameTileAs",
 			|t: &mut TileHandle, other: Native<TileHandle>| -> bool { t.id == other.0.id },

@@ -80,6 +80,9 @@ struct Machine {
 	scene_update: Option<SceneUpdate>,
 	/// What `State.renderScene()` runs: the logic side of rendering (discovery, …).
 	scene_render: Option<SceneUpdate>,
+	/// The engine's own listener, which sees every mouse event before the states (the
+	/// world's hovered tile).
+	mouse_listener: Option<MouseListener>,
 	/// Added states whose `onInit` hasn't run yet.
 	pending_init: Vec<SqStrongRef>,
 	methods: Vec<(&'static str, SqStrongRef)>,
@@ -89,6 +92,7 @@ struct Machine {
 
 /// A host scene update, run by `State.updateScene()`.
 type SceneUpdate = Rc<dyn Fn(&SQVM) -> Result<(), String>>;
+type MouseListener = Rc<dyn Fn(&SQVM, &MouseInput) -> Result<(), String>>;
 
 impl Machine {
 	/// The registered name of the state with identity `id` (`"RootState"` for the
@@ -258,6 +262,7 @@ impl RootState {
 				bg_suspended: false,
 				scene_update: None,
 				scene_render: None,
+				mouse_listener: None,
 				pending_init: Vec::new(),
 				methods: Vec::new(),
 				input: None,
@@ -472,6 +477,12 @@ impl RootState {
 		self.machine.borrow_mut().scene_render = Some(Rc::new(render));
 	}
 
+	/// Set the engine's mouse listener, run on every mouse event before the states'
+	/// `onMouseInput`.
+	pub fn set_mouse_listener(&self, listener: impl Fn(&SQVM, &MouseInput) -> Result<(), String> + 'static) {
+		self.machine.borrow_mut().mouse_listener = Some(Rc::new(listener));
+	}
+
 	/// One frame's update pass, as the original's: the root's `onUpdate`, then each
 	/// child in registration order. A child runs its `onUpdate` (if visible) unless it
 	/// is finishing; then, if it is finishing (even by its own update), its `onFinish`
@@ -520,6 +531,10 @@ impl RootState {
 	/// routes it this way among several visible states is unverified; in a battle or on
 	/// the world map only one state with input handling is visible.
 	pub fn mouse_input(&self, vm: &SQVM, input: MouseInput) -> Result<bool, String> {
+		let listener = self.machine.borrow().mouse_listener.clone();
+		if let Some(listener) = listener {
+			listener(vm, &input)?;
+		}
 		let event = {
 			let m = self.machine.borrow();
 			m.input.as_ref().ok_or("mouse_input: not installed")?.mouse(vm, input)
@@ -600,6 +615,7 @@ impl RootState {
 		machine.input = None;
 		machine.scene_update = None;
 		machine.scene_render = None;
+		machine.mouse_listener = None;
 		machine.bg_callback = None;
 		machine.methods.clear();
 	}

@@ -112,6 +112,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.
 		root_state.set_scene_update(world_entities.scene_update_hook());
+		// The world keeps the tile under the mouse.
+		root_state.set_mouse_listener(world_entities.mouse_listener(natives.world_camera.clone(), world_grid.dims_reader()));
 		// Saving and loading, over every stateful part (in load order).
 		let saves = SaveSystem::new();
 		saves.install(&mut vm);

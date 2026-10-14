@@ -22,9 +22,10 @@ mod travel;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, StackArgs, This, Variadic};
 
 use crate::native::TacticalGrid;
+use crate::native::overload::{Overload, expect_arity, overload_key};
 use crate::native::tactical_entities::{Units, unit_identity};
 use crate::native::tactical_grid::{self, Grid, TileHandle};
 use pathfind::{Query, Step};
@@ -233,31 +234,26 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 				cost_table(vm, &st.grid, &c)
 			},
 		)
-		// (unit, settings, ap) or (unit, settings, ap, target tile, faction).
+		// getTurnsRequiredForPath(unit, settings, ap) or (unit, settings, ap, target tile,
+		// faction): Sqrat overloads.
 		.method(
-			"getTurnsRequiredForPath",
+			&overload_key("getTurnsRequiredForPath", 3),
 			|n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<f64, String> {
-				let st = n.0.borrow();
-				if args.len() != 3 && args.len() != 5 {
-					return Err("getTurnsRequiredForPath: wrong number of parameters".to_string());
-				}
-				let settings = st.settings_of(vm, &args[1].0).ok_or("getTurnsRequiredForPath: expected settings")?;
-				let ap = args[2].0.get_value::<Number>(vm).ok_or("getTurnsRequiredForPath: expected a number")?.0 as i32;
-				let target = if args.len() == 5 {
-					let tile = tactical_grid::tile_id_of(&st.grid, vm, &args[3].0).ok_or("getTurnsRequiredForPath: expected a tile")?;
-					let faction = args[4].0.get_value::<Number>(vm).ok_or("getTurnsRequiredForPath: expected a faction")?.0 as i64;
-					Some((tile, faction))
-				} else {
-					None
-				};
-				let Some(from) = st.unit_tile(vm, &args[0].0) else { return Ok(0.0) };
-				if st.path.is_empty() {
-					return Ok(0.0);
-				}
-				let g = st.grid.borrow();
-				Ok(cost::turns_required(&g, &st.path, &settings, from, ap, target) as f64)
+				expect_arity(args.len(), 3)?;
+				turns_required(n, vm, &args)
 			},
 		)
+		.method(
+			&overload_key("getTurnsRequiredForPath", 5),
+			|n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<f64, String> {
+				expect_arity(args.len(), 5)?;
+				turns_required(n, vm, &args)
+			},
+		)
+		.native_method("getTurnsRequiredForPath", {
+			let overload = Overload::new("getTurnsRequiredForPath");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
+		})
 		// isTravelling(entity): whether any unit is moving along a path (the original asks
 		// that, whoever the entity), or that one is teleporting.
 		.method("isTravelling", |n: &mut NavHandle, vm: &SQVM, entity: Retained| -> bool {
@@ -279,9 +275,24 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 		.method("travel", |n: &mut NavHandle, vm: &SQVM, entity: Retained, _ap: Number, _fatigue: Number| -> Result<bool, String> {
 			travel::travel(&n.0, vm, &entity.0)
 		})
-		// teleport(entity, tile, onDone, tag, flag[, speed]) (see `teleport`).
-		.method("teleport", |n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<bool, String> {
-			teleport::teleport(&n.0, vm, &args)
+		// teleport(entity, tile, onDone, tag, flag[, speed]) (see `teleport`): Sqrat overloads.
+		.method(
+			&overload_key("teleport", 5),
+			|n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<bool, String> {
+				expect_arity(args.len(), 5)?;
+				teleport::teleport(&n.0, vm, &args)
+			},
+		)
+		.method(
+			&overload_key("teleport", 6),
+			|n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<bool, String> {
+				expect_arity(args.len(), 6)?;
+				teleport::teleport(&n.0, vm, &args)
+			},
+		)
+		.native_method("teleport", {
+			let overload = Overload::new("teleport");
+			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
 		// switchEntities(a, b, onDone, tag, speed) (see `teleport`).
 		.method("switchEntities", |n: &mut NavHandle, vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<bool, String> {
@@ -293,4 +304,24 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 		.method("render", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
 		.method("update", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
 		.build(vm)
+}
+
+/// `getTurnsRequiredForPath` with 3 or 5 arguments (see the overloads above).
+fn turns_required(n: &NavHandle, vm: &SQVM, args: &[Retained]) -> Result<f64, String> {
+	let st = n.0.borrow();
+	let settings = st.settings_of(vm, &args[1].0).ok_or("getTurnsRequiredForPath: expected settings")?;
+	let ap = args[2].0.get_value::<Number>(vm).ok_or("getTurnsRequiredForPath: expected a number")?.0 as i32;
+	let target = if args.len() == 5 {
+		let tile = tactical_grid::tile_id_of(&st.grid, vm, &args[3].0).ok_or("getTurnsRequiredForPath: expected a tile")?;
+		let faction = args[4].0.get_value::<Number>(vm).ok_or("getTurnsRequiredForPath: expected a faction")?.0 as i64;
+		Some((tile, faction))
+	} else {
+		None
+	};
+	let Some(from) = st.unit_tile(vm, &args[0].0) else { return Ok(0.0) };
+	if st.path.is_empty() {
+		return Ok(0.0);
+	}
+	let g = st.grid.borrow();
+	Ok(cost::turns_required(&g, &st.path, &settings, from, ap, target) as f64)
 }

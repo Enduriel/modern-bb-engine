@@ -13,6 +13,7 @@ use std::rc::Rc;
 use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::{EntityMachine, ignore_missing, vec_xy};
+use crate::native::overload::single_overload;
 use crate::native::world_query;
 
 /// `Const.Faction.Player`.
@@ -191,7 +192,6 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 		("getDirection8To", get_direction8_to),
 		("getVisibility", get_visibility),
 		("setVisibility", set_visibility),
-		("setDiscovered", set_discovered),
 		("isDiscovered", is_discovered),
 		("getZOffset", get_z_offset),
 		("setZOffset", set_z_offset),
@@ -206,6 +206,8 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 		("isRenderedTop", is_rendered_top),
 		("setRenderedTop", set_rendered_top),
 	]);
+	// The original binds it as a one-arity Sqrat overload.
+	out.extend(single_overload(vm, "setDiscovered", "__sqrat_ol_ setDiscovered_1", set_discovered));
 	out
 }
 

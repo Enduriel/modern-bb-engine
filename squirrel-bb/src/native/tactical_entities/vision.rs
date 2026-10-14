@@ -10,6 +10,7 @@ use std::rc::Rc;
 use squirrel::{Retained, SQVM, SqStrongRef};
 
 use super::{TacticalMachine, ignore_missing};
+use crate::native::overload::single_overload;
 use crate::native::tactical_grid::visibility::{Occupant, PLAYER, Sightings};
 use crate::native::tactical_grid::{self, zone::faction_bit};
 
@@ -127,13 +128,15 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 			}
 		})
 	};
-	vec![
+	let mut out = vec![
 		("updateVisibility", update_visibility),
 		("isHiddenToPlayer", is_hidden_to_player),
 		("isVisibleToEntity", is_visible_to_entity),
 		("isOccludedByTerrain", is_occluded_by_terrain),
-		("setDiscovered", set_discovered),
-	]
+	];
+	// The original binds it as a one-arity Sqrat overload.
+	out.extend(single_overload(vm, "setDiscovered", "__sqrat_ol_ setDiscovered_1", set_discovered));
+	out
 }
 
 /// `Tactical.clearVisibility` and `Tactical.fillVisibility`.

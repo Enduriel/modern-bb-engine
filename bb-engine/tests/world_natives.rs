@@ -1,12 +1,16 @@
 //! World natives built from the original's disassembly, on a new campaign:
 //! `World.move`, `getPlayerPos`, `getAllTilesOfRegion`, `getAllRosters` and `roster.get`, the world tile's
 //! `getTileBetweenThisAnd`/`getPosBetweenThisAnd`, and `presave`/`canLoad` around a save.
+//! Then the Sqrat overloads probed on 2026-10-14: `getDistanceTo(x, y)`, `getEntityAtPos`,
+//! and `spawnEntity(script)` at the tile under the mouse; and `IO.enumerateFiles` over
+//! the real data folder.
 //!
 //! Skips if no Steam install. Slow in debug builds: it runs all of worldgen first.
 
 use std::path::Path;
 
 use bb_engine::{harness, tactical_player as player};
+use squirrel_bb::MouseInput;
 
 /// Run a check script that returns "" when everything holds, else what didn't.
 fn check(engine: &harness::GameEngine, what: &str, script: &str) {
@@ -129,6 +133,62 @@ fn world_natives_from_the_disassembly() {
 		::World.save("presave_test", null);
 		if (!::World.canLoad("presave_test")) wrong.push("not saved after the world was drawn");
 		if (::World.canLoad("no_such_save")) wrong.push("canLoad of a missing save");
+		"#,
+	);
+
+	check(
+		&engine,
+		"getDistanceTo(x, y)",
+		r#"
+		// Probed: the (x, y) form takes axial Coords, and floats truncate.
+		local t0 = ::World.getTileSquare(20, 20);
+		if (t0.Coords.X != 20 || t0.Coords.Y != 10) wrong.push("t0 coords " + t0.Coords.X + "," + t0.Coords.Y);
+		foreach (c in [[23, 20, 3], [20, 23, 3], [22, 21, 2], [25, 24, 7], [17, 22, 4], [27, 15, 8]])
+		{
+			local t = ::World.getTileSquare(c[0], c[1]);
+			if (t0.getDistanceTo(t) != c[2]) wrong.push("tile form to " + c[0] + "," + c[1]);
+			if (t0.getDistanceTo(t.Coords.X, t.Coords.Y) != c[2]) wrong.push("xy form to " + c[0] + "," + c[1]);
+		}
+		if (t0.getDistanceTo(0, 0) != 30 || t0.getDistanceTo(-5, 3) != 32 || t0.getDistanceTo(1000, 1000) != 1970) wrong.push("raw coords");
+		if (t0.getDistanceTo(20.7, 10.2) != 0) wrong.push("floats don't truncate");
+		try { t0.getDistanceTo(); wrong.push("no args accepted"); }
+		catch (e) { if (e != "No overload matching this argument list found") wrong.push("no args: " + e); }
+		"#,
+	);
+	check(
+		&engine,
+		"getEntityAtPos",
+		r#"
+		local p = ::World.State.getPlayer().getPos();
+		if (::World.getEntityAtPos(p) != null || ::World.getEntityAtPos(p.X, p.Y) != null) wrong.push("found an entity");
+		"#,
+	);
+
+	// spawnEntity(script) spawns at the tile under the mouse, once it has been over the map.
+	check(
+		&engine,
+		"spawnEntity before the mouse moved",
+		r#"try { ::World.spawnEntity("scripts/entity/world/party"); wrong.push("spawned"); } catch (e) {}"#,
+	);
+	engine.root_state().mouse_input(engine.vm(), MouseInput::moved(700, 300)).expect("mouse move");
+	check(
+		&engine,
+		"spawnEntity at the hovered tile",
+		r#"
+		local hovered = ::World.screenToTile(700, 300);
+		local e = ::World.spawnEntity("scripts/entity/world/party");
+		local c = e.getTile().Coords;
+		if (c.X != hovered.X || c.Y != hovered.Y) wrong.push("at " + c.X + "," + c.Y + ", not " + hovered.X + "," + hovered.Y);
+		e.die();
+		"#,
+	);
+	check(
+		&engine,
+		"IO.enumerateFiles over the data folder",
+		r#"
+		local files = ::IO.enumerateFiles("data/");
+		if (files == null || files.find("data/data_001") == null) wrong.push("data/data_001 not listed");
+		if (::IO.enumerateFiles("./data/") != null) wrong.push("./data/ listed");
 		"#,
 	);
 }

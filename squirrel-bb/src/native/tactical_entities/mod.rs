@@ -23,7 +23,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::inject_natives;
-use super::overload::{make_dispatcher, overload_key};
+use super::overload::{make_dispatcher, overload_key, single_overload};
 
 mod persist;
 mod effects;
@@ -883,14 +883,20 @@ impl TacticalEntities {
 			"setAlpha",
 			"clearVisibility",
 			"setZ",
-			"storeSpriteColors",
-			"restoreSpriteColors",
 			"fadeTo",
 			"fadeToStoredColors",
 			"moveSpriteScale",
 			"copySpritesFrom",
 		] {
 			methods.push((name, noop.clone()));
+		}
+		// One-arity Sqrat overloads in the original; render-only here.
+		for (name, key) in [
+			("storeSpriteColors", "__sqrat_ol_ storeSpriteColors_0"),
+			("restoreSpriteColors", "__sqrat_ol_ restoreSpriteColors_0"),
+		] {
+			let leaf = vm.make_closure(|| {});
+			methods.extend(single_overload(vm, name, key, leaf));
 		}
 		methods.extend(vision::unit_natives(vm, &self.machine));
 		methods.extend(render::unit_natives(vm, &self.machine));

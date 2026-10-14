@@ -24,34 +24,4 @@ menu/natives | native WorldCameraBridge.* | not a root global here
 menu/natives | native WorldNavigator.* | not a root global here
 menu/natives | native WorldWeather.* | not a root global here
 
-# Overloaded natives without their per-arity slots (`__sqrat_ol_ <name>_<N>`). Modern Hooks
-# wraps overloads through these slots.
-campaign/natives | native tile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
-campaign/natives | native tile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
-campaign/natives | native settlement.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
-campaign/natives | native settlement.__sqrat_ol_ setDiscovered_1 | missing overload slot
-campaign/natives | native settlement.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
-campaign/natives | native player_party.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
-campaign/natives | native player_party.__sqrat_ol_ setDiscovered_1 | missing overload slot
-campaign/natives | native player_party.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
-campaign/natives | native brother.__sqrat_ol_ restoreSpriteColors_0 | missing overload slot
-campaign/natives | native brother.__sqrat_ol_ setDiscovered_1 | missing overload slot
-campaign/natives | native brother.__sqrat_ol_ storeSpriteColors_0 | missing overload slot
-menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_3 | missing overload slot
-menu/natives | native TacticalNavigator.__sqrat_ol_ getTurnsRequiredForPath_5 | missing overload slot
-menu/natives | native TacticalNavigator.__sqrat_ol_ teleport_5 | missing overload slot
-menu/natives | native TacticalNavigator.__sqrat_ol_ teleport_6 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
-menu/natives | native TacticalTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
-menu/natives | native World.__sqrat_ol_ getEntityAtPos_1 | missing overload slot
-menu/natives | native World.__sqrat_ol_ getEntityAtPos_2 | missing overload slot
-menu/natives | native World.__sqrat_ol_ spawnEntity_1 | missing overload slot
-menu/natives | native World.__sqrat_ol_ spawnLocation_1 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_1 | missing overload slot
-menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
-
 # Plain natives we don't have.
-menu/natives | native PersistenceManager.createStorage | missing
-menu/natives | native PersistenceManager.deleteStorages | missing
-menu/natives | native PersistenceManager.loadStorage | missing
-menu/natives | native World.getEntityAtPos | missing

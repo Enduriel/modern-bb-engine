@@ -28,7 +28,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::inject_natives;
-use super::overload::{make_dispatcher, overload_key};
+use super::overload::{make_dispatcher, overload_key, single_overload};
 use super::world_layout;
 use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
@@ -36,6 +36,7 @@ use crate::native::{EntityIds, Sprites};
 use crate::native::sprite_color::{SpriteColor, real_time};
 
 mod footprints;
+mod hover;
 mod movement;
 mod persist;
 mod render;
@@ -485,6 +486,7 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 /// The native World-entity subsystem (`World.spawnLocation` + injected entity methods).
 pub struct WorldEntities {
 	machine: Rc<RefCell<EntityMachine>>,
+	hover: hover::Hover,
 }
 
 impl WorldEntities {
@@ -492,6 +494,7 @@ impl WorldEntities {
 	/// [`ModuleSystem::instantiator`](crate::ModuleSystem::instantiator)).
 	pub fn new(instantiate: Instantiator) -> Self {
 		WorldEntities {
+			hover: hover::Hover::default(),
 			machine: Rc::new(RefCell::new(EntityMachine {
 				instantiate,
 				sprite_class: None,
@@ -728,8 +731,6 @@ impl WorldEntities {
 		// Render-only natives.
 		for name in [
 			"setZ",
-			"storeSpriteColors",
-			"restoreSpriteColors",
 			"fadeTo",
 			"fadeToStoredColors",
 			"fadeIn",
@@ -742,13 +743,31 @@ impl WorldEntities {
 		] {
 			methods.push((name, noop.clone()));
 		}
+		// One-arity Sqrat overloads in the original; render-only here.
+		for (name, key) in [
+			("storeSpriteColors", "__sqrat_ol_ storeSpriteColors_0"),
+			("restoreSpriteColors", "__sqrat_ol_ restoreSpriteColors_0"),
+		] {
+			let leaf = vm.make_closure(|| {});
+			methods.extend(single_overload(vm, name, key, leaf));
+		}
 		self.machine.borrow_mut().methods = methods;
 
-		// --- World.spawnLocation / World.spawnEntity: Sqrat overloads (1 ctx / 2 coords /
-		// 3 x,y). We serve the 2- and 3-arg forms; the 1-arg context form errors (the
-		// scripts never use it). Locations occupy their tile, parties don't.
+		// --- World.spawnLocation / World.spawnEntity: Sqrat overloads (script, at the tile
+		// under the mouse (see `hover`) / script, coords / script, x, y). Locations occupy
+		// their tile, parties don't.
 		let mut slots: Vec<(String, SqStrongRef)> = Vec::new();
 		for (name, occupy) in [("spawnLocation", true), ("spawnEntity", false)] {
+			let spawn_1 = {
+				let m = self.machine.clone();
+				let hover = self.hover.clone();
+				vm.make_closure(move |vm: &SQVM, path: &str| -> Result<SqStrongRef, String> {
+					// The original reads the tile without a check (a crash before the
+					// pointer has been over the map).
+					let (q, r) = hover.tile().ok_or("spawn: the mouse hasn't been over the map")?;
+					spawn(&m, vm, path, q, r, occupy)
+				})
+			};
 			let spawn_2 = {
 				let m = self.machine.clone();
 				vm.make_closure(
@@ -768,6 +787,7 @@ impl WorldEntities {
 				)
 			};
 			let dispatch = make_dispatcher(vm, name);
+			slots.push((overload_key(name, 1), spawn_1));
 			slots.push((overload_key(name, 2), spawn_2));
 			slots.push((overload_key(name, 3), spawn_3));
 			slots.push((name.to_string(), dispatch));
@@ -834,6 +854,18 @@ impl WorldEntities {
 			})
 		};
 		slots.push(("getAllEntitiesAtPos".to_string(), all_at_pos));
+		// getEntityAtPos(pos) or (x, y): Sqrat overloads over the entity layer's point
+		// query (radius 4, `0x4f2ae0`/`0x4f2c20`). That query (`0x55cb60`) only matches an
+		// entity when an edge of its rect lies within 4 of the point on each axis, and
+		// no point near the company ever matched (probed 2026-10-14: 2 x 11,817 points
+		// around it, at campaign start and 1.5 s later). Nothing in the game or the
+		// installed mods calls it. Always null here.
+		slots.push((overload_key("getEntityAtPos", 1), vm.make_closure(|_pos: Retained| -> Option<SqStrongRef> { None })));
+		slots.push((
+			overload_key("getEntityAtPos", 2),
+			vm.make_closure(|_x: Number, _y: Number| -> Option<SqStrongRef> { None }),
+		));
+		slots.push(("getEntityAtPos".to_string(), make_dispatcher(vm, "getEntityAtPos")));
 		slots.push(("getAllEntitiesAndOneLocationAtPos".to_string(), all_and_one_location_at_pos));
 		slots.push(("getEntityByID".to_string(), get_entity_by_id));
 		slots.push(("getEntityAtTile".to_string(), get_entity_at_tile));
@@ -864,6 +896,20 @@ impl WorldEntities {
 	}
 
 	/// The per-frame render pass (see [`render`]): which entities the player discovers.
+	/// The world's own mouse listener (see [`hover`]): keeps the tile under the pointer,
+	/// read through `camera` on a map of the size `dims` gives.
+	pub(crate) fn mouse_listener(
+		&self,
+		camera: crate::native::world_camera::WorldCamera,
+		dims: impl Fn() -> (i64, i64) + 'static,
+	) -> impl Fn(&SQVM, &crate::input_events::MouseInput) -> Result<(), String> + 'static {
+		let hover = self.hover.clone();
+		move |vm, input| {
+			hover.on_mouse(vm, &camera, dims(), input);
+			Ok(())
+		}
+	}
+
 	pub fn scene_render_hook(&self) -> impl Fn(&SQVM) -> Result<(), String> + 'static {
 		let m = self.machine.clone();
 		move |vm: &SQVM| render::run_pass(&m, vm)

@@ -96,3 +96,31 @@ pub(crate) fn make_dispatcher(vm: &mut SQVM, base_name: &str) -> SqStrongRef {
 	let overload = Overload::new(base_name);
 	vm.make_closure(move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args))
 }
+
+/// The parameter check of a leaf that takes its arguments as a `Variadic`: the dispatcher
+/// only picks it for exactly `arity` arguments, and a direct call through its slot with
+/// another count fails as a native's own parameter check would.
+pub(crate) fn expect_arity(args: usize, arity: usize) -> Result<(), String> {
+	if args == arity { Ok(()) } else { Err("wrong number of parameters".to_string()) }
+}
+
+/// The two slots of a native method the original binds as a Sqrat overload with a single
+/// arity (e.g. `storeSpriteColors`, only `"__sqrat_ol_ storeSpriteColors_0"`): the leaf
+/// under its key and the dispatcher under the bare name, for the `(name, closure)` method
+/// lists injected onto script objects. `key` is [`overload_key`]`(name, arity)` spelled
+/// out, since those lists hold `&'static str`s.
+pub(crate) fn single_overload(
+	vm: &mut SQVM,
+	name: &'static str,
+	key: &'static str,
+	leaf: SqStrongRef,
+) -> [(&'static str, SqStrongRef); 2] {
+	debug_assert!(
+		key.strip_prefix("__sqrat_ol_ ")
+			.and_then(|k| k.strip_prefix(name))
+			.and_then(|k| k.strip_prefix('_'))
+			.is_some_and(|n| n.parse::<usize>().is_ok()),
+		"{key} is not an overload slot of {name}"
+	);
+	[(key, leaf), (name, make_dispatcher(vm, name))]
+}

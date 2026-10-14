@@ -382,7 +382,12 @@ mod direction_tests {
 
 /// Hex distance between two tiles.
 pub(crate) fn hex_distance(a: &TacticalTileData, b: &TacticalTileData) -> i64 {
-	let (dq, dr) = (a.q - b.q, a.r - b.r);
+	hex_distance_to(a, b.q, b.r)
+}
+
+/// Hex distance from a tile to axial coords `(q, r)` (`getDistanceTo(x, y)`, `0x4daeb0`).
+pub(crate) fn hex_distance_to(a: &TacticalTileData, q: i64, r: i64) -> i64 {
+	let (dq, dr) = (a.q - q, a.r - r);
 	(dq.abs() + dr.abs() + (dq + dr).abs()) / 2
 }
 
