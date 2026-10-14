@@ -3,9 +3,10 @@
 //! `KeyMapSQ`), and it agrees with every code vanilla tests for (Escape 41, `C` 13,
 //! `I` 19, F5 75, F9 79). Codes 42, 43, 52, 65 and 69 exist but nothing names them.
 //!
-//! A key reports state 1 when pressed and 0 when released (MSU's `getKeyState`);
-//! vanilla acts on 0. The modifier is a mask whose bit 2 is Ctrl (vanilla's
-//! developer keys test `getModifier() & 2`); the other bits are unknown.
+//! A key reports state 1 when pressed and 0 when released (`KeyState` Down/Up); vanilla
+//! acts on 0. Held-down repeats come again as pressed with `getFire()` 1 (`KeyFire`
+//! Repeated). The modifier is the `KeyModifier` mask: Shift 1, Ctrl 2, Alt 4 (the
+//! original's enums, disassembled).
 
 use winit::keyboard::{KeyCode, ModifiersState};
 
@@ -64,7 +65,7 @@ pub fn code(key: KeyCode) -> Option<i64> {
 
 /// The modifier mask for `getModifier()`.
 pub fn modifier(state: ModifiersState) -> i64 {
-	if state.control_key() { 2 } else { 0 }
+	i64::from(state.shift_key()) | i64::from(state.control_key()) << 1 | i64::from(state.alt_key()) << 2
 }
 
 #[cfg(test)]
@@ -83,5 +84,13 @@ mod tests {
 		assert_eq!(code(KeyCode::F9), Some(79));
 		assert_eq!(code(KeyCode::KeyZ), Some(36));
 		assert_eq!(code(KeyCode::CapsLock), None);
+	}
+
+	#[test]
+	fn modifiers_are_a_mask() {
+		assert_eq!(modifier(ModifiersState::empty()), 0);
+		assert_eq!(modifier(ModifiersState::SHIFT), 1);
+		assert_eq!(modifier(ModifiersState::CONTROL), 2);
+		assert_eq!(modifier(ModifiersState::ALT | ModifiersState::SHIFT), 5);
 	}
 }

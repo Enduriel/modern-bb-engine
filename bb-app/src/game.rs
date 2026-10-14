@@ -27,6 +27,8 @@ pub struct Game {
 	cursor: (i64, i64),
 	/// Mouse buttons held, for "moved with a button down".
 	buttons_down: u32,
+	/// The modifier keys held (`KeyModifier` mask), sent with every event.
+	modifier: i64,
 }
 
 impl Game {
@@ -48,6 +50,7 @@ impl Game {
 			screen: mode,
 			cursor: (0, 0),
 			buttons_down: 0,
+			modifier: 0,
 		})
 	}
 
@@ -68,7 +71,13 @@ impl Game {
 		self.cursor = (x, y);
 		self.engine.ui().set_cursor(x, y, false);
 		// Every pointer move is `MouseState.Moved`, button held or not (disassembled).
-		self.mouse(MouseInput { id: 6, state: 2, x, y, modifier: 0 })
+		self.mouse(MouseInput {
+			id: 6,
+			state: 2,
+			x,
+			y,
+			modifier: self.modifier,
+		})
 	}
 
 	/// Button `id` (1 left, 2 right, 3 middle, 4 back, 5 forward) went down or up.
@@ -85,7 +94,7 @@ impl Game {
 			state: if down { 0 } else { 1 },
 			x,
 			y,
-			modifier: 0,
+			modifier: self.modifier,
 		})
 	}
 
@@ -97,17 +106,23 @@ impl Game {
 			state: if up { 3 } else { 4 },
 			x,
 			y,
-			modifier: 0,
+			modifier: self.modifier,
 		})
 	}
 
-	/// Key `key` (an engine code, see `keys`) went down or up with `modifier` held.
-	pub fn key(&mut self, key: i64, down: bool, modifier: i64) -> Result<(), String> {
+	/// The modifier keys held now (see `keys::modifier`).
+	pub fn set_modifier(&mut self, modifier: i64) {
+		self.modifier = modifier;
+	}
+
+	/// Key `key` (an engine code, see `keys`) went down or up; `repeat` for a held key's
+	/// repeats.
+	pub fn key(&mut self, key: i64, down: bool, repeat: bool) -> Result<(), String> {
 		let input = KeyInput {
 			key,
 			state: i64::from(down),
-			modifier,
-			fire: 0,
+			modifier: self.modifier,
+			fire: i64::from(repeat),
 		};
 		self.engine.root_state().key_input(self.engine.vm(), input).map(|_| ())
 	}

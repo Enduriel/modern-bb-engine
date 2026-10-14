@@ -10,7 +10,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::{ModifiersState, PhysicalKey};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 use crate::game::Game;
@@ -35,7 +35,6 @@ struct Running {
 	game: Game,
 	last_frame: Instant,
 	frames: u64,
-	modifiers: ModifiersState,
 }
 
 pub struct App {
@@ -101,7 +100,6 @@ impl App {
 			game,
 			last_frame: Instant::now(),
 			frames: 0,
-			modifiers: ModifiersState::empty(),
 		})
 	}
 
@@ -180,17 +178,14 @@ impl Running {
 				if y == 0.0 { Ok(()) } else { self.game.wheel(y > 0.0) }
 			}
 			WindowEvent::ModifiersChanged(m) => {
-				self.modifiers = m.state();
+				self.game.set_modifier(keys::modifier(m.state()));
 				Ok(())
 			}
 			WindowEvent::KeyboardInput { event, .. } => {
 				let PhysicalKey::Code(code) = event.physical_key else { return Ok(()) };
 				let Some(key) = keys::code(code) else { return Ok(()) };
-				if event.repeat {
-					return Ok(());
-				}
 				let down = event.state == ElementState::Pressed;
-				self.game.key(key, down, keys::modifier(self.modifiers))
+				self.game.key(key, down, event.repeat)
 			}
 			_ => Ok(()),
 		}
