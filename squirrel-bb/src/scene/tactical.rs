@@ -30,7 +30,8 @@ pub struct TacticalScene {
 	/// The other effects over the battle (icons, attacks, sprite effects,
 	/// projectiles), in the order they began.
 	pub effects: Vec<SceneEffect>,
-	/// The pools on the ground (`Tactical.spawnPoolEffect`), oldest first.
+	/// What lies on the ground from effects, oldest first: pools
+	/// (`Tactical.spawnPoolEffect`) and landed heads with their blood.
 	pub pools: Vec<ScenePool>,
 }
 
@@ -45,6 +46,7 @@ pub struct SceneEffect {
 	pub rotation: f32,
 	/// ARGB, its fade in the alpha.
 	pub color: u32,
+	pub saturation: f32,
 	pub mirrored: bool,
 	/// Placed by its brush's offset (projectiles), or without it (icons, attacks and
 	/// sprite effects, which the original flags so).
@@ -63,6 +65,7 @@ pub struct ScenePool {
 	pub rotation: f32,
 	/// ARGB.
 	pub color: u32,
+	pub saturation: f32,
 	pub mirrored: bool,
 }
 

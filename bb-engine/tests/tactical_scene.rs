@@ -108,4 +108,27 @@ fn a_battle_map_is_ready_to_draw() {
 	let scene = engine.tactical_scene();
 	assert!(scene.effects.iter().all(|e| e.brush != "status_effect_87"), "the icon is over after 1.5 s");
 	assert!(scene.pools.len() >= pools, "pools stay");
+
+	// A head flies off with the layers' sprites as the script coloured them, then lies
+	// on the ground over its blood pool.
+	engine
+		.run_script(
+			"local t = ::Tactical.getTileSquare(12, 12); \
+			 ::__layer <- ::Const.BloodPoolDecals[::Const.BloodType.Red][1]; \
+			 local d = ::Tactical.spawnHeadEffect(t, [::__layer], ::createVec(0, 0), -90.0, \"bust_head_dead_bloodpool\"); \
+			 d[0].Color = ::createColor(\"#ff0000\"); d[0].Scale = 0.9;",
+			"head",
+		)
+		.expect("head");
+	let layer = squirrel::SqTable::root(engine.vm()).get::<String>("__layer").expect("the layer");
+	let scene = engine.tactical_scene();
+	let flying = scene.effects.iter().find(|e| e.brush == layer).expect("the head flies");
+	assert_eq!((flying.color & 0x00ff_ffff, flying.scale), (0x00ff_0000, 0.9), "as coloured: {flying:?}");
+	for _ in 0..60 {
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	}
+	let scene = engine.tactical_scene();
+	assert!(scene.effects.iter().all(|e| e.brush != layer), "landed after 0.75 s");
+	assert!(scene.pools.iter().any(|p| p.brush == "bust_head_dead_bloodpool"), "its blood pool");
+	assert!(scene.pools.iter().any(|p| p.brush == layer), "the head on the ground");
 }

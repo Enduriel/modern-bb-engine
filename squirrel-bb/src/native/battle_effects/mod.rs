@@ -7,12 +7,13 @@
 //! - attacks (`spawnAttackEffect`, the slash over a target): the same phases at once,
 //!   moving by one movement until a switch time and by another after (`0x4d1010`,
 //!   `0x4b8af0`);
-//! - [`sprite`] effects, [`projectile`]s and [`pool`]s.
+//! - [`sprite`] effects, [`projectile`]s, [`pool`]s and flying [`head`]s.
 //!
 //! Effects are pure functions of the virtual time since they began, so the scene
 //! reads them at any frame; finished ones are dropped as it does. The camera is
 //! never flipped in vanilla, so its mirroring of effects isn't modelled.
 
+mod head;
 mod pool;
 mod projectile;
 mod sprite;
@@ -22,6 +23,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub(crate) use head::Head;
 pub(crate) use projectile::{Projectile, flight_time};
 pub(crate) use sprite::SpriteEffect;
 pub(crate) use timed::Phases;
@@ -63,9 +65,19 @@ fn with_alpha(color: u32, alpha: f32) -> u32 {
 	(color & 0x00ff_ffff) | (a.min(255) << 24)
 }
 
+/// How a head's layer looks, as the script left its sprite.
+pub(crate) struct LayerLook {
+	pub brush: String,
+	pub color: u32,
+	pub saturation: f32,
+	pub scale: f32,
+	pub flipped: bool,
+}
+
 /// The battle's effects.
 pub(crate) struct BattleEffects {
 	floating: Vec<Floating>,
+	heads: Vec<Head>,
 	sprites: Vec<SpriteEffect>,
 	projectiles: Vec<Projectile>,
 	pools: Vec<Pool>,
@@ -82,6 +94,7 @@ impl BattleEffects {
 	pub fn handle(rng: EngineRng, crt: Prng) -> BattleEffectsHandle {
 		Rc::new(RefCell::new(BattleEffects {
 			floating: Vec::new(),
+			heads: Vec::new(),
 			sprites: Vec::new(),
 			projectiles: Vec::new(),
 			pools: Vec::new(),
@@ -125,6 +138,15 @@ impl BattleEffects {
 		self.sprites.push(effect);
 	}
 
+	pub fn spawn_head(&mut self, head: Head) {
+		self.heads.push(head);
+	}
+
+	/// The engine's stream, for an effect's random looks.
+	pub fn rng(&self) -> EngineRng {
+		self.rng.clone()
+	}
+
 	pub fn spawn_projectile(&mut self, projectile: Projectile) {
 		self.projectiles.push(projectile);
 	}
@@ -139,6 +161,7 @@ impl BattleEffects {
 	/// The battle is over: nothing is left.
 	pub fn clear(&mut self) {
 		self.floating.clear();
+		self.heads.clear();
 		self.sprites.clear();
 		self.projectiles.clear();
 		self.pools.clear();
@@ -146,8 +169,14 @@ impl BattleEffects {
 	}
 
 	/// What shows at virtual time `now`, finished effects dropped: the effects over the
-	/// battle, and the pools on its tiles (from `tile_pos`, a tile's position).
-	pub fn scene(&mut self, now: f32, tile_pos: impl Fn(usize) -> Option<(f32, f32)>) -> (Vec<SceneEffect>, Vec<ScenePool>) {
+	/// battle, and what lies on its tiles (from `tile_pos`, a tile's position; `look`,
+	/// how a head's layer sprite looks now).
+	pub fn scene(
+		&mut self,
+		now: f32,
+		tile_pos: impl Fn(usize) -> Option<(f32, f32)>,
+		look: impl Fn(&squirrel::SqStrongRef) -> Option<LayerLook>,
+	) -> (Vec<SceneEffect>, Vec<ScenePool>) {
 		self.floating.retain(|f| !f.phases.over((now - f.start) * 1000.0));
 		self.sprites.retain(|s| s.alpha(now).is_some());
 		self.projectiles.retain(|p| !p.arrived(now));
@@ -162,6 +191,7 @@ impl BattleEffects {
 				scale: f.scale,
 				rotation: 0.0,
 				color: with_alpha(0xffff_ffff, alpha),
+				saturation: 1.0,
 				mirrored: false,
 				brush_offset: false,
 			});
@@ -174,6 +204,7 @@ impl BattleEffects {
 				scale: s.scale(now),
 				rotation: 0.0,
 				color: with_alpha(s.color, alpha),
+				saturation: 1.0,
 				mirrored: false,
 				brush_offset: false,
 			});
@@ -185,11 +216,36 @@ impl BattleEffects {
 				scale: p.scale,
 				rotation: p.rotation(now),
 				color: with_alpha(0xffff_ffff, p.alpha(now)),
+				saturation: 1.0,
 				mirrored: p.flipped,
 				brush_offset: true,
 			});
 		}
-		let pools = self
+		// Heads in flight over the battle; landed ones on the ground, below.
+		let mut landed = Vec::new();
+		for h in &self.heads {
+			let Some(at) = tile_pos(h.tile) else { continue };
+			let rotation = h.rotation(now);
+			let looks: Vec<LayerLook> = h.layers.iter().filter_map(&look).collect();
+			if h.landed(now) {
+				landed.push((h, at, rotation, looks));
+				continue;
+			}
+			let pos = h.pos(now, at);
+			for l in looks {
+				effects.push(SceneEffect {
+					brush: l.brush,
+					pos,
+					scale: l.scale,
+					rotation,
+					color: l.color,
+					saturation: l.saturation,
+					mirrored: l.flipped,
+					brush_offset: true,
+				});
+			}
+		}
+		let mut pools: Vec<ScenePool> = self
 			.pools
 			.iter()
 			.filter_map(|p| {
@@ -202,10 +258,39 @@ impl BattleEffects {
 					scale: p.scale(now),
 					rotation: p.rotation,
 					color: p.color,
+					saturation: 1.0,
 					mirrored: p.mirrored,
 				})
 			})
 			.collect();
+		// A landed head: its blood pool, turned and sized as its first layer, then the
+		// layers where it came to rest.
+		for (h, at, rotation, looks) in landed {
+			if let (Some(pool), Some(first)) = (&h.pool, looks.first()) {
+				pools.push(ScenePool {
+					tile: h.tile,
+					brush: pool.clone(),
+					pos: at,
+					scale: first.scale,
+					rotation,
+					color: 0xffff_ffff,
+					saturation: 1.0,
+					mirrored: first.flipped,
+				});
+			}
+			for l in looks {
+				pools.push(ScenePool {
+					tile: h.tile,
+					brush: l.brush,
+					pos: (at.0 + h.land.0, at.1 + h.land.1),
+					scale: l.scale,
+					rotation,
+					color: l.color,
+					saturation: l.saturation,
+					mirrored: l.flipped,
+				});
+			}
+		}
 		(effects, pools)
 	}
 }
@@ -230,11 +315,11 @@ mod tests {
 		e.spawn_icon("a".into(), 7, (0.0, 190.0), 0.75, ICON, (0.0, -200.0), 10.0);
 		e.spawn_icon("b".into(), 7, (0.0, 190.0), 0.75, ICON, (0.0, -200.0), 10.0);
 		e.spawn_icon("c".into(), 8, (0.0, 190.0), 0.75, ICON, (0.0, -200.0), 10.0);
-		let (shown, _) = e.scene(10.5, |_| None);
+		let (shown, _) = e.scene(10.5, |_| None, |_| None);
 		let names: Vec<_> = shown.iter().map(|s| s.brush.as_str()).collect();
 		assert_eq!(names, ["a", "c"], "b waits for a");
 		assert_eq!(shown[0].pos, (0.0, 90.0), "200 down a second");
-		let (shown, _) = e.scene(10.9, |_| None);
+		let (shown, _) = e.scene(10.9, |_| None, |_| None);
 		let names: Vec<_> = shown.iter().map(|s| s.brush.as_str()).collect();
 		assert_eq!(names, ["b"], "a and c are over");
 	}
@@ -248,7 +333,7 @@ mod tests {
 			fade_out: 100.0,
 		};
 		e.spawn_attack("uproot".into(), (0.0, 0.0), p, [(0.0, 80.0), (0.0, -80.0)], 200.0, 0.0);
-		let (shown, _) = e.scene(0.3, |_| None);
+		let (shown, _) = e.scene(0.3, |_| None, |_| None);
 		assert!((shown[0].pos.1 - 8.0).abs() < 1e-4, "up 16, down 8: {:?}", shown[0].pos);
 	}
 }

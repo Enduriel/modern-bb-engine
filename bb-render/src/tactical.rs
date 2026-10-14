@@ -362,7 +362,7 @@ fn draw_dressing(
 			rotation: pool.rotation,
 			tint: [r, g, b_],
 		};
-		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, hidden, level);
+		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
 	for entity in standing {
 		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
@@ -464,7 +464,7 @@ fn draw_effect(b: &mut Builder, effect: &SceneEffect, level: u32) {
 		let offset = b.brush_offset(&effect.brush);
 		at = [at[0] - offset[0] * effect.scale, at[1] - offset[1] * effect.scale];
 	}
-	b.placed(&effect.brush, at, look, 1.0, level);
+	b.placed(&effect.brush, at, look, effect.saturation, level);
 }
 
 /// The battle's clouds or fog over everything, each with its shadow, as the world's

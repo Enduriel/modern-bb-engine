@@ -12,7 +12,7 @@ use std::rc::Rc;
 use squirrel::{Native, Number, Retained, SQVM, SqArray, SqStrongRef, Variadic};
 
 use super::{TacticalMachine, UnitSpriteData};
-use crate::native::battle_effects::{Projectile, flight_time};
+use crate::native::battle_effects::{Head, Projectile, flight_time};
 use crate::native::sprite_color::virtual_time;
 use crate::native::tactical_grid::TileHandle;
 
@@ -122,13 +122,35 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 			},
 		)
 	};
-	// spawnHeadEffect(tile, layers, offset, rotation, bloodPool): a sprite per layer.
+	// spawnHeadEffect(tile, layers, offset, rotation, bloodPool): a sprite per layer
+	// (brush names), which the script colours; the head flies off with them.
 	let head_effect = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, _tile: Retained, layers: SqArray, Variadic(_rest): Variadic<Retained>| -> SqStrongRef {
+		vm.make_closure(move |vm: &SQVM, tile: Native<TileHandle>, layers: SqArray, Variadic(a): Variadic<Retained>| -> SqStrongRef {
+			let rotation = num(vm, &a, 1);
+			let (class, sprites) = {
+				let mm = m.borrow();
+				(mm.sprite_class.clone(), mm.sprites.clone())
+			};
 			let mut out = SqArray::new(vm);
-			for _ in 0..layers.len() {
-				out.push(sprite(&m, vm));
+			let mut handles = Vec::new();
+			for i in 0..layers.len() {
+				let Some(handle) = sprite(&m, vm) else { continue };
+				if let (Some(class), Some(name)) = (&class, layers.get::<String>(i)) {
+					class.with_payload(vm, &handle, |s| {
+						s.brush = sprites.resolve(&name);
+						s.rotation = f64::from(rotation);
+					});
+				}
+				handles.push(handle.clone());
+				out.push(handle);
+			}
+			if let Some(effects) = m.borrow().effects.clone() {
+				let ((x, y), id) = tile_of(&tile.0);
+				let pool = a.get(2).and_then(|p| p.0.get_value::<String>(vm)).filter(|p| brush_speed(&m, p).is_some());
+				let rng = effects.borrow().rng();
+				let head = Head::new(&rng, id, (x, y), handles, pool, vec2(vm, &a, 0), rotation, virtual_time(vm));
+				effects.borrow_mut().spawn_head(head);
 			}
 			out.to_strong()
 		})

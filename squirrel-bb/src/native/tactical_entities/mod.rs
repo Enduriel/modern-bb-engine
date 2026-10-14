@@ -1138,6 +1138,20 @@ impl TacticalEntities {
 		}
 	}
 
+	/// How a sprite a script holds looks now (a head's layer, see `battle_effects`).
+	pub(crate) fn sprite_look(&self, vm: &SQVM, handle: &SqStrongRef) -> Option<crate::native::battle_effects::LayerLook> {
+		let class = self.machine.borrow().sprite_class.clone()?;
+		class
+			.with_payload(vm, handle, |s| crate::native::battle_effects::LayerLook {
+				brush: s.brush.clone(),
+				color: (s.color & 0x00ff_ffff) | ((s.alpha.clamp(0.0, 255.0) as u32) << 24),
+				saturation: s.saturation as f32,
+				scale: s.scale as f32,
+				flipped: s.flipped,
+			})
+			.filter(|l| !l.brush.is_empty())
+	}
+
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
 		let now = real_time(vm);
 		let shown = overlay::Shown {

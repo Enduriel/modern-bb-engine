@@ -226,7 +226,11 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let (effects, pools) = self
 			.battle_effects
 			.borrow_mut()
-			.scene(self.time.virtual_seconds() as f32, |tile| self.tactical_grid.tile_world_pos(tile));
+			.scene(
+				self.time.virtual_seconds() as f32,
+				|tile| self.tactical_grid.tile_world_pos(tile),
+				|sprite| self.tactical_entities.sprite_look(&self.vm, sprite),
+			);
 		crate::scene::tactical::TacticalScene {
 			effects,
 			pools,
@@ -347,6 +351,8 @@ impl<S: ScriptSource> Drop for Engine<S> {
 		// field then drops last (clean `sq_close`).
 		self.saves.clear();
 		self.root_state.clear();
+		// Flying heads hold their layers' sprites.
+		self.battle_effects.borrow_mut().clear();
 		self.tactical_entities.clear();
 		self.tactical_navigator.clear();
 		self.tactical_grid.clear();
