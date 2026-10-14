@@ -49,7 +49,9 @@ const LEVEL_SHADE: f32 = 0.1;
 const WALL_TOP_GRACE: f32 = 2.6;
 /// The depth of field's strength (`sprite_dof.vs`, `DOF_STRENGTH`).
 pub const DOF_STRENGTH: f32 = 0.25;
-/// The saturation of a tile the player has seen but doesn't see now.
+/// The saturation of a tile the player doesn't see now, and of everything on it: its
+/// details and what stands there (the original's tile, detail and entity draws,
+/// `0x4b94bf`, `0x4bc8df`, `0x4c3379`, by the tile's player visibility bit).
 const FOGGED_SATURATION: f32 = 0.33;
 /// The cap where the camera cuts a taller tile off, and the wall without a socket.
 const TILE_INSIDE: &str = "tile_inside";
@@ -321,6 +323,7 @@ impl Fade {
 fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTacticalEntity], fade: Fade) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
+	let hidden = if tile.fogged { FOGGED_SATURATION } else { 1.0 };
 	for detail in &tile.details {
 		let [a, r, g, b_] = detail.color.to_be_bytes();
 		let look = Look {
@@ -331,7 +334,7 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 			tint: [r, g, b_],
 		};
 		let anchor = [x + detail.offset.0, y + detail.offset.1];
-		b.placed(&detail.brush, anchor, look, detail.saturation, level);
+		b.placed(&detail.brush, anchor, look, detail.saturation * hidden, level);
 	}
 	for entity in standing {
 		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
@@ -351,7 +354,7 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 				tint: [r, g, b_],
 			};
 			let at = [anchor[0] + sprite.offset.0 * sprite.scale, anchor[1] + sprite.offset.1 * sprite.scale];
-			b.placed(&sprite.brush, at, look, sprite.saturation, level);
+			b.placed(&sprite.brush, at, look, sprite.saturation * hidden, level);
 		}
 	}
 }
