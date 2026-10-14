@@ -47,8 +47,10 @@ impl UiSession {
 		let files =
 			Arc::new(UiFiles::open_install(data_dir, false).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
+		let exact_clock = config.exact_clock;
 		let host = UiHost::start(files.clone(), config)?;
-		let mut engine = harness::open_install(data_dir).map_err(|e| format!("install: {e}"))?;
+		let mut engine = harness::open_install_with(data_dir, |c| c.exact_clock = exact_clock)
+			.map_err(|e| format!("install: {e}"))?;
 		// The scripts see the window's size as the video mode's (the page fills it).
 		engine
 			.video()

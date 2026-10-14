@@ -99,6 +99,10 @@ pub struct HostConfig {
 	/// Serve Chrome DevTools on `127.0.0.1:<port>` (open `chrome://inspect` in a
 	/// browser). Off by default.
 	pub devtools_port: Option<u16>,
+	/// The clock behind `Time.getExactTime()` for the scripts this page runs with: the
+	/// windowed game passes [`ExactClock::Live`], as the original's clock is (tests keep
+	/// the default frame time).
+	pub exact_clock: squirrel_bb::ExactClock,
 }
 
 impl Default for HostConfig {
@@ -110,6 +114,7 @@ impl Default for HostConfig {
 			frame_rate: 30,
 			cache_dir: std::env::temp_dir().join(format!("bb-ui-{}", std::process::id())),
 			devtools_port: None,
+			exact_clock: squirrel_bb::ExactClock::Frame,
 		}
 	}
 }

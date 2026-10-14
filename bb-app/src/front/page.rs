@@ -27,6 +27,9 @@ impl Front {
 	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str) -> Result<Front, String> {
 		let config = HostConfig {
 			frame_rate: PAGE_FRAME_RATE,
+			// A live clock behind Time.getExactTime, as the original's: the AI's
+			// background work then spreads over frames.
+			exact_clock: squirrel_bb::ExactClock::Live,
 			..HostConfig::default()
 		};
 		let session = UiSession::start(data_dir, config, false)?;
