@@ -488,6 +488,7 @@ impl TacticalGrid {
 				flipped: c.flipped,
 			},
 			entities: Vec::new(),
+			light: Default::default(),
 		}
 	}
 

@@ -43,4 +43,18 @@ fn a_battle_map_is_ready_to_draw() {
 	}
 	assert!(scene.tiles.iter().any(|t| t.level > 0), "the map has height");
 	assert!(scene.camera.zoom > 0.0);
+	// The battle's light, as `setupAmbience` sets it for the time of day.
+	engine
+		.run_script(
+			"local t = ::World.getTime().TimeOfDay; \
+			 ::__light <- ::Const.Tactical.AmbientLightingColor.Time[t]; \
+			 ::__saturation <- ::Const.Tactical.AmbientLightingSaturation.Time[t];",
+			"light",
+		)
+		.expect("light");
+	let root = squirrel::SqTable::root(engine.vm());
+	let hex = root.get::<String>("__light").expect("colour");
+	let color = 0xff00_0000 | u32::from_str_radix(&hex[1..], 16).expect("hex");
+	assert_eq!(scene.light.color, color, "ambient colour {hex}");
+	assert_eq!(scene.light.saturation, root.get::<f64>("__saturation").expect("saturation") as f32);
 }

@@ -18,6 +18,8 @@ pub struct TacticalScene {
 	pub camera: SceneCamera,
 	/// The units and map objects (trees, rocks, …) standing on tiles, in creation order.
 	pub entities: Vec<SceneTacticalEntity>,
+	/// The battle's light (`Tactical.getWeather().setAmbientLighting*`).
+	pub light: crate::scene::SceneLight,
 }
 
 /// A unit or map object on the battle map.

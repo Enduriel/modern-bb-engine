@@ -173,12 +173,12 @@ impl NativeConfig {
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm);
 		let (world_clock, clouds, waves) = world::install(vm, &engine_rng, &sprites);
-		let transitions = tactical::install(vm);
+		let (transitions, tactical_light) = tactical::install(vm);
 		let video = settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, clouds, waves, transitions, sprites, engine_rng, video }
+		InstalledNatives { world_clock, clouds, waves, transitions, tactical_light, sprites, engine_rng, video }
 	}
 }
 
@@ -188,6 +188,7 @@ pub struct InstalledNatives {
 	pub(crate) clouds: world_clouds::Clouds,
 	pub(crate) waves: world_waves::Waves,
 	pub(crate) transitions: tactical::Transitions,
+	pub(crate) tactical_light: tactical::TacticalLight,
 	pub(crate) sprites: Sprites,
 	pub(crate) engine_rng: EngineRng,
 	pub(crate) video: VideoSettings,

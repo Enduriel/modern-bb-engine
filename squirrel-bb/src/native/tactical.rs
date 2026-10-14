@@ -33,6 +33,25 @@ pub struct TileTransition {
 /// The transition registry, by tile-brush name.
 pub(crate) type Transitions = Rc<RefCell<HashMap<String, TileTransition>>>;
 
+/// The battle's light: ambient colour (ARGB) and saturation, as the tactical weather's
+/// `setAmbientLighting*` set them (`0x4e1280`, `0x4e12a0`, `0x4e12c0`: straight into
+/// the battle scene's ambient).
+pub(crate) type TacticalLight = Rc<std::cell::Cell<(u32, f32)>>;
+
+/// `setAmbientLightingPreset(i)`'s colours, by `AmbientLightingPreset` (Default, Dawn,
+/// Dusk, Night, Midday, Rain, Storm, Desert), from the table the original fills at
+/// startup (`0x463b79`…).
+const LIGHTING_PRESETS: [u32; 8] = [
+	0xffff_ffff,
+	0xffca_e7f8,
+	0xfff8_c3be,
+	0xff70_9de0,
+	0xffff_ffff,
+	0xffc3_cbd0,
+	0xff9b_a5ad,
+	0xfff5_f0e1,
+];
+
 impl TileTransition {
 	fn new() -> Self {
 		TileTransition {
@@ -44,8 +63,8 @@ impl TileTransition {
 }
 
 /// Register the tile-transition class, the `createTileTransition` root global, and
-/// the `Tactical` table; returns the transition registry.
-pub(crate) fn install(vm: &mut SQVM) -> Transitions {
+/// the `Tactical` table; returns the transition registry and the battle's light.
+pub(crate) fn install(vm: &mut SQVM) -> (Transitions, TacticalLight) {
 	// The descriptor class: three mutating setters over the payload.
 	let transition = ClassBuilder::<TileTransition>::new("TileTransition")
 		.method("setSocket", |t: &mut TileTransition, name: String| {
@@ -120,6 +139,34 @@ pub(crate) fn install(vm: &mut SQVM) -> Transitions {
 	// Tactical.getWeather(): visual only (see `weather`).
 	super::weather::install_consts(vm);
 	let weather = super::weather::weather(vm);
+	let light: TacticalLight = Rc::new(std::cell::Cell::new((0xffff_ffff, 1.0)));
+	let set_color = {
+		let light = light.clone();
+		vm.make_closure(move |vm: &SQVM, color: Retained| -> Result<(), String> {
+			let argb = super::color::color_argb(vm, &color.0).ok_or("setAmbientLightingColor: not a color")?;
+			light.set((argb, light.get().1));
+			Ok(())
+		})
+	};
+	let set_saturation = {
+		let light = light.clone();
+		vm.make_closure(move |s: squirrel::Number| light.set((light.get().0, s.0 as f32)))
+	};
+	let set_preset = {
+		let light = light.clone();
+		vm.make_closure(move |preset: i64| {
+			if let Some(&argb) = usize::try_from(preset).ok().and_then(|i| LIGHTING_PRESETS.get(i)) {
+				light.set((argb, light.get().1));
+			}
+		})
+	};
+	for (name, f) in [
+		("setAmbientLightingColor", set_color),
+		("setAmbientLightingSaturation", set_saturation),
+		("setAmbientLightingPreset", set_preset),
+	] {
+		weather.set_member(vm, name, f).expect("the weather table");
+	}
 	let get_weather = vm.make_closure(move || weather.clone());
 	let mut tactical = SqTable::new(vm);
 	tactical.set("getWeather", get_weather);
@@ -131,5 +178,5 @@ pub(crate) fn install(vm: &mut SQVM) -> Transitions {
 	tactical.set("setVisible", set_visible);
 	tactical.set("isVisible", is_visible);
 	SqTable::root(vm).set("Tactical", tactical);
-	registry
+	(registry, light)
 }

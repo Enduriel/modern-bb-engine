@@ -53,6 +53,7 @@ pub struct Engine<S: ScriptSource> {
 	waves: crate::native::world_waves::Waves,
 	/// The tactical terrain transitions (no VM handles).
 	transitions: crate::native::tactical::Transitions,
+	tactical_light: crate::native::tactical::TacticalLight,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -131,6 +132,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			clouds: natives.clouds.clone(),
 			waves: natives.waves.clone(),
 			transitions: natives.transitions.clone(),
+			tactical_light: natives.tactical_light.clone(),
 			time,
 			modules,
 			vm,
@@ -188,6 +190,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		crate::scene::tactical::TacticalScene {
 			transitions: self.transitions.borrow().clone(),
 			entities: self.tactical_entities.scene_entities(&self.vm),
+			light: {
+				let (color, saturation) = self.tactical_light.get();
+				crate::scene::SceneLight { color, saturation }
+			},
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}

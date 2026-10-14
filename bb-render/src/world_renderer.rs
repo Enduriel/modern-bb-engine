@@ -319,8 +319,14 @@ impl WorldRenderer {
 			})
 			.collect();
 		stats.quads = quads.len();
+		// The battle's light (the weather's `setAmbientLighting*`).
+		let uniforms = SceneUniforms {
+			ambient_color: argb_floats(scene.light.color),
+			ambient_saturation: scene.light.saturation,
+			..view.uniforms()
+		};
 		self.sprites
-			.draw(gpu, target, &view.uniforms(), Some(CLEAR), &quads, &ready);
+			.draw(gpu, target, &uniforms, Some(CLEAR), &quads, &ready);
 		stats
 	}
 }
