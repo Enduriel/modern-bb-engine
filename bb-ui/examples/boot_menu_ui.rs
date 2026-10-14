@@ -7,8 +7,8 @@
 //! once the target shows up: the visible button with that label, else any element with
 //! that text, or with `css:SELECTOR` the first visible match. `hover:TARGET` moves the
 //! mouse over a target instead, `key:NAME` presses a key (`Enter`, `Escape`, … see
-//! `Key`), `type:TEXT` types into the focused field, and `sq:CODE` runs Squirrel in the
-//! game (e.g. `sq:::World.State.setPause(false)`). It
+//! `Key`), `type:TEXT` types into the focused field, `sq:CODE` runs Squirrel in the
+//! game (e.g. `sq:::World.State.setPause(false)`) and `js:CODE` runs JS in the page. It
 //! reports and screenshots the result of each step (`menu-1.png`, …). `--seed SEED`
 //! types the new-campaign map seed into its field just before a "Start" click.
 //! `--after SECONDS` keeps the game running after the last step (e.g. while a new
@@ -195,6 +195,8 @@ fn run(options: Options) -> Result<(), String> {
 			session.hover_when_ready(target, Duration::from_secs(120))?;
 		} else if let Some(code) = step.strip_prefix("sq:") {
 			session.engine().run_script(code, "step")?;
+		} else if let Some(code) = step.strip_prefix("js:") {
+			session.eval(code)?;
 		} else {
 			// Generous: a new campaign takes a while to generate.
 			session.click_when_ready(step, Duration::from_secs(120))?;
