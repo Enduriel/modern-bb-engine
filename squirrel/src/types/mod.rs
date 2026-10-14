@@ -8,6 +8,7 @@
 
 mod array;
 mod bind;
+mod bytes;
 mod consts;
 mod deep;
 mod dynamic;
@@ -15,6 +16,7 @@ mod table;
 mod value;
 
 pub use array::SqArray;
+pub use bytes::SqBytes;
 pub use dynamic::SqRef;
 pub use table::SqTable;
 pub use value::SqValue;

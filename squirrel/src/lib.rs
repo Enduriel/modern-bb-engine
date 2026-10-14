@@ -15,7 +15,7 @@ pub use function::{DynNumber, Forwarded, Number, Retained, SqStrongRef, StackArg
 pub use identity::Identity;
 pub(crate) use object::SqObject;
 pub use object::SqObjectType;
-pub use types::{SqArray, SqRef, SqTable};
+pub use types::{SqArray, SqBytes, SqRef, SqTable};
 pub use vm::{CompileError, SQVM};
 
 /// A hash of the vendored VM's sources and build options. It changes whenever the VM or

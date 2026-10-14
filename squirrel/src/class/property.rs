@@ -60,6 +60,15 @@ impl FieldValue for String {
 	}
 }
 
+impl FieldValue for crate::SqBytes {
+	fn push_field(self, vm: &SQVM) {
+		vm.push_bytes(&self.0);
+	}
+	fn read_field(vm: &SQVM, idx: i64) -> Option<crate::SqBytes> {
+		vm.get_bytes_ref(idx).map(|b| crate::SqBytes(b.to_vec()))
+	}
+}
+
 /// A single named property: a getter that pushes the field and a setter that
 /// reads a value off the stack and writes the field. Both are type-erased over
 /// the field's scalar type.
