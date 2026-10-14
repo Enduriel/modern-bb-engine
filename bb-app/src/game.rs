@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, GameEngine};
+use bb_render::portrait::PortraitRequest;
 use bb_render::world::WorldView;
-use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer};
+use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer, write_png};
 use squirrel::{SqStrongRef, SqTable};
 use squirrel_bb::{KeyInput, MouseInput};
 
@@ -182,10 +183,25 @@ impl Game {
 }
 
 /// The PNG for the page's `coui://procedural/<path>` (an entity's portrait, e.g.
-/// `tacticalentity(...)`), or `None` for the transparent placeholder. The portrait
-/// compositor fills this in.
-fn procedural_png(_renderer: &mut WorldRenderer, _gpu: &Gpu, _engine: &GameEngine, _path: &str) -> Option<Vec<u8>> {
-	None
+/// `tacticalentity(...)`), or `None` for the transparent placeholder: an unknown path
+/// or entity, or nothing to draw. Like the original's, its pixels are as drawn
+/// (colour premultiplied), not unpremultiplied for the PNG.
+fn procedural_png(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, path: &str) -> Option<Vec<u8>> {
+	let request = PortraitRequest::parse(path)?;
+	let portrait = engine.portrait(request.id)?;
+	let image = engine
+		.sprites()
+		.with(|registry| renderer.compose_portrait(gpu, &portrait, &request.hidden, registry));
+	let image = match image {
+		Ok(image) => image?,
+		Err(e) => {
+			eprintln!("portrait {path}: {e}");
+			return None;
+		}
+	};
+	let mut png = Vec::new();
+	write_png(&mut png, &image).ok()?;
+	Some(png)
 }
 
 /// `Settings.getVideoMode()`.

@@ -1,7 +1,8 @@
 //! The game with its real UI, as `bb` built with `--features ui` plays it, but
 //! offscreen (no window): the campaign starts from the menu, and its opening event is
 //! drawn over the world and takes the clicks it's under, while the open map passes
-//! them to the states.
+//! them to the states. A brother's portrait the page asks for is composed by the
+//! renderer.
 //!
 //! Skips if there is no Steam install or no GPU.
 //!
@@ -17,7 +18,9 @@ use std::time::Duration;
 use bb_app::game::Game;
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_assets::Image;
+use bb_render::portrait::{PortraitRequest, portrait_size};
 use bb_render::{Gpu, RenderTarget, save_png};
+use bb_ui::json::Json;
 use squirrel::SqTable;
 
 /// The campaign's map seed (the UI goldens').
@@ -66,6 +69,50 @@ fn draw_until(game: &mut Game, gpu: &Gpu, target: &RenderTarget, ready: impl Fn(
 		std::thread::sleep(Duration::from_millis(50));
 	}
 	Err("the frame never got ready".into())
+}
+
+/// The first brother's portrait, as the page loads it (`Path.PROCEDURAL` and his
+/// `getImagePath()`), arrives the size the compositor makes it.
+fn portrait_reaches_the_page(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	let engine = game.front().engine();
+	engine.run_script(
+		"::__portrait <- ::World.getPlayerRoster().getAll()[0].getImagePath();",
+		"portrait path",
+	)?;
+	let path = SqTable::root(engine.vm())
+		.get::<String>("__portrait")
+		.ok_or("no image path")?;
+	let request = PortraitRequest::parse(&path).ok_or_else(|| format!("not a portrait: {path}"))?;
+	let portrait = engine.portrait(request.id).ok_or("no such entity")?;
+	let expected = engine
+		.sprites()
+		.with(|registry| portrait_size(&portrait, &request.hidden, registry));
+	let mut url = String::new();
+	Json::Str(format!("coui://procedural/{path}")).write(&mut url);
+	game.front().session().eval(&format!(
+		"(function () {{
+	var image = new Image();
+	window.__portrait = null;
+	image.onload = function () {{ window.__portrait = [image.naturalWidth, image.naturalHeight]; }};
+	image.src = {url};
+}})()"
+	))?;
+	// Drawing a frame answers the page's procedural images.
+	for _ in 0..100 {
+		game.step(1000.0 / 60.0)?;
+		game.draw(gpu, target);
+		let loaded = game.front().session().eval("window.__portrait")?;
+		if let Json::Array(size) = loaded {
+			let size: Vec<i64> = size.iter().filter_map(|n| n.as_i64()).collect();
+			if size != [i64::from(expected.0), i64::from(expected.1)] || expected.0 == 0 {
+				return Err(format!("{path} loaded at {size:?}, composed at {expected:?}"));
+			}
+			println!("  portrait {path}: {}x{}", expected.0, expected.1);
+			return Ok(());
+		}
+		std::thread::sleep(Duration::from_millis(20));
+	}
+	Err(format!("{path} never loaded"))
 }
 
 fn check(gpu: &Gpu) -> Result<(), String> {
@@ -122,8 +169,10 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	if clicked(&game)? {
 		return Err("the states got the event's click too".into());
 	}
+	portrait_reaches_the_page(&mut game, gpu, &target)?;
 
 	// The open map: a spot where the page is transparent now, away from the top bar.
+	let session = game.front().session();
 	session.run_frames(1.0)?;
 	let host = session.host();
 	let (mx, my) = (0..20)
