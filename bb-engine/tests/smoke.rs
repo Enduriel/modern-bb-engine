@@ -301,7 +301,12 @@ fn smoke(mut engine: harness::GameEngine) {
 	// And it keeps running.
 	script(&engine, "unpause", "::World.State.setAutoPause(false); ::World.State.setPause(false);");
 	let start = player::eval_i64(&engine, "::World.getTime().Time.tointeger()").unwrap().unwrap();
-	for _ in 0..1200 {
+	for i in 0..1200 {
+		// An event (answered by the scripted player) or a mod (Configurable Pause) may
+		// pause the world meanwhile, as everywhere else in this test.
+		if i % 60 == 0 {
+			script(&engine, "unpause", UNPAUSE);
+		}
 		frame(&engine);
 	}
 	let later = player::eval_i64(&engine, "::World.getTime().Time.tointeger()").unwrap().unwrap();
