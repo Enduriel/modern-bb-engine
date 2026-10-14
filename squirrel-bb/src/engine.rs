@@ -76,6 +76,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let modules = ModuleSystem::new(source);
 		modules.install(&mut vm);
 		let time = TimeService::new();
+		time.set_exact_clock(config.exact_clock);
 		time.install(&mut vm);
 		let ui = UiBridge::new();
 		ui.install(&mut vm);

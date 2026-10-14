@@ -55,7 +55,7 @@ pub fn mod_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 pub fn open_install_with_mods(dir: &Path) -> io::Result<GameEngine> {
 	let mut archives = data_archives(dir)?;
 	archives.extend(mod_archives(dir)?);
-	open_archives(archives)
+	open_archives(archives, |_| {})
 }
 
 /// An engine over the install at `dir`, configured as the original sees a Steam install:
@@ -66,22 +66,31 @@ pub fn open_install_with_mods(dir: &Path) -> io::Result<GameEngine> {
 /// to load is reported on stderr, and so is a missing fog-of-war stamp. The engine's own random stream is unpredictably
 /// seeded like the original's, unless `BB_ENGINE_SEED` gives a seed (for reproducible renders).
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
-	open_archives(data_archives(dir)?)
+	open_archives(data_archives(dir)?, |_| {})
 }
 
-/// An engine over `archives` (in mount order), configured as [`open_install`] says.
-fn open_archives(archives: Vec<PathBuf>) -> io::Result<GameEngine> {
+/// [`open_install`], letting the caller adjust the engine's [`NativeConfig`] first. The
+/// windowed game sets `exact_clock` to [`ExactClock::Live`](squirrel_bb::ExactClock), as
+/// the original's clock is; the harness and tests keep frame time.
+pub fn open_install_with(dir: &Path, configure: impl FnOnce(&mut NativeConfig)) -> io::Result<GameEngine> {
+	open_archives(data_archives(dir)?, configure)
+}
+
+/// An engine over `archives` (in mount order), configured as [`open_install`] says, then
+/// by `configure`.
+fn open_archives(archives: Vec<PathBuf>, configure: impl FnOnce(&mut NativeConfig)) -> io::Result<GameEngine> {
 	let source = DatScriptSource::open(archives)?.with_cache(ScriptCache::from_env());
 	let sprites = source.with_archives(|archives| load_sprites(archives));
 	for failure in &sprites.failures {
 		eprintln!("[Error] brush {failure}");
 	}
-	let config = NativeConfig {
+	let mut config = NativeConfig {
 		is_steam_build: true,
 		owned_dlc: installed_dlc(&source),
 		engine_seed: std::env::var("BB_ENGINE_SEED").ok().and_then(|s| s.parse().ok()),
 		..NativeConfig::default()
 	};
+	configure(&mut config);
 	let fog_stamp = source.with_archives(|archives| load_fog_stamp(archives, &sprites.registry));
 	let engine = Engine::with_config(source, &config);
 	engine.sprites().set(sprites.registry);

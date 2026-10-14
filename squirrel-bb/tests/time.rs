@@ -2,7 +2,7 @@
 //! the host-driven `tick`/`setRound` advancement.
 
 use squirrel::SQVM;
-use squirrel_bb::TimeService;
+use squirrel_bb::{ExactClock, TimeService};
 
 fn setup() -> (SQVM, TimeService) {
 	let mut vm = SQVM::new(4096);
@@ -56,6 +56,37 @@ fn clocks_start_at_zero_and_advance_with_tick() {
 		"after_tick",
 	)
 	.expect("clocks advance with tick");
+}
+
+#[test]
+fn a_live_exact_clock_moves_within_a_frame() {
+	// As the original's: getExactTime keeps moving while a script runs, and the frame
+	// clocks don't (the AI budgets its per-frame work with it).
+	let (vm, time) = setup();
+	time.set_exact_clock(ExactClock::Live);
+	vm.run_script(
+		r#"
+		local e0 = Time.getExactTime(), r0 = Time.getRealTimeF();
+		local start = e0, n = 0;
+		while (Time.getExactTime() - start < 0.002) n++;   // spins ~2 ms of real time
+		assert(Time.getExactTime() > e0);
+		assert(Time.getRealTimeF() == r0);
+		"#,
+		"live",
+	)
+	.expect("a live exact clock moves within a frame");
+
+	// Frame time again: still within the frame, it stands still.
+	time.set_exact_clock(ExactClock::Frame);
+	vm.run_script(
+		r#"
+		local e0 = Time.getExactTime();
+		for (local i = 0; i < 100000; i++) {}
+		assert(Time.getExactTime() == e0);
+		"#,
+		"frame",
+	)
+	.expect("the frame clock stands still within a frame");
 }
 
 #[test]

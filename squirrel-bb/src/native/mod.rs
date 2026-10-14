@@ -67,7 +67,7 @@ pub use log::{LogLevel, install_logging};
 pub use tactical_entities::TacticalEntities;
 pub use tactical_grid::TacticalGrid;
 pub use tactical_nav::TacticalNavigator;
-pub use time::TimeService;
+pub use time::{ExactClock, TimeService};
 pub use ui_bridge::{UiBridge, UiCall, UiFrontend};
 pub use vec::{Vec2f, Vec2i};
 pub use world_entities::WorldEntities;
@@ -104,6 +104,9 @@ pub struct NativeConfig {
 	/// Seed of the engine's own random stream ([`EngineRng`]): `None` seeds it
 	/// unpredictably, as the original does; a fixed seed makes runs reproducible.
 	pub engine_seed: Option<u64>,
+	/// The clock behind `Time.getExactTime()`: frame time (the default, deterministic)
+	/// or live, as the original's (the windowed game).
+	pub exact_clock: ExactClock,
 }
 
 /// Each paid DLC's init script and its Steam app ID (the argument the script passes
@@ -149,6 +152,7 @@ impl Default for NativeConfig {
 			version_name: String::new(),
 			company: "(c) Overhype Studios GmbH".to_string(),
 			engine_seed: None,
+			exact_clock: ExactClock::Frame,
 		}
 	}
 }

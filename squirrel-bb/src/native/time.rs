@@ -18,15 +18,32 @@
 //!   (seconds); not yet checked against the original.
 //! - A scheduled callback is invoked as `callback(userdata)` with `this` = the
 //!   root table (a `bindenv`'d callback uses its bound environment instead).
+//! - `getExactTime` is a live clock in the original: it moves within a frame
+//!   (probed), and the AI's background task budgets its work with it (~5 ms a frame).
+//!   Which clock it reads here is the host's choice ([`ExactClock`]).
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 const UNIT_REAL: i64 = 0;
 const UNIT_VIRTUAL: i64 = 1;
 const UNIT_ROUNDS: i64 = 2;
+
+/// The clock behind `Time.getExactTime()`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ExactClock {
+	/// The frame's real time, like `getRealTimeF`: deterministic, for the harness and
+	/// tests (draw-exact battles depend on it). Work budgeted with it never runs out
+	/// within a frame, so the AI evaluates a whole turn at once.
+	#[default]
+	Frame,
+	/// A live monotonic clock (seconds since the service started), as the original
+	/// has: the AI's background work then yields after its per-frame budget.
+	Live,
+}
 
 /// A scheduled callback: fires when its clock reaches `fire_threshold`.
 struct Event {
@@ -45,6 +62,8 @@ struct TimeState {
 	frame: i64,
 	last_delta: f64, // real ms of the last frame
 	events: Vec<Event>,
+	/// Set for [`ExactClock::Live`]: `getExactTime` counts from here.
+	live_origin: Option<Instant>,
 }
 
 /// The host-owned `Time` service. Construct one, [`install`](Self::install) it
@@ -97,6 +116,14 @@ impl TimeService {
 		fire_all(vm, due);
 	}
 
+	/// Choose the clock behind `getExactTime` (default [`ExactClock::Frame`]).
+	pub fn set_exact_clock(&self, clock: ExactClock) {
+		self.state.borrow_mut().live_origin = match clock {
+			ExactClock::Frame => None,
+			ExactClock::Live => Some(Instant::now()),
+		};
+	}
+
 	/// Real time since boot in seconds (`Time.getRealTimeF()`).
 	pub fn real_seconds(&self) -> f64 {
 		self.state.borrow().real_time / 1000.0
@@ -139,7 +166,10 @@ impl TimeService {
 		let entries: Vec<(&str, SqStrongRef)> = vec![
 			("getRealTime", getter!(|st| st.real_time as i64)),
 			("getRealTimeF", getter!(|st| st.real_time / 1000.0)),
-			("getExactTime", getter!(|st| st.real_time / 1000.0)),
+			(
+				"getExactTime",
+				getter!(|st| st.live_origin.map_or(st.real_time / 1000.0, |o| o.elapsed().as_secs_f64())),
+			),
 			("getVirtualTime", getter!(|st| st.virtual_time as i64)),
 			("getVirtualTimeF", getter!(|st| st.virtual_time / 1000.0)),
 			(
