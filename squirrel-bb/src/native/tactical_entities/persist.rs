@@ -21,6 +21,8 @@ pub(crate) struct RostersPart(pub Rc<RefCell<TacticalMachine>>);
 fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 	w.str(&s.brush);
 	w.u32(s.color);
+	w.f64(s.offset.0);
+	w.f64(s.offset.1);
 	for v in [s.alpha, s.scale, s.rotation, s.saturation, s.render_anim_start] {
 		w.f64(v);
 	}
@@ -48,6 +50,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 	Ok(UnitSpriteData {
 		brush: r.str()?,
 		color: r.u32()?,
+		offset: (r.f64()?, r.f64()?),
 		alpha: r.f64()?,
 		scale: r.f64()?,
 		rotation: r.f64()?,
@@ -100,8 +103,8 @@ impl SavePart for RostersPart {
 					w.bool(rec.blocks_sight);
 					w.f64(rec.pos.0);
 					w.f64(rec.pos.1);
-					let mut sprites: Vec<(&String, &SqStrongRef)> = rec.sprites.iter().collect();
-					sprites.sort_by(|a, b| a.0.cmp(b.0));
+					// In layering order.
+					let sprites: Vec<(&String, &SqStrongRef)> = rec.sprites.iter().collect();
 					w.u32(sprites.len() as u32);
 					for (name, handle) in sprites {
 						w.str(name);

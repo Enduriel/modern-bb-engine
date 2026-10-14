@@ -187,6 +187,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
 		crate::scene::tactical::TacticalScene {
 			transitions: self.transitions.borrow().clone(),
+			entities: self.tactical_entities.scene_entities(&self.vm),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}

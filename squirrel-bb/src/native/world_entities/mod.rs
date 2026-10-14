@@ -39,7 +39,7 @@ mod footprints;
 mod movement;
 mod persist;
 mod render;
-mod slots;
+use super::sprite_slots as slots;
 mod sprites;
 mod think;
 mod view;

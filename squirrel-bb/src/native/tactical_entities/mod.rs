@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::inject_natives;
 use super::overload::{make_dispatcher, overload_key};
@@ -53,6 +53,9 @@ struct UnitSpriteData {
 	brush: String,
 	/// `Color` (ARGB). Skeletons copy their body's into their blood colour.
 	color: u32,
+	/// From the unit's position, in world units with y up (`setSpriteOffset`, the
+	/// sprite's `setOffset`).
+	offset: (f64, f64),
 	alpha: f64,
 	scale: f64,
 	rotation: f64,
@@ -80,6 +83,7 @@ impl UnitSpriteData {
 		UnitSpriteData {
 			brush: String::new(),
 			color: 0xffff_ffff,
+			offset: (0.0, 0.0),
 			alpha: 255.0,
 			scale: 1.0,
 			rotation: 0.0,
@@ -135,7 +139,8 @@ struct UnitRecord {
 	dead: bool,
 	/// `setRenderCallbackEnabled`: its `onRender` runs when it is drawn (see `render`).
 	render_callback: bool,
-	sprites: HashMap<String, SqStrongRef>,
+	/// Named sprites, in the order they were added (their layering).
+	sprites: super::sprite_slots::Slots,
 }
 
 /// Shared host state: the rosters, the unit registry, the `this.new` capability, the stub
@@ -227,7 +232,7 @@ fn create_unit(
 			is_actor,
 			dead: false,
 			render_callback: false,
-			sprites: HashMap::new(),
+			sprites: super::sprite_slots::Slots::default(),
 		});
 		idx
 	};
@@ -356,7 +361,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 		.method("fadeIn", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method("fadeOut", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method("fadeToAlpha", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("setOffset", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		.method("setOffset", |s: &mut UnitSpriteData, vm: &SQVM, offset: Retained| {
+			let c = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
+			s.offset = (c("X"), c("Y"));
+		})
 		.method("varyColor", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
 		.method(
 			"varySaturation",
@@ -687,16 +695,39 @@ impl TacticalEntities {
 				}
 			})
 		};
-		// getSpriteOffset(name): sprite offsets are visual; return a zero vec (the one
-		// caller, actor.onAfterInit, only feeds it straight into no-op setSpriteOffset).
-		let get_sprite_offset = vm.make_closure(
-			move |vm: &SQVM, _name: Variadic<Retained>| -> Result<Option<SqStrongRef>, String> {
+		// getSpriteOffset(name) / setSpriteOffset(name, offset): the named sprite's offset
+		// (a zero vector for an unknown name).
+		let get_sprite_offset = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String| -> Result<Option<SqStrongRef>, String> {
+				let (handle, class) = {
+					let m = m.borrow();
+					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
+				};
+				let offset = match (handle, class) {
+					(Some(h), Some(c)) => c.with_payload(vm, &h, |s| s.offset).unwrap_or((0.0, 0.0)),
+					_ => (0.0, 0.0),
+				};
 				let create_vec = SqTable::root(vm)
 					.get::<SqStrongRef>("createVec")
 					.ok_or("getSpriteOffset: createVec missing")?;
-				create_vec.call_ret::<SqStrongRef, _>(vm, (0.0_f64, 0.0_f64))
-			},
-		);
+				create_vec.call_ret::<SqStrongRef, _>(vm, offset)
+			})
+		};
+		let set_sprite_offset = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String, offset: Retained| {
+				let (handle, class) = {
+					let m = m.borrow();
+					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
+				};
+				if let (Some(h), Some(c)) = (handle, class) {
+					let c2 = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
+					let xy = (c2("X"), c2("Y"));
+					c.with_payload(vm, &h, |s| s.offset = xy);
+				}
+			})
+		};
 		let noop = vm.make_closure(|_a: Variadic<Retained>| {});
 		// Unit state the scripts read back (semantics probed in the original, 2026-10-13).
 		let flag = |vm: &mut SQVM, m: &Rc<RefCell<TacticalMachine>>, get: fn(&UnitRecord) -> bool, set: fn(&mut UnitRecord, bool)| {
@@ -742,6 +773,7 @@ impl TacticalEntities {
 			("getSprite", get_sprite),
 			("hasSprite", has_sprite),
 			("getSpriteOffset", get_sprite_offset),
+			("setSpriteOffset", set_sprite_offset),
 			("createOverlay", create_overlay),
 			("isInitialized", is_initialized),
 			("isPlacedOnMap", is_placed_on_map),
@@ -766,7 +798,6 @@ impl TacticalEntities {
 			"setVisibleInFogOfWar",
 			"setPreventOcclusion",
 			"setSpriteScaling",
-			"setSpriteOffset",
 			"setSpriteColorization",
 			"addDefaultStatusSprites",
 			"updateOverlay",
@@ -941,6 +972,41 @@ impl TacticalEntities {
 	/// The rosters' share of a save (see [`persist`]).
 	pub(crate) fn save_part(&self) -> Rc<dyn crate::native::save::SavePart> {
 		Rc::new(persist::RostersPart(self.machine.clone()))
+	}
+
+	/// The units and objects on the battle map, with their sprites in layering order,
+	/// as a renderer reads them.
+	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
+		let m = self.machine.borrow();
+		let Some(class) = m.sprite_class.clone() else { return Vec::new() };
+		m.units
+			.iter()
+			.filter(|u| !u.dead && u.tile.is_some())
+			.map(|u| crate::scene::tactical::SceneTacticalEntity {
+				id: u.id,
+				pos: u.pos,
+				tile: u.tile,
+				is_actor: u.is_actor,
+				sprites: u
+					.sprites
+					.iter()
+					.filter_map(|(name, handle)| {
+						class.with_payload(vm, handle, |s| crate::scene::tactical::SceneTacticalSprite {
+							name: name.clone(),
+							brush: s.brush.clone(),
+							color: (s.color & 0x00ff_ffff) | ((s.alpha.clamp(0.0, 255.0) as u32) << 24),
+							scale: s.scale as f32,
+							rotation: s.rotation as f32,
+							saturation: s.saturation as f32,
+							visible: s.visible,
+							flipped: s.flipped,
+							offset: (s.offset.0 as f32, s.offset.1 as f32),
+							ignore_ambient: s.ignore_ambient,
+						})
+					})
+					.collect(),
+			})
+			.collect()
 	}
 
 	/// Total units created (host/test inspection).

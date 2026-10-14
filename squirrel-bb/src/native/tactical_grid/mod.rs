@@ -487,6 +487,7 @@ impl TacticalGrid {
 				level: c.level,
 				flipped: c.flipped,
 			},
+			entities: Vec::new(),
 		}
 	}
 

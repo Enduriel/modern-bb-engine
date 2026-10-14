@@ -16,6 +16,41 @@ pub struct TacticalScene {
 	/// Each terrain brush's transition set (`Tactical.setTransitions`), by brush name.
 	pub transitions: HashMap<String, SceneTransition>,
 	pub camera: SceneCamera,
+	/// The units and map objects (trees, rocks, …) standing on tiles, in creation order.
+	pub entities: Vec<SceneTacticalEntity>,
+}
+
+/// A unit or map object on the battle map.
+#[derive(Clone, Debug)]
+pub struct SceneTacticalEntity {
+	pub id: i64,
+	/// Its position in world units, its tile's level included.
+	pub pos: (f64, f64),
+	/// The index of its tile in [`TacticalScene::tiles`].
+	pub tile: Option<usize>,
+	/// A unit, rather than a map object.
+	pub is_actor: bool,
+	/// Its sprites, back to front.
+	pub sprites: Vec<SceneTacticalSprite>,
+}
+
+/// One of a battle entity's named sprites.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneTacticalSprite {
+	pub name: String,
+	/// `""` for none.
+	pub brush: String,
+	/// ARGB (its alpha is the sprite's `Alpha`).
+	pub color: u32,
+	pub scale: f32,
+	/// Degrees.
+	pub rotation: f32,
+	pub saturation: f32,
+	pub visible: bool,
+	pub flipped: bool,
+	/// From the entity's position, in world units with y up.
+	pub offset: (f32, f32),
+	pub ignore_ambient: bool,
 }
 
 /// One battle tile.

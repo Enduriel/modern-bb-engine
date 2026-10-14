@@ -1,5 +1,5 @@
 //! Drawing a battle map from a [`TacticalScene`]: tiles, their raised walls, the
-//! transitions where terrains meet, and their details.
+//! transitions where terrains meet, their details, and who stands on them.
 //!
 //! Geometry (from the scripts and the picking masks, `tactical_grid::picking`): tiles
 //! are 160 × 80 hexes in columns 120 apart, odd columns half a row up, with world y up
@@ -12,7 +12,7 @@
 //! transition rules are read from the data, not yet the original's code.
 
 use bb_assets::SpriteRegistry;
-use squirrel_bb::scene::tactical::{SceneTacticalTile, TacticalScene};
+use squirrel_bb::scene::tactical::{SceneTacticalEntity, SceneTacticalTile, TacticalScene};
 
 use crate::sprite::Quad;
 use crate::world::{AtlasList, Look, WorldQuads, WorldView, frame_quad};
@@ -47,6 +47,15 @@ pub fn tactical_quads<'a>(
 		.collect();
 	// Back to front: further north first; ties left to right.
 	order.sort_by(|a, b| b.pos.1.total_cmp(&a.pos.1).then(a.col.cmp(&b.col)));
+
+	// Who stands on each tile, drawn right after it.
+	let mut standing: std::collections::HashMap<usize, Vec<&SceneTacticalEntity>> =
+		Default::default();
+	for entity in &scene.entities {
+		if let Some(tile) = entity.tile {
+			standing.entry(tile).or_default().push(entity);
+		}
+	}
 
 	let mut atlases = AtlasList::default();
 	let mut quads = Vec::new();
@@ -129,6 +138,29 @@ pub fn tactical_quads<'a>(
 				&mut quads,
 				&mut atlases,
 			);
+		}
+		let index = (tile.row * scene.width + tile.col) as usize;
+		for entity in standing.get(&index).into_iter().flatten() {
+			let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
+			for sprite in entity
+				.sprites
+				.iter()
+				.filter(|s| s.visible && !s.brush.is_empty())
+			{
+				let [a, r, g, b] = sprite.color.to_be_bytes();
+				let look = Look {
+					scale: sprite.scale,
+					flipped: sprite.flipped,
+					alpha: f32::from(a),
+					rotation: sprite.rotation,
+					tint: [r, g, b],
+				};
+				let at = [
+					anchor[0] + sprite.offset.0 * sprite.scale,
+					anchor[1] + sprite.offset.1 * sprite.scale,
+				];
+				push(&sprite.brush, at, look, &mut quads, &mut atlases);
+			}
 		}
 	}
 	let labels_from = quads.len();

@@ -28,6 +28,7 @@ mod mt64;
 mod prng;
 mod settings;
 pub(crate) mod sprite_color;
+pub(crate) mod sprite_slots;
 mod strings;
 pub(crate) mod tactical;
 pub(crate) mod tactical_grid;
