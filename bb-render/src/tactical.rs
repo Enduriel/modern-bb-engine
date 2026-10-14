@@ -291,13 +291,16 @@ fn draw_tile(b: &mut Builder, scene: &TacticalScene, tile: &SceneTacticalTile) {
 /// The alpha a faded sprite is drawn with (the original sets its colour's alpha to 60).
 const FADED_ALPHA: f32 = 60.0 / 255.0;
 
-/// What fades an object's sprites so that units behind it show (the object draw,
-/// `0x4c30c0`, disassembled 2026-10-14). Each sprite with `setSpriteOcclusion(a, b, c)`
-/// fades when:
+/// What fades an object's sprites so that what's behind it shows (the object draw,
+/// `0x4c30c0`). "Something" is a tile that unveils
+/// ([`SceneTacticalTile::unveils`]: one the player sees with a unit, items on the
+/// ground, or a step of the path shown; the draw's own test, `0x4b4940` and
+/// `0x4d9ab0`), so a unit the player can't see gives nothing away. Each sprite with
+/// `setSpriteOcclusion(a, b, c)` fades when:
 /// - `HideTrees` is on and `c <= 0 <= b` (crowns and boulder tops, not trunks);
-/// - otherwise a unit stands one row behind and the level it stands above the object
-///   is within `c..=b`;
-/// - or, with no unit there, a unit stands two rows behind (sprites with `a > 1`) or
+/// - otherwise something is one row behind and its tile stands above the object by a
+///   level within `c..=b`;
+/// - or, with nothing there, something is two rows behind (sprites with `a > 1`) or
 ///   three (`a > 2`), at most two levels above.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Fade {
@@ -310,23 +313,21 @@ enum Fade {
 }
 
 impl Fade {
-	fn of(scene: &TacticalScene, tile: &SceneTacticalTile, units: &std::collections::HashSet<usize>) -> Fade {
+	fn of(scene: &TacticalScene, tile: &SceneTacticalTile) -> Fade {
 		if scene.hide_trees {
 			return Fade::HideTrees;
 		}
 		let (q, r) = axial(tile);
 		// "Behind" is up the map; with the camera flipped, down it.
 		let step = if scene.camera.flipped { -1 } else { 1 };
-		let unit_at = |rows: i64| {
-			tile_at(scene, q, r + rows * step).filter(|t| units.contains(&((t.row * scene.width + t.col) as usize)))
-		};
-		if let Some(t) = unit_at(1) {
+		let unveiling_at = |rows: i64| tile_at(scene, q, r + rows * step).filter(|t| t.unveils);
+		if let Some(t) = unveiling_at(1) {
 			return Fade::BehindOne(t.level - tile.level);
 		}
-		if unit_at(2).is_some_and(|t| t.level - tile.level <= 2) {
+		if unveiling_at(2).is_some_and(|t| t.level - tile.level <= 2) {
 			return Fade::BehindTwo;
 		}
-		if unit_at(3).is_some_and(|t| t.level - tile.level <= 2) {
+		if unveiling_at(3).is_some_and(|t| t.level - tile.level <= 2) {
 			return Fade::BehindThree;
 		}
 		Fade::None
@@ -606,9 +607,6 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	}
 	let nothing = OnTile::default();
 
-	// The tiles units stand on, for what fades in front of them.
-	let unit_tiles: std::collections::HashSet<usize> =
-		scene.entities.iter().filter(|e| e.is_actor).filter_map(|e| e.tile).collect();
 	let mut b = Builder {
 		sprites,
 		atlases: AtlasList::default(),
@@ -621,7 +619,7 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	let overlay_level = scene.camera.level.clamp(0, 3) as u32;
 	for tile in &order {
 		let index = (tile.row * scene.width + tile.col) as usize;
-		let fade = Fade::of(scene, tile, &unit_tiles);
+		let fade = Fade::of(scene, tile);
 		draw_dressing(&mut b, tile, on.get(&index).unwrap_or(&nothing), fade, overlay_level);
 	}
 	// The marks on the tiles map objects stand on (`HighlightBlockedTiles`): sprites in
@@ -800,6 +798,29 @@ mod tests {
 		let seen: Vec<_> = quads.iter().filter(|q| q.corners[0][0] > 50.0 && q.factor != 0.0).collect();
 		assert_eq!(seen.len(), 1, "the unit in sight is drawn");
 		assert_eq!((seen[0].overlay, seen[0].factor), ([0x60, 0x0a, 0x0a, 0xff], 0.25), "with its hit's flash");
+	}
+
+	#[test]
+	fn only_a_tile_that_unveils_fades_what_stands_in_front() {
+		// A column of four tiles; "behind" a tree on the first is up the map.
+		let column = |unveils: [bool; 4]| TacticalScene {
+			width: 1,
+			height: 4,
+			tiles: (0..4)
+				.map(|row| SceneTacticalTile {
+					row,
+					unveils: unveils[row as usize],
+					..tile(0, true)
+				})
+				.collect(),
+			..TacticalScene::default()
+		};
+		let scene = column([false; 4]);
+		assert_eq!(Fade::of(&scene, &scene.tiles[0]), Fade::None, "a unit the player can't see gives nothing away");
+		let scene = column([false, true, false, false]);
+		assert_eq!(Fade::of(&scene, &scene.tiles[0]), Fade::BehindOne(0));
+		let scene = column([false, false, false, true]);
+		assert_eq!(Fade::of(&scene, &scene.tiles[0]), Fade::BehindThree);
 	}
 
 	#[test]
