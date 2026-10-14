@@ -328,7 +328,9 @@ impl Fade {
 
 /// A tile's details and what stands on it, each entity followed by its overlay (the
 /// original draws a unit's bars with it, `0x4c3547`, so a unit in front covers the
-/// bars of one behind), the overlay at `overlay_level`.
+/// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
+/// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
+/// desaturated.
 fn draw_dressing(
 	b: &mut Builder,
 	tile: &SceneTacticalTile,
@@ -364,28 +366,41 @@ fn draw_dressing(
 		};
 		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
-	for entity in standing {
-		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
-		for sprite in entity.sprites.iter().filter(|s| s.visible && !s.brush.is_empty()) {
-			let [a, r, g, b_] = sprite.color.to_be_bytes();
-			// The original writes the alpha of every sprite with occlusion each frame:
-			// 60 faded, else 255.
-			let alpha = match sprite.occlusion {
-				Some(o) if o.0 != 0 => fade.alpha(o) * 255.0,
-				_ => f32::from(a),
-			};
-			let look = Look {
-				scale: sprite.scale,
-				flipped: sprite.flipped,
-				alpha,
-				rotation: sprite.rotation,
-				tint: [r, g, b_],
-			};
-			let at = [anchor[0] + sprite.offset.0 * sprite.scale, anchor[1] + sprite.offset.1 * sprite.scale];
-			b.placed(&sprite.brush, at, look, sprite.saturation * hidden, level);
-		}
+	for entity in standing.iter().filter(|e| !tile.fogged || e.visible_in_fog) {
+		draw_entity_sprites(b, entity, Some(fade), hidden, level);
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
+		}
+	}
+}
+
+/// An entity's sprites, at `saturation` and `level`, each with its hit flash (its
+/// `highlight` blended in by `highlight_factor`); with `fade`, the sprites with
+/// occlusion take its alpha (the original writes it every frame: 60 faded, else 255).
+fn draw_entity_sprites(b: &mut Builder, entity: &SceneTacticalEntity, fade: Option<Fade>, saturation: f32, level: u32) {
+	let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
+	for sprite in entity.sprites.iter().filter(|s| s.visible && !s.brush.is_empty()) {
+		let [a, r, g, b_] = sprite.color.to_be_bytes();
+		let alpha = match (fade, sprite.occlusion) {
+			(Some(fade), Some(o)) if o.0 != 0 => fade.alpha(o) * 255.0,
+			_ => f32::from(a),
+		};
+		let look = Look {
+			scale: sprite.scale,
+			flipped: sprite.flipped,
+			alpha,
+			rotation: sprite.rotation,
+			tint: [r, g, b_],
+		};
+		let at = [anchor[0] + sprite.offset.0 * sprite.scale, anchor[1] + sprite.offset.1 * sprite.scale];
+		let before = b.quads.len();
+		b.placed(&sprite.brush, at, look, sprite.saturation * saturation, level);
+		if sprite.highlight_factor != 0.0 {
+			let [ha, hr, hg, hb] = sprite.highlight.to_be_bytes();
+			for quad in &mut b.quads[before..] {
+				quad.overlay = [hr, hg, hb, ha];
+				quad.factor = sprite.highlight_factor;
+			}
 		}
 	}
 }
@@ -528,8 +543,9 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	for pool in &scene.pools {
 		pools.entry(pool.tile).or_default().push(pool);
 	}
+	// Flying units aren't on a tile: they draw after the tiles (see below).
 	let mut standing: std::collections::HashMap<usize, Vec<&SceneTacticalEntity>> = Default::default();
-	for entity in &scene.entities {
+	for entity in scene.entities.iter().filter(|e| !e.flying) {
 		if let Some(tile) = entity.tile {
 			standing.entry(tile).or_default().push(entity);
 		}
@@ -553,6 +569,13 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
 		let pooled = pools.get(&index).map_or(&[][..], |v| &v[..]);
 		draw_dressing(&mut b, tile, pooled, on_it, Fade::of(scene, tile, &unit_tiles), overlay_level);
+	}
+	// A unit in the air is in the original's effects layer, drawn after the tiles and
+	// first in that layer (its box always stays in the layer's root): over everything
+	// on the map, under the effects; its sprites only (no bars), not desaturated by a
+	// tile the player can't see, with no occlusion fade (`0x4c3560`).
+	for entity in scene.entities.iter().filter(|e| e.flying) {
+		draw_entity_sprites(&mut b, entity, None, 1.0, overlay_level);
 	}
 	// Particle effects, then the weather over everything.
 	for particle in &scene.particles {
@@ -605,6 +628,139 @@ mod tests {
 		assert_eq!(Fade::BehindThree.alpha((2, 2, -3)), 1.0);
 		assert_eq!(Fade::BehindThree.alpha(top), FADED_ALPHA);
 		assert_eq!(Fade::None.alpha(top), 1.0);
+	}
+
+	use bb_assets::{BrushFrame, BrushSheet, BrushSprite, SheetHeader, name_hash};
+	use squirrel_bb::scene::tactical::{SceneTacticalSprite, SceneTacticalTile};
+
+	/// A registry with sprites `tile`, `unit` and `rock`, each a 2×2 picture.
+	fn registry() -> SpriteRegistry {
+		let sprite = |name: &str| BrushSprite {
+			hash: name_hash(name.as_bytes()),
+			name: name.into(),
+			material: 0,
+			width: 2,
+			height: 2,
+			offset_x: 0,
+			offset_y: 0,
+			depth_bias: 0,
+			frame_time_ms: 0,
+			unknown_pause: [0, 0],
+			rotation_speed: 0.0,
+			flags: 0,
+			unknown_offset: [0.0, 0.0],
+			color: [255; 4],
+			unknown_scale: 1.0,
+			frames: vec![BrushFrame {
+				name: String::new(),
+				uv: [0.0, 1.0, 0.0, 1.0],
+				rect: [-1.0, 1.0, -1.0, 1.0],
+			}],
+			trailer: [0; 3],
+		};
+		let mut registry = SpriteRegistry::new();
+		registry.add_sheet(
+			"brushes/test.brush",
+			BrushSheet {
+				texture: "gfx/test.png".into(),
+				header: SheetHeader {
+					width: 2,
+					height: 2,
+					flags: [0; 12],
+					sprite_count: 3,
+					reserved: [0; 2],
+					max_level: 1000,
+				},
+				sprites: vec![sprite("tile"), sprite("unit"), sprite("rock")],
+			},
+		);
+		registry
+	}
+
+	fn tile(col: i64, fogged: bool) -> SceneTacticalTile {
+		SceneTacticalTile {
+			col,
+			row: 0,
+			pos: (col as f64 * 120.0, 0.0),
+			level: 0,
+			terrain: 0,
+			subtype: 0,
+			blend_priority: 0,
+			brush: "tile".into(),
+			color: 0xffff_ffff,
+			fogged,
+			details: Vec::new(),
+		}
+	}
+
+	fn entity(id: i64, tile: usize, brush: &str, visible_in_fog: bool, flying: bool) -> SceneTacticalEntity {
+		SceneTacticalEntity {
+			id,
+			pos: (tile as f64 * 120.0, 0.0),
+			tile: Some(tile),
+			flying,
+			visible_in_fog,
+			is_actor: !visible_in_fog,
+			overlay: None,
+			sprites: vec![SceneTacticalSprite {
+				name: "body".into(),
+				brush: brush.into(),
+				color: 0xffff_ffff,
+				scale: 1.0,
+				rotation: 0.0,
+				saturation: 1.0,
+				highlight: 0xff60_0a0a,
+				highlight_factor: if flying { 0.0 } else { 0.25 },
+				visible: true,
+				flipped: false,
+				offset: (0.0, 0.0),
+				ignore_ambient: false,
+				occlusion: None,
+			}],
+		}
+	}
+
+	fn quads_of(scene: &TacticalScene) -> Vec<Quad> {
+		let registry = registry();
+		let view = WorldView {
+			center: [120.0, 0.0],
+			zoom: 1.0,
+			width: 800,
+			height: 600,
+		};
+		tactical_quads(scene, &registry, &view).quads
+	}
+
+	#[test]
+	fn units_out_of_sight_are_not_drawn_and_objects_are_desaturated() {
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![tile(0, true), tile(1, false)],
+			entities: vec![entity(1, 0, "unit", false, false), entity(2, 0, "rock", true, false), entity(3, 1, "unit", false, false)],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let units: Vec<_> = quads.iter().filter(|q| q.corners[0][0] < 50.0 && q.factor != 0.0).collect();
+		assert!(units.len() == 1 && units[0].saturation < 0.5, "only the rock on the unseen tile, desaturated");
+		let seen: Vec<_> = quads.iter().filter(|q| q.corners[0][0] > 50.0 && q.factor != 0.0).collect();
+		assert_eq!(seen.len(), 1, "the unit in sight is drawn");
+		assert_eq!((seen[0].overlay, seen[0].factor), ([0x60, 0x0a, 0x0a, 0xff], 0.25), "with its hit's flash");
+	}
+
+	#[test]
+	fn a_flying_unit_draws_after_the_map_undesaturated() {
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![tile(0, true), tile(1, false)],
+			entities: vec![entity(1, 0, "unit", false, true), entity(2, 1, "rock", true, false)],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let last = quads.last().expect("quads");
+		assert_eq!(last.corners[0][0] < 50.0, true, "the flying unit is drawn last, over the rock");
+		assert_eq!(last.saturation, 1.0, "not desaturated by the unseen tile it's over");
 	}
 
 	#[test]
