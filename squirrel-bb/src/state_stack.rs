@@ -24,6 +24,7 @@ use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
+use crate::input_events::{InputClasses, KeyInput, MouseInput};
 use crate::module::Instantiator;
 
 /// A registered child state of the root (a sibling among the root's children).
@@ -80,6 +81,8 @@ struct Machine {
 	/// Added states whose `onInit` hasn't run yet.
 	pending_init: Vec<SqStrongRef>,
 	methods: Vec<(&'static str, SqStrongRef)>,
+	/// The mouse and key event classes (`onMouseInput` / `onKeyInput`).
+	input: Option<InputClasses>,
 }
 
 /// A host scene update, run by `State.updateScene()`.
@@ -254,6 +257,7 @@ impl RootState {
 				scene_render: None,
 				pending_init: Vec::new(),
 				methods: Vec::new(),
+				input: None,
 			})),
 		}
 	}
@@ -261,6 +265,7 @@ impl RootState {
 	/// Build the shared native state methods. Call once, with `&mut SQVM`, before
 	/// [`boot`](Self::boot).
 	pub fn install(&self, vm: &mut SQVM) {
+		self.machine.borrow_mut().input = Some(InputClasses::build(vm));
 		// Each closure captures the shared machine; a method recovers its receiver
 		// via `vm.this_identity()`. `add`/`get` ignore the receiver (all `add` sites
 		// target the root's children).
@@ -478,6 +483,41 @@ impl RootState {
 		Ok(())
 	}
 
+	/// Hand a mouse event to the visible states' `onMouseInput`, the most recently added
+	/// first and the root last, until one answers true (handled). Whether the original
+	/// routes it this way among several visible states is unverified; in a battle or on
+	/// the world map only one state with input handling is visible.
+	pub fn mouse_input(&self, vm: &SQVM, input: MouseInput) -> Result<bool, String> {
+		let event = {
+			let m = self.machine.borrow();
+			m.input.as_ref().ok_or("mouse_input: not installed")?.mouse(vm, input)
+		};
+		self.dispatch(vm, "onMouseInput", &event)
+	}
+
+	/// Hand a key event to the visible states' `onKeyInput` (see [`mouse_input`](Self::mouse_input)).
+	pub fn key_input(&self, vm: &SQVM, input: KeyInput) -> Result<bool, String> {
+		let event = {
+			let m = self.machine.borrow();
+			m.input.as_ref().ok_or("key_input: not installed")?.key(vm, input)
+		};
+		self.dispatch(vm, "onKeyInput", &event)
+	}
+
+	fn dispatch(&self, vm: &SQVM, method: &str, event: &SqStrongRef) -> Result<bool, String> {
+		let targets: Vec<SqStrongRef> = {
+			let m = self.machine.borrow();
+			let children = m.children.iter().rev().filter(|c| !c.frame.hidden).map(|c| c.state.clone());
+			children.chain(m.root.iter().filter(|r| !r.frame.hidden).map(|r| r.state.clone())).collect()
+		};
+		for state in targets {
+			if state.call_method_ret::<bool, _>(vm, method, (event.clone(),))?.unwrap_or(false) {
+				return Ok(true);
+			}
+		}
+		Ok(false)
+	}
+
 	/// Run the registered background task (`Root.setBackgroundTaskCallback`) once, as
 	/// the original does after the states' updates every frame, whether or not the
 	/// state that registered it is visible.
@@ -525,6 +565,7 @@ impl RootState {
 		machine.children.clear();
 		machine.root = None;
 		machine.pending_init.clear();
+		machine.input = None;
 		machine.scene_update = None;
 		machine.scene_render = None;
 		machine.bg_callback = None;
