@@ -1,6 +1,7 @@
 //! `bb`'s window, run in a headless gamescope (muted, so nothing shows or sounds): it
 //! exits cleanly, and the scripts' video mode is put on it as they set it. Skips
-//! cleanly without gamescope or the Steam install.
+//! cleanly without gamescope or the Steam install, or when gamescope can't start (no
+//! display, no runtime folder).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,7 +28,7 @@ fn run_dir(name: &str) -> PathBuf {
 }
 
 /// Run `bb` with `args` (and `--mute`) in a headless gamescope of `width` × `height`,
-/// or `None` to skip.
+/// or `None` to skip: no install, no gamescope, or a gamescope that couldn't start.
 fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run> {
 	if !Path::new(STEAM_DATA_DIR).exists() {
 		eprintln!("skipping: {STEAM_DATA_DIR} not present");
@@ -39,20 +40,27 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		return None;
 	}
 	let _one = GAMESCOPE.lock().unwrap_or_else(|e| e.into_inner());
-	let (status, stderr) = (dir.join("status"), dir.join("stderr"));
-	// gamescope doesn't pass its child's status on: the shell writes it. Its own Wayland
-	// display (`--expose-wayland`) stands in for the desktop's, so the window opens there.
+	let (started, status, stderr) = (dir.join("started"), dir.join("status"), dir.join("stderr"));
+	let log = std::fs::File::create(dir.join("gamescope.log")).expect("gamescope's log");
+	// gamescope doesn't pass its child's status on: the shell writes it, and first that
+	// it started at all. Its own Wayland display (`--expose-wayland`) stands in for the
+	// desktop's, so the window opens there.
 	let mut child = Command::new("gamescope")
 		.args(["--backend", "headless", "--expose-wayland"])
 		.args(["-W", &width.to_string(), "-H", &height.to_string(), "--"])
-		.args(["sh", "-c", r#""$0" "$@" 2>"$BB_TEST_STDERR"; echo $? > "$BB_TEST_STATUS""#])
+		.args([
+			"sh",
+			"-c",
+			r#": > "$BB_TEST_STARTED"; "$0" "$@" 2>"$BB_TEST_STDERR"; echo $? > "$BB_TEST_STATUS""#,
+		])
 		.arg(env!("CARGO_BIN_EXE_bb"))
 		.arg("--mute")
 		.args(args)
+		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
 		.env("BB_TEST_STDERR", &stderr)
-		.stdout(Stdio::null())
-		.stderr(Stdio::null())
+		.stdout(log.try_clone().expect("gamescope's log"))
+		.stderr(log)
 		.spawn()
 		.expect("run gamescope");
 	let deadline = Instant::now() + Duration::from_secs(300);
@@ -63,6 +71,12 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 			panic!("bb didn't exit within 5 minutes");
 		}
 		std::thread::sleep(Duration::from_millis(200));
+	}
+	if !started.exists() {
+		let log = std::fs::read_to_string(dir.join("gamescope.log")).unwrap_or_default();
+		let last = log.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("nothing");
+		eprintln!("skipping: gamescope couldn't start bb (no display or runtime folder?); its last line: {last}");
+		return None;
 	}
 	Some(Run {
 		status: std::fs::read_to_string(&status).expect("bb's exit status").trim().to_string(),
