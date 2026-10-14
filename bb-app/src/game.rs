@@ -162,20 +162,26 @@ impl Game {
 			engine.sprites().with(|registry| {
 				self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady)
 			});
-		} else {
+		} else if world_visible(engine) {
 			if let Some(patch) = engine.world_grid().take_fog_patch() {
 				self.renderer.update_fog(gpu, &patch);
 			}
-			let scene = engine.world_scene();
+			let camera = engine.world_camera();
 			let view = WorldView {
-				center: [scene.camera.pos.0, scene.camera.pos.1],
-				zoom: fit / scene.camera.zoom,
+				center: [camera.pos.0, camera.pos.1],
+				zoom: fit / camera.zoom,
 				width,
 				height,
 			};
+			// Only the tiles the screen can show: the map is tens of thousands.
+			let scene = engine.world_scene_where(|pos| view.shows(pos));
 			engine.sprites().with(|registry| {
 				self.renderer.draw(gpu, target, &scene, registry, &view, Atlases::DrawReady)
 			});
+		} else {
+			// Neither shows (the main menu, after `World.setVisible(false)`): the UI is
+			// drawn over an empty frame, not the last campaign's map.
+			target.clear(gpu);
 		}
 		// The UI over everything, with the portraits it asked for.
 		let renderer = &mut self.renderer;
@@ -236,6 +242,16 @@ fn video_mode(engine: &GameEngine) -> Option<(u32, u32)> {
 	let mode = settings.get::<SqStrongRef>("getVideoMode")?.call_ret::<SqStrongRef, _>(vm, ()).ok()??;
 	let dim = |k: &str| mode.get_member::<squirrel::Number>(vm, k).map(|n| n.0 as u32);
 	Some((dim("Width")?, dim("Height")?))
+}
+
+/// `World.isVisible()`: the world map is showing (it isn't at the main menu).
+fn world_visible(engine: &GameEngine) -> bool {
+	let vm = engine.vm();
+	SqTable::root(vm)
+		.get::<SqTable>("World")
+		.and_then(|t| t.get::<SqStrongRef>("isVisible"))
+		.and_then(|f| f.call_ret::<bool, _>(vm, ()).ok().flatten())
+		.unwrap_or(true)
 }
 
 /// `Tactical.isVisible()`: a battle is showing.

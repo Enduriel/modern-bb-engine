@@ -44,6 +44,10 @@ pub(crate) const CLOUD_SHADOW_SCALE: f32 = 1.25;
 pub(crate) const CLOUD_SHADOW_ALPHA: f32 = 0.2;
 pub(crate) const CLOUD_SHADOW_DROP: f32 = -500.0;
 
+/// How far past its anchor a tile's or an entity's sprites can reach: well past the hex
+/// (400 x 200 around a 180 x 120 cell).
+const SPRITE_REACH: f32 = 400.0;
+
 /// Region names: white at alpha `0x66`, at 0.4 of the script's scale (`0x4f0350`).
 const REGION_TEXT_COLOR: [u8; 4] = [255, 255, 255, 0x66];
 const REGION_TEXT_SCALE: f32 = 0.4;
@@ -67,6 +71,14 @@ impl WorldView {
 			self.width as f32 / self.zoom,
 			self.height as f32 / self.zoom,
 		)
+	}
+
+	/// Whether a tile or entity anchored at world point `pos` can show in this view: what
+	/// [`world_quads`] draws of them, so a scene can be cut down to it beforehand.
+	pub fn shows(&self, (x, y): (f64, f64)) -> bool {
+		let [left, right, bottom, top] = self.bounds(SPRITE_REACH);
+		let (x, y) = (x as f32, y as f32);
+		x >= left && x <= right && y >= bottom && y <= top
 	}
 
 	/// The world rectangle on screen, `[left, right, bottom, top]`, grown by `margin`.
@@ -141,12 +153,7 @@ pub fn world_quads<'a>(
 	view: &WorldView,
 	fonts: WorldFonts<'a>,
 ) -> WorldQuads {
-	// Tile sprites reach well past their hex (400 x 200 around a 180 x 120 cell).
-	let [left, right, bottom, top] = view.bounds(400.0);
-	let on_screen = |(x, y): (f64, f64)| {
-		let (x, y) = (x as f32, y as f32);
-		x >= left && x <= right && y >= bottom && y <= top
-	};
+	let on_screen = |pos: (f64, f64)| view.shows(pos);
 	let mut drawables: Vec<Drawable> = Vec::new();
 	// `key`: the sort key without the brush's depth bias, which is added here.
 	let push = |drawables: &mut Vec<Drawable<'a>>,

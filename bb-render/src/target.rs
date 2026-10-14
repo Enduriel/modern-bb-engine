@@ -44,6 +44,30 @@ impl RenderTarget {
 		}
 	}
 
+	/// Fill the target with opaque black, as a frame with nothing in it.
+	pub fn clear(&self, gpu: &Gpu) {
+		let mut encoder = gpu
+			.device
+			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+		encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			label: Some("clear"),
+			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				view: &self.view,
+				depth_slice: None,
+				resolve_target: None,
+				ops: wgpu::Operations {
+					load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+					store: wgpu::StoreOp::Store,
+				},
+			})],
+			depth_stencil_attachment: None,
+			timestamp_writes: None,
+			occlusion_query_set: None,
+			multiview_mask: None,
+		});
+		gpu.queue.submit([encoder.finish()]);
+	}
+
 	/// Copy the target's pixels back (rows top to bottom).
 	pub fn read(&self, gpu: &Gpu) -> Result<Image, String> {
 		let row = self.width * 4;

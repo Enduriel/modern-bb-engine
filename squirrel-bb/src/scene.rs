@@ -15,7 +15,8 @@ pub use crate::native::world_detail::DetailData as SceneDetail;
 /// The world map as last set by the scripts.
 #[derive(Clone, Debug, Default)]
 pub struct WorldScene {
-	/// Every tile, row by row (`col` fastest).
+	/// Every tile, row by row (`col` fastest); only those on screen from
+	/// [`Engine::world_scene_where`](crate::Engine::world_scene_where).
 	pub tiles: Vec<SceneTile>,
 	/// Every live entity, in spawn order.
 	pub entities: Vec<SceneEntity>,

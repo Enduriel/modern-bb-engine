@@ -249,8 +249,15 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// The world map as the scripts have set it up, for a renderer. The fog of war's
 	/// mask comes separately, as patches ([`WorldGrid::take_fog_patch`]).
 	pub fn world_scene(&self) -> crate::scene::WorldScene {
+		self.world_scene_where(|_| true)
+	}
+
+	/// [`world_scene`](Self::world_scene) with only the tiles whose centre `keep_tile`
+	/// accepts (in world units), e.g. those the screen can show: a frame then doesn't copy
+	/// the whole map. Everything else is whole.
+	pub fn world_scene_where(&self, keep_tile: impl Fn((f64, f64)) -> bool) -> crate::scene::WorldScene {
 		crate::scene::WorldScene {
-			tiles: self.world_grid.scene_tiles(),
+			tiles: self.world_grid.scene_tiles_where(keep_tile),
 			entities: self.world_entities.scene_entities(&self.vm),
 			extent: self.world_grid.extent(),
 			fog_of_war: self.world_grid.fog_of_war(),
@@ -262,9 +269,14 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			clouds: self.clouds.borrow().clouds().to_vec(),
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
-			camera: crate::native::world_camera::view(&self.world_camera),
+			camera: self.world_camera(),
 			particles: self.world_particles.borrow().scene(),
 		}
+	}
+
+	/// The world camera (`World.getCamera()`): where the screen's centre is and its zoom.
+	pub fn world_camera(&self) -> crate::scene::SceneWorldCamera {
+		crate::native::world_camera::view(&self.world_camera)
 	}
 	/// What entity `id`'s portrait draws: a battle unit (placed on the map or not, e.g.
 	/// a brother in the roster) or a world entity.

@@ -262,7 +262,10 @@ impl ApplicationHandler for App {
 		if self.running.is_some() {
 			return;
 		}
-		event_loop.set_control_flow(ControlFlow::Poll);
+		// Wait, not Poll: a frame is drawn per redraw, and each frame requests the next
+		// (`about_to_wait`). Where the compositor paces redraws (Wayland's frame callbacks),
+		// Poll would spin the thread between them.
+		event_loop.set_control_flow(ControlFlow::Wait);
 		match self.start(event_loop) {
 			Ok(running) => self.running = Some(running),
 			Err(e) => self.fail(event_loop, e),

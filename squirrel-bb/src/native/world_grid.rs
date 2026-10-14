@@ -828,14 +828,21 @@ impl WorldGrid {
 
 	/// Every tile as the renderer sees it.
 	pub fn scene_tiles(&self) -> Vec<crate::scene::SceneTile> {
+		self.scene_tiles_where(|_| true)
+	}
+
+	/// The tiles whose centre `keep` accepts (in world units), as the renderer sees them.
+	pub fn scene_tiles_where(&self, keep: impl Fn((f64, f64)) -> bool) -> Vec<crate::scene::SceneTile> {
 		self.grid
 			.borrow()
 			.tiles
 			.iter()
-			.map(|t| crate::scene::SceneTile {
+			.map(|t| (t, world_layout::tile_pos(t.col, t.row)))
+			.filter(|(_, pos)| keep(*pos))
+			.map(|(t, pos)| crate::scene::SceneTile {
 				col: t.col,
 				row: t.row,
-				pos: world_layout::tile_pos(t.col, t.row),
+				pos,
 				terrain: t.type_,
 				discovered: t.is_discovered,
 				brush: t.brush.clone(),
