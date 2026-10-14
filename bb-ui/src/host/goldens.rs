@@ -104,29 +104,12 @@ pub const WORLD_SEED: &str = "bbuitest";
 /// The steps between the world's snapshots, which the probe runs too.
 const WORLD_STEPS: &str = include_str!("../../probes/world_golden.nut");
 
-/// How the probe harness's campaign mode starts the campaign, with the
-/// seed left as `{seed}`.
-const START_CAMPAIGN: &str = r#"::RootState.get("MainMenuState").campaign_menu_module_onStartPressed({
-	Name = "Probe Company",
-	Banner = ::Const.PlayerBanners[0],
-	Difficulty = 1,
-	EconomicDifficulty = 1,
-	BudgetDifficulty = 1,
-	Ironman = false,
-	ExplorationMode = false,
-	GreaterEvil = ::Const.World.GreaterEvilType.Random,
-	PermanentDestruction = false,
-	Seed = {seed},
-	StartingScenario = "scenario.early_access"
-});"#;
-
 /// Start the world's campaign from the main menu as the golden probe's harness does,
 /// and walk it through [`WORLD_SCREENS`] as the probe does, snapshotting each 3 s
 /// after its step.
 pub fn capture_world(session: &UiSession) -> Result<Vec<(&'static str, Snapshot)>, String> {
-	let seed = Json::Str(WORLD_SEED.to_string()).to_text();
 	let engine = session.engine();
-	engine.run_script(&START_CAMPAIGN.replace("{seed}", &seed), "world_golden")?;
+	session.start_campaign(WORLD_SEED)?;
 	// The probe harness runs the steps' .nut right after world_state.init(), before the
 	// world's first update (it pins the generator there): do the same. A frame inits the
 	// states added since the last one and then updates them, so init them first.

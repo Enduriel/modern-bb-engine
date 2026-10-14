@@ -204,7 +204,7 @@ impl UiSession {
 	/// Lay the page out at the video mode's size divided by its UI scale, as the original
 	/// does when the scripts set a video mode (`Settings.setVideoMode`, e.g. the Options
 	/// screen's UI scale): the page sees a smaller window.
-	fn follow_ui_scale(&self) {
+	pub(super) fn follow_ui_scale(&self) {
 		let (width, height) = self.engine.video().ui_size();
 		let size = (width as i32, height as i32);
 		if self.host().size() != size {

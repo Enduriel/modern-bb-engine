@@ -27,10 +27,12 @@ mod client;
 pub mod goldens;
 mod input;
 mod ipc;
+mod live_input;
 mod renderer;
 mod scheme;
 mod session;
 mod session_input;
+mod session_play;
 mod targets;
 
 use std::cell::{Cell, RefCell};
@@ -46,6 +48,7 @@ use client::Shared;
 pub use client::{Event, FrameBuffer};
 pub use input::Key;
 use ipc::Arg;
+pub use live_input::{Modifiers, MouseButton};
 pub use scheme::{RequestKind, Responder};
 pub use session::{LogLine, UiSession};
 
@@ -122,6 +125,8 @@ pub struct UiHost {
 	next_request: Cell<i32>,
 	/// Where the mouse was last sent, if anywhere.
 	pointer: Cell<Option<(i32, i32)>>,
+	/// Mouse buttons held (`EVENTFLAG_*_MOUSE_BUTTON` bits), which moves carry.
+	held: Cell<u32>,
 	cache_dir: PathBuf,
 	_args: Args,
 }
@@ -183,6 +188,7 @@ impl UiHost {
 			pending: RefCell::new(None),
 			next_request: Cell::new(1),
 			pointer: Cell::new(None),
+			held: Cell::new(0),
 			cache_dir: config.cache_dir,
 			_args: args,
 		};
@@ -382,14 +388,16 @@ impl UiHost {
 	pub fn mouse_move(&self, x: i32, y: i32) {
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
-			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers: 0 }), 0);
+			let modifiers = self.held.get();
+			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), 0);
 		}
 	}
 
 	/// Move the mouse out of the view, if it's in it (hover ends).
 	pub fn mouse_leave(&self) {
 		if let (Some((x, y)), Some(host)) = (self.pointer.take(), self.browser_host()) {
-			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers: 0 }), 1);
+			let modifiers = self.held.get();
+			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), 1);
 		}
 	}
 
@@ -403,6 +411,38 @@ impl UiHost {
 		host.send_mouse_move_event(Some(&event), 0);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 0, 1);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 1, 1);
+	}
+
+	/// `button` went down or up at `(x, y)` (view pixels), as a player's mouse does it.
+	/// Moves carry the buttons held, so the page sees drags.
+	pub fn mouse_button(&self, x: i32, y: i32, button: MouseButton, down: bool) {
+		let Some(host) = self.browser_host() else {
+			return;
+		};
+		self.pointer.set(Some((x, y)));
+		let flag = button.held_flag();
+		let held = if down {
+			self.held.get() | flag
+		} else {
+			self.held.get() & !flag
+		};
+		// The event itself carries the button while it goes down and until it is up.
+		live_input::button(&host, x, y, button, down, self.held.get() | flag);
+		self.held.set(held);
+	}
+
+	/// Key `code` (a Windows virtual-key code) went down or up in the focused element.
+	pub fn key(&self, code: i32, down: bool, modifiers: Modifiers) {
+		if let Some(host) = self.browser_host() {
+			live_input::key(&host, code, down, modifiers);
+		}
+	}
+
+	/// The keys typed `c` in the focused element (after the key went down).
+	pub fn character(&self, c: char, modifiers: Modifiers) {
+		if let Some(host) = self.browser_host() {
+			live_input::character(&host, c, modifiers);
+		}
 	}
 
 	/// Press and release `key` in the focused element.
@@ -436,6 +476,27 @@ impl UiHost {
 			bgra: f.bgra.clone(),
 			paints: f.paints,
 		})
+	}
+
+	/// Run `f` on the latest painted frame, without copying it; `None` before the first.
+	pub fn with_frame<R>(&self, f: impl FnOnce(&FrameBuffer) -> R) -> Option<R> {
+		let frame = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+		frame.as_ref().map(f)
+	}
+
+	/// The painted page's alpha at `(x, y)` (view pixels): 0 outside it, or before the
+	/// first paint.
+	pub fn alpha_at(&self, x: i32, y: i32) -> u8 {
+		self.with_frame(|f| {
+			let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {
+				return 0;
+			};
+			if x >= f.width || y >= f.height {
+				return 0;
+			}
+			f.bgra[((y * f.width + x) * 4 + 3) as usize]
+		})
+		.unwrap_or(0)
 	}
 
 	/// How many frames have been painted so far.

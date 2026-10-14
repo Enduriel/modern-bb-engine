@@ -132,7 +132,13 @@ fn key_for(c: char) -> (i32, u32) {
 	}
 }
 
-fn send(host: &BrowserHost, type_: KeyEventType, code: i32, modifiers: u32, character: u16) {
+pub(super) fn send_key(
+	host: &BrowserHost,
+	type_: KeyEventType,
+	code: i32,
+	modifiers: u32,
+	character: u16,
+) {
 	host.send_key_event(Some(&KeyEvent {
 		type_,
 		modifiers,
@@ -147,15 +153,15 @@ fn send(host: &BrowserHost, type_: KeyEventType, code: i32, modifiers: u32, char
 fn press(host: &BrowserHost, code: i32, modifiers: u32, character: Option<char>) {
 	// An offscreen browser only delivers keys while it has focus.
 	host.set_focus(1);
-	send(host, KeyEventType::RAWKEYDOWN, code, modifiers, 0);
+	send_key(host, KeyEventType::RAWKEYDOWN, code, modifiers, 0);
 	if let Some(c) = character {
 		let mut units = [0; 2];
 		for &unit in c.encode_utf16(&mut units).iter() {
 			// For character events, CEF takes the character as the key code too.
-			send(host, KeyEventType::CHAR, i32::from(unit), modifiers, unit);
+			send_key(host, KeyEventType::CHAR, i32::from(unit), modifiers, unit);
 		}
 	}
-	send(host, KeyEventType::KEYUP, code, modifiers, 0);
+	send_key(host, KeyEventType::KEYUP, code, modifiers, 0);
 }
 
 /// Press and release `key` in the focused element.

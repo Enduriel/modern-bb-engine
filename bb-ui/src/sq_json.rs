@@ -164,7 +164,10 @@ mod tests {
 		let json = Json::parse(r#"["a\u0000b", "\u00e9"]"#).unwrap();
 		let mut root = SqTable::root(&vm);
 		root.set("t", from_json(&vm, &json));
-		assert_eq!(strong_to_json(&vm, &global(&vm, "t")).unwrap().to_text(), r#"["a","é"]"#);
+		assert_eq!(
+			strong_to_json(&vm, &global(&vm, "t")).unwrap().to_text(),
+			r#"["a","é"]"#
+		);
 	}
 
 	#[test]
