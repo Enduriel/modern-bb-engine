@@ -162,9 +162,13 @@ impl TimeService {
 				let state = self.state.clone();
 				vm.make_closure(move |speed: Number| state.borrow_mut().virtual_speed = speed.0)
 			}),
+			// setVirtualTime(seconds), as getVirtualTimeF reads them: the world parks its
+			// clock in seconds while a battle runs on one from 0 and puts it back after
+			// (disassembled, 0x51d260: the f32 argument becomes the seconds clock, and
+			// trunc(× 1000) the millisecond one).
 			("setVirtualTime", {
 				let state = self.state.clone();
-				vm.make_closure(move |time: Number| state.borrow_mut().virtual_time = time.0)
+				vm.make_closure(move |seconds: Number| state.borrow_mut().virtual_time = seconds.0 as f32 as f64 * 1000.0)
 			}),
 			("clearEvents", {
 				let state = self.state.clone();

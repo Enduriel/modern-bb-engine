@@ -87,10 +87,25 @@ fn virtual_speed_scales_and_pauses_virtual_time() {
 	)
 	.expect("virtual paused at speed 0");
 
-	vm.run_script("Time.setVirtualTime(500);", "settime")
+	// setVirtualTime takes seconds (what getVirtualTimeF gives), as the world does
+	// around a battle: it parks its time, the battle runs from 0, then it's put back.
+	vm.run_script("Time.setVirtualTime(0.5);", "settime")
 		.expect("set time");
-	vm.run_script("assert(Time.getVirtualTime() == 500);", "settime_check")
+	vm.run_script("assert(Time.getVirtualTime() == 500); assert(Time.getVirtualTimeF() == 0.5);", "settime_check")
 		.expect("virtual time set directly");
+	vm.run_script("Time.setVirtualSpeed(1.0);", "speed").expect("speed");
+	time.tick(&vm, 250.0);
+	vm.run_script(
+		r#"
+		::parked <- Time.getVirtualTimeF();
+		Time.setVirtualTime(0);
+		assert(Time.getVirtualTime() == 0);
+		Time.setVirtualTime(::parked);
+		assert(Time.getVirtualTime() == 750);
+		"#,
+		"park",
+	)
+	.expect("parked and restored in seconds");
 }
 
 #[test]
