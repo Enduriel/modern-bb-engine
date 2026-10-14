@@ -689,6 +689,7 @@ mod tests {
 			brush: "tile".into(),
 			color: 0xffff_ffff,
 			visible,
+			highlight: None,
 			details: Vec::new(),
 		}
 	}

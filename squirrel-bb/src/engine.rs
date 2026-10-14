@@ -43,6 +43,7 @@ pub struct Engine<S: ScriptSource> {
 	tactical_entities: TacticalEntities,
 	tactical_grid: TacticalGrid,
 	tactical_navigator: TacticalNavigator,
+	tactical_highlighter: crate::native::TacticalHighlighter,
 	ui: UiBridge,
 	/// The headless browser side answering the UI (see [`crate::ui_client`]).
 	ui_client: RefCell<crate::ui_client::UiClient>,
@@ -128,6 +129,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_navigator.install(&mut vm);
 		// After the navigator's update and the map's clearScene, which it wraps.
 		tactical_entities.install_shaker(&mut vm);
+		let tactical_highlighter = crate::native::TacticalHighlighter::new(&tactical_grid, tactical_entities.units());
+		tactical_highlighter.install(&mut vm);
 		crate::native::tactical::install_effects(&mut vm, &natives.tactical);
 		// Leaving a campaign empties the world (after every `World` native exists).
 		crate::native::world_clear_scene::install(
@@ -190,6 +193,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tactical_entities,
 			tactical_grid,
 			tactical_navigator,
+			tactical_highlighter,
 			ui,
 			ui_client: RefCell::new(crate::ui_client::UiClient::new()),
 			sprites: natives.sprites,
@@ -308,6 +312,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			clouds: self.tactical_clouds.borrow().clouds().to_vec(),
 			hide_trees: crate::native::temp_gameplay_flag(&self.vm, "HideTrees"),
 			particles: self.tactical_particles.borrow().scene(),
+			overlay_icons: self.tactical_highlighter.scene_icons(crate::native::sprite_color::real_time(&self.vm)),
+			path: self.tactical_navigator.scene_path(),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}
@@ -446,6 +452,7 @@ impl<S: ScriptSource> Drop for Engine<S> {
 		self.battle_effects.borrow_mut().clear();
 		self.tactical_entities.clear();
 		self.tactical_navigator.clear();
+		self.tactical_highlighter.clear();
 		self.tactical_grid.clear();
 		self.world_entities.clear();
 		self.world_grid.clear();

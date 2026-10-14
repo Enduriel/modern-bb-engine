@@ -33,6 +33,34 @@ pub struct TacticalScene {
 	/// What lies on the ground from effects, oldest first: pools
 	/// (`Tactical.spawnPoolEffect`) and landed heads with their blood.
 	pub pools: Vec<ScenePool>,
+	/// The highlighter's icons over tiles (an area attack's, a blocked shot's), drawn in
+	/// the effects layer, over the units.
+	pub overlay_icons: Vec<SceneOverlayIcon>,
+	/// The footsteps of the move the player is about to make, standing on their tiles
+	/// like units.
+	pub path: Vec<ScenePathStep>,
+}
+
+/// An icon over a tile (`Tactical.getHighlighter().addOverlayIcon`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneOverlayIcon {
+	pub brush: String,
+	/// World units, y up.
+	pub pos: (f32, f32),
+	/// ARGB; its alpha fades out after a clear.
+	pub color: u32,
+}
+
+/// A footstep of the path preview (`navigator.buildVisualisation`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScenePathStep {
+	pub tile: usize,
+	/// The tile's world position, level included (where a unit there would stand).
+	pub pos: (f64, f64),
+	/// `steps_<direction>`: the way the path enters the tile.
+	pub brush: String,
+	/// ARGB: pale yellow (`#e0e5a2`) while affordable, grey (`#777777`) past that.
+	pub color: u32,
 }
 
 /// An effect over the battle, as drawn now.
@@ -152,6 +180,9 @@ pub struct SceneTacticalTile {
 	/// Out of sight, a tile and what's on it draw desaturated, and units on it aren't
 	/// drawn; that includes a tile nobody has seen yet.
 	pub visible: bool,
+	/// The highlighter's mark: the brush and colour (ARGB) drawn over the tile's
+	/// terrain, under what stands on it (a zone of control, a skill's range, a target).
+	pub highlight: Option<(String, u32)>,
 	/// Its details, in spawn order.
 	pub details: Vec<SceneTacticalDetail>,
 }

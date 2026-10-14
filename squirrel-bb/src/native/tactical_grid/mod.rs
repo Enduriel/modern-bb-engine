@@ -82,6 +82,8 @@ pub(crate) struct TacticalTileData {
 	/// AI path heat (`Tactical.fillHeat`/`clearHeat`), weighted by the navigator's
 	/// `HeatCost`.
 	pub heat: i32,
+	/// The highlighter's mark on it (`Tactical.getHighlighter()`).
+	pub highlight: crate::native::tactical_highlighter::Highlight,
 }
 
 impl TacticalTileData {
@@ -464,6 +466,7 @@ impl TacticalGrid {
 				brush: t.brush.clone(),
 				color: t.color,
 				visible: t.vis_mask.contains(visibility::PLAYER),
+				highlight: t.highlight.look().map(|(brush, color)| (brush.to_string(), color)),
 				details: t
 					.details
 					.iter()
@@ -502,6 +505,8 @@ impl TacticalGrid {
 			particles: Vec::new(),
 			effects: Vec::new(),
 			pools: Vec::new(),
+			overlay_icons: Vec::new(),
+			path: Vec::new(),
 		}
 	}
 

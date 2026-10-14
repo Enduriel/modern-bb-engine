@@ -20,6 +20,7 @@ mod pathfind;
 mod settings;
 mod teleport;
 mod travel;
+mod visual;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -47,6 +48,8 @@ struct NavState {
 	instance: Option<SqStrongRef>,
 	/// How moves are paced (the host's choice).
 	motion: BattleMotion,
+	/// The path's footsteps (`buildVisualisation`).
+	markers: Vec<visual::Marker>,
 }
 
 impl NavState {
@@ -101,8 +104,14 @@ impl TacticalNavigator {
 				instance: None,
 				teleports: Vec::new(),
 				motion: BattleMotion::default(),
+				markers: Vec::new(),
 			})),
 		}
+	}
+
+	/// The path's footsteps as drawn now.
+	pub(crate) fn scene_path(&self) -> Vec<crate::scene::tactical::ScenePathStep> {
+		visual::scene(&self.state.borrow())
 	}
 
 	/// How units' moves are paced (see [`BattleMotion`]).
@@ -309,8 +318,19 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 			teleport::switch_entities(&n.0, vm, &args)
 		})
 		// The path overlay is visual.
-		.method("buildVisualisation", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
-		.method("clearVisualisation", |_n: &mut NavHandle| {})
+		// buildVisualisation(entity, settings, ap, fatigue): the path's footsteps (see
+		// `visual`); the costs are the navigator's own settings, not `settings`.
+		.method(
+			"buildVisualisation",
+			|n: &mut NavHandle, vm: &SQVM, entity: Retained, _settings: Retained, ap: Number, fatigue: Number| {
+				let mut st = n.0.borrow_mut();
+				st.markers.clear();
+				if let Some(start) = st.unit_tile(vm, &entity.0) {
+					visual::build(&mut st, start, ap.0 as i64, fatigue.0 as i64);
+				}
+			},
+		)
+		.method("clearVisualisation", |n: &mut NavHandle| n.0.borrow_mut().markers.clear())
 		.method("render", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
 		.method("update", |_n: &mut NavHandle, _a: Variadic<Retained>| {})
 		.build(vm)
