@@ -65,7 +65,8 @@ impl Default for SceneLight {
 /// A region's name on the map (`World.spawnRegionText`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneRegionText {
-	pub text: String,
+	/// One glyph per byte, like [`SceneLabel::text`].
+	pub text: Vec<u8>,
 	/// The scale the script gave (`0.5`, `0.75` or `1` by the region's size).
 	pub scale: f32,
 	/// Degrees, counter-clockwise.

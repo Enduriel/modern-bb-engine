@@ -69,9 +69,9 @@ fn a_new_campaign_world_is_ready_to_draw() {
 
 	// Region names come from worldgen's seeded stream: the original's screenshot of
 	// this seed shows these three (2026-10-13).
-	let names: Vec<&str> = scene.region_texts.iter().map(|t| t.text.as_str()).collect();
+	let names: Vec<String> = scene.region_texts.iter().map(|t| String::from_utf8_lossy(&t.text).into_owned()).collect();
 	for name in ["Clan's Claim", "Dreaded Mire", "Bleakwolds"] {
-		assert!(names.contains(&name), "{name} in {names:?}");
+		assert!(names.iter().any(|n| n == name), "{name} in {names:?}");
 	}
 	assert!(scene.region_texts.iter().all(|t| [0.5, 0.75, 1.0].contains(&t.scale)));
 

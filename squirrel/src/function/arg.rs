@@ -1,7 +1,7 @@
 //! [`SqArg`]: how each closure parameter type is read off the Squirrel stack and
 //! what it contributes to the function's type mask.
 
-use crate::{SQVM, SqArray, SqObjectType, SqRef, SqTable, SqValue};
+use crate::{SQVM, SqArray, SqBytes, SqObjectType, SqRef, SqTable, SqValue};
 
 /// A Rust type that can be read from a Squirrel call argument.
 ///
@@ -78,6 +78,19 @@ impl SqArg for &str {
 	}
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<&'a str, String> {
 		vm.get_str_ref(idx)
+	}
+}
+
+/// A string argument as its raw bytes, UTF-8 or not (see [`SqBytes`]).
+impl SqArg for SqBytes {
+	type Item<'a> = SqBytes;
+	fn push_typemask(mask: &mut String) {
+		mask.push('s');
+	}
+	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<SqBytes, String> {
+		vm.get_bytes_ref(idx)
+			.map(|b| SqBytes(b.to_vec()))
+			.ok_or_else(|| format!("expected a string at parameter {}", idx - 1))
 	}
 }
 

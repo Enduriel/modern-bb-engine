@@ -295,7 +295,7 @@ pub fn world_quads<'a>(
 	if let Some(font) = fonts.region {
 		let zoom = 1.0 / view.zoom;
 		for region in &scene.region_texts {
-			let text = region.text.as_bytes();
+			let text = region.text.as_slice();
 			let width = font.font.text_width(text) as f32;
 			let height = font.font.cell_height as f32;
 			let run = TextRun {

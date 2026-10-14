@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{
-	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, StackArg, This,
+	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, StackArg, This,
 	Variadic,
 };
 
@@ -81,7 +81,7 @@ impl super::save::SavePart for GridPart {
 		g.fog.save(&mut w);
 		w.u32(g.region_texts.len() as u32);
 		for t in &g.region_texts {
-			w.str(&t.text);
+			w.bytes(&t.text);
 			for v in [t.scale, t.rotation, t.pos.0, t.pos.1] {
 				w.f32(v);
 			}
@@ -119,7 +119,7 @@ impl super::save::SavePart for GridPart {
 		g.region_texts = (0..count)
 			.map(|_| {
 				Ok(SceneRegionText {
-					text: r.str()?,
+					text: r.bytes()?,
 					scale: r.f32()?,
 					rotation: r.f32()?,
 					pos: (r.f32()?, r.f32()?),
@@ -610,10 +610,10 @@ impl WorldGrid {
 		// kept for the renderer (`0x4f0350`; see `SceneRegionText`).
 		let spawn_region_text = {
 			let g = self.grid.clone();
-			vm.make_closure(move |vm: &SQVM, name: &str, scale: Number, rotation: Number, pos: Retained| {
+			vm.make_closure(move |vm: &SQVM, name: SqBytes, scale: Number, rotation: Number, pos: Retained| {
 				let coord = |axis: &str| pos.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
 				g.borrow_mut().region_texts.push(SceneRegionText {
-					text: name.to_string(),
+					text: name.0,
 					scale: scale.0 as f32,
 					rotation: rotation.0 as f32,
 					pos: (coord("X"), coord("Y")),
