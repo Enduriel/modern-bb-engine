@@ -270,12 +270,18 @@ impl Game {
 		}
 	}
 
-	/// What the scenes ask of the renderer this frame: the textures of those the game
-	/// discarded go, and the atlases hinted are warmed (see `bb_render::residency`). A
-	/// battle sprite's only while a battle map is set up; the rest wait for one.
+	/// What the scenes ask of the renderer and the page this frame: the textures of
+	/// those the game discarded go, and what the page kept for them (see
+	/// `bb_ui::host::UiHost::release_memory`), and the atlases hinted are warmed (see
+	/// `bb_render::residency`). A battle sprite's only while a battle map is set up; the
+	/// rest wait for one.
 	fn follow_scenes(&mut self) {
+		let discards = self.front.engine().take_discards();
+		if !discards.is_empty() {
+			self.front.discarded();
+		}
 		let engine = self.front.engine();
-		for discard in engine.take_discards() {
+		for discard in discards {
 			match discard {
 				squirrel_bb::Discard::Battle => self.renderer.discard(Discard::Battle),
 				squirrel_bb::Discard::Campaign => {

@@ -74,6 +74,10 @@ wrap_render_process_handler! {
 		) -> ::std::os::raw::c_int {
 			let (Some(frame), Some(message)) = (frame, message) else { return 0 };
 			let name = ipc::name(message);
+			if name == ipc::TRIM {
+				super::memory::trim();
+				return 1;
+			}
 			let function = match name.as_str() {
 				ipc::CALL => "__bbCall",
 				ipc::EVAL => "__bbEval",

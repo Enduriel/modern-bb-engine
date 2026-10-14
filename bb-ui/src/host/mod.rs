@@ -37,6 +37,7 @@ pub mod goldens;
 mod input;
 mod ipc;
 mod live_input;
+mod memory;
 mod renderer;
 mod scheme;
 mod session;
@@ -391,6 +392,15 @@ impl UiHost {
 	/// Whether the page is parked.
 	pub fn is_parked(&self) -> bool {
 		self.parked.get()
+	}
+
+	/// The game discarded a scene (a battle's end, the campaign left, a save loaded):
+	/// the page gives back what it kept for it ([`memory`]).
+	pub fn release_memory(&self) {
+		if let Some(host) = self.browser_host() {
+			let frame = host.browser().and_then(|b| b.main_frame());
+			memory::release(&host, frame.as_ref());
+		}
 	}
 
 	/// How many images the page has loaded from the game's files so far (each fetch

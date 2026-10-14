@@ -6,7 +6,9 @@
 //! - [`CALL`] `(id, entry)`: run an SQ→JS entry now and reply (`__bbCall`);
 //! - [`EVAL`] `(id, code)`: evaluate test code and reply (`__bbEval`);
 //! - [`PARK`] `(id)`: park (`__bbPark`), replying once the game lets the page go
-//!   on, or at once if the page has no bridge yet.
+//!   on, or at once if the page has no bridge yet;
+//! - [`TRIM`] `()`: give the C allocator's free memory back to the system
+//!   ([`memory`](super::memory)); no reply.
 //!
 //! Renderer → browser:
 //! - [`REPLY`] `(id, ok, text)`: the answer to a `CALL`, `EVAL` or `PARK`: its JSON
@@ -17,6 +19,7 @@ use cef::*;
 pub const CALL: &str = "bb.call";
 pub const EVAL: &str = "bb.eval";
 pub const PARK: &str = "bb.park";
+pub const TRIM: &str = "bb.trim";
 pub const REPLY: &str = "bb.reply";
 
 /// An argument of a process message.

@@ -96,6 +96,11 @@ impl Front {
 		self.session.park();
 	}
 
+	/// The game discarded a scene: the page gives back what it kept for it.
+	pub fn discarded(&mut self) {
+		self.session.host().release_memory();
+	}
+
 	/// The cursor moved to the screen pixel `(x, y)`: the page's mouse follows, and
 	/// whether it's over the UI is what the page shows there.
 	pub fn cursor(&mut self, x: i64, y: i64) {

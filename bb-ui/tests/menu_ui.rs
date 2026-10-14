@@ -6,7 +6,8 @@
 //! page's own tasks run between the scripts, never inside one. Images with nothing to
 //! show paint nothing, bold or italic text in a face without either draws in it as it
 //! is, text advances by whole pixels, and right clicks open no menu, as in Coherent.
-//! Skips if there is no Steam install.
+//! Where the game discards a scene, the page gives its memory back. Skips if there is
+//! no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -241,6 +242,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	images_with_nothing_to_show_paint_nothing(&session)?;
 	faces_are_never_faked(&session)?;
 	text_lays_out_in_whole_pixels(&session)?;
+	discards_give_memory_back(&session)?;
 	right_clicks_reach_the_page(&session)?;
 	page_tasks_run_between_scripts(&session)?;
 
@@ -520,6 +522,23 @@ fn text_lays_out_in_whole_pixels(session: &UiSession) -> Result<(), String> {
 			.all(|w| w.parse::<f64>().is_ok_and(|w| w > 0.0 && w.fract() == 0.0)),
 		format!("text advances by fractions of a pixel: line widths {widths}"),
 	)
+}
+
+/// Where the game discards a scene, the page gives back what it kept (`UiHost::
+/// release_memory`), a garbage collection among it: an object nothing holds any more
+/// is gone after it, where a page this quiet wouldn't collect on its own.
+fn discards_give_memory_back(session: &UiSession) -> Result<(), String> {
+	session.eval("window.__bbWeak = new WeakRef({ big: new Array(100000).fill(1) }); true")?;
+	session.run_frames(0.3)?;
+	ensure(
+		session.eval("window.__bbWeak.deref() !== undefined")? == Json::Bool(true),
+		"the object went before any release (the check can't tell)",
+	)?;
+	session.host().release_memory();
+	session.run_frames(0.5)?;
+	let gone = session.eval("window.__bbWeak.deref() === undefined")?;
+	session.eval("delete window.__bbWeak; true")?;
+	ensure(gone == Json::Bool(true), "no collection after the release")
 }
 
 /// The right mouse button reaches the page, and Chromium shows no menu of its own

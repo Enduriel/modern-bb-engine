@@ -66,6 +66,9 @@ impl Front {
 	/// Before the scripts run outside a step: no page to hold.
 	pub fn park(&mut self) {}
 
+	/// The game discarded a scene: no page to give anything back.
+	pub fn discarded(&mut self) {}
+
 	/// The cursor moved to the screen pixel `(x, y)`.
 	pub fn cursor(&mut self, x: i64, y: i64) {
 		self.engine.ui().set_cursor(x, y, false);
