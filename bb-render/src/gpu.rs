@@ -77,6 +77,13 @@ impl Gpu {
 		self.surface_adapter.as_ref().map(|a| surface.get_capabilities(a))
 	}
 
+	/// The GPU memory wgpu's allocator holds: the bytes allocated, and the bytes its
+	/// memory blocks reserve (free space inside them included), if the backend says.
+	pub fn allocator_use(&self) -> Option<(u64, u64)> {
+		let report = self.device.generate_allocator_report()?;
+		Some((report.total_allocated_bytes, report.total_reserved_bytes))
+	}
+
 	/// Block until the GPU has finished all submitted work.
 	pub fn wait(&self) -> Result<(), String> {
 		self.device

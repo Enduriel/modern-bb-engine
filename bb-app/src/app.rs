@@ -64,8 +64,10 @@ struct Running {
 	game: Game,
 	last_frame: Instant,
 	frames: u64,
-	/// With `BB_STATS`, when the renderer's memory is logged next.
+	/// With `BB_STATS`, when the renderer's memory is logged next, and the frames since
+	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
+	stats_frames: (u32, Duration),
 	/// Whether the system's cursor shows over the window (the game draws its own
 	/// otherwise), and which, as last set.
 	system_cursor: Option<(bool, String)>,
@@ -212,6 +214,7 @@ impl App {
 			last_frame: Instant::now(),
 			frames: 0,
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
+			stats_frames: (0, Duration::ZERO),
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
@@ -322,7 +325,15 @@ impl Running {
 		// Beside `stats`' log, what the renderer holds (every 5 s, with `BB_STATS`).
 		if self.next_stats.is_some_and(|at| now >= at) {
 			let frame = self.target.bytes() as f64 / (1024.0 * 1024.0);
-			eprintln!("renderer: {}; the frame {frame:.1} MiB", self.game.renderer_memory());
+			let allocator = self.gpu.allocator_use().map_or(String::new(), |(used, reserved)| {
+				format!("; wgpu's allocator {:.1} MiB in {:.1} MiB of blocks", used as f64 / 1048576.0, reserved as f64 / 1048576.0)
+			});
+			eprintln!("renderer: {}; the frame {frame:.1} MiB{allocator}", self.game.renderer_memory());
+			let (frames, work) = std::mem::take(&mut self.stats_frames);
+			if frames > 0 {
+				let ms = work.as_secs_f64() * 1000.0 / f64::from(frames);
+				eprintln!("frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting)");
+			}
 			self.next_stats = Some(now + Duration::from_secs(5));
 		}
 		// The game draws its cursor unless the scripts want the system's (the hardware
@@ -358,6 +369,10 @@ impl Running {
 		self.presenter.draw(&self.gpu, &self.target, &view, self.frame_rect);
 		self.window.pre_present_notify();
 		self.gpu.queue.present(texture);
+		if self.next_stats.is_some() {
+			self.stats_frames.0 += 1;
+			self.stats_frames.1 += now.elapsed();
+		}
 		self.frames += 1;
 		Ok(self.frames)
 	}
