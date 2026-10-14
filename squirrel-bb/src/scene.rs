@@ -38,6 +38,36 @@ pub struct WorldScene {
 	pub camera: SceneWorldCamera,
 }
 
+/// What an entity's portrait draws (the UI's `coui://procedural/tacticalentity(...)`
+/// and `worldentity(...)` images): its sprites, back to front.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScenePortrait {
+	pub sprites: Vec<PortraitSprite>,
+	/// Sprites sit at their offsets (`setAlwaysApplySpriteOffset`); otherwise all at
+	/// the entity's anchor.
+	pub apply_offsets: bool,
+}
+
+/// One of a portrait's sprites.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PortraitSprite {
+	pub name: String,
+	/// `""` for none.
+	pub brush: String,
+	/// ARGB.
+	pub color: u32,
+	pub scale: f32,
+	/// Degrees.
+	pub rotation: f32,
+	pub saturation: f32,
+	pub flipped: bool,
+	/// From the entity's anchor, in world units with y up.
+	pub offset: (f32, f32),
+	pub visible: bool,
+	/// Drawn into portraits (`setSpriteRenderToTexture`).
+	pub in_portrait: bool,
+}
+
 /// A footprint (`World.spawnFootprint`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneFootprint {

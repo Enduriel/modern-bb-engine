@@ -77,7 +77,7 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 	}
 	w.f64(s.offset.0);
 	w.f64(s.offset.1);
-	for b in [s.flipped, s.scaling, s.colorization] {
+	for b in [s.flipped, s.scaling, s.colorization, s.in_portrait] {
 		w.bool(b);
 	}
 }
@@ -93,6 +93,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 		flipped: r.bool()?,
 		scaling: r.bool()?,
 		colorization: r.bool()?,
+		in_portrait: r.bool()?,
 	})
 }
 
@@ -140,7 +141,9 @@ impl SavePart for EntitiesPart {
 					z_offset: rec.z_offset,
 				}
 				.write(&mut w);
-				let sprites = sorted(rec.sprites.iter());
+				// In layer order, so sprites a load adds keep their place.
+				let sprites: Vec<(String, SqStrongRef)> =
+					rec.sprites.iter().map(|(n, h)| (n.clone(), h.clone())).collect();
 				w.u32(sprites.len() as u32);
 				for (name, handle) in sprites {
 					w.str(&name);

@@ -200,6 +200,14 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			camera: *self.world_camera.borrow(),
 		}
 	}
+	/// What entity `id`'s portrait draws: a battle unit (placed on the map or not, e.g.
+	/// a brother in the roster) or a world entity.
+	pub fn portrait(&self, id: i64) -> Option<crate::scene::ScenePortrait> {
+		self.tactical_entities
+			.portrait(&self.vm, id)
+			.or_else(|| self.world_entities.portrait(&self.vm, id))
+	}
+
 	/// The battle map as the scripts have set it up, for a renderer.
 	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
 		crate::scene::tactical::TacticalScene {

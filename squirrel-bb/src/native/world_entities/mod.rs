@@ -63,6 +63,8 @@ struct SpriteData {
 	scaling: bool,
 	/// `setSpriteColorization(name, false)` turns it off.
 	colorization: bool,
+	/// Drawn into the entity's portrait (`setSpriteRenderToTexture`, on by default).
+	in_portrait: bool,
 }
 
 impl SpriteData {
@@ -77,6 +79,7 @@ impl SpriteData {
 			flipped: false,
 			scaling: true,
 			colorization: true,
+			in_portrait: true,
 		}
 	}
 }
@@ -135,6 +138,8 @@ struct EntityRecord {
 	alive: bool,
 	/// When a `fadeAndDie` lets it die (real-time ms).
 	dies_at: Option<i64>,
+	/// The portrait draws the sprites at their offsets (`setAlwaysApplySpriteOffset`).
+	portrait_offsets: bool,
 	sprites: slots::Slots,
 	labels: HashMap<String, SqStrongRef>,
 }
@@ -252,6 +257,7 @@ fn create_entity(
 			faction: 0, // Neutral until settlement.onBuild/addFaction assigns one
 			alive: true,
 			dies_at: None,
+			portrait_offsets: false,
 			sprites: slots::Slots::default(),
 			labels: HashMap::new(),
 		});
@@ -732,8 +738,6 @@ impl WorldEntities {
 			"setSpriteOcclusion",
 			"moveSpriteOffset",
 			"moveSpriteScale",
-			"setAlwaysApplySpriteOffset",
-			"setSpriteRenderToTexture",
 			"setRenderCallbackEnabled",
 		] {
 			methods.push((name, noop.clone()));
@@ -898,6 +902,35 @@ impl WorldEntities {
 	}
 
 	/// Every live entity and its sprites as the renderer sees them.
+	/// What entity `id`'s portrait draws (`None` for no such live entity).
+	pub(crate) fn portrait(&self, vm: &SQVM, id: i64) -> Option<crate::scene::ScenePortrait> {
+		let m = self.machine.borrow();
+		let class = m.sprite_class.clone()?;
+		let rec = m.entities.iter().find(|rec| rec.alive && rec.id == id)?;
+		let sprites = rec
+			.sprites
+			.iter()
+			.filter_map(|(name, handle)| {
+				class.with_payload(vm, handle, |s| crate::scene::PortraitSprite {
+					name: name.clone(),
+					brush: s.brush.clone(),
+					color: s.color.color,
+					scale: s.scale as f32,
+					rotation: 0.0,
+					saturation: 1.0,
+					flipped: s.flipped,
+					offset: (s.offset.0 as f32, s.offset.1 as f32),
+					visible: s.visible,
+					in_portrait: s.in_portrait,
+				})
+			})
+			.collect();
+		Some(crate::scene::ScenePortrait {
+			sprites,
+			apply_offsets: rec.portrait_offsets,
+		})
+	}
+
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::SceneEntity> {
 		let now = real_time(vm);
 		let m = self.machine.borrow();

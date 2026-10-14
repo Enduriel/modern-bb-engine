@@ -44,6 +44,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 	] {
 		w.bool(b);
 	}
+	w.bool(s.in_portrait);
 	w.bool(s.occlusion.is_some());
 	if let Some((a, b, c)) = s.occlusion {
 		w.i64(a);
@@ -76,6 +77,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		fading_done: r.bool()?,
 		ignore_ambient: r.bool()?,
 		ignore_camera_flip: r.bool()?,
+		in_portrait: r.bool()?,
 		occlusion: if r.bool()? { Some((r.i64()?, r.i64()?, r.i64()?)) } else { None },
 	})
 }

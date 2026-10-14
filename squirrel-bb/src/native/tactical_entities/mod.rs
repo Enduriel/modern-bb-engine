@@ -83,6 +83,8 @@ struct UnitSpriteData {
 	/// `setSpriteOcclusion(name, a, b, c)`, kept on the sprite's slot (`0x4a8950`):
 	/// trees' and boulders' tops, which `HideTrees` fades.
 	occlusion: Option<(i64, i64, i64)>,
+	/// Drawn into the unit's portrait (`setSpriteRenderToTexture`, on by default).
+	in_portrait: bool,
 }
 
 impl UnitSpriteData {
@@ -111,6 +113,7 @@ impl UnitSpriteData {
 			ignore_ambient: false,
 			ignore_camera_flip: false,
 			occlusion: None,
+			in_portrait: true,
 		}
 	}
 }
@@ -137,6 +140,9 @@ struct UnitRecord {
 	discovered: bool,
 	/// `isBlockingSight`/`setBlockSight`.
 	blocks_sight: bool,
+	/// The portrait draws the sprites at their offsets (`setAlwaysApplySpriteOffset`;
+	/// scripts set it in `onInit`).
+	portrait_offsets: bool,
 	/// The bars over a unit (`createOverlay`): head armour, body armour and hitpoints,
 	/// each 0 to 1, as `setOverlayValues` last set them (`0x4c2ec0`, `0x4c2f60`).
 	overlay: Option<[f32; 3]>,
@@ -238,6 +244,7 @@ fn create_unit(
 			faction: 0,
 			initialized: false,
 			overlay: None,
+			portrait_offsets: false,
 			discovered: false,
 			blocks_sight: false,
 			pos: (0.0, 0.0),
@@ -743,6 +750,28 @@ impl TacticalEntities {
 				create_vec.call_ret::<SqStrongRef, _>(vm, offset)
 			})
 		};
+		// setSpriteRenderToTexture(name, on) and setAlwaysApplySpriteOffset(on): what the
+		// unit's portrait draws (see `portrait`).
+		let set_sprite_in_portrait = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+				let (handle, class) = {
+					let m = m.borrow();
+					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
+				};
+				if let (Some(h), Some(class)) = (handle, class) {
+					class.with_payload(vm, &h, |s| s.in_portrait = on);
+				}
+			})
+		};
+		let set_portrait_offsets = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, on: bool| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.portrait_offsets = on;
+				}
+			})
+		};
 		// setSpriteOcclusion(name, a, b, c): see `UnitSpriteData::occlusion`.
 		let set_sprite_occlusion = {
 			let m = self.machine.clone();
@@ -817,6 +846,8 @@ impl TacticalEntities {
 			("getSpriteOffset", get_sprite_offset),
 			("setSpriteOffset", set_sprite_offset),
 			("setSpriteOcclusion", set_sprite_occlusion),
+			("setSpriteRenderToTexture", set_sprite_in_portrait),
+			("setAlwaysApplySpriteOffset", set_portrait_offsets),
 			("createOverlay", create_overlay),
 			("setOverlayValues", set_overlay_values),
 			("isInitialized", is_initialized),
@@ -857,8 +888,6 @@ impl TacticalEntities {
 			"fadeTo",
 			"fadeToStoredColors",
 			"moveSpriteScale",
-			"setAlwaysApplySpriteOffset",
-			"setSpriteRenderToTexture",
 			"copySpritesFrom",
 		] {
 			methods.push((name, noop.clone()));
@@ -1072,6 +1101,36 @@ impl TacticalEntities {
 					.collect(),
 			})
 			.collect()
+	}
+
+	/// What unit `id`'s portrait draws, placed on the map or not (`None` for no such
+	/// unit).
+	pub(crate) fn portrait(&self, vm: &SQVM, id: i64) -> Option<crate::scene::ScenePortrait> {
+		let m = self.machine.borrow();
+		let class = m.sprite_class.clone()?;
+		let unit = m.units.iter().find(|u| u.id == id && !u.dead)?;
+		let sprites = unit
+			.sprites
+			.iter()
+			.filter_map(|(name, handle)| {
+				class.with_payload(vm, handle, |s| crate::scene::PortraitSprite {
+					name: name.clone(),
+					brush: s.brush.clone(),
+					color: s.color,
+					scale: s.scale as f32,
+					rotation: s.rotation as f32,
+					saturation: s.saturation as f32,
+					flipped: s.flipped,
+					offset: (s.offset.0 as f32, s.offset.1 as f32),
+					visible: s.visible,
+					in_portrait: s.in_portrait,
+				})
+			})
+			.collect();
+		Some(crate::scene::ScenePortrait {
+			sprites,
+			apply_offsets: unit.portrait_offsets,
+		})
 	}
 
 	/// Total units created (host/test inspection).

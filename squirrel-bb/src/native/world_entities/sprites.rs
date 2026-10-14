@@ -97,7 +97,23 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 			with_sprite(&m, vm, &name, |s| s.colorization = on);
 		})
 	};
+	let set_in_portrait = {
+		let m = m.clone();
+		vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+			with_sprite(&m, vm, &name, |s| s.in_portrait = on);
+		})
+	};
+	let set_portrait_offsets = {
+		let m = m.clone();
+		vm.make_closure(move |vm: &SQVM, on: bool| {
+			if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+				rec.portrait_offsets = on;
+			}
+		})
+	};
 	vec![
+		("setSpriteRenderToTexture", set_in_portrait),
+		("setAlwaysApplySpriteOffset", set_portrait_offsets),
 		("insertSprite", insert),
 		("removeSprite", remove),
 		("getSpriteOffset", get_offset),
