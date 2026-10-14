@@ -16,8 +16,12 @@ pub(crate) fn tile_pos(col: i64, row: i64) -> (f64, f64) {
 /// on a `width` x `height` grid. Reproduces the original's rectangle-and-corner test in
 /// `f32`, including its edge cases (verified on 16,799 sampled points):
 /// x is clamped to >= 0; the corner test only runs when the base cell is on the map;
-/// comparisons are strict; the result is clamped in axial space.
+/// comparisons are strict; the result is clamped in axial space. With no map (a size of
+/// 0, before `resizeScene`) it's `(0, 0)`.
 pub(crate) fn world_to_tile(x: f64, y: f64, width: i64, height: i64) -> (i64, i64) {
+	if width <= 0 || height <= 0 {
+		return (0, 0);
+	}
 	let x = (x as f32).max(0.0);
 	let y = y as f32;
 	let mut col = (x / 180.0).floor() as i64;
@@ -51,6 +55,12 @@ pub(crate) fn world_to_tile(x: f64, y: f64, width: i64, height: i64) -> (i64, i6
 #[cfg(test)]
 mod tests {
 	use super::{tile_pos, world_to_tile};
+
+	#[test]
+	fn no_map_gives_the_first_tile_without_panicking() {
+		assert_eq!(world_to_tile(500.0, 500.0, 0, 0), (0, 0));
+		assert_eq!(world_to_tile(-5.0, 1e9, 0, 170), (0, 0));
+	}
 
 	#[test]
 	fn matches_points_probed_in_the_original() {
@@ -105,4 +115,3 @@ pub(crate) fn step_toward(from: (f64, f64), to: (f64, f64), max: f64) -> (f32, f
 	let inv = 1.0f32 / len;
 	(inv * dx * max + fx, inv * dy * max + fy)
 }
-

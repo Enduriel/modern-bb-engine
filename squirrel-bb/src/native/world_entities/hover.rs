@@ -25,9 +25,10 @@ impl Hover {
 	}
 
 	/// The world's mouse listener: on a pointer move, keep the tile under the pointer
-	/// (through the world camera) if it is on the `(width, height)` map.
+	/// (through the world camera) if it is on the `(width, height)` map. It runs on every
+	/// move, at the main menu too: with no map there's no tile to keep.
 	pub(crate) fn on_mouse(&self, vm: &SQVM, camera: &WorldCamera, (width, height): (i64, i64), input: &MouseInput) {
-		if input.state != MouseInput::moved(0, 0).state {
+		if input.state != MouseInput::moved(0, 0).state || width <= 0 || height <= 0 {
 			return;
 		}
 		let view = crate::native::world_camera::view(camera);
