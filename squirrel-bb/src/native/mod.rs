@@ -42,6 +42,7 @@ mod world;
 mod world_entities;
 pub(crate) mod world_detail;
 mod world_grid;
+pub(crate) mod world_clouds;
 mod world_layout;
 mod world_query;
 pub(crate) mod world_time;
@@ -166,21 +167,22 @@ impl NativeConfig {
 		math::install(vm, prng);
 		strings::install(vm);
 		platform::install(vm, self);
-		let world_clock = world::install(vm);
+		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
+		let (world_clock, clouds) = world::install(vm, &engine_rng);
 		tactical::install(vm);
 		let sprites = brushes::install(vm);
-		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let video = settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, sprites, engine_rng, video }
+		InstalledNatives { world_clock, clouds, sprites, engine_rng, video }
 	}
 }
 
 /// Handles to state the stateless-looking natives keep, for the host (e.g. to save it).
 pub struct InstalledNatives {
 	pub(crate) world_clock: world_time::Clock,
+	pub(crate) clouds: world_clouds::Clouds,
 	pub(crate) sprites: Sprites,
 	pub(crate) engine_rng: EngineRng,
 	pub(crate) video: VideoSettings,

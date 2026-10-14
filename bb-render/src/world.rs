@@ -34,6 +34,16 @@ pub struct WorldFonts<'a> {
 	pub region: Option<LabelFont<'a>>,
 }
 
+/// How far a cloud's centre may be off screen and still show (cloud pictures are
+/// large and scaled up to 1.25, their shadows 1.25 more and 500 units lower).
+const CLOUD_REACH: f32 = 2000.0;
+
+/// A cloud's shadow: 1.25 of its scale, a fifth of its alpha, 500 units times its
+/// scale below it (`0x4e3ed0`).
+const CLOUD_SHADOW_SCALE: f32 = 1.25;
+const CLOUD_SHADOW_ALPHA: f32 = 0.2;
+const CLOUD_SHADOW_DROP: f32 = -500.0;
+
 /// Region names: white at alpha `0x66`, at 0.4 of the script's scale (`0x4f0350`).
 const REGION_TEXT_COLOR: [u8; 4] = [255, 255, 255, 0x66];
 const REGION_TEXT_SCALE: f32 = 0.4;
@@ -110,6 +120,8 @@ enum Layer {
 	Terrain,
 	Details,
 	Entities,
+	/// Clouds and their shadows (the original's effects layer).
+	Effects,
 	/// Entity labels, above everything.
 	Labels,
 }
@@ -180,6 +192,7 @@ pub fn world_quads<'a>(
 				flipped: detail.flipped,
 				alpha: detail.alpha as f32,
 				rotation: detail.rotation as f32,
+				tint: [255; 3],
 			};
 			// The original's detail key: int(y) + depth bias + z level (`0x4fb707`).
 			let key = anchor[1] as i64 + detail.z_level;
@@ -206,6 +219,7 @@ pub fn world_quads<'a>(
 				flipped: sprite.flipped,
 				alpha: sprite.alpha as f32,
 				rotation: 0.0,
+				tint: [255; 3],
 			};
 			push(
 				Layer::Entities,
@@ -216,6 +230,46 @@ pub fn world_quads<'a>(
 				look,
 			);
 		}
+	}
+
+	// Clouds: each a shadow and the cloud over it (`0x4e3ed0`). The shadow's key is
+	// 2000 more than the cloud's, so it draws first.
+	let [left, right, bottom, top] = view.bounds(CLOUD_REACH);
+	for cloud in scene.clouds.iter().filter(|c| {
+		let (x, y) = c.pos;
+		x >= left && x <= right && y >= bottom && y <= top
+	}) {
+		let anchor = [cloud.pos.0, cloud.pos.1];
+		let [_, r, g, b] = cloud.color.to_be_bytes();
+		let shadow = Look {
+			scale: cloud.scale * CLOUD_SHADOW_SCALE,
+			alpha: cloud.alpha * CLOUD_SHADOW_ALPHA * 255.0,
+			tint: [0; 3],
+			..Look::PLAIN
+		};
+		let below = [anchor[0], anchor[1] + CLOUD_SHADOW_DROP * cloud.scale];
+		push(
+			Layer::Effects,
+			cloud.key + 2000,
+			cloud.brush,
+			below,
+			[0.0; 2],
+			shadow,
+		);
+		let look = Look {
+			scale: cloud.scale,
+			alpha: cloud.alpha * 255.0,
+			tint: [r, g, b],
+			..Look::PLAIN
+		};
+		push(
+			Layer::Effects,
+			cloud.key,
+			cloud.brush,
+			anchor,
+			[0.0; 2],
+			look,
+		);
 	}
 
 	if let Some(font) = fonts.region {
@@ -308,6 +362,8 @@ pub struct Look {
 	pub alpha: f32,
 	/// Degrees, counter-clockwise about the anchor.
 	pub rotation: f32,
+	/// The sprite's colour, RGB (white leaves the picture as it is).
+	pub tint: [u8; 3],
 }
 
 impl Look {
@@ -317,6 +373,7 @@ impl Look {
 		flipped: false,
 		alpha: 255.0,
 		rotation: 0.0,
+		tint: [255; 3],
 	};
 }
 
@@ -345,7 +402,12 @@ pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
 			place(x0, y_bottom),
 		],
 		uv: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
-		color: [255, 255, 255, look.alpha.clamp(0.0, 255.0) as u8],
+		color: [
+			look.tint[0],
+			look.tint[1],
+			look.tint[2],
+			look.alpha.clamp(0.0, 255.0) as u8,
+		],
 		overlay: [0; 4],
 		factor: 0.0,
 		saturation: 1.0,
@@ -389,6 +451,7 @@ mod tests {
 			flipped: true,
 			alpha: 128.0,
 			rotation: 0.0,
+			tint: [255; 3],
 		};
 		let quad = frame_quad(&frame([-10.0, 4.0, -20.0, 5.0]), [0.0, 0.0], look);
 		assert_eq!(quad.corners[0], [-8.0, 10.0]);

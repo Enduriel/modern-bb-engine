@@ -39,6 +39,17 @@ impl EngineRng {
 		*self.0.borrow_mut() = Mt19937_64::new(seed);
 	}
 
+	/// A uniform float in `[0, 1)`.
+	pub(crate) fn unit(&self) -> f32 {
+		((self.0.borrow_mut().next_u64() >> 40) as f32) / (1u64 << 24) as f32
+	}
+
+	/// A uniform float in `[min, max)`, or `min` without drawing when `min >= max`
+	/// (the original's cloud and weather draws skip the RNG then).
+	pub(crate) fn between(&self, min: f32, max: f32) -> f32 {
+		if min < max { min + self.unit() * (max - min) } else { min }
+	}
+
 	/// A uniform integer in `[min, max]` (`min` if `max <= min`).
 	pub(crate) fn range(&self, min: i64, max: i64) -> i64 {
 		if max <= min {

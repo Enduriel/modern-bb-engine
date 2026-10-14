@@ -1,7 +1,8 @@
 //! `World.getWeather()` / `Tactical.getWeather()`: clouds, birds, rain and lighting.
 //!
 //! All of it is visual, and building it draws nothing from the script RNG (probed for
-//! the world 2026-10-13), so headless the builders are no-ops. The settings objects only
+//! the world), so headless the builders are no-ops, except the world's
+//! `buildCloudCover`, whose clouds are kept for the renderer (`world_clouds`). The settings objects only
 //! receive field writes from scripts, so each is a table pre-filled with every field
 //! vanilla writes (an absent key can't be assigned); rain settings also carry their
 //! drop-brush methods. `IsRaining` stays false: it only gates particle effects.

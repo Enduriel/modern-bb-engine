@@ -198,7 +198,11 @@ pub(crate) type Clock = Rc<RefCell<WorldClock>>;
 
 /// Build the `World` clock natives over `clock`: `(name, closure)` pairs for the
 /// `World` table.
-pub(crate) fn world_entries(vm: &mut SQVM, clock: &Clock) -> Vec<(&'static str, SqStrongRef)> {
+pub(crate) fn world_entries(
+	vm: &mut SQVM,
+	clock: &Clock,
+	clouds: &super::world_clouds::Clouds,
+) -> Vec<(&'static str, SqStrongRef)> {
 	// The object `World.getTime()` returns: one live view of the clock, read-only except
 	// `IsPaused`.
 	let ignore_f = |_: &mut Clock, _: f64| {};
@@ -232,12 +236,16 @@ pub(crate) fn world_entries(vm: &mut SQVM, clock: &Clock) -> Vec<(&'static str, 
 	// World.update(): advance by this frame's real delta (`Time.getDelta()`, seconds).
 	let update = {
 		let c = clock.clone();
+		let clouds = clouds.clone();
 		vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 			let time = SqTable::root(vm).get::<SqStrongRef>("Time").ok_or("Time table missing")?;
 			let delta = time
 				.call_method_ret::<Number, _>(vm, "getDelta", ())?
 				.map_or(0.0, |n| n.0);
 			c.borrow_mut().advance(delta as f32);
+			// The clouds drift with the same update (`0x4fdc30`).
+			let speed = c.borrow().speed;
+			clouds.borrow_mut().advance(delta as f32, speed);
 			Ok(())
 		})
 	};

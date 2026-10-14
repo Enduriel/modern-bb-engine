@@ -4,6 +4,7 @@
 //! sprites; [`Engine::world_scene`](crate::Engine::world_scene) copies it into these
 //! plain values once per frame, so a renderer never touches the VM.
 
+pub use crate::native::world_clouds::SceneCloud;
 pub use crate::native::world_detail::DetailData as SceneDetail;
 
 /// The world map as last set by the scripts.
@@ -23,6 +24,8 @@ pub struct WorldScene {
 	pub region_texts: Vec<SceneRegionText>,
 	/// The time of day's lighting.
 	pub light: SceneLight,
+	/// The clouds drifting over the map (`World.getWeather().buildCloudCover`).
+	pub clouds: Vec<SceneCloud>,
 }
 
 /// The world's lighting: the day phase's ambient colour and saturation, which lit
