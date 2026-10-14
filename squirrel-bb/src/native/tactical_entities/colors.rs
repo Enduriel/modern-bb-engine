@@ -16,7 +16,9 @@
 //! - `copySpritesFrom(entity, names)` (`0x4c3fc0`): the named sprites take the other
 //!   unit's brush, colour and saturation (the barber's preview).
 //!
-//! Fades run on real time, hidden sprites included.
+//! Fades run on real time, hidden sprites included. "Every sprite" is every colourised
+//! one: these, and shakes, leave a sprite with `setSpriteColorization(name, false)`
+//! alone (actors' `arrow`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -30,7 +32,8 @@ use crate::native::sprite_color::real_time;
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
-/// Do `f` to every sprite of the calling unit.
+/// Do `f` to every colourised sprite of the calling unit (each of these natives checks
+/// the slot's `+0x1c`, see `UnitSpriteData::colorization`).
 fn each_sprite(m: &Machine, vm: &SQVM, mut f: impl FnMut(&mut UnitSpriteData)) {
 	let (class, handles) = {
 		let machine = m.borrow();
@@ -40,7 +43,11 @@ fn each_sprite(m: &Machine, vm: &SQVM, mut f: impl FnMut(&mut UnitSpriteData)) {
 	};
 	let Some(class) = class else { return };
 	for h in handles {
-		class.with_payload(vm, &h, &mut f);
+		class.with_payload(vm, &h, |s| {
+			if s.colorization {
+				f(s)
+			}
+		});
 	}
 }
 

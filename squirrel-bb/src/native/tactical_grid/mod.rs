@@ -462,6 +462,12 @@ impl TacticalGrid {
 		g.hex_masks = None;
 	}
 
+	/// The tiles with items on the ground (`IsContainingItems`).
+	pub(crate) fn tiles_with_items(&self) -> Vec<usize> {
+		let g = self.grid.borrow();
+		(0..g.tiles.len()).filter(|&i| g.tiles[i].is_containing_items).collect()
+	}
+
 	/// The battle map as a renderer reads it (`transitions` aside), at real time `now`.
 	pub(crate) fn scene(&self, now: f32) -> crate::scene::tactical::TacticalScene {
 		let g = self.grid.borrow();
@@ -479,6 +485,8 @@ impl TacticalGrid {
 				brush: t.brush.clone(),
 				color: t.color,
 				visible: t.vis_mask.contains(visibility::PLAYER),
+				// Filled in with the units and the path (see `tactical_unveil`).
+				unveils: false,
 				highlight: t.highlight.look().map(|(brush, color)| (brush.to_string(), color)),
 				details: t
 					.details

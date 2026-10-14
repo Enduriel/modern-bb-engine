@@ -62,7 +62,7 @@ pub(super) struct Stored {
 	pub color: u32,
 	highlight: u32,
 	factor: f64,
-	saturation: f64,
+	pub saturation: f64,
 }
 
 impl Default for Stored {
@@ -253,7 +253,7 @@ fn layer_mask(m: &TacticalMachine, unit: usize, layers: &[String]) -> u32 {
 }
 
 /// The unit's sprites in `layers`, with their handles.
-fn masked(m: &TacticalMachine, unit: usize, layers: Layers) -> Vec<SqStrongRef> {
+fn masked(m: &TacticalMachine, vm: &SQVM, unit: usize, layers: Layers) -> Vec<SqStrongRef> {
 	m.units[unit]
 		.sprites
 		.iter()
@@ -263,6 +263,9 @@ fn masked(m: &TacticalMachine, unit: usize, layers: Layers) -> Vec<SqStrongRef> 
 			Layers::Mask(mask) => mask & 1 << (i % 32) != 0,
 		})
 		.map(|(_, (_, h))| h.clone())
+		// Uncolourised sprites keep their colours (every one of these checks the slot's
+		// `+0x1c`).
+		.filter(|h| with_sprite(m, vm, h, |s| s.colorization).unwrap_or(false))
 		.collect()
 }
 
@@ -277,7 +280,7 @@ pub(super) fn store_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, laye
 	if m.units[unit].colors_stored {
 		return;
 	}
-	for h in masked(m, unit, layers) {
+	for h in masked(m, vm, unit, layers) {
 		with_sprite(m, vm, &h, |s| {
 			if !s.is_stored {
 				s.stored = Stored {
@@ -296,7 +299,7 @@ pub(super) fn store_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, laye
 /// Put back the colours of the sprites in `layers` that were kept (`0x4a9230`; all:
 /// `0x4a92e0`). A fade in progress goes on from the colour put back.
 pub(super) fn restore_colors(m: &mut TacticalMachine, vm: &SQVM, unit: usize, layers: Layers) {
-	for h in masked(m, unit, layers) {
+	for h in masked(m, vm, unit, layers) {
 		with_sprite(m, vm, &h, |s| {
 			if s.is_stored {
 				let st = s.stored;
@@ -329,7 +332,7 @@ fn apply(m: &mut TacticalMachine, vm: &SQVM, s: &Shake, t: f32) {
 	if s.color.is_none() && s.factor.is_none() && s.saturation.is_none() {
 		return;
 	}
-	for h in masked(m, s.unit, Layers::Mask(s.mask)) {
+	for h in masked(m, vm, s.unit, Layers::Mask(s.mask)) {
 		with_sprite(m, vm, &h, |sp| {
 			let st = sp.stored;
 			if let Some(c) = s.color {

@@ -221,6 +221,10 @@ pub struct SceneTacticalTile {
 	/// Out of sight, a tile and what's on it draw desaturated, and units on it aren't
 	/// drawn; that includes a tile nobody has seen yet.
 	pub visible: bool,
+	/// The player sees something on it that a tree or boulder in front of it (one to
+	/// three rows down the map) fades for: a unit (`setPreventOcclusion`), items on the
+	/// ground, or a step of the movement path shown (see `native::tactical_unveil`).
+	pub unveils: bool,
 	/// The highlighter's mark: the brush and colour (ARGB) drawn over the tile's
 	/// terrain, under what stands on it (a zone of control, a skill's range, a target).
 	pub highlight: Option<(String, u32)>,

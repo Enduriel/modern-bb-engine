@@ -89,6 +89,8 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		},
 		ignore_camera_flip: r.bool()?,
 		in_portrait: r.bool()?,
+		// A slot's, which `onInit` sets (see `load`).
+		colorization: true,
 		occlusion: if r.bool()? { Some((r.i64()?, r.i64()?, r.i64()?)) } else { None },
 		brush_bits: r.u32()?,
 	})
@@ -193,7 +195,9 @@ fn load_unit(m: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, roster_id: i64, cx: &L
 		let existing = m.borrow().units[idx].sprites.get(&name).cloned();
 		match existing {
 			Some(handle) => {
-				sprite_class.with_payload(vm, &handle, |s| *s = data);
+				// Colourisation is the slot's, as `onInit` just set it (the original
+				// doesn't save it either).
+				sprite_class.with_payload(vm, &handle, |s| *s = UnitSpriteData { colorization: s.colorization, ..data });
 			}
 			None => {
 				let handle = sprite_class.instantiate(vm, data);

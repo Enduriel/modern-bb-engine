@@ -110,6 +110,10 @@ struct UnitSpriteData {
 	occlusion: Option<(i64, i64, i64)>,
 	/// Drawn into the unit's portrait (`setSpriteRenderToTexture`, on by default).
 	in_portrait: bool,
+	/// `setSpriteColorization(name, on)` (`0x4a8a50`, the slot's byte `+0x1c`, on by
+	/// default): off, the unit's colour natives (see `colors`) and its shakes leave the
+	/// sprite alone, and its portrait draws it as it is (actors' `arrow`).
+	colorization: bool,
 	/// The flag bits its brush calls left (see [`Sprites::brush_bits`]), which the
 	/// original saves.
 	brush_bits: u32,
@@ -143,6 +147,7 @@ impl UnitSpriteData {
 			ignore_camera_flip: false,
 			occlusion: None,
 			in_portrait: true,
+			colorization: true,
 			brush_bits: 0,
 		}
 	}
@@ -194,6 +199,9 @@ struct UnitRecord {
 	/// Drawn on a tile the player can't see now (`setVisibleInFogOfWar`, `+0x18b`;
 	/// true until actors turn it off).
 	visible_in_fog: bool,
+	/// `setPreventOcclusion` (`0x4c2bf0`, `+0x188`; every actor turns it on): trees and
+	/// boulders in front of its tile fade (see `tactical_unveil`).
+	prevent_occlusion: bool,
 }
 
 /// Shared host state: the rosters, the unit registry, the `this.new` capability, the stub
@@ -296,6 +304,7 @@ fn create_unit(
 			colors_stored: false,
 			flying: false,
 			visible_in_fog: true,
+			prevent_occlusion: false,
 		});
 		idx
 	};
@@ -923,6 +932,27 @@ impl TacticalEntities {
 				}
 			})
 		};
+		// setSpriteColorization(name, on): see `UnitSpriteData::colorization`.
+		let set_sprite_colorization = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+				let (handle, class) = {
+					let m = m.borrow();
+					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
+				};
+				if let (Some(h), Some(class)) = (handle, class) {
+					class.with_payload(vm, &h, |s| s.colorization = on);
+				}
+			})
+		};
+		let set_prevent_occlusion = {
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM, on: bool| {
+				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+					rec.prevent_occlusion = on;
+				}
+			})
+		};
 		let set_sprite_offset = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String, offset: Retained| {
@@ -983,6 +1013,8 @@ impl TacticalEntities {
 			("getSpriteOffset", get_sprite_offset),
 			("setSpriteOffset", set_sprite_offset),
 			("setSpriteOcclusion", set_sprite_occlusion),
+			("setSpriteColorization", set_sprite_colorization),
+			("setPreventOcclusion", set_prevent_occlusion),
 			("setSpriteRenderToTexture", set_sprite_in_portrait),
 			("setAlwaysApplySpriteOffset", set_portrait_offsets),
 			("createOverlay", create_overlay),
@@ -1007,9 +1039,7 @@ impl TacticalEntities {
 		for name in [
 			"setDirty",
 			"setVisibility",
-			"setPreventOcclusion",
 			"setSpriteScaling",
-			"setSpriteColorization",
 			"addDefaultStatusSprites",
 			"updateOverlay",
 			// A bare `ret` in the original.
@@ -1293,6 +1323,14 @@ impl TacticalEntities {
 		let m = self.machine.borrow();
 		let class = m.sprite_class.clone()?;
 		let unit = m.units.iter().find(|u| u.id == id && !u.dead)?;
+		// A colourised sprite is drawn with its kept colours while the unit keeps them,
+		// else at full alpha: a faded or shaken unit's portrait shows it as it was
+		// (`0x4a8700`).
+		let portrait_look = |s: &UnitSpriteData| match (s.colorization, unit.colors_stored && s.is_stored) {
+			(false, _) => (s.color.color, s.saturation),
+			(true, true) => (s.stored.color, s.stored.saturation),
+			(true, false) => (s.color.color | 0xff00_0000, s.saturation),
+		};
 		let sprites = unit
 			.sprites
 			.iter()
@@ -1300,10 +1338,10 @@ impl TacticalEntities {
 				class.with_payload(vm, handle, |s| crate::scene::PortraitSprite {
 					name: name.clone(),
 					brush: s.brush.clone(),
-					color: s.color.color,
+					color: portrait_look(s).0,
 					scale: s.scale as f32,
 					rotation: s.rotation as f32,
-					saturation: s.saturation as f32,
+					saturation: portrait_look(s).1 as f32,
 					flipped: s.flipped,
 					offset: (s.offset.0 as f32, s.offset.1 as f32),
 					visible: s.visible,
@@ -1315,6 +1353,12 @@ impl TacticalEntities {
 			sprites,
 			apply_offsets: unit.portrait_offsets,
 		})
+	}
+
+	/// The tiles of the live units that prevent occlusion (see `tactical_unveil`).
+	pub(crate) fn occlusion_preventers(&self) -> Vec<usize> {
+		let m = self.machine.borrow();
+		m.units.iter().filter(|u| !u.dead && u.prevent_occlusion).filter_map(|u| u.tile).collect()
 	}
 
 	/// The shaker (`Tactical.getShaker()`), over the units. Call after the navigator and

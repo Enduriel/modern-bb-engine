@@ -337,7 +337,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				|sprite| self.tactical_entities.sprite_look(&self.vm, sprite),
 			);
 		let (rain, rain_splats) = self.tactical_rain.scene(crate::native::sprite_color::real_time(&self.vm));
-		crate::scene::tactical::TacticalScene {
+		let mut scene = crate::scene::tactical::TacticalScene {
 			effects,
 			pools,
 			rain,
@@ -355,7 +355,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			path: self.tactical_navigator.scene_path(),
 			blocked_tiles: self.tactical_highlighter.scene_blocked(),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
-		}
+		};
+		crate::native::tactical_unveil::mark(
+			&mut scene,
+			&self.tactical_entities.occlusion_preventers(),
+			&self.tactical_grid.tiles_with_items(),
+		);
+		scene
 	}
 	/// Let the headless UI client answer what the scripts asked of the UI since the
 	/// last pump (see [`crate::ui_client::UiClient::pump`]).
