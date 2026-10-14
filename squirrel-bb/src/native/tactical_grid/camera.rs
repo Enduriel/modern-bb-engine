@@ -2,6 +2,7 @@
 //! waits on it (`agent.IsCameraReady`) always pass: it is never moving, always centred,
 //! and everything is on screen. Its position (what's at the centre of the screen) is
 //! real, for `screenToWorld` and `Tactical.screenToTile`, which turn clicks into tiles.
+//! The original's `setPos` and `jumpTo` are instant too; its `moveToTile` glides.
 //!
 //! Its `Level` (how many height levels are drawn raised) is logic, not just looks:
 //! picking (`Tactical.worldToTile`) treats tiles above it as lower. Scripts set it
@@ -69,7 +70,9 @@ fn screen_size(vm: &SQVM) -> (f64, f64) {
 }
 
 /// `screenToWorld(x, y)`: the world point under screen pixel `(x, y)`, the camera's
-/// position being the centre of the screen.
+/// position being the centre of the screen. Probed (2560x1440): pixels to the right
+/// raise world X and pixels down lower world Y, both scaled by the zoom. (The original
+/// clamps `Zoom`: 2.0 reads back as 1.640625. Ours doesn't; nothing logic-side zooms.)
 pub(super) fn screen_to_world(camera: &CameraState, vm: &SQVM, x: f64, y: f64) -> (f64, f64) {
 	let (w, h) = screen_size(vm);
 	(camera.pos.0 + (x - w / 2.0) * camera.zoom, camera.pos.1 + (h / 2.0 - y) * camera.zoom)
