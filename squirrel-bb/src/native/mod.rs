@@ -77,7 +77,8 @@ pub use tactical_grid::camera::BattleCamera;
 pub use ui_bridge::{UiBridge, UiCall, UiFrontend};
 pub use vec::{Vec2f, Vec2i};
 pub use world_entities::WorldEntities;
-pub use save::SaveSystem;
+pub use save::original::compare::{compare_original_saves, original_save_name};
+pub use save::{SaveFormat, SaveSystem};
 pub use world_grid::WorldGrid;
 pub use fog_mask::{FogPatch, FogStamp, MASK_SIZE as FOG_MASK_SIZE};
 

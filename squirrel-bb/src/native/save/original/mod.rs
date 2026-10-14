@@ -23,6 +23,8 @@
 //! through the engine's [`OriginalWorld`](world::OriginalWorld).
 
 pub(crate) mod camera;
+pub mod compare;
+pub(crate) mod export;
 pub(crate) mod fog;
 pub(crate) mod game_entity;
 pub(crate) mod import;

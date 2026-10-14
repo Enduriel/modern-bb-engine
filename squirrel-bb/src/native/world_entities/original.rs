@@ -11,8 +11,12 @@ use squirrel::{SQVM, SqStrongRef};
 
 use super::footprints::Footprint;
 use super::{SpriteData, WorldEntities, create_entity, ignore_missing};
-use crate::native::save::original::record::{Head, WorldEntityPart};
-use crate::native::save::original::sprite::{FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, SpriteEntry, VISIBLE};
+use crate::class_name_hash;
+use crate::native::save::original::game_entity::GameEntity;
+use crate::native::save::original::record::{Body, Head, SceneEntity, WorldEntityPart, type_id};
+use crate::native::save::original::sprite::{
+	ALWAYS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, SpriteEntry, VISIBLE,
+};
 use crate::native::sprite_color::SpriteColor;
 use crate::native::world_grid::brush_name;
 use crate::native::{Sprites, world_layout};
@@ -41,6 +45,36 @@ fn apply_sprite(s: &mut SpriteData, entry: &SpriteEntry, sprites: &Sprites) {
 	s.scale = saved.scale.into();
 	s.rotation = saved.rotation;
 	s.offset = (entry.offset.0.into(), entry.offset.1.into());
+}
+
+/// An entity's sprite as the original saves it.
+fn sprite_entry(name: &str, s: &SpriteData, sprites: &Sprites) -> SpriteEntry {
+	let look = sprites.with(|r| BrushLook::of(r, &s.brush));
+	let mut flags = ALWAYS | look.flags;
+	for (on, bit) in [(s.visible, VISIBLE), (s.flipped, FLIPPED), (s.ignore_ambient, IGNORE_AMBIENT_COLOR)] {
+		if on {
+			flags |= bit;
+		}
+	}
+	SpriteEntry {
+		name: name.as_bytes().to_vec(),
+		sprite: Sprite {
+			brush: look.hash,
+			flags,
+			color: rgba(s.color.color),
+			scale: s.scale as f32,
+			rotation: s.rotation,
+			saturation: 1.0,
+			f64_: 0.1,
+			i58: 1,
+			v4c: look.v4c,
+		},
+		stored_color: 0xffff_ffff,
+		stored_highlight: 0,
+		stored_highlight_factor: 0.0,
+		stored_saturation: 1.0,
+		offset: (s.offset.0 as f32, s.offset.1 as f32),
+	}
 }
 
 impl WorldEntities {
@@ -110,7 +144,105 @@ impl WorldEntities {
 			expires,
 			visibility: f32::from_bits(head.i14 as u32),
 			kind: kind.into(),
+			id: head.id.into(),
 		});
+		if m.ids.peek() <= i64::from(head.id) {
+			m.ids.restore(i64::from(head.id) + 1);
+		}
+	}
+
+	/// Every living entity as the original saves it in the scene: those drawn on top
+	/// (`RenderedTop`, the `entity` layer) and the others (the `detail` layer), by id.
+	pub(crate) fn original_entities(&self, vm: &SQVM) -> Result<(Vec<SceneEntity>, Vec<SceneEntity>), String> {
+		let m = self.machine.borrow();
+		let sprite_class = m.sprite_class.clone().ok_or("save: sprite class missing")?;
+		let (mut top, mut rest) = (Vec::new(), Vec::new());
+		let mut order: Vec<&super::EntityRecord> = m.entities.iter().filter(|e| e.alive && e.dies_at.is_none()).collect();
+		order.sort_by_key(|e| e.id);
+		for rec in order {
+			let mut sprites = Vec::new();
+			for (name, handle) in rec.sprites.iter() {
+				let entry = sprite_class
+					.with_payload(vm, handle, |s| sprite_entry(name, s, &m.sprites))
+					.ok_or("save: not a sprite")?;
+				sprites.push(entry);
+			}
+			let faction = rec.faction as u8;
+			let e = SceneEntity {
+				type_: type_id("WorldEntity"),
+				head: Head {
+					id: rec.id as u32,
+					pos: (rec.pos.0 as f32, rec.pos.1 as f32),
+					z: rec.pos.1 as f32 as i32 - 20,
+					i14: 0,
+					rotation: 0.0,
+					flags: 0x0070_247d,
+					u34: 0,
+					children: Vec::new(),
+				},
+				body: Body::World(WorldEntityPart {
+					discovered: rec.discovered,
+					ignore_collision: rec.ignore_collision,
+					important: rec.important,
+					script_hash: class_name_hash(&rec.path) as i32,
+					game: GameEntity {
+						storing_color: false,
+						initialized: true,
+						render_callback: false,
+						sprite_occlusion: false,
+						faction,
+						// `setFactionEx`'s `1 << faction` (the shift taken mod 32); never set
+						// for faction 0.
+						faction_bit: if faction == 0 { 0 } else { 1u32 << (faction % 32) },
+						sprites,
+					},
+				}),
+			};
+			if rec.rendered_top { top.push(e) } else { rest.push(e) }
+		}
+		Ok((top, rest))
+	}
+
+	/// The footprints as the original saves them (`WorldFootprint`s, in the `detail`
+	/// layer).
+	pub(crate) fn original_footprints(&self) -> Vec<SceneEntity> {
+		let m = self.machine.borrow();
+		m.footprints
+			.all()
+			.iter()
+			.map(|f| {
+				let look = m.sprites.with(|r| BrushLook::of(r, &f.brush));
+				SceneEntity {
+					type_: type_id("WorldFootprint"),
+					head: Head {
+						id: f.id as u32,
+						pos: f.pos,
+						z: 0,
+						// The original keeps its visibility here.
+						i14: f.visibility.to_bits() as i32,
+						rotation: 0.0,
+						flags: 0x0050_2c7d,
+						u34: 256,
+						children: Vec::new(),
+					},
+					body: Body::Footprint {
+						sprite: Sprite {
+							brush: look.hash,
+							flags: ALWAYS | VISIBLE | look.flags,
+							color: [0xff; 4],
+							scale: f.scale,
+							rotation: 0.0,
+							saturation: 1.0,
+							f64_: 0.0,
+							i58: 0,
+							v4c: look.v4c,
+						},
+						time: f.expires,
+						kind: f.kind as u16,
+					},
+				}
+			})
+			.collect()
 	}
 
 	/// Every living entity's id and script, by id descending (the order the original

@@ -1,7 +1,21 @@
 //! The map's share of the original's save layout (see `save::original`): the tiles, the
-//! terrain layer's brushes, the region names and the fog of war.
+//! terrain layer's brushes, the decorations, the region names and the fog of war.
+//!
+//! A saved decoration (`WorldDecal`) joins the tile that contains its position, as the
+//! original's load attaches it (`0x4e4490`), with its id, position and draw order kept.
+//! A detail spawned with an offset into a neighbouring tile (the worldgen's straits)
+//! therefore moves to that tile across a load, as in the original.
 
-use super::{TileData, WorldGrid, bound_camera, fog_extent};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use super::{GridState, TileData, WorldGrid, bound_camera, fog_extent};
+use crate::native::save::original::record::{Head, SceneEntity, Text};
+use crate::native::save::original::scene::{Grid, HexTileLayer, TILE_ALWAYS};
+use crate::native::save::original::sprite::{ALWAYS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, VISIBLE};
+use crate::native::world_detail::{self, DetailData};
+use crate::native::world_entities::{argb, rgba};
+use crate::native::world_layout;
 use crate::native::Sprites;
 use crate::native::save::original::record::{Body, type_id};
 use crate::native::save::original::scene::{
@@ -65,6 +79,10 @@ impl WorldGrid {
 		g.height = h;
 		g.fog.reset(fog_extent(w, h));
 		g.region_texts = region_texts(scene);
+		let decal = type_id("WorldDecal");
+		for e in scene.layers.iter().flat_map(|l| l.entities()).filter(|e| e.type_ == decal) {
+			add_decal(&mut g, e);
+		}
 		bound_camera(&g);
 		Ok(())
 	}
@@ -73,6 +91,170 @@ impl WorldGrid {
 	pub(crate) fn load_original_fog(&self, mask: Vec<u8>) -> Result<(), String> {
 		self.grid.borrow_mut().fog.set_alpha(mask)
 	}
+
+	/// The map as the original saves it: the grid, the terrain layer, and the scene
+	/// entities of the `detail` layer that are the map's (decorations, region names).
+	pub(crate) fn original_map(&self) -> (Grid, HexTileLayer, Vec<SceneEntity>) {
+		let g = self.grid.borrow();
+		let (w, h) = (g.width, g.height);
+		let mut tiles = Vec::with_capacity((w * h).max(0) as usize);
+		let mut drawn = Vec::with_capacity(tiles.capacity());
+		// Column by column.
+		for col in 0..w {
+			for row in 0..h {
+				let t = &g.tiles[(row * w + col) as usize];
+				let mut flags = TILE_ALWAYS;
+				if t.is_discovered {
+					flags |= TILE_DISCOVERED;
+				}
+				if t.is_occupied {
+					flags |= TILE_OCCUPIED;
+				}
+				tiles.push(WorldTile {
+					i0c: 0,
+					flags,
+					type_: t.type_ as u8,
+					subtype: 0,
+					region: t.region as u8,
+					subregion: t.subregion as u8,
+					road_directions: t.road_directions as u8,
+					river_directions: t.river_directions as u8,
+					heat: t.heat as u8,
+					tactical_type: t.tactical_type as u8,
+				});
+				drawn.push(DrawableTile {
+					brush: g.sprites.with(|r| BrushLook::of(r, &t.brush).hash),
+					flags: if t.is_flipped { DRAWABLE_FLIPPED } else { 0 },
+					b9: 0,
+					color: [0xff; 4],
+				});
+			}
+		}
+		let grid = Grid {
+			origin: (0, 2),
+			width: w as i32,
+			height: h as i32,
+			tiles,
+		};
+		let layer = HexTileLayer {
+			metrics: [240.0, 120.0, 400.0, 200.0, 2.0, 0.0],
+			i4c: 0,
+			u5c: 0x420,
+			mask: b"gfx/masks/hex_mask_world".to_vec(),
+			tiles: Some((drawn, Vec::new())),
+		};
+		let mut entities: Vec<SceneEntity> = g.tiles.iter().flat_map(|t| &t.details).map(|d| decal(&g, &d.borrow())).collect();
+		entities.extend(g.region_texts.iter().map(region_text));
+		(grid, layer, entities)
+	}
+
+	/// The fog of war's mask as the original saves it.
+	pub(crate) fn original_fog(&self) -> Vec<u8> {
+		self.grid.borrow().fog.alpha().to_vec()
+	}
+}
+
+/// A decoration as the original saves it (a `WorldDecal`, see `spawnDetail`).
+fn decal(g: &GridState, d: &DetailData) -> SceneEntity {
+	let look = g.sprites.with(|r| BrushLook::of(r, &d.brush));
+	let mut flags = ALWAYS | VISIBLE | look.flags;
+	if d.flipped {
+		flags |= FLIPPED;
+	}
+	if d.ignore_ambient {
+		flags |= IGNORE_AMBIENT_COLOR;
+	}
+	SceneEntity {
+		type_: type_id("WorldDecal"),
+		head: Head {
+			id: d.id as u32,
+			pos: d.pos,
+			z: d.z,
+			i14: 0,
+			rotation: 0.0,
+			flags: 0x502c7d,
+			u34: d.flags as u32,
+			children: Vec::new(),
+		},
+		body: Body::Sprite(Sprite {
+			brush: look.hash,
+			flags,
+			color: rgba(((d.alpha as u32 & 0xff) << 24) | (d.tint & 0x00ff_ffff)),
+			scale: d.scale as f32,
+			rotation: d.rotation as f32,
+			saturation: d.saturation as f32,
+			f64_: 0.1,
+			i58: 0,
+			v4c: look.v4c,
+		}),
+	}
+}
+
+/// A region name as the original saves it (a `TextEntity`, see `spawnRegionText`).
+fn region_text(t: &SceneRegionText) -> SceneEntity {
+	SceneEntity {
+		type_: type_id("TextEntity"),
+		head: Head {
+			id: t.id as u32,
+			pos: t.pos,
+			z: 0,
+			i14: 0,
+			rotation: t.rotation,
+			flags: 0x503c7d,
+			u34: 0,
+			children: Vec::new(),
+		},
+		body: Body::Text(Text {
+			font: b"gfx/fonts/cinzel_bold_100.fnt".to_vec(),
+			offset: (0.0, 0.0),
+			size: t.scale * REGION_TEXT_SIZE,
+			alpha: 1.0,
+			valign: 2,
+			halign: 2,
+			color: 0x66ff_ffff,
+			color2: 0xffff_ffff,
+			b9c: false,
+			text: t.text.clone(),
+		}),
+	}
+}
+
+/// A saved decoration, on the tile containing it.
+fn add_decal(g: &mut GridState, e: &SceneEntity) {
+	let Body::Sprite(sprite) = &e.body else { return };
+	let (x, y) = (f64::from(e.head.pos.0), f64::from(e.head.pos.1));
+	let (q, r) = world_layout::world_to_tile(x, y, g.width, g.height);
+	let Some(idx) = g.idx(q, r + q / 2) else { return };
+	let brush = g.sprites.resolve(&brush_name(&g.sprites, sprite.brush));
+	let (depth_bias, rotation_speed) = g
+		.sprites
+		.with(|reg| reg.get(&brush).map_or((0, 0.0), |(_, s)| (i64::from(s.depth_bias), s.rotation_speed)));
+	let color = argb(sprite.color);
+	let mut data = DetailData {
+		brush,
+		// The z level it was spawned with, as far as its containing tile tells.
+		z_level: i64::from(e.head.z) - y as i64 - depth_bias + (r & 1),
+		flags: i64::from(e.head.u34),
+		flipped: sprite.flags & FLIPPED != 0,
+		alpha: i64::from(color >> 24),
+		rotation: sprite.rotation.into(),
+		saturation: sprite.saturation.into(),
+		scale: sprite.scale.into(),
+		tint: color & 0x00ff_ffff,
+		ignore_ambient: sprite.flags & IGNORE_AMBIENT_COLOR != 0,
+		id: e.head.id.into(),
+		pos: e.head.pos,
+		z: e.head.z,
+		..DetailData::default()
+	};
+	// The brush's rotation speed (torque isn't saved).
+	data.spin.torque = rotation_speed;
+	if g.ids.peek() <= data.id {
+		g.ids.restore(data.id + 1);
+	}
+	let detail = Rc::new(RefCell::new(data));
+	world_detail::note_spin(&g.spinning, &detail);
+	g.tiles[idx].details.push(detail);
 }
 
 /// The region names: the map's text entities, in the order the layers keep them.
@@ -85,6 +267,7 @@ fn region_texts(scene: &Scene) -> Vec<SceneRegionText> {
 		.filter(|e| e.type_ == text)
 		.filter_map(|e| match &e.body {
 			Body::Text(t) => Some(SceneRegionText {
+				id: e.head.id.into(),
 				text: t.text.clone(),
 				scale: t.size / REGION_TEXT_SIZE,
 				rotation: e.head.rotation,

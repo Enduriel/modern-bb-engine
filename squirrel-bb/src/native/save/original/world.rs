@@ -52,4 +52,38 @@ pub(crate) trait OriginalWorld {
 
 	/// The fog of war's mask.
 	fn load_fog(&self, mask: Vec<u8>) -> Result<(), String>;
+
+	// Saving, in the original's order.
+
+	/// The virtual time, in seconds.
+	fn virtual_time(&self) -> f64;
+
+	/// The world scene: the map, and every world entity's native part, decoration,
+	/// footprint and region name in its layer.
+	fn scene(&self, vm: &SQVM) -> Result<Scene, String>;
+
+	fn camera(&self) -> Camera;
+	fn clock(&self) -> Clock;
+
+	/// Every roster's units with their native parts.
+	fn rosters(&self, vm: &SQVM) -> Result<Rosters, String>;
+
+	/// The fog of war's mask.
+	fn fog(&self) -> Vec<u8>;
+}
+
+/// The rosters as saved: the player's, the guests', then the created ones by id
+/// ascending.
+pub(crate) struct Rosters {
+	pub player: Vec<SavedUnit>,
+	pub guests: Vec<SavedUnit>,
+	pub created: Vec<(u32, Vec<SavedUnit>)>,
+}
+
+/// A unit as saved: its record, its native part, and its script (for its
+/// `onSerialize`).
+pub(crate) struct SavedUnit {
+	pub head: Head,
+	pub native: TacticalNative,
+	pub script: SqStrongRef,
 }

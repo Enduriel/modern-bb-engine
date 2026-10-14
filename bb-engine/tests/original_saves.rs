@@ -101,6 +101,11 @@ fn load(dir: &Path, name: &str) -> harness::GameEngine {
 
 /// Load `name` and compare the world with the original's dump of it.
 fn loads_as_the_original_had_it(test: &str, name: &str) -> Option<harness::GameEngine> {
+	loads_in(test, name).map(|(engine, _)| engine)
+}
+
+/// [`loads_as_the_original_had_it`], with the directory the saves are in.
+fn loads_in(test: &str, name: &str) -> Option<(harness::GameEngine, std::path::PathBuf)> {
 	let dir = saves_dir(test)?;
 	let engine = load(&dir, name);
 	let ours = player::eval_string(&engine, DUMP).unwrap().unwrap();
@@ -120,7 +125,7 @@ fn loads_as_the_original_had_it(test: &str, name: &str) -> Option<harness::GameE
 		original.len(),
 		differ.join("\n")
 	);
-	Some(engine)
+	Some((engine, dir))
 }
 
 #[test]
@@ -141,4 +146,80 @@ fn an_original_save_loads_as_the_original_had_it_and_runs_on() {
 fn other_original_saves_load_as_the_original_had_them() {
 	loads_as_the_original_had_it("later_original_saves_load", "new_campaign_later");
 	loads_as_the_original_had_it("reloaded_original_saves_load", "new_campaign_reloaded");
+}
+
+/// The campaign the saves are of, started here as the original's capture probe started
+/// it (the main menu's start, its settings and seed), is the one the original had: the
+/// same dump, entity ids included (a decoration takes an id from the counter every
+/// entity shares, about 19,000 during worldgen).
+#[test]
+fn a_new_campaign_is_the_one_the_original_saved() {
+	let Some(dir) = saves_dir("a_new_campaign_is_the_original_s") else { return };
+	let mut engine = harness::open_install(Path::new(harness::STEAM_DATA_DIR)).expect("open the install");
+	engine.vm_mut().install_standard_error_handlers();
+	engine.saves().set_directory(dir.clone());
+	harness::boot_menu(&engine).expect("boot the menu");
+	until(&engine, 60, "main menu", &format!("{MENU}.isVisible() && !{MENU}.isAnimating()"));
+	script(
+		&engine,
+		"start",
+		r#"::RootState.get("MainMenuState").campaign_menu_module_onStartPressed({
+			Name = "Probe Company", Banner = ::Const.PlayerBanners[0],
+			Difficulty = 1, EconomicDifficulty = 1, BudgetDifficulty = 1,
+			Ironman = false, ExplorationMode = false,
+			GreaterEvil = ::Const.World.GreaterEvilType.Random, PermanentDestruction = false,
+			Seed = "rust-engine-test", StartingScenario = "scenario.early_access"
+		});"#,
+	);
+	until(
+		&engine,
+		600,
+		"the campaign starts",
+		"(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null",
+	);
+	let ours = player::eval_string(&engine, DUMP).unwrap().unwrap();
+	let original = std::fs::read_to_string(dir.join("new_campaign.dump.txt")).unwrap();
+	let (ours, original): (Vec<&str>, Vec<&str>) = (ours.lines().collect(), original.lines().collect());
+	let differ: Vec<String> = ours
+		.iter()
+		.zip(&original)
+		.filter(|(a, b)| a != b)
+		.take(20)
+		.map(|(a, b)| format!("  ours     {a}\n  original {b}"))
+		.collect();
+	assert!(
+		differ.is_empty() && ours.len() == original.len(),
+		"the new campaign differs from the original's ({} vs {} lines):\n{}",
+		ours.len(),
+		original.len(),
+		differ.join("\n")
+	);
+}
+
+/// The round trip: the original's save, loaded here and saved in the original's format,
+/// is the save the original writes after loading it (`new_campaign_reloaded`, which the
+/// capture probe made by loading `new_campaign` and saving it at once). The same bytes,
+/// but for the header's times and the order of the scene's quadtree layers, which the
+/// original's own load doesn't keep either (`compare_original_saves`).
+#[test]
+#[ignore = "needs buildTextFromTemplate's {a|b} choices and the sprites' brush flags"]
+fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
+	let Some((engine, dir)) = loads_in("round_trip", "new_campaign") else { return };
+	engine.saves().set_format(squirrel_bb::SaveFormat::Original);
+	// The capture ran with Modern Hooks.
+	engine.saves().set_modified(true);
+	// As the capture probe made it: load, and save at once (the world state ignores a
+	// load within 4 s of the last), under the name its metadata records.
+	for _ in 0..300 {
+		frame(&engine);
+	}
+	script(
+		&engine,
+		"load and save",
+		"::World.State.loadCampaign(\"new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
+	);
+	let ours = std::fs::read(dir.join("bb_probe_resave.sav")).expect("our save");
+	let original = std::fs::read(dir.join("new_campaign_reloaded.sav")).unwrap();
+	let differences = squirrel_bb::compare_original_saves(&ours, &original).expect("both read");
+	assert!(differences.is_empty(), "ours vs the original's:\n{}", differences.join("\n"));
 }

@@ -7,11 +7,15 @@ use squirrel::{SQVM, SqStrongRef};
 
 use super::{GUEST_ROSTER_ID, PLAYER_ROSTER_ID, TacticalEntities, UnitSpriteData, create_unit, ignore_missing};
 use crate::native::Sprites;
+use crate::class_name_hash;
+use crate::native::save::original::game_entity::GameEntity;
 use crate::native::save::original::record::{Head, TacticalNative};
-use crate::native::save::original::sprite::{FLIPPED, IGNORE_AMBIENT_COLOR, IGNORE_CAMERA_FLIP, SpriteEntry, VISIBLE};
-use crate::native::save::original::world::Roster;
+use crate::native::save::original::sprite::{
+	ALWAYS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, IGNORE_CAMERA_FLIP, Sprite, SpriteEntry, VISIBLE,
+};
+use crate::native::save::original::world::{Roster, Rosters, SavedUnit};
 use crate::native::sprite_color::SpriteColor;
-use crate::native::world_entities::argb;
+use crate::native::world_entities::{argb, rgba};
 use crate::native::world_grid::brush_name;
 
 /// Our id of roster `r`.
@@ -35,6 +39,41 @@ fn apply_sprite(s: &mut UnitSpriteData, entry: &SpriteEntry, sprites: &Sprites) 
 	s.rotation = saved.rotation.into();
 	s.saturation = saved.saturation.into();
 	s.offset = (entry.offset.0.into(), entry.offset.1.into());
+}
+
+/// A unit's sprite as the original saves it.
+fn sprite_entry(name: &str, s: &UnitSpriteData, sprites: &Sprites) -> SpriteEntry {
+	let look = sprites.with(|r| BrushLook::of(r, &s.brush));
+	let mut flags = ALWAYS | look.flags;
+	for (on, bit) in [
+		(s.visible, VISIBLE),
+		(s.flipped, FLIPPED),
+		(s.ignore_camera_flip, IGNORE_CAMERA_FLIP),
+		(s.ignore_ambient, IGNORE_AMBIENT_COLOR),
+	] {
+		if on {
+			flags |= bit;
+		}
+	}
+	SpriteEntry {
+		name: name.as_bytes().to_vec(),
+		sprite: Sprite {
+			brush: look.hash,
+			flags,
+			color: rgba(s.color.color),
+			scale: s.scale as f32,
+			rotation: s.rotation as f32,
+			saturation: s.saturation as f32,
+			f64_: 0.1,
+			i58: 1,
+			v4c: look.v4c,
+		},
+		stored_color: 0xffff_ffff,
+		stored_highlight: 0,
+		stored_highlight_factor: 0.0,
+		stored_saturation: 1.0,
+		offset: (s.offset.0 as f32, s.offset.1 as f32),
+	}
 }
 
 impl TacticalEntities {
@@ -82,6 +121,60 @@ impl TacticalEntities {
 			}
 		}
 		Ok(unit)
+	}
+
+	/// The rosters as the original saves them (the battle's and the world's temporary
+	/// rosters aren't saved).
+	pub(crate) fn original_rosters(&self, vm: &SQVM) -> Result<Rosters, String> {
+		let units = |id: i64| -> Result<Vec<SavedUnit>, String> {
+			let m = self.machine.borrow();
+			let sprite_class = m.sprite_class.clone().ok_or("save: sprite class missing")?;
+			let mut out = Vec::new();
+			for unit in m.rosters.get(&id).into_iter().flatten() {
+				let rec = m.record(unit.identity()).ok_or("save: unit not registered")?;
+				let mut sprites = Vec::new();
+				for (name, handle) in rec.sprites.iter() {
+					let entry = sprite_class
+						.with_payload(vm, handle, |s| sprite_entry(name, s, &m.sprites))
+						.ok_or("save: not a unit sprite")?;
+					sprites.push(entry);
+				}
+				let faction = rec.faction as u8;
+				out.push(SavedUnit {
+					head: Head {
+						id: rec.id as u32,
+						pos: (rec.pos.0 as f32, rec.pos.1 as f32),
+						z: 0,
+						i14: 0,
+						rotation: 0.0,
+						flags: 0x0010_2c7d,
+						u34: 0,
+						children: Vec::new(),
+					},
+					native: TacticalNative {
+						script_hash: class_name_hash(&rec.path) as i32,
+						game: GameEntity {
+							storing_color: false,
+							initialized: rec.initialized,
+							render_callback: rec.render_callback,
+							sprite_occlusion: false,
+							faction,
+							faction_bit: if faction == 0 { 0 } else { 1u32 << (faction % 32) },
+							sprites,
+						},
+					},
+					script: unit.clone(),
+				});
+			}
+			Ok(out)
+		};
+		let mut created: Vec<i64> = self.machine.borrow().rosters.keys().copied().filter(|&id| id >= 0).collect();
+		created.sort_unstable();
+		Ok(Rosters {
+			player: units(PLAYER_ROSTER_ID)?,
+			guests: units(GUEST_ROSTER_ID)?,
+			created: created.into_iter().map(|id| Ok((id as u32, units(id)?))).collect::<Result<_, String>>()?,
+		})
 	}
 
 	/// Add a loaded unit to `roster` (the original appends it once its record, script

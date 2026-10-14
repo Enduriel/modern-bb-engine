@@ -20,7 +20,7 @@
 
 mod container;
 mod meta;
-pub(crate) mod original;
+pub mod original;
 mod persistence;
 mod storage;
 pub(crate) mod stream;
@@ -69,6 +69,11 @@ struct Inner {
 	parts: RefCell<Vec<Rc<dyn SavePart>>>,
 	/// The engine's parts for the original's layout (see [`original`]).
 	original: RefCell<Option<Rc<dyn original::world::OriginalWorld>>>,
+	/// The format campaigns are saved in.
+	format: Cell<SaveFormat>,
+	/// The game runs modified (mods are loaded): a campaign save records it, and the
+	/// original warns when it loads such a save.
+	modified: Cell<bool>,
 	callbacks: RefCell<Callbacks>,
 	classes: RefCell<Option<Rc<StreamClasses>>>,
 	/// A save or load is running (the original's `World+0x2d0`): another one is
@@ -77,6 +82,15 @@ struct Inner {
 	/// `World.presave()` asked for the save's picture of the world, taken the next time
 	/// the world is drawn (`World+0x2cd`). Until then saves are ignored.
 	presave_pending: Cell<bool>,
+}
+
+/// The format campaigns are saved in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveFormat {
+	/// This engine's own.
+	Own,
+	/// The original's: its container and its layout, which the original game loads.
+	Original,
 }
 
 /// The save system. Host-owned: [`clear`](Self::clear) it before the VM closes.
@@ -111,10 +125,24 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 		modified: now,
 		..Meta::default()
 	}));
-	let writer = Rc::new(RefCell::new(SaveWriter::default()));
+	// As the original's World.save, before onBeforeSave (`0x4f46e5`).
+	meta.borrow_mut().set_int("modified".to_string(), i64::from(inner.modified.get()));
+	let original = inner.format.get() == SaveFormat::Original;
+	let writer = Rc::new(RefCell::new(SaveWriter {
+		strings: if original { stream::StrLen::U16 } else { stream::StrLen::U32 },
+		..SaveWriter::default()
+	}));
 	let stream = classes.out_stream(vm, writer.clone(), meta.clone());
 	let before = inner.callbacks.borrow().before_save.clone();
 	run_callback(vm, before, &stream)?;
+	if original {
+		let world = inner.original.borrow().clone().ok_or("saving in the original's format: no world to save")?;
+		let after = inner.callbacks.borrow().save.clone();
+		let cx = SaveCx { vm, writer: writer.clone(), stream: stream.clone() };
+		original::export::save(world.as_ref(), &cx, after)?;
+		let bytes = container::encode(&meta.borrow(), &writer.borrow().buf);
+		return inner.storage.borrow().write(&file, bytes);
+	}
 	let parts = inner.parts.borrow().clone();
 	let cx = SaveCx {
 		vm,
@@ -169,6 +197,8 @@ impl SaveSystem {
 				storage: RefCell::new(Storage::Memory(RefCell::default())),
 				parts: RefCell::default(),
 				original: RefCell::default(),
+				format: Cell::new(SaveFormat::Own),
+				modified: Cell::new(false),
 				callbacks: RefCell::default(),
 				classes: RefCell::default(),
 				busy: Cell::new(false),
@@ -196,6 +226,17 @@ impl SaveSystem {
 	/// Keep saves as `<name>.sav` files in `dir`.
 	pub fn set_directory(&self, dir: PathBuf) {
 		*self.inner.storage.borrow_mut() = Storage::Dir(dir);
+	}
+
+	/// Whether the game runs modified (mods are loaded), which campaign saves record.
+	pub fn set_modified(&self, modified: bool) {
+		self.inner.modified.set(modified);
+	}
+
+	/// Save campaigns in `format` (this engine's own unless set). Saves of either format
+	/// load.
+	pub fn set_format(&self, format: SaveFormat) {
+		self.inner.format.set(format);
 	}
 
 	/// The engine's parts for loading (and writing) the original's layout.
