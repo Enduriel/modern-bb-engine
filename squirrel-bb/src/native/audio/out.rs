@@ -49,4 +49,10 @@ pub trait AudioOut {
 
 	/// The real time is `now_ms` (a frame passed).
 	fn update(&mut self, now_ms: u32);
+
+	/// How the output has been doing since the last call (a device's underruns and
+	/// load), for the host to report; `None` if there's nothing to say.
+	fn status(&mut self) -> Option<String> {
+		None
+	}
 }

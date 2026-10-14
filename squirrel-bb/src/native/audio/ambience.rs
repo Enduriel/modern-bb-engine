@@ -73,6 +73,12 @@ impl SoundManager {
 			a.entries.clear();
 			return;
 		}
+		// The original loads a layer's sounds here (`0x4adf90`); the output reads
+		// them ahead.
+		for e in &entries {
+			self.out.preload(&e.file);
+		}
+		let a = &mut self.ambience[layer];
 		a.entries = entries;
 		a.ticket = a.ticket.wrapping_add(1);
 		a.volume = volume;

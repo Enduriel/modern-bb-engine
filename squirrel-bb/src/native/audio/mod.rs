@@ -93,6 +93,11 @@ impl Audio {
 		self.0.borrow_mut().update(now_ms);
 	}
 
+	/// How the output has been doing since the last call (see [`AudioOut::status`]).
+	pub fn output_status(&self) -> Option<String> {
+		self.0.borrow_mut().out.status()
+	}
+
 	/// The sounds the game holds, oldest first.
 	pub fn playing(&self) -> Vec<Playing> {
 		self.0
