@@ -124,6 +124,10 @@ pub struct Tolerance {
 	/// Elements not compared, with their subtrees: those whose path contains one of
 	/// these, e.g. a list whose content depends on the machine (display modes).
 	pub ignore_paths: Vec<String>,
+	/// Elements whose boxes aren't compared, nor their subtrees' (their text and styles
+	/// still are): those whose path contains one of these, e.g. a list of text lines
+	/// that differ in height by a known amount.
+	pub ignore_boxes: Vec<String>,
 	/// Whether to compare the boxes and styles of the images the engine draws
 	/// ([`Node::procedural`]: portraits), whose sizes follow what they show. Off by
 	/// default: we draw placeholders until the renderer draws them.
@@ -136,6 +140,7 @@ impl Default for Tolerance {
 			pixels: 2,
 			ignore_styles: Vec::new(),
 			ignore_paths: Vec::new(),
+			ignore_boxes: Vec::new(),
 			procedural_images: false,
 		}
 	}
@@ -434,6 +439,10 @@ fn compare_nodes(
 	}
 	// Old WebKit reports an empty box for `<br>`; Chromium, its place in the line.
 	if golden.tag != "br"
+		&& !tolerance
+			.ignore_boxes
+			.iter()
+			.any(|p| path.contains(p.as_str()))
 		&& golden
 			.rect
 			.iter()

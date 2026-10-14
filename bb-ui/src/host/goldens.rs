@@ -33,13 +33,20 @@ pub fn load(dir: &Path, name: &str) -> Result<Snapshot, String> {
 }
 
 /// What screen `name`'s comparison leaves out: the Options resolution list shows the
-/// machine's display modes (none on the probe's virtual display).
+/// machine's display modes (none on the probe's virtual display), and the battle's
+/// combat log has lines a pixel shorter here (the original rounds a font's total line
+/// height once, Chromium each part), which adds up down the
+/// log. Its text is still compared.
 pub fn tolerance(name: &str) -> Tolerance {
 	let mut tolerance = Tolerance::default();
-	if name == "options" {
-		tolerance
+	match name {
+		"options" => tolerance
 			.ignore_paths
-			.push("div.control.l-list-container".into());
+			.push("div.control.l-list-container".into()),
+		"world_combat" => tolerance
+			.ignore_boxes
+			.push("div.l-event-logs-container".into()),
+		_ => {}
 	}
 	tolerance
 }
@@ -83,12 +90,8 @@ const START_CAMPAIGN: &str = r#"::RootState.get("MainMenuState").campaign_menu_m
 
 /// Start the world's campaign from the main menu as the golden probe's harness does,
 /// and walk it through [`WORLD_SCREENS`] as the probe does, snapshotting each 3 s
-/// after its step. The ambush (the last) only with `combat`: our battles don't yet play
-/// out the same from run to run.
-pub fn capture_world(
-	session: &UiSession,
-	combat: bool,
-) -> Result<Vec<(&'static str, Snapshot)>, String> {
+/// after its step.
+pub fn capture_world(session: &UiSession) -> Result<Vec<(&'static str, Snapshot)>, String> {
 	let seed = Json::Str(WORLD_SEED.to_string()).to_text();
 	let engine = session.engine();
 	engine.run_script(&START_CAMPAIGN.replace("{seed}", &seed), "world_golden")?;
@@ -132,13 +135,11 @@ pub fn capture_world(
 	session.run_frames(3.0)?;
 	step("town")?;
 	settle_and_snapshot(WORLD_SCREENS[3])?;
-	if combat {
-		step("leaveTown")?;
-		session.run_frames(3.0)?;
-		step("combat")?;
-		wait_for_player_turn(session)?;
-		settle_and_snapshot(WORLD_SCREENS[4])?;
-	}
+	step("leaveTown")?;
+	session.run_frames(3.0)?;
+	step("combat")?;
+	wait_for_player_turn(session)?;
+	settle_and_snapshot(WORLD_SCREENS[4])?;
 	Ok(snapshots)
 }
 

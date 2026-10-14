@@ -5,7 +5,7 @@
 //!     boxes and the compared styles, within `goldens::tolerance`;
 //!   * `matches_the_originals_world`: likewise for a new campaign started as the
 //!     probe harness starts it: the intro event, the world screen, the character
-//!     screen and the nearest town (`probes/world_golden.js`);
+//!     screen, the nearest town and a seeded bandit ambush (`probes/world_golden.js`);
 //!   * `follows_the_originals_layout_rules`: `probes/layout_rules.js` gets the
 //!     original's answers (`tests/goldens/layout_rules.json`) in our page.
 //!
@@ -89,7 +89,7 @@ fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
 /// Runs after the menu screens: it leaves Options and starts a campaign.
 fn matches_the_originals_world(session: &UiSession) -> Result<(), String> {
 	session.click_when_ready("Cancel", Duration::from_secs(30))?;
-	compare_all(goldens::capture_world(session, false)?)
+	compare_all(goldens::capture_world(session)?)
 }
 
 /// Runs after the screens: the probe leaves its font samples in the page.
