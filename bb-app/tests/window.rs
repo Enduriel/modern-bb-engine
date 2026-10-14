@@ -1,7 +1,8 @@
 //! `bb`'s window, run in a headless gamescope (muted, so nothing shows or sounds): it
 //! exits cleanly, and the scripts' video mode is put on it as they set it. Skips
 //! cleanly without gamescope or the Steam install, or when gamescope can't start (no
-//! display, no runtime folder).
+//! display, no runtime folder). Each run waits its turn behind the probes' games
+//! ([`bb_engine::game_queue`]).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -40,6 +41,9 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		return None;
 	}
 	let _one = GAMESCOPE.lock().unwrap_or_else(|e| e.into_inner());
+	// Behind the probes' games, which run in a headless gamescope too: two at once can
+	// hang one's teardown.
+	let _turn = bb_engine::game_queue::Ticket::wait(Duration::from_secs(3600)).expect("a turn for gamescope");
 	let (started, status, stderr) = (dir.join("started"), dir.join("status"), dir.join("stderr"));
 	let log = std::fs::File::create(dir.join("gamescope.log")).expect("gamescope's log");
 	// gamescope doesn't pass its child's status on: the shell writes it, and first that

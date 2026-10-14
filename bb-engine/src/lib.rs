@@ -21,6 +21,7 @@ pub mod assets;
 pub mod crypt;
 pub mod datsource;
 pub mod files;
+pub mod game_queue;
 pub mod harness;
 pub mod mounts;
 pub mod script_cache;
