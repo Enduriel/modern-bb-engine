@@ -27,6 +27,7 @@ mod platform;
 mod mt64;
 mod prng;
 mod settings;
+pub(crate) mod sprite_color;
 mod strings;
 mod tactical;
 pub(crate) mod tactical_grid;

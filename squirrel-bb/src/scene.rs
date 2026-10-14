@@ -123,7 +123,8 @@ pub struct SceneSprite {
 	pub name: String,
 	/// The brush drawn (`""` for none).
 	pub brush: String,
-	pub alpha: f64,
+	/// ARGB as drawn now (a fade in progress included).
+	pub color: u32,
 	pub scale: f64,
 	pub visible: bool,
 	/// From the entity's position, in world units with y up.

@@ -117,7 +117,24 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 			ignore_missing(entity.call_method(vm, "onVisibleToPlayer", ()))?;
 		}
 	}
+	draw_sprites(m, vm, now as f32 * 0.001);
 	Ok(())
+}
+
+/// Draw the shown entities' sprites at real time `now` (seconds): what a draw does to
+/// them is finish their fades (see `SpriteColor`), which may hide them.
+fn draw_sprites(m: &Machine, vm: &SQVM, now: f32) {
+	let machine = m.borrow();
+	let Some(class) = machine.sprite_class.clone() else { return };
+	for rec in machine.entities.iter().filter(|r| r.alive && r.visible && r.render.shown()) {
+		for (_, handle) in rec.sprites.iter() {
+			class.with_payload(vm, handle, |s| {
+				if s.visible && s.color.draw(now).hide {
+					s.visible = false;
+				}
+			});
+		}
+	}
 }
 
 /// `World.prepareRender()` and `World.render()`.

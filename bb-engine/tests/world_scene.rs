@@ -137,4 +137,38 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	let answers = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__slot").expect("answers");
 	let answers: Vec<bool> = (0..answers.len()).map(|i| answers.get::<bool>(i).expect("bool")).collect();
 	assert_eq!(answers, [false, true, false, true, true, true, true, false, false, false, true]);
+
+	// Sprite fades: Alpha is an integer; a fade shows when drawn and only a draw at its
+	// end finishes it (see SpriteColor).
+	engine
+		.run_script(
+			r#"
+			local s = ::World.State.getPlayer().addSprite("fade_probe");
+			s.Alpha = 0;
+			local r = [s.Alpha, s.IsFadingDone];
+			s.fadeToAlpha(128, 0);
+			r.extend([s.Alpha, s.IsFadingDone]);
+			s.fadeIn(100);
+			r.extend([s.Alpha, s.IsFadingDone]);
+			::__fade <- r;
+			"#,
+			"fade",
+		)
+		.expect("fade");
+	let fade = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__fade").expect("fade");
+	let n = |i| fade.get::<Number>(i).map(|n| n.0);
+	assert_eq!((n(0), fade.get::<bool>(1)), (Some(0.0), Some(true)));
+	assert_eq!((n(2), fade.get::<bool>(3)), (Some(128.0), Some(true)), "a zero-length fade is immediate");
+	assert_eq!((n(4), fade.get::<bool>(5)), (Some(128.0), Some(false)), "fading, the start alpha reads back");
+	for _ in 0..20 {
+		engine.frame(16.0).expect("frame");
+	}
+	engine
+		.run_script(
+			r#"local s = ::World.State.getPlayer().getSprite("fade_probe"); ::__fade <- [s.Alpha, s.IsFadingDone];"#,
+			"fade after",
+		)
+		.expect("fade after");
+	let fade = SqTable::root(engine.vm()).get::<squirrel::SqArray>("__fade").expect("fade");
+	assert_eq!((fade.get::<Number>(0).map(|n| n.0), fade.get::<bool>(1)), (Some(255.0), Some(true)), "drawn past its end");
 }

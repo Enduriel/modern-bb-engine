@@ -33,6 +33,15 @@ use super::world_layout;
 use super::world_query::{self, Candidate};
 use crate::module::Instantiator;
 use crate::native::Sprites;
+use crate::native::sprite_color::SpriteColor;
+
+/// `Time.getRealTimeF()`: real seconds, the clock sprite fades run on.
+fn real_time(vm: &SQVM) -> f32 {
+	SqTable::root(vm)
+		.get::<SqStrongRef>("Time")
+		.and_then(|t| t.call_method_ret::<Number, _>(vm, "getRealTimeF", ()).ok().flatten())
+		.map_or(0.0, |n| n.0 as f32)
+}
 
 mod footprints;
 mod movement;
@@ -48,11 +57,11 @@ mod view;
 #[derive(Clone)]
 struct SpriteData {
 	brush: String,
-	alpha: f64,
+	/// `Color` (and `Alpha`), with any fade in progress.
+	color: SpriteColor,
 	scale: f64,
 	visible: bool,
 	ignore_ambient: bool,
-	fading_done: bool,
 	/// From the entity's position, in world units with y up (`setOffset`,
 	/// `setSpriteOffset`).
 	offset: (f64, f64),
@@ -68,11 +77,10 @@ impl SpriteData {
 	fn fresh() -> Self {
 		SpriteData {
 			brush: String::new(),
-			alpha: 255.0,
+			color: SpriteColor::default(),
 			scale: 1.0,
 			visible: true,
 			ignore_ambient: false,
-			fading_done: true, // no fade in progress
 			offset: (0.0, 0.0),
 			flipped: false,
 			scaling: true,
@@ -366,10 +374,11 @@ fn set_tile_occupied(vm: &SQVM, q: i64, r: i64, occupied: bool) -> Result<(), St
 fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 	let (set_with, get_with) = (sprites.clone(), sprites.clone());
 	ClassBuilder::<SpriteData>::new("WorldEntitySprite")
+		// `Alpha` is the colour's top byte, an integer (`0x504b40` family).
 		.property(
 			"Alpha",
-			|s: &SpriteData| s.alpha,
-			|s: &mut SpriteData, v: f64| s.alpha = v,
+			|s: &SpriteData| s.color.alpha(),
+			|s: &mut SpriteData, v: i64| s.color.set_alpha(v),
 		)
 		.property(
 			"Scale",
@@ -388,10 +397,17 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 		)
 		.property(
 			"IsFadingDone",
-			|s: &SpriteData| s.fading_done,
-			|s: &mut SpriteData, v: bool| s.fading_done = v,
+			|s: &SpriteData| s.color.is_fading_done(),
+			|_s: &mut SpriteData, _v: bool| {},
 		)
-		.property_noop("Color") // render tint: set by some entities, unread headless
+		.property_obj_rw(
+			"Color",
+			|s: &SpriteData, vm: &SQVM| super::color::color_object(vm, s.color.color),
+			|s: &mut SpriteData, vm: &SQVM, v: SqStrongRef| {
+				s.color.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
+				Ok(())
+			},
+		)
 		.property("HasBrush", |s: &SpriteData| !s.brush.is_empty(), |_s: &mut SpriteData, _v: bool| {})
 		.method("setBrush", move |s: &mut SpriteData, brush: &str| s.brush = set_with.resolve(brush))
 		.method("resetBrush", |s: &mut SpriteData| s.brush.clear())
@@ -402,9 +418,17 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 			s.offset = vec_xy(vm, &offset.0)
 		})
 		.method("setHorizontalFlipping", |s: &mut SpriteData, flipped: bool| s.flipped = flipped)
-		// Render-only fades.
-		.method("fadeIn", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
-		.method("fadeOut", |_s: &mut SpriteData, _a: Variadic<Retained>| {})
+		// Fades run on real time and finish when the sprite is drawn (see `SpriteColor`).
+		.method("fadeIn", |s: &mut SpriteData, vm: &SQVM, ms: i64| s.color.fade_in(ms, real_time(vm)))
+		.method("fadeOut", |s: &mut SpriteData, vm: &SQVM, ms: i64| {
+			s.color.fade_out(ms, real_time(vm), false)
+		})
+		.method("fadeOutAndHide", |s: &mut SpriteData, vm: &SQVM, ms: i64| {
+			s.color.fade_out(ms, real_time(vm), true)
+		})
+		.method("fadeToAlpha", |s: &mut SpriteData, vm: &SQVM, alpha: i64, ms: i64| {
+			s.color.fade_to_alpha(alpha, ms, real_time(vm))
+		})
 		.build(vm)
 }
 
@@ -852,6 +876,7 @@ impl WorldEntities {
 
 	/// Every live entity and its sprites as the renderer sees them.
 	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::SceneEntity> {
+		let now = real_time(vm);
 		let m = self.machine.borrow();
 		let (Some(class), Some(label_class)) = (m.sprite_class.clone(), m.label_class.clone()) else {
 			return Vec::new();
@@ -870,7 +895,7 @@ impl WorldEntities {
 						class.with_payload(vm, handle, |s| crate::scene::SceneSprite {
 							name: name.clone(),
 							brush: s.brush.clone(),
-							alpha: s.alpha,
+							color: s.color.shown(now),
 							scale: s.scale,
 							visible: s.visible,
 							offset: s.offset,

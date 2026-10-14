@@ -69,9 +69,10 @@ impl Flags {
 
 fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 	w.str(&s.brush);
-	w.f64(s.alpha);
+	// The colour without any fade in progress, which a load drops.
+	w.u32(s.color.color);
 	w.f64(s.scale);
-	for b in [s.visible, s.ignore_ambient, s.fading_done] {
+	for b in [s.visible, s.ignore_ambient] {
 		w.bool(b);
 	}
 	w.f64(s.offset.0);
@@ -84,11 +85,10 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 	Ok(SpriteData {
 		brush: r.str()?,
-		alpha: r.f64()?,
+		color: crate::native::sprite_color::SpriteColor::new(r.u32()?),
 		scale: r.f64()?,
 		visible: r.bool()?,
 		ignore_ambient: r.bool()?,
-		fading_done: r.bool()?,
 		offset: (r.f64()?, r.f64()?),
 		flipped: r.bool()?,
 		scaling: r.bool()?,

@@ -231,9 +231,12 @@ pub fn world_quads<'a>(
 			let look = Look {
 				scale: sprite.scale as f32 * zoom_scale,
 				flipped: sprite.flipped,
-				alpha: sprite.alpha as f32,
+				alpha: (sprite.color >> 24) as f32,
 				rotation: 0.0,
-				tint: [255; 3],
+				tint: {
+					let [_, r, g, b] = sprite.color.to_be_bytes();
+					[r, g, b]
+				},
 			};
 			push(
 				&mut drawables,
