@@ -528,20 +528,27 @@ fn adventure(p: &Play) -> Result<(), String> {
 	p.script("::__autoplayFight = true; ::__autoplayDieAsPlayers = true;")?;
 	during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
 	let money = || p.int("::World.Assets.getMoney()");
-	let start = money()?;
+	let active = || p.int("::World.Contracts.getActiveContract() != null ? 1 : 0");
 	let reward = p.int("::World.Contracts.getActiveContract().getPayment().getOnCompletion()")?;
 	let deadline = std::time::Instant::now() + Duration::from_secs(900);
-	let (mut battles, mut last) = (0, String::new());
+	let (mut battles, mut last, mut paid) = (0, String::new(), None);
 	loop {
 		ensure(std::time::Instant::now() < deadline, format!("the contract took too long (facing {last})"))?;
 		let facing = p.text(FACING)?;
 		if facing == "done" {
 			break;
 		}
+		// The payment comes with the screen that ends the contract (wages go out on the
+		// road meanwhile, so it's measured across that answer).
+		let before = (money()?, active()?);
 		answer(p, &facing, &last, &mut battles)?;
+		if facing == "event" && before.1 == 1 && active()? == 0 {
+			paid = Some(money()? - before.0);
+		}
 		last = facing;
 	}
-	ensure(money()? >= start + reward, format!("paid: {start} + {reward} > {}", money()?))?;
+	let paid = paid.ok_or("the contract ended without its last screen")?;
+	ensure(paid == reward, format!("paid {paid}, the contract said {reward}"))?;
 	println!("contract done after {battles} battle(s): paid {reward}");
 	Ok(())
 }
