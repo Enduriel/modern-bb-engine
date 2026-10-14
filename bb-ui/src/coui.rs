@@ -60,23 +60,12 @@ impl UiFiles {
 	}
 
 	/// Open an install's `data_*.dat` archives (`data_dir` is the game's `data/`).
-	/// With `mods`, its `mod_*.zip` archives load after them, as the original orders
-	/// them.
+	/// With `mods`, its mods load after them, as the original orders them (every
+	/// `.zip`, see [`bb_engine::harness::mod_archives`]).
 	pub fn open_install(data_dir: &Path, mods: bool) -> io::Result<Self> {
 		let mut archives = bb_engine::harness::data_archives(data_dir)?;
 		if mods {
-			let mut zips: Vec<PathBuf> = std::fs::read_dir(data_dir)?
-				.flatten()
-				.map(|e| e.path())
-				.filter(|p| {
-					p.file_name().is_some_and(|n| {
-						let n = n.to_string_lossy();
-						n.starts_with("mod_") && n.ends_with(".zip")
-					})
-				})
-				.collect();
-			zips.sort();
-			archives.extend(zips);
+			archives.extend(bb_engine::harness::mod_archives(data_dir)?);
 		}
 		Self::open(&archives, data_dir.parent().map(Path::to_path_buf))
 	}

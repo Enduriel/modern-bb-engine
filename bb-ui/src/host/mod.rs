@@ -107,6 +107,9 @@ pub struct HostConfig {
 	/// [`BattleCamera::Glides`](squirrel_bb::BattleCamera), as the original's camera
 	/// does (tests keep the default instant camera).
 	pub battle_camera: squirrel_bb::BattleCamera,
+	/// Mount the install's mods (every `.zip` in `data/`), as the original loads them,
+	/// for the page and the scripts alike. Off by default (vanilla).
+	pub mods: bool,
 }
 
 impl Default for HostConfig {
@@ -120,6 +123,7 @@ impl Default for HostConfig {
 			devtools_port: None,
 			exact_clock: squirrel_bb::ExactClock::Frame,
 			battle_camera: squirrel_bb::BattleCamera::Instant,
+			mods: false,
 		}
 	}
 }

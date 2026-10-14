@@ -44,15 +44,22 @@ impl UiSession {
 	/// script engine, and wait until the page has registered its screens. With `echo`,
 	/// page and bridge messages are also printed as they arrive.
 	pub fn start(data_dir: &Path, config: HostConfig, echo: bool) -> Result<UiSession, String> {
-		let files =
-			Arc::new(UiFiles::open_install(data_dir, false).map_err(|e| format!("archives: {e}"))?);
+		let files = Arc::new(UiFiles::open_install(data_dir, config.mods).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
 		let (exact_clock, battle_camera) = (config.exact_clock, config.battle_camera);
+		let mods = config.mods;
 		let host = UiHost::start(files.clone(), config)?;
-		let mut engine = harness::open_install_with(data_dir, |c| {
+		let configure = |c: &mut squirrel_bb::NativeConfig| {
 			c.exact_clock = exact_clock;
 			c.battle_camera = battle_camera;
-		})
+		};
+		let mut engine = if mods {
+			let mut archives = harness::data_archives(data_dir).map_err(|e| format!("install: {e}"))?;
+			archives.extend(harness::mod_archives(data_dir).map_err(|e| format!("mods: {e}"))?);
+			harness::open_mounted(data_dir, archives, configure)
+		} else {
+			harness::open_install_with(data_dir, configure)
+		}
 		.map_err(|e| format!("install: {e}"))?;
 		// The scripts see the window's size as the video mode's (the page fills it).
 		engine
@@ -91,9 +98,14 @@ impl UiSession {
 		Ok(session)
 	}
 
-	/// Boot the scripts to the main menu (config, then `scripts/root_state`).
+	/// Boot the scripts to the main menu (config, then `scripts/root_state`). With
+	/// Modern Hooks, the page first loads every mod's JS and then resumes the boot (its
+	/// handshake), so this runs the page for up to 10 s until it has.
 	pub fn boot_menu(&self) -> Result<(), String> {
-		harness::boot_menu(&self.engine)?;
+		harness::boot_menu_with(&self.engine, 600, || {
+			self.pump_until_deadline(Instant::now() + Duration::from_micros(16_667));
+			Ok(())
+		})?;
 		self.pump();
 		Ok(())
 	}
