@@ -10,8 +10,13 @@
 //! [`ImageLoader`] is the decode service: a queue, worker threads and a result
 //! channel. [`TextureCache`] sits on top and remembers each path's state; it is
 //! generic over the uploaded texture type, so it works without a GPU.
+//!
+//! A hint only warms a path ([`TextureCache::warm`]): it decodes, and the image waits
+//! on the CPU until a draw needs it, so what's hinted but never drawn never takes GPU
+//! memory. The owner drops images that wait too long ([`TextureCache::drop_decoded`]).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -137,6 +142,8 @@ fn work(source: &dyn FileSource, queue: &Queue, results: &Sender<Decoded>) {
 #[derive(Debug, PartialEq)]
 pub enum Slot<T> {
 	Loading,
+	/// Decoded ahead of a draw (warmed), not uploaded, since this moment.
+	Decoded(Image, Instant),
 	Ready(T),
 	/// The path failed to load (why), and holds the fallback image in its place.
 	Missing(T, String),
@@ -149,7 +156,7 @@ impl<T> Slot<T> {
 	pub fn texture(&self) -> Option<&T> {
 		match self {
 			Slot::Ready(texture) | Slot::Missing(texture, _) => Some(texture),
-			Slot::Loading | Slot::Failed(_) => None,
+			Slot::Loading | Slot::Decoded(..) | Slot::Failed(_) => None,
 		}
 	}
 }
@@ -164,6 +171,8 @@ impl<T> Slot<T> {
 pub struct TextureCache<T> {
 	loader: ImageLoader,
 	slots: HashMap<String, Slot<T>>,
+	/// Paths a draw (or a prefetch) asked to have uploaded once decoded.
+	wanted: HashSet<String>,
 	fallback: Option<String>,
 }
 
@@ -172,6 +181,7 @@ impl<T> TextureCache<T> {
 		TextureCache {
 			loader,
 			slots: HashMap::new(),
+			wanted: HashSet::new(),
 			fallback: None,
 		}
 	}
@@ -202,32 +212,92 @@ impl<T> TextureCache<T> {
 		}
 	}
 
-	/// Start loading `path` in the background unless it is already known: a hint
-	/// that it will be needed soon.
-	pub fn prefetch(&mut self, path: &str) {
+	/// Start decoding `path` in the background unless it is already known, without
+	/// uploading it: a hint that a draw may need it soon.
+	pub fn warm(&mut self, path: &str) {
 		if !self.slots.contains_key(path) {
 			self.slots.insert(path.to_string(), Slot::Loading);
 			self.loader.request(path);
 		}
 	}
 
-	/// Take in every finished decode, turning each image into a `T` with `upload`.
+	/// Start loading `path` in the background, to be uploaded once decoded.
+	pub fn prefetch(&mut self, path: &str) {
+		self.warm(path);
+		if matches!(self.slots.get(path), Some(Slot::Loading | Slot::Decoded(..))) {
+			self.wanted.insert(path.to_string());
+		}
+	}
+
+	/// Take in every finished decode: one a draw asked for becomes a `T` with `upload`,
+	/// one only warmed waits as an image; and upload the waiting images asked for since.
 	/// Call once per frame.
 	pub fn pump(&mut self, mut upload: impl FnMut(&str, Image) -> T) {
 		while let Some((path, result)) = self.loader.try_take() {
 			if !matches!(self.slots.get(&path), Some(Slot::Loading)) {
 				continue; // unknown, or already loaded on demand
 			}
-			let slot = self.settle(&path, result, &mut upload);
+			let slot = match result {
+				Ok(image) if !self.wanted.contains(&path) => Slot::Decoded(image, Instant::now()),
+				result => self.settle(&path, result, &mut upload),
+			};
 			self.slots.insert(path, slot);
+		}
+		let waiting: Vec<String> = self
+			.wanted
+			.iter()
+			.filter(|path| matches!(self.slots.get(*path), Some(Slot::Decoded(..))))
+			.cloned()
+			.collect();
+		for path in waiting {
+			self.upload_decoded(&path, &mut upload);
+		}
+		self.wanted.retain(|path| matches!(self.slots.get(path), Some(Slot::Loading)));
+	}
+
+	/// Upload `path`'s waiting image.
+	fn upload_decoded(&mut self, path: &str, upload: &mut impl FnMut(&str, Image) -> T) {
+		if let Some(Slot::Decoded(image, _)) = self.slots.remove(path) {
+			self.slots.insert(path.to_string(), Slot::Ready(upload(path, image)));
 		}
 	}
 
 	/// The texture for `path` (or the fallback in its place) if it is ready. The first
-	/// call for a path starts loading it in the background.
+	/// call for a path starts loading it in the background, to be uploaded by `pump`.
 	pub fn get(&mut self, path: &str) -> Option<&T> {
 		self.prefetch(path);
 		self.slots.get(path).and_then(Slot::texture)
+	}
+
+	/// As [`TextureCache::get`], but a waiting image is uploaded with `upload` at once.
+	pub fn get_or_upload(&mut self, path: &str, mut upload: impl FnMut(&str, Image) -> T) -> Option<&T> {
+		if matches!(self.slots.get(path), Some(Slot::Decoded(..))) {
+			self.upload_decoded(path, &mut upload);
+			self.wanted.remove(path);
+		}
+		self.get(path)
+	}
+
+	/// The images waiting for a draw: path, since when, bytes.
+	pub fn decoded(&self) -> Vec<(String, Instant, u64)> {
+		self.slots
+			.iter()
+			.filter_map(|(path, slot)| match slot {
+				Slot::Decoded(image, since) => Some((path.clone(), *since, image.rgba.len() as u64)),
+				_ => None,
+			})
+			.collect()
+	}
+
+	/// Drop every image waiting for a draw.
+	pub fn drop_all_decoded(&mut self) {
+		self.slots.retain(|_, slot| !matches!(slot, Slot::Decoded(..)));
+	}
+
+	/// Drop the images that waited for a draw since before `before`.
+	pub fn drop_decoded(&mut self, before: Instant) {
+		self.slots
+			.retain(|_, slot| !matches!(slot, Slot::Decoded(_, since) if *since < before));
 	}
 
 	/// The texture for `path` (or the fallback in its place), decoding it on this
@@ -237,14 +307,18 @@ impl<T> TextureCache<T> {
 		path: &str,
 		mut upload: impl FnMut(&str, Image) -> T,
 	) -> Result<&T, &str> {
+		if matches!(self.slots.get(path), Some(Slot::Decoded(..))) {
+			self.upload_decoded(path, &mut upload);
+		}
 		if matches!(self.slots.get(path), None | Some(Slot::Loading)) {
 			let slot = self.settle(path, self.loader.load_now(path), &mut upload);
 			self.slots.insert(path.to_string(), slot);
 		}
+		self.wanted.remove(path);
 		match &self.slots[path] {
 			Slot::Ready(texture) | Slot::Missing(texture, _) => Ok(texture),
 			Slot::Failed(err) => Err(err),
-			Slot::Loading => unreachable!("just loaded"),
+			Slot::Loading | Slot::Decoded(..) => unreachable!("just loaded"),
 		}
 	}
 
@@ -260,6 +334,7 @@ impl<T> TextureCache<T> {
 
 	/// Forget `path`, returning its texture if it had one. Asking again reloads it.
 	pub fn remove(&mut self, path: &str) -> Option<T> {
+		self.wanted.remove(path);
 		match self.slots.remove(path)? {
 			Slot::Ready(texture) | Slot::Missing(texture, _) => Some(texture),
 			_ => None,
@@ -382,6 +457,33 @@ mod tests {
 		// Without its image, the fallback can't stand in: the failure stays one.
 		let mut cache = TextureCache::new(ImageLoader::new(files(), 1)).with_fallback("gone.png");
 		assert!(cache.get_now("gfx/missing.png", |_, i| (i.width, i.height)).is_err());
+	}
+
+	#[test]
+	fn a_warmed_image_waits_for_a_draw() {
+		let mut cache = TextureCache::new(ImageLoader::new(files(), 1));
+		cache.warm("gfx/a.png");
+		cache.warm("gfx/b.png");
+		pump_until(&mut cache, "gfx/a.png");
+		pump_until(&mut cache, "gfx/b.png");
+		assert!(matches!(cache.slot("gfx/a.png"), Some(Slot::Decoded(..))), "decoded, not uploaded");
+		// A draw uploads it at once.
+		assert_eq!(cache.get_or_upload("gfx/a.png", |_, i| (i.width, i.height)), Some(&(2, 1)));
+		// One asked for without an upload goes up with the next pump.
+		assert_eq!(cache.get("gfx/b.png"), None);
+		cache.pump(|_, i| (i.width, i.height));
+		assert_eq!(cache.slot("gfx/b.png"), Some(&Slot::Ready((1, 3))));
+	}
+
+	#[test]
+	fn images_nobody_drew_are_dropped() {
+		let mut cache = TextureCache::new(ImageLoader::new(files(), 1));
+		cache.warm("gfx/a.png");
+		pump_until(&mut cache, "gfx/a.png");
+		cache.drop_decoded(Instant::now() - Duration::from_secs(60));
+		assert!(matches!(cache.slot("gfx/a.png"), Some(Slot::Decoded(..))), "not old enough");
+		cache.drop_decoded(Instant::now() + Duration::from_secs(1));
+		assert_eq!(cache.slot("gfx/a.png"), None, "dropped; a later warm or draw decodes it again");
 	}
 
 	#[test]

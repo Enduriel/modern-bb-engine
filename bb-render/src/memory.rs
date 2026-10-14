@@ -1,6 +1,6 @@
-//! What the renderer holds, for the memory inventory: every texture it
-//! loaded, by path, with its GPU bytes. Nothing is evicted yet, so this only grows
-//! over a session. No CPU copies are kept: a decoded image is dropped once uploaded.
+//! What the renderer holds, for the memory inventory: every texture on
+//! the GPU, by path, with its bytes, and the warmed images waiting on the CPU for a draw
+//! (see [`crate::residency`]). A decoded image is dropped once uploaded.
 
 use bb_assets::{Slot, TextureCache};
 
@@ -26,6 +26,9 @@ pub struct RendererMemory {
 	/// Paths still loading, and paths that failed with nothing in their place.
 	pub loading: usize,
 	pub failed: usize,
+	/// Warmed images waiting on the CPU for a draw: how many, and their bytes.
+	pub held: usize,
+	pub held_bytes: u64,
 	/// The fog of war's mask.
 	pub fog_mask: u64,
 	/// The UI page's texture, when the game draws one (not the renderer's own).
@@ -43,7 +46,8 @@ impl std::fmt::Display for RendererMemory {
 		write!(
 			f,
 			"{:.1} MiB on the GPU: {} textures {:.1} MiB ({stand_ins} standing in for missing ones), \
-			fog mask {:.1} MiB, UI page {:.1} MiB, own {:.1} MiB; {} loading, {} failed",
+			fog mask {:.1} MiB, UI page {:.1} MiB, own {:.1} MiB; {} loading, {} failed; \
+			{} warmed waiting for a draw ({:.1} MiB on the CPU)",
 			mib(self.total()),
 			self.textures.len(),
 			mib(self.texture_bytes()),
@@ -52,6 +56,8 @@ impl std::fmt::Display for RendererMemory {
 			mib(self.own),
 			self.loading,
 			self.failed,
+			self.held,
+			mib(self.held_bytes),
 		)
 	}
 }
@@ -76,6 +82,11 @@ impl RendererMemory {
 				Slot::Missing(texture, _) => (texture, true),
 				Slot::Loading => {
 					memory.loading += 1;
+					continue;
+				}
+				Slot::Decoded(image, _) => {
+					memory.held += 1;
+					memory.held_bytes += image.rgba.len() as u64;
 					continue;
 				}
 				Slot::Failed(_) => {

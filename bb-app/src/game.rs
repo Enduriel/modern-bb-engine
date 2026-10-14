@@ -3,6 +3,7 @@
 //! the window presents. The scripts' UI is the [`Front`]'s: headless, or with the `ui`
 //! feature the real page drawn over the frame.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, GameEngine};
 use bb_render::portrait::PortraitRequest;
 use bb_render::world::WorldView;
-use bb_render::{Atlases, Clock, Gpu, RenderTarget, WorldRenderer, write_png};
+use bb_render::{Atlases, Clock, Discard, FrameStats, Gpu, RenderTarget, WorldRenderer, write_png};
 use squirrel::{SqStrongRef, SqTable};
 use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
@@ -22,6 +23,10 @@ const MAX_FRAME_MS: f64 = 250.0;
 pub struct Game {
 	front: Front,
 	renderer: WorldRenderer,
+	/// The battle sprites' atlases hinted while no battle map was set up (the company's
+	/// units on the world map), warmed whenever one is; and whether one was last frame.
+	battle_atlases: HashSet<String>,
+	battle_map: bool,
 	cursor: (i64, i64),
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
@@ -45,12 +50,17 @@ impl Game {
 		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
 		let renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
-		Ok(Game {
+		let mut game = Game {
 			front,
 			renderer,
+			battle_atlases: HashSet::new(),
+			battle_map: false,
 			cursor: (0, 0),
 			modifier: 0,
-		})
+		};
+		// What the boot hinted (worldgen's brushes) starts decoding before the first frame.
+		game.follow_scenes();
+		Ok(game)
 	}
 
 	/// The scripts and their UI.
@@ -82,6 +92,12 @@ impl Game {
 	/// Run the Squirrel `code`.
 	pub fn run_script(&self, code: &str) -> Result<(), String> {
 		self.engine().run_script(code, "script")
+	}
+
+	/// The bytes of textures kept on the GPU before the least recently drawn go (see
+	/// `bb_render::residency`).
+	pub fn set_texture_budget(&mut self, bytes: u64) {
+		self.renderer.set_texture_budget(bytes);
 	}
 
 	/// Track which parts of the atlases are drawn from now on (see
@@ -187,9 +203,12 @@ impl Game {
 	}
 
 	/// Draw what the player sees now into `target`.
-	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
+	/// Returns what the map drew (and the cursor): how many sprites, and how many waited
+	/// for their atlas.
+	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) -> FrameStats {
+		self.renderer.begin_frame();
+		self.follow_scenes();
 		let engine = self.front.engine();
-		self.renderer.prefetch(engine.sprites().take_hints());
 		self.renderer.set_clock(Clock {
 			real: engine.time().real_seconds() as f32,
 			virtual_time: engine.time().virtual_seconds() as f32,
@@ -198,7 +217,8 @@ impl Game {
 		let (width, height) = (target.width, target.height);
 		// The screen the scripts think in maps onto the frame.
 		let fit = width as f32 / self.screen().0 as f32;
-		if tactical_visible(engine) {
+		let (tactical, world) = (tactical_visible(engine), world_visible(engine));
+		let stats = if tactical {
 			let scene = engine.tactical_scene();
 			let view = WorldView {
 				center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
@@ -208,8 +228,8 @@ impl Game {
 			};
 			engine.sprites().with(|registry| {
 				self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady)
-			});
-		} else if world_visible(engine) {
+			})
+		} else if world {
 			if let Some(patch) = engine.world_grid().take_fog_patch() {
 				self.renderer.update_fog(gpu, &patch);
 			}
@@ -224,32 +244,64 @@ impl Game {
 			let scene = engine.world_scene_where(|pos| view.shows(pos));
 			engine.sprites().with(|registry| {
 				self.renderer.draw(gpu, target, &scene, registry, &view, Atlases::DrawReady)
-			});
+			})
 		} else {
 			// Neither shows (the main menu, after `World.setVisible(false)`): the UI is
 			// drawn over an empty frame, not the last campaign's map.
 			target.clear(gpu);
-		}
+			FrameStats::default()
+		};
 		// The UI over everything, with the portraits it asked for.
 		let renderer = &mut self.renderer;
 		self.front
 			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
 		self.front.draw(gpu, target);
-		self.draw_cursor(gpu, target, fit);
+		let cursor = self.draw_cursor(gpu, target, fit);
+		FrameStats {
+			quads: stats.quads + cursor.quads,
+			waiting: stats.waiting + cursor.waiting,
+			failed: stats.failed + cursor.failed,
+		}
+	}
+
+	/// What the scenes ask of the renderer this frame: the textures of those the game
+	/// discarded go, and the atlases hinted are warmed (see `bb_render::residency`). A
+	/// battle sprite's only while a battle map is set up; the rest wait for one.
+	fn follow_scenes(&mut self) {
+		let engine = self.front.engine();
+		for discard in engine.take_discards() {
+			match discard {
+				squirrel_bb::Discard::Battle => self.renderer.discard(Discard::Battle),
+				squirrel_bb::Discard::Campaign => {
+					self.renderer.discard(Discard::Campaign);
+					self.battle_atlases.clear();
+				}
+				// The new campaign draws the old one's atlases again.
+				squirrel_bb::Discard::Load => {}
+			}
+		}
+		self.renderer.prefetch(engine.sprites().take_hints());
+		let battle_hints = engine.sprites().take_battle_hints();
+		let battle_map = engine.has_battle_map();
+		self.battle_atlases.extend(battle_hints.iter().cloned());
+		if battle_map && !self.battle_map {
+			self.renderer.prefetch(self.battle_atlases.iter().cloned());
+		} else if battle_map {
+			self.renderer.prefetch(battle_hints);
+		}
+		self.battle_map = battle_map;
 	}
 
 	/// The mouse cursor the scripts chose, last, over the UI, where they last put it,
 	/// unscaled (the original's software cursor); none while the system's shows.
-	fn draw_cursor(&mut self, gpu: &Gpu, target: &RenderTarget, fit: f32) {
+	fn draw_cursor(&mut self, gpu: &Gpu, target: &RenderTarget, fit: f32) -> FrameStats {
 		let engine = self.front.engine();
 		let (look, (x, y)) = engine.cursor();
-		let Some(brush) = look.brush.filter(|_| !look.hardware) else { return };
+		let Some(brush) = look.brush.filter(|_| !look.hardware) else { return FrameStats::default() };
 		let since = engine.time().virtual_seconds() as f32 - look.since;
 		// Screen pixels from the window's centre, y up.
 		let at = [x as f32 * fit - target.width as f32 * 0.5, target.height as f32 * 0.5 - y as f32 * fit];
-		engine.sprites().with(|registry| {
-			self.renderer.draw_cursor(gpu, target, registry, &brush, since, at);
-		});
+		engine.sprites().with(|registry| self.renderer.draw_cursor(gpu, target, registry, &brush, since, at))
 	}
 
 	/// Whether the scripts want the system's cursor (`UseHardwareCursor`) rather than

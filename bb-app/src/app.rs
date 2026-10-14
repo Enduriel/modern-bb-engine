@@ -68,6 +68,9 @@ struct Running {
 	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
 	stats_frames: (u32, Duration),
+	/// Since the last log, the frames that drew sprites without their atlas (still
+	/// loading), and those sprites.
+	stats_waiting: (u32, usize),
 	/// Whether the system's cursor shows over the window (the game draws its own
 	/// otherwise), and which, as last set.
 	system_cursor: Option<(bool, String)>,
@@ -167,6 +170,9 @@ impl App {
 		if std::env::var_os("BB_TEXTURE_USAGE").is_some_and(|v| v != "0") {
 			game.track_texture_usage();
 		}
+		if let Some(mib) = self.settings.texture_budget_mib() {
+			game.set_texture_budget(mib << 20);
+		}
 		let size = window.inner_size();
 		eprintln!(
 			"video: {}x{} {placement:?} on a {}x{} monitor, the window {}x{} (scale {})",
@@ -218,6 +224,7 @@ impl App {
 			frames: 0,
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
+			stats_waiting: (0, 0),
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
@@ -338,7 +345,11 @@ impl Running {
 			let (frames, work) = std::mem::take(&mut self.stats_frames);
 			if frames > 0 {
 				let ms = work.as_secs_f64() * 1000.0 / f64::from(frames);
-				eprintln!("frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting)");
+				let (waited, sprites) = std::mem::take(&mut self.stats_waiting);
+				eprintln!(
+					"frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting); \
+					{waited} drew without {sprites} sprites whose atlas was still loading"
+				);
 			}
 			self.next_stats = Some(now + Duration::from_secs(5));
 		}
@@ -362,7 +373,11 @@ impl Running {
 		if (self.target.width, self.target.height) != (width, height) {
 			self.target = RenderTarget::new(&self.gpu, width, height);
 		}
-		self.game.draw(&self.gpu, &self.target);
+		let drawn = self.game.draw(&self.gpu, &self.target);
+		if drawn.waiting > 0 {
+			self.stats_waiting.0 += 1;
+			self.stats_waiting.1 += drawn.waiting;
+		}
 		let texture = match self.surface.get_current_texture() {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
 			wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {

@@ -3,8 +3,10 @@
 //! No preload list is read. An atlas starts decoding on a
 //! worker thread when a script hints at it (a brush set on a sprite, tile or detail,
 //! or `Tactical.addResource`; see `squirrel_bb::Sprites::take_hints`) or when a frame
-//! first needs it. A live frame skips sprites whose atlas isn't ready yet, and they
-//! appear once it is; a frame for a screenshot waits for every atlas instead.
+//! first needs it, and goes to the GPU when a frame draws it; what no frame draws for a
+//! while is dropped again ([`crate::residency`]). A live frame skips sprites whose atlas
+//! isn't ready yet, and they appear once it is; a frame for a screenshot waits for every
+//! atlas instead.
 
 use std::sync::Arc;
 
@@ -16,6 +18,7 @@ use squirrel_bb::scene::tactical::TacticalScene;
 use crate::fog::FogPass;
 use crate::gpu::Gpu;
 use crate::labels::{LabelFont, WHITE};
+use crate::residency::{Drawer, Residency};
 use crate::sprite::{Quad, SceneUniforms, SpriteRenderer};
 use crate::tactical::tactical_quads;
 use crate::target::RenderTarget;
@@ -30,6 +33,15 @@ pub enum Atlases {
 	DrawReady,
 	/// Load every atlas the frame needs first (screenshots, tests).
 	WaitForAll,
+}
+
+/// A scene the game discarded, whose textures go (see [`crate::residency`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Discard {
+	/// A battle ended (`Tactical.clearScene`).
+	Battle,
+	/// The campaign was left (`World.clearScene`).
+	Campaign,
 }
 
 /// What one frame drew.
@@ -61,6 +73,8 @@ pub struct WorldRenderer {
 	depth_of_field: bool,
 	/// Which parts of the atlases are drawn, when tracked ([`WorldRenderer::track_usage`]).
 	usage: Option<crate::usage::TextureUsage>,
+	/// When each texture was last drawn, for which stay on the GPU.
+	residency: Residency,
 }
 
 /// The game's clocks, in seconds.
@@ -121,6 +135,7 @@ impl WorldRenderer {
 			clock: Clock::default(),
 			depth_of_field: false,
 			usage: None,
+			residency: Residency::new(gpu.texture_budget()),
 		}
 	}
 
@@ -177,12 +192,67 @@ impl WorldRenderer {
 		self.depth_of_field = on;
 	}
 
-	/// Start loading `paths` (the scripts' hints) in the background. Only images are
-	/// loaded here; other hinted resources, such as sounds, are left to their own
-	/// subsystem.
+	/// Start decoding `paths` (the scripts' hints) in the background, for a draw to
+	/// upload (see [`crate::residency`]). Only images are loaded here; other hinted
+	/// resources, such as sounds, are left to their own subsystem.
 	pub fn prefetch(&mut self, paths: impl IntoIterator<Item = String>) {
 		for path in paths.into_iter().filter(|p| p.ends_with(".png")) {
-			self.textures.prefetch(&path);
+			self.textures.warm(&path);
+		}
+	}
+
+	/// A new frame: what it draws counts as drawn now (see [`crate::residency`]).
+	pub fn begin_frame(&mut self) {
+		self.residency.next_frame();
+	}
+
+	/// The bytes of textures kept before the least recently drawn go.
+	pub fn set_texture_budget(&mut self, bytes: u64) {
+		self.residency.set_budget(bytes);
+	}
+
+	/// The game discarded a scene: what only it needed goes, and the warmed images no
+	/// draw asked for.
+	pub fn discard(&mut self, discard: Discard) {
+		self.textures.drop_all_decoded();
+		let resident = self.resident();
+		let gone = match discard {
+			Discard::Battle => self.residency.battle_discarded(&resident),
+			Discard::Campaign => self.residency.campaign_discarded(&resident),
+		};
+		for path in gone {
+			self.textures.remove(&path);
+		}
+	}
+
+	/// The textures on the GPU by path, with their bytes. The "texture missing"
+	/// stand-ins aren't counted: a dropped one would only fail again.
+	fn resident(&self) -> Vec<(String, u64)> {
+		self.textures
+			.slots()
+			.filter_map(|(path, slot)| match slot {
+				Slot::Ready(texture) => Some((path.to_string(), texture.bytes())),
+				_ => None,
+			})
+			.collect()
+	}
+
+	/// Keep the textures within the budget, and the warmed images too, the oldest
+	/// going first.
+	fn fit_budget(&mut self) {
+		let resident = self.resident();
+		for path in self.residency.over_budget(&resident) {
+			self.textures.remove(&path);
+		}
+		let mut held = self.textures.decoded();
+		let mut total: u64 = held.iter().map(|(_, _, bytes)| bytes).sum();
+		held.sort_by_key(|(_, since, _)| *since);
+		for (path, _, bytes) in held {
+			if total <= self.residency.budget() {
+				break;
+			}
+			total -= bytes;
+			self.textures.remove(&path);
 		}
 	}
 
@@ -229,9 +299,10 @@ impl WorldRenderer {
 					let _ = self.textures.get_now(path, upload);
 				}
 				Atlases::DrawReady => {
-					let _ = self.textures.get(path);
+					let _ = self.textures.get_or_upload(path, upload);
 				}
 			}
+			self.residency.drawn(path, Drawer::World);
 		}
 
 		// The frame's atlases, renumbered; `None` for one not usable.
@@ -318,6 +389,7 @@ impl WorldRenderer {
 
 		self.sprites
 			.draw(gpu, target, &uniforms, None, &labels, &ready);
+		self.fit_budget();
 		stats
 	}
 
@@ -343,7 +415,9 @@ impl WorldRenderer {
 			dof_strength: crate::tactical::dof_strength(self.depth_of_field),
 			..view.uniforms()
 		};
-		self.draw_quads(gpu, target, &map, &uniforms, Some(CLEAR), atlases)
+		let stats = self.draw_quads(gpu, target, &map, &uniforms, Some(CLEAR), atlases, Drawer::Battle);
+		self.fit_budget();
+		stats
 	}
 
 	/// Entity `portrait` drawn on its own, without the sprites named in `hidden` (see
@@ -363,7 +437,7 @@ impl WorldRenderer {
 		self.record_usage(&map, 1.0, None);
 		let target = RenderTarget::new(gpu, width, height);
 		let uniforms = SceneUniforms::centered([0.0, 0.0], width as f32, height as f32);
-		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll);
+		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll, Drawer::Other);
 		target.read(gpu).map(Some)
 	}
 
@@ -386,7 +460,7 @@ impl WorldRenderer {
 		};
 		let uniforms = SceneUniforms::centered([0.0, 0.0], target.width as f32, target.height as f32);
 		self.record_usage(&map, 1.0, None);
-		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady)
+		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady, Drawer::Other)
 	}
 
 	/// Draw `map`'s quads into `target`, over `clear` or what it holds, with the atlases
@@ -399,6 +473,7 @@ impl WorldRenderer {
 		uniforms: &SceneUniforms,
 		clear: Option<[f64; 4]>,
 		atlases: Atlases,
+		drawer: Drawer,
 	) -> FrameStats {
 		let upload = |path: &str, image: bb_assets::Image| {
 			if path.starts_with(FONT_DIR) {
@@ -414,9 +489,10 @@ impl WorldRenderer {
 					let _ = self.textures.get_now(path, upload);
 				}
 				Atlases::DrawReady => {
-					let _ = self.textures.get(path);
+					let _ = self.textures.get_or_upload(path, upload);
 				}
 			}
+			self.residency.drawn(path, drawer);
 		}
 		let mut stats = FrameStats::default();
 		let mut ready: Vec<&GpuTexture> = Vec::new();

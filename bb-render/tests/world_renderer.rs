@@ -10,7 +10,7 @@ use bb_assets::{
 	BrushFrame, BrushSheet, BrushSprite, FileSource, SheetHeader, SpriteRegistry, name_hash,
 };
 use bb_render::world::WorldView;
-use bb_render::{Atlases, Gpu, RenderTarget, WorldRenderer};
+use bb_render::{Atlases, Discard, Gpu, RenderTarget, WorldRenderer};
 use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
 use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
@@ -146,6 +146,63 @@ fn atlases_load_on_first_use() {
 	let atlas = memory.textures.iter().find(|t| t.path == "gfx/test.png").expect("the atlas counted");
 	assert_eq!((atlas.width, atlas.height, atlas.bytes, atlas.stand_in), (2, 2, 20, false));
 	assert!(memory.own > 0 && memory.total() >= memory.texture_bytes() + memory.own);
+}
+
+/// A hinted atlas waits on the CPU until a frame draws it; then it's on the GPU until the
+/// scene that drew it is discarded: a battle's end keeps what the world map drew, the
+/// campaign's end doesn't.
+#[test]
+fn a_hinted_atlas_goes_to_the_gpu_when_drawn_and_leaves_when_unused() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	let files = Files(HashMap::from([("gfx/test.png".to_string(), atlas_png())]));
+	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	let registry = registry();
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 4,
+		height: 4,
+	};
+	let target = RenderTarget::new(&gpu, 4, 4);
+	let empty = WorldScene::default();
+	let on_gpu = |r: &WorldRenderer| r.memory().textures.iter().any(|t| t.path == "gfx/test.png");
+
+	renderer.prefetch(["gfx/test.png".to_string()]);
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+	while renderer.memory().held == 0 {
+		assert!(std::time::Instant::now() < deadline, "never decoded");
+		renderer.draw(&gpu, &target, &empty, &registry, &view, Atlases::DrawReady);
+	}
+	assert!(!on_gpu(&renderer), "hinted, not drawn: waiting on the CPU");
+
+	let scene = WorldScene {
+		tiles: vec![SceneTile {
+			col: 0,
+			row: 0,
+			pos: (0.0, 0.0),
+			terrain: 2,
+			discovered: true,
+			brush: "dot".into(),
+			flipped: false,
+			details: Vec::new(),
+		}],
+		..WorldScene::default()
+	};
+	let stats = renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::DrawReady);
+	assert_eq!((stats.quads, stats.waiting), (1, 0), "drawn in the same frame it was needed");
+	assert!(on_gpu(&renderer) && renderer.memory().held == 0);
+
+	renderer.begin_frame();
+	renderer.discard(Discard::Battle);
+	assert!(on_gpu(&renderer), "the world map's, after a battle");
+	renderer.discard(Discard::Campaign);
+	assert!(!on_gpu(&renderer), "the campaign left: dropped");
 }
 
 /// A missing atlas draws the game's "texture missing" picture (`error.png`) in its

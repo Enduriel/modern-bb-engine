@@ -14,6 +14,8 @@ pub struct Gpu {
 	pub queue: wgpu::Queue,
 	/// The adapter's name and backend, for logs.
 	pub adapter: String,
+	/// Whether the GPU has memory of its own, shares the system's, or is software.
+	pub device_type: wgpu::DeviceType,
 	/// The adapter, kept when opened for a window (to query its surface).
 	surface_adapter: Option<wgpu::Adapter>,
 }
@@ -43,6 +45,7 @@ impl Gpu {
 			device,
 			queue,
 			adapter: format!("{} ({:?})", info.name, info.backend),
+			device_type: info.device_type,
 			surface_adapter: None,
 		})
 	}
@@ -69,6 +72,7 @@ impl Gpu {
 			device,
 			queue,
 			adapter: format!("{} ({:?})", info.name, info.backend),
+			device_type: info.device_type,
 			surface_adapter: Some(adapter),
 		})
 	}
@@ -84,6 +88,19 @@ impl Gpu {
 	pub fn allocator_use(&self) -> Option<(u64, u64)> {
 		let report = self.device.generate_allocator_report()?;
 		Some((report.total_allocated_bytes, report.total_reserved_bytes))
+	}
+
+	/// The textures kept before the least recently drawn go (see `crate::residency`):
+	/// 1 GiB on a GPU with memory of its own, 384 MiB on one that shares the system's
+	/// (integrated chips, the Steam Deck's) or a software one, where every byte comes
+	/// out of the game's RAM. A fresh world draws about 260 MiB of whole atlases, and a
+	/// battle adds 100–150 more, so a discrete GPU keeps both and a shared one keeps the
+	/// scene in view. The settings file can set it (`render.texture_budget_mib`).
+	pub fn texture_budget(&self) -> u64 {
+		match self.device_type {
+			wgpu::DeviceType::DiscreteGpu => 1 << 30,
+			_ => 384 << 20,
+		}
 	}
 
 	/// Block until the GPU has finished all submitted work.

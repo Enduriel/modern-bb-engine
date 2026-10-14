@@ -47,6 +47,12 @@ impl Settings {
 		video::read(&self.text, start)
 	}
 
+	/// The GPU memory for textures, in MiB (`render.texture_budget_mib`), if the file
+	/// sets one; otherwise it follows the GPU (`bb_render::Gpu::texture_budget`).
+	pub fn texture_budget_mib(&self) -> Option<u64> {
+		self.text.get("render.texture_budget_mib")?.parse().ok().filter(|&mib| mib > 0)
+	}
+
 	/// Keep `mode`, in the file at once.
 	pub fn save_video_mode(&mut self, mode: &VideoMode) -> Result<(), String> {
 		video::write(&mut self.text, mode);
@@ -80,7 +86,11 @@ mod tests {
 			..start
 		};
 		settings.save_video_mode(&mode).expect("save");
-		assert_eq!(Settings::load(Some(path)).video_mode(start), mode);
+		assert_eq!(Settings::load(Some(path.clone())).video_mode(start), mode);
+		assert_eq!(Settings::load(Some(path.clone())).texture_budget_mib(), None, "the GPU's by default");
+		let text = std::fs::read_to_string(&path).expect("the file") + "render.texture_budget_mib = 256\n";
+		std::fs::write(&path, text).expect("write");
+		assert_eq!(Settings::load(Some(path)).texture_budget_mib(), Some(256));
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }
