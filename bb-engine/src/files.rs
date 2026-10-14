@@ -10,7 +10,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Mutex;
 
-use bb_assets::FileSource;
+use bb_assets::{FileSource, FileStream};
 
 use crate::vfs::DatArchive;
 
@@ -53,6 +53,14 @@ impl FileSource for GameFiles {
 
 	/// The archive the file comes from (the last that has it, as `read` takes), and the
 	/// CRC32 and size its central directory records.
+	/// From the last archive that has `path` (as a read resolves it), if that one keeps it
+	/// uncompressed: never an earlier archive's copy that a mod replaced.
+	fn stream(&self, path: &str) -> Option<Box<dyn FileStream>> {
+		let archive = self.archives.iter().rev().find(|archive| archive.lock().unwrap().contains(path))?;
+		let window = archive.lock().unwrap().stream(path)?;
+		Some(Box::new(window))
+	}
+
 	fn identity(&self, path: &str) -> Option<String> {
 		self.archives.iter().rev().find_map(|archive| {
 			let mut archive = archive.lock().unwrap();

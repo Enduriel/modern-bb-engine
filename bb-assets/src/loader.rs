@@ -34,6 +34,19 @@ pub trait FileSource: Send + Sync {
 	fn identity(&self, _path: &str) -> Option<String> {
 		None
 	}
+
+	/// The file at `path` to read in place, when its archive keeps it uncompressed: for
+	/// a long sound decoded as it plays, with none of it kept in memory. `None` if no
+	/// archive has it, or the one that does compressed it (read it whole instead).
+	fn stream(&self, _path: &str) -> Option<Box<dyn FileStream>> {
+		None
+	}
+}
+
+/// A file read in place ([`FileSource::stream`]).
+pub trait FileStream: std::io::Read + std::io::Seek + Send + Sync {
+	/// Its length in bytes.
+	fn len(&self) -> u64;
 }
 
 /// A finished decode: the path asked for and its image or why it failed.

@@ -3,17 +3,20 @@
 //!
 //! A short sound is decoded once, whole, and kept: the next play of it starts from
 //! memory. A long one (music, the ambience loops) is decoded as it plays, on kira's
-//! side, from its file's bytes, so a 13 MB rain loop costs no decoding on the game's
-//! thread. A file that's missing or doesn't decode is remembered as such, and reported
-//! once.
+//! side, so a 13 MB rain loop costs no decoding on the game's thread: read in place from
+//! its archive when the archive stores it uncompressed (all of vanilla's do), or else
+//! from its file's bytes. A file that's missing or doesn't decode is remembered as such,
+//! and reported once.
 //!
 //! What stays in memory: the original keeps a sound only while one of its instances
 //! plays (`0x5283e0`).
-//! - A long sound's bytes are held by the voices playing it, as the original's, and go
-//!   when the last one ends; the bank remembers only its length, and reads it again
-//!   for its next play (on a loader thread when it's prefetched, as the next track is).
-//!   Holding them all, every track and ambience loop ever played stayed in memory, up to
-//!   about 730 MB for vanilla's.
+//! - A long sound read in place keeps nothing but its length; its voices read the archive
+//!   as they play.
+//! - A long sound read whole (a mod's compressed file) is held by the voices playing it,
+//!   as the original's, and goes when the last one ends; the bank remembers only its
+//!   length, and reads it again for its next play (on a loader thread when it's
+//!   prefetched, as the next track is). Holding them all, every track and ambience loop
+//!   ever played stayed in memory, up to about 730 MB for vanilla's.
 //! - Decoded short sounds are kept beyond their play, as a cache, up to [`KEEP_BYTES`]:
 //!   past it the least recently played go (and are read again if they play again).
 //! - What's read ahead and not yet played is kept up to [`KEEP_READ_AHEAD`], the oldest
@@ -31,15 +34,16 @@
 //! ambience loop 15 ms, an effect well under 1 ms; measured 2026-10-14).
 
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 
-use bb_assets::FileSource;
+use bb_assets::{FileSource, FileStream};
 use kira::sound::FromFileError;
 use kira::sound::static_sound::StaticSoundData;
 use kira::sound::streaming::StreamingSoundData;
-use squirrel_bb::sound_length_ms;
+use squirrel_bb::{sound_length_ms, sound_length_ms_in};
+use symphonia::core::io::MediaSource;
 
 /// Files at least this large stream rather than decode whole.
 const STREAM_FROM: usize = 1 << 20;
@@ -67,6 +71,8 @@ pub enum Sound {
 /// What the bank knows of a sound.
 enum Entry {
 	Static(StaticSoundData, u32),
+	/// A long sound read in place from its archive: its length.
+	InPlace(u32),
 	/// A long sound's file, while a voice holds it, and its length.
 	Bytes(Weak<Box<[u8]>>, u32),
 	Missing,
@@ -75,9 +81,36 @@ enum Entry {
 /// A sound read from the files.
 enum Loaded {
 	Static(StaticSoundData, u32),
+	/// A long sound read in place from its archive as it plays: its length.
+	InPlace(u32),
 	/// A long sound's file, decoded as it plays, and its length.
 	Bytes(Arc<Box<[u8]>>, u32),
 	Missing,
+}
+
+/// A long sound's file in its archive, as symphonia reads its media.
+struct InPlace(Box<dyn FileStream>);
+
+impl Read for InPlace {
+	fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+		self.0.read(out)
+	}
+}
+
+impl Seek for InPlace {
+	fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+		self.0.seek(to)
+	}
+}
+
+impl MediaSource for InPlace {
+	fn is_seekable(&self) -> bool {
+		true
+	}
+
+	fn byte_len(&self) -> Option<u64> {
+		Some(self.0.len())
+	}
 }
 
 /// A long sound's file, shared by the voices playing it. Boxed inside the `Arc`, so the
@@ -123,6 +156,19 @@ impl SoundBank {
 		match self.entry(path) {
 			Loaded::Static(data, _) => Some(Sound::Static(data)),
 			// The voice holds the bytes from here on.
+			Loaded::InPlace(_) => {
+				let Some(file) = self.files.stream(path) else {
+					eprintln!("audio: {path}: no longer in its archive");
+					return None;
+				};
+				match StreamingSoundData::from_media_source(InPlace(file)) {
+					Ok(data) => Some(Sound::Streaming(data)),
+					Err(e) => {
+						eprintln!("audio: {path}: {e}");
+						None
+					}
+				}
+			}
 			Loaded::Bytes(bytes, _) => match StreamingSoundData::from_cursor(Cursor::new(FileBytes(bytes))) {
 				Ok(data) => Some(Sound::Streaming(data)),
 				Err(e) => {
@@ -137,11 +183,11 @@ impl SoundBank {
 	/// How long the sound at `path` plays at normal speed, in milliseconds (0 for
 	/// none), read on its first use like [`get`](Self::get).
 	pub fn length_ms(&mut self, path: &str) -> u32 {
-		if let Some((Entry::Static(_, ms) | Entry::Bytes(_, ms), _)) = self.entries.get(path) {
+		if let Some((Entry::Static(_, ms) | Entry::InPlace(ms) | Entry::Bytes(_, ms), _)) = self.entries.get(path) {
 			return *ms;
 		}
 		match self.entry(path) {
-			Loaded::Static(_, ms) | Loaded::Bytes(_, ms) => ms,
+			Loaded::Static(_, ms) | Loaded::InPlace(ms) | Loaded::Bytes(_, ms) => ms,
 			Loaded::Missing => 0,
 		}
 	}
@@ -213,6 +259,7 @@ impl SoundBank {
 			let bytes = match &loaded {
 				Loaded::Static(data, _) => data.num_frames() * FRAME_BYTES,
 				Loaded::Bytes(bytes, _) => bytes.len(),
+				Loaded::InPlace(_) => 0,
 				Loaded::Missing => 0,
 			};
 			self.read_ahead.insert(path, (loaded, asked, bytes));
@@ -247,6 +294,7 @@ impl SoundBank {
 		if let Some((entry, used)) = self.entries.get_mut(path) {
 			let kept = match entry {
 				Entry::Static(data, ms) => Some(Loaded::Static(data.clone(), *ms)),
+				Entry::InPlace(ms) => Some(Loaded::InPlace(*ms)),
 				Entry::Bytes(bytes, ms) => bytes.upgrade().map(|bytes| Loaded::Bytes(bytes, *ms)),
 				Entry::Missing => Some(Loaded::Missing),
 			};
@@ -262,6 +310,7 @@ impl SoundBank {
 		};
 		let entry = match &loaded {
 			Loaded::Static(data, ms) => Entry::Static(data.clone(), *ms),
+			Loaded::InPlace(ms) => Entry::InPlace(*ms),
 			Loaded::Bytes(bytes, ms) => Entry::Bytes(Arc::downgrade(bytes), *ms),
 			Loaded::Missing => Entry::Missing,
 		};
@@ -291,6 +340,15 @@ impl SoundBank {
 
 /// Read `path` from `files`, decoding it if short.
 fn load(files: &dyn FileSource, path: &str) -> Loaded {
+	if let Some(mut file) = files.stream(path).filter(|f| f.len() >= STREAM_FROM as u64) {
+		return match in_place_length_ms(&mut *file) {
+			Some(length) => Loaded::InPlace(length),
+			None => {
+				eprintln!("audio: {path}: not a sound");
+				Loaded::Missing
+			}
+		};
+	}
 	let Some(bytes) = files.read(path) else {
 		eprintln!("audio: {path}: no such file");
 		return Loaded::Missing;
@@ -306,6 +364,21 @@ fn load(files: &dyn FileSource, path: &str) -> Loaded {
 			Loaded::Missing
 		}
 	}
+}
+
+/// A long sound's length, from the start and the end of its file (see
+/// [`sound_length_ms_in`]).
+fn in_place_length_ms(file: &mut dyn FileStream) -> Option<u32> {
+	const SPAN: u64 = 64 << 10;
+	let len = file.len();
+	let mut head = Vec::new();
+	file.seek(SeekFrom::Start(0)).ok()?;
+	(&mut *file).take(SPAN).read_to_end(&mut head).ok()?;
+	let mut tail = Vec::new();
+	file.seek(SeekFrom::Start(len.saturating_sub(SPAN))).ok()?;
+	(&mut *file).take(SPAN).read_to_end(&mut tail).ok()?;
+	file.seek(SeekFrom::Start(0)).ok()?;
+	sound_length_ms_in(&head, &tail, len)
 }
 
 fn decoded_bytes(entry: &Entry) -> usize {
@@ -354,6 +427,54 @@ mod tests {
 		assert_eq!(bank.length_ms("a.wav"), 100);
 		assert_eq!(*files.0.lock().unwrap(), ["a.wav on sound loader"]);
 		assert!(bank.get("missing.wav").is_none());
+	}
+
+	/// [`Files`], whose archive stores its files uncompressed: they can be read in place.
+	struct Stored(Files);
+
+	struct InMemory(std::io::Cursor<Vec<u8>>);
+
+	impl Read for InMemory {
+		fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+			self.0.read(out)
+		}
+	}
+
+	impl Seek for InMemory {
+		fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+			self.0.seek(to)
+		}
+	}
+
+	impl FileStream for InMemory {
+		fn len(&self) -> u64 {
+			self.0.get_ref().len() as u64
+		}
+	}
+
+	impl FileSource for Stored {
+		fn read(&self, path: &str) -> Option<Vec<u8>> {
+			self.0.read(path)
+		}
+
+		fn stream(&self, path: &str) -> Option<Box<dyn FileStream>> {
+			let bytes = self.0.read(path)?;
+			self.0 .0.lock().unwrap().push(format!("{path} streamed"));
+			Some(Box::new(InMemory(std::io::Cursor::new(bytes))))
+		}
+	}
+
+	#[test]
+	fn a_long_sound_in_an_uncompressed_archive_plays_in_place() {
+		let files = Arc::new(Stored(Files(Mutex::new(Vec::new()))));
+		let mut bank = SoundBank::new(files.clone());
+		assert_eq!(bank.length_ms("long.wav"), 15_000, "from the file's start and end");
+		let playing = bank.get("long.wav");
+		assert!(matches!(playing, Some(Sound::Streaming(_))));
+		assert_eq!(bank.memory_use().2, 0, "none of its file held: the voice reads it in place");
+		assert!(bank.is_loaded("long.wav"), "known: nothing to read ahead");
+		// A short sound is still read whole and decoded.
+		assert!(matches!(bank.get("a.wav"), Some(Sound::Static(_))));
 	}
 
 	#[test]

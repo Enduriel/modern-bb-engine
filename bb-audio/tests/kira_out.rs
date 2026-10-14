@@ -52,13 +52,21 @@ fn a_game_sound_plays_through_kira_for_its_length() {
 	run(&mut out, length);
 	assert!(out.stopped(voice), "ended");
 
-	// A track streams from the file's bytes, decoded as it plays.
+	// A track streams, read in place from its archive (vanilla's store their files
+	// uncompressed) and decoded as it plays: none of its file is held.
 	let track = out.length_ms("music/title.ogg");
 	assert!(track > 60_000, "the title track is minutes long: {track}");
 	let voice = out.start("music/title.ogg", None).expect("starts");
 	out.set_paused(voice, false);
-	run(&mut out, 100);
+	// Its decoder reads ahead on a thread of its own: the position moves once it has.
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+	while out.position_ms(voice) == 0 {
+		assert!(std::time::Instant::now() < deadline, "the track never played");
+		run(&mut out, 10);
+		std::thread::sleep(std::time::Duration::from_millis(5));
+	}
 	assert!(!out.stopped(voice));
+	assert_eq!(out.bank_use().2, 0, "no file bytes held");
 	out.stop(voice);
 	assert!(out.stopped(voice));
 }

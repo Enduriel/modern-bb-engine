@@ -24,7 +24,7 @@ use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
-pub use length::sound_length_ms;
+pub use length::{sound_length_ms, sound_length_ms_in};
 pub use null_out::NullOut;
 pub use out::{AudioOut, Voice};
 

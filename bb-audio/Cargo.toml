@@ -9,6 +9,9 @@ edition = "2024"
 [dependencies]
 bb-assets = { path = "../bb-assets" }
 kira = { version = "0.12.5", default-features = false, features = ["cpal", "wav", "pcm", "ogg", "vorbis"] }
+# The decoder kira already uses (no crate of its own added: the version kira pulls in),
+# named for its `MediaSource` trait, so a long sound streams from its archive in place.
+symphonia = { version = "0.6.1", default-features = false }
 squirrel-bb = { path = "../squirrel-bb" }
 
 [dev-dependencies]

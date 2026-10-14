@@ -291,6 +291,7 @@ dependencies = [
  "kira",
  "squirrel",
  "squirrel-bb",
+ "symphonia",
 ]
 
 [[package]]

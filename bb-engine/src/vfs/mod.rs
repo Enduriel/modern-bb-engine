@@ -9,6 +9,7 @@
 //! An archive is parsed once per process ([`opened`]): every opener of the same file
 //! shares its index.
 
+mod entry_window;
 mod opened;
 mod shared_file;
 
@@ -17,11 +18,14 @@ use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
+pub use entry_window::EntryWindow;
 use shared_file::SharedFile;
 
 /// A single opened `.dat` (ZIP) archive.
 pub struct DatArchive {
 	archive: ZipArchive<SharedFile>,
+	/// The archive's file, for reading an entry in place.
+	file: SharedFile,
 	path: PathBuf,
 }
 
@@ -31,8 +35,8 @@ impl DatArchive {
 	/// whole).
 	pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
 		let path = path.as_ref().to_path_buf();
-		let archive = opened::open(&path)?;
-		Ok(DatArchive { archive, path })
+		let (archive, file) = opened::open(&path)?;
+		Ok(DatArchive { archive, file, path })
 	}
 
 	/// The path the archive was opened from.
@@ -53,6 +57,23 @@ impl DatArchive {
 		let mut bytes = Vec::with_capacity(entry.size() as usize);
 		entry.read_to_end(&mut bytes).ok()?;
 		Some(bytes)
+	}
+
+	/// The entry at `name` to read in place, if the archive stores it uncompressed (all of
+	/// vanilla's entries; a mod's zip may compress its files). `None` if there's no such
+	/// entry or it's compressed.
+	pub fn stream(&mut self, name: &str) -> Option<EntryWindow> {
+		let entry = self.archive.by_name(name).ok()?;
+		// (An encrypted entry fails to open above.)
+		if entry.compression() != zip::CompressionMethod::Stored {
+			return None;
+		}
+		Some(EntryWindow::new(self.file.clone(), entry.data_start(), entry.size()))
+	}
+
+	/// Whether the archive has an entry at `name`.
+	pub fn contains(&self, name: &str) -> bool {
+		self.archive.index_for_name(name).is_some()
 	}
 
 	/// Number of entries in the archive.

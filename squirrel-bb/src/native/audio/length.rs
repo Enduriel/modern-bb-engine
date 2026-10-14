@@ -7,10 +7,18 @@
 /// The length of the sound in `bytes`, in milliseconds, or `None` if it isn't a
 /// readable PCM wav or Ogg Vorbis file.
 pub fn sound_length_ms(bytes: &[u8]) -> Option<u32> {
-	if bytes.starts_with(b"RIFF") {
-		wav_length_ms(bytes)
-	} else if bytes.starts_with(b"OggS") {
-		ogg_length_ms(bytes)
+	sound_length_ms_in(bytes, bytes, bytes.len() as u64)
+}
+
+/// [`sound_length_ms`] from a file's start and its end, the file `len` bytes long: what a
+/// sound read in place needs, not its whole file. The start holds a wav's chunks up to its
+/// `data` (`fmt` comes first) or the Ogg Vorbis identification header; the end the last
+/// Ogg page (64 KiB of either is plenty: an Ogg page is at most 65,307 bytes).
+pub fn sound_length_ms_in(head: &[u8], tail: &[u8], len: u64) -> Option<u32> {
+	if head.starts_with(b"RIFF") {
+		wav_length_ms(head, len)
+	} else if head.starts_with(b"OggS") {
+		ogg_length_ms(head, tail)
 	} else {
 		None
 	}
@@ -24,8 +32,9 @@ fn u32_at(b: &[u8], at: usize) -> Option<u32> {
 	Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// Frames in the `data` chunk over the `fmt` chunk's sample rate.
-fn wav_length_ms(b: &[u8]) -> Option<u32> {
+/// Frames in the `data` chunk over the `fmt` chunk's sample rate, from the file's first
+/// bytes `b`, the whole file `len` bytes long.
+fn wav_length_ms(b: &[u8], len: u64) -> Option<u32> {
 	if b.get(8..12)? != b"WAVE" {
 		return None;
 	}
@@ -41,7 +50,7 @@ fn wav_length_ms(b: &[u8]) -> Option<u32> {
 				block_align = u16_at(b, body + 12);
 			}
 			// A truncated last chunk counts what's there.
-			b"data" => data = Some(size.min(b.len().saturating_sub(body))),
+			b"data" => data = Some(size.min(usize::try_from(len).unwrap_or(usize::MAX).saturating_sub(body))),
 			_ => {}
 		}
 		// Chunks are padded to an even size.
@@ -55,14 +64,14 @@ fn wav_length_ms(b: &[u8]) -> Option<u32> {
 	Some((frames * 1000 / u64::from(rate)) as u32)
 }
 
-/// The last page's granule position (the stream's length in samples) over the
-/// Vorbis identification header's sample rate.
-fn ogg_length_ms(b: &[u8]) -> Option<u32> {
+/// The last page's granule position (the stream's length in samples, from the file's end
+/// `tail`) over the Vorbis identification header's sample rate (from its start `head`).
+fn ogg_length_ms(head: &[u8], tail: &[u8]) -> Option<u32> {
 	// The identification packet: type 1, "vorbis", version, channels, rate.
-	let id = b.windows(7).position(|w| w == b"\x01vorbis")?;
-	let rate = u32_at(b, id + 12)?;
-	let last = b.windows(4).rposition(|w| w == b"OggS")?;
-	let granule = u64::from_le_bytes(b.get(last + 6..last + 14)?.try_into().ok()?);
+	let id = head.windows(7).position(|w| w == b"\x01vorbis")?;
+	let rate = u32_at(head, id + 12)?;
+	let last = tail.windows(4).rposition(|w| w == b"OggS")?;
+	let granule = u64::from_le_bytes(tail.get(last + 6..last + 14)?.try_into().ok()?);
 	if rate == 0 || granule == u64::MAX {
 		return None;
 	}
@@ -98,5 +107,11 @@ mod tests {
 		assert_eq!(sound_length_ms(&wav(44_100, 2, 44_100 * 3 / 2)), Some(1500));
 		assert_eq!(sound_length_ms(&wav(48_000, 1, 480)), Some(10));
 		assert_eq!(sound_length_ms(b"nothing"), None);
+	}
+
+	#[test]
+	fn a_wavs_length_from_its_start() {
+		let file = wav(44_100, 2, 44_100 * 3);
+		assert_eq!(sound_length_ms_in(&file[..64], &file[file.len() - 64..], file.len() as u64), Some(3000));
 	}
 }
