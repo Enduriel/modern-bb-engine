@@ -27,6 +27,43 @@ pub struct TacticalScene {
 	pub hide_trees: bool,
 	/// Particle effects (`Tactical.spawnParticleEffect`), effect by effect.
 	pub particles: Vec<crate::scene::SceneParticle>,
+	/// The other effects over the battle (icons, attacks, sprite effects,
+	/// projectiles), in the order they began.
+	pub effects: Vec<SceneEffect>,
+	/// The pools on the ground (`Tactical.spawnPoolEffect`), oldest first.
+	pub pools: Vec<ScenePool>,
+}
+
+/// An effect over the battle, as drawn now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneEffect {
+	pub brush: String,
+	/// Where its sprite's anchor is, in world units.
+	pub pos: (f32, f32),
+	pub scale: f32,
+	/// Degrees, counter-clockwise.
+	pub rotation: f32,
+	/// ARGB, its fade in the alpha.
+	pub color: u32,
+	pub mirrored: bool,
+	/// Placed by its brush's offset (projectiles), or without it (icons, attacks and
+	/// sprite effects, which the original flags so).
+	pub brush_offset: bool,
+}
+
+/// A pool on the ground, as drawn now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScenePool {
+	/// The index of its tile in [`TacticalScene::tiles`].
+	pub tile: usize,
+	pub brush: String,
+	pub pos: (f32, f32),
+	pub scale: f32,
+	/// Degrees, counter-clockwise.
+	pub rotation: f32,
+	/// ARGB.
+	pub color: u32,
+	pub mirrored: bool,
 }
 
 /// A unit or map object on the battle map.

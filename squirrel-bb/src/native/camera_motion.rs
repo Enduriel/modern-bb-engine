@@ -13,7 +13,11 @@
 //!   within its arrival radius. A speed of 0 jumps.
 //! - `zoomTo(zoom, speed)` and `zoomBy(delta)` (speed 8) ease the zoom: each update
 //!   covers `delta x speed x dt` of what's left.
-//! - The update runs once a frame, with the frame's real time.
+//! - A quake (`quake`, the battle camera's; ignored while gliding) pushes the camera
+//!   along a direction by its strength over one span of virtual time, then back over
+//!   another (`0x4bf280`, `0x4bf470`, the update's other phases).
+//! - The update runs once a frame, with the frame's real time (and the virtual time,
+//!   for quakes).
 
 /// A camera's state.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +42,20 @@ pub struct Camera {
 	ease: bool,
 	/// A glide stops where it is this close to its target (0: it lands on it).
 	radius: f32,
+	quake: Option<Quake>,
+}
+
+/// A quake in progress.
+#[derive(Clone, Debug, PartialEq)]
+struct Quake {
+	/// Where the camera was, which it returns to.
+	from: (f32, f32),
+	/// The push: direction times strength.
+	push: (f32, f32),
+	/// Virtual seconds it began at, and how long it pushes and returns.
+	start: f32,
+	out: f32,
+	back: f32,
 }
 
 /// The original's speed for `moveTo`, `moveToTile` and `moveToPos` without one.
@@ -73,9 +91,25 @@ impl Camera {
 			speed: 1024.0,
 			ease: false,
 			radius: 0.0,
+			quake: None,
 		};
 		c.zoom_changed();
 		c
+	}
+
+	/// `quake`: push along `dir` by `strength` over `out` seconds of virtual time from
+	/// `now`, then back over `back`. Not while gliding.
+	pub fn quake(&mut self, dir: (f32, f32), strength: f32, out: f32, back: f32, now: f32) {
+		if self.moving {
+			return;
+		}
+		self.quake = Some(Quake {
+			from: self.pos,
+			push: (dir.0 * strength, dir.1 * strength),
+			start: now,
+			out,
+			back,
+		});
 	}
 
 	/// The closest the zoom goes.
@@ -202,8 +236,8 @@ impl Camera {
 		near((inside(p.0, hw, x0, x1), inside(p.1, hh, y0, y1)))
 	}
 
-	/// One frame, `dt` seconds of real time (`0x52dfd0`).
-	pub fn update(&mut self, dt: f32) {
+	/// One frame, `dt` seconds of real time, at virtual time `now` (`0x52dfd0`).
+	pub fn update(&mut self, dt: f32, now: f32) {
 		if self.zoom_target != self.zoom {
 			let left = self.zoom_target - self.zoom;
 			let step = left * dt * self.zoom_speed;
@@ -219,6 +253,21 @@ impl Camera {
 		}
 		if self.moving {
 			self.glide_step(dt);
+		} else if let Some(q) = self.quake.clone() {
+			let t = (now - q.start) / q.out;
+			let share = if t < 1.0 {
+				Some(t)
+			} else {
+				let back = (now - (q.start + q.out)) / q.back;
+				(back < 1.0).then(|| 1.0 - back)
+			};
+			match share {
+				Some(k) => self.pos = (q.from.0 + q.push.0 * k, q.from.1 + q.push.1 * k),
+				None => {
+					self.pos = q.from;
+					self.quake = None;
+				}
+			}
 		}
 		if self.bounds.is_some() {
 			self.clamp();
@@ -308,15 +357,15 @@ mod tests {
 	fn a_plain_glide_goes_at_its_speed_and_lands() {
 		let mut c = camera();
 		c.glide((300.0, 400.0), 100.0, false, 0.0);
-		c.update(1.0);
+		c.update(1.0, 0.0);
 		let close = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
 		assert!(close(c.pos, (60.0, 80.0)), "100 units along (3, 4): {:?}", c.pos);
 		assert!(c.is_moving());
 		for _ in 0..4 {
-			c.update(1.0);
+			c.update(1.0, 0.0);
 		}
 		assert_eq!(c.pos, (300.0, 400.0), "never past the target");
-		c.update(0.0);
+		c.update(0.0, 0.0);
 		assert!(!c.is_moving(), "within a unit, it lands");
 	}
 
@@ -324,12 +373,12 @@ mod tests {
 	fn an_eased_glide_slows_near_the_end() {
 		let mut c = camera();
 		c.glide((1000.0, 0.0), 4096.0, true, 0.0);
-		c.update(0.01);
+		c.update(0.01, 0.0);
 		// (1000 / 4096 + 0.15) of 4096 per second.
 		assert!((c.pos.0 - (1000.0 / 4096.0 + 0.15) * 40.96).abs() < 1e-3, "{:?}", c.pos);
 		let mut far = camera();
 		far.glide((10000.0, 0.0), 4096.0, true, 0.0);
-		far.update(0.01);
+		far.update(0.01, 0.0);
 		assert!((far.pos.0 - 40.96).abs() < 1e-3, "full speed far away: {:?}", far.pos);
 	}
 
@@ -337,11 +386,24 @@ mod tests {
 	fn a_glide_with_a_radius_stops_where_it_is() {
 		let mut c = camera();
 		c.glide((100.0, 0.0), 95.0, false, 10.0);
-		c.update(1.0);
-		c.update(0.0);
+		c.update(1.0, 0.0);
+		c.update(0.0, 0.0);
 		assert_eq!(c.pos, (95.0, 0.0));
 		assert_eq!(c.target(), (95.0, 0.0));
 		assert!(!c.is_moving());
+	}
+
+	#[test]
+	fn a_quake_pushes_and_returns() {
+		let mut c = camera();
+		c.set_pos((100.0, 100.0));
+		c.quake((0.0, -1.0), 6.0, 0.16, 0.35, 10.0);
+		c.update(0.0, 10.08);
+		assert!((c.pos.1 - 97.0).abs() < 1e-4, "halfway out: {:?}", c.pos);
+		c.update(0.0, 10.335);
+		assert!((c.pos.1 - 97.0).abs() < 1e-3, "halfway back: {:?}", c.pos);
+		c.update(0.0, 11.0);
+		assert_eq!(c.pos, (100.0, 100.0));
 	}
 
 	#[test]
@@ -356,9 +418,9 @@ mod tests {
 	fn the_zoom_eases_and_keeps_its_limits() {
 		let mut c = camera();
 		c.zoom_to(2.0, 4.0);
-		c.update(0.1);
+		c.update(0.1, 0.0);
 		assert!((c.zoom - 1.4).abs() < 1e-6, "{}", c.zoom);
-		c.update(1.0);
+		c.update(1.0, 0.0);
 		assert_eq!(c.zoom, 2.0, "never past the target");
 		c.set_zoom(40.0);
 		assert_eq!(c.zoom, 12.0);

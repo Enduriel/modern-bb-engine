@@ -364,8 +364,27 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 				g.cancel();
 			}
 		});
-	// Shakes, the level's easing and the overlays' screen positions: visual only.
-	for name in ["registerCallbacks", "unregisterCallbacks", "quake", "climbBy", "update", "render", "updateEntityOverlays"] {
+	// quake(from, to, strength, out, back) along the way from one entity to the other,
+	// or quake(direction, strength, out, back): a gliding camera shakes.
+	b = b.method("quake", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
+		let mut g = c.0.borrow_mut();
+		let Some(glide) = g.camera.glide.as_mut() else { return };
+		let n = |i: usize| a.get(i).and_then(|v| v.0.get_value::<Number>(vm)).map_or(0.0, |n| n.0 as f32);
+		let now = crate::native::sprite_color::virtual_time(vm);
+		if a.len() >= 5 {
+			let (Some(from), Some(to)) = (pos_of(vm, &a[0].0), pos_of(vm, &a[1].0)) else { return };
+			let (dx, dy) = ((to.0 - from.0) as f32, (to.1 - from.1) as f32);
+			if dx == 0.0 && dy == 0.0 {
+				return;
+			}
+			let inv = 1.0 / f64::from(dy * dy + dx * dx).sqrt() as f32;
+			glide.quake((inv * dx, inv * dy), n(2), n(3), n(4), now);
+		} else if let Some(dir) = a.first().and_then(|v| pos_of(vm, &v.0)) {
+			glide.quake((dir.0 as f32, dir.1 as f32), n(1), n(2), n(3), now);
+		}
+	});
+	// The level's easing and the overlays' screen positions: visual only.
+	for name in ["registerCallbacks", "unregisterCallbacks", "climbBy", "update", "render", "updateEntityOverlays"] {
 		b = b.method(name, |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| {});
 	}
 	b.build(vm)

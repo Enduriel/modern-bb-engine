@@ -13,6 +13,7 @@
 //! `GameInfo` stubs). The engine-state natives (Time scheduler, World) land later.
 
 mod audio;
+pub(crate) mod battle_effects;
 mod brushes;
 pub(crate) mod camera_motion;
 mod color;
@@ -30,7 +31,7 @@ mod overload;
 pub(crate) mod particles;
 mod platform;
 mod mt64;
-mod prng;
+pub(crate) mod prng;
 mod screen;
 mod settings;
 pub(crate) mod spin;
@@ -183,6 +184,8 @@ impl NativeConfig {
 	pub fn install(&self, vm: &mut SQVM) -> InstalledNatives {
 		// One shared RNG stream feeds Math.rand and color.varyRGB.
 		let prng = prng::Prng::new();
+		// Pools draw from the C runtime's rand(), which 0-argument Math.rand also is.
+		let crt = prng.clone();
 		vec::install(vm);
 		color::install(vm, prng.clone());
 		math::install(vm, prng);
@@ -191,7 +194,7 @@ impl NativeConfig {
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm);
 		let (world_clock, clouds, waves, world_camera, world_particles) = world::install(vm, &engine_rng, &sprites);
-		let tactical = tactical::install(vm, &engine_rng);
+		let tactical = tactical::install(vm, &engine_rng, &crt);
 		let video = settings::install(vm);
 		audio::install(vm);
 		execute::install(vm);

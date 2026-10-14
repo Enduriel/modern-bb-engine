@@ -73,6 +73,9 @@ pub(crate) struct TacticalParts {
 	pub clouds: Clouds,
 	/// The battle's particle effects (`Tactical.spawnParticleEffect`).
 	pub particles: super::particles::ParticlesHandle,
+	/// The battle's other visual effects (`Tactical.spawn…Effect`, see
+	/// `battle_effects`).
+	pub effects: super::battle_effects::BattleEffectsHandle,
 }
 
 /// The first and last tile centres of the battle map (`Tactical.getMapSize()`), or
@@ -106,13 +109,14 @@ pub(crate) fn install_effects(vm: &mut SQVM, parts: &TacticalParts) {
 		.and_then(|t| t.get::<SqStrongRef>("clearScene"));
 	let (clouds, particles) = (parts.clouds.clone(), parts.particles.clone());
 	let clear = {
-		let (clouds, particles) = (clouds.clone(), particles.clone());
+		let (clouds, particles, effects) = (clouds.clone(), particles.clone(), parts.effects.clone());
 		vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 			if let Some(inner) = &inner_clear {
 				inner.call(vm, ())?;
 			}
 			clouds.borrow_mut().clear();
 			particles.borrow_mut().clear();
+			effects.borrow_mut().clear();
 			Ok(())
 		})
 	};
@@ -136,7 +140,7 @@ pub(crate) fn install_effects(vm: &mut SQVM, parts: &TacticalParts) {
 
 /// Register the tile-transition class, the `createTileTransition` root global, and
 /// the `Tactical` table.
-pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> TacticalParts {
+pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng, crt: &super::prng::Prng) -> TacticalParts {
 	// The descriptor class: three mutating setters over the payload.
 	let transition = ClassBuilder::<TileTransition>::new("TileTransition")
 		.method("setSocket", |t: &mut TileTransition, name: String| {
@@ -273,5 +277,6 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng) -> TacticalP
 		light,
 		clouds,
 		particles: Rc::new(RefCell::new(super::particles::Particles::new(engine_rng.clone()))),
+		effects: super::battle_effects::BattleEffects::handle(engine_rng.clone(), crt.clone()),
 	}
 }

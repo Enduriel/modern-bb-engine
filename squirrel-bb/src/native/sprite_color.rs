@@ -25,6 +25,14 @@ pub(crate) fn real_time(vm: &SQVM) -> f32 {
 		.map_or(0.0, |n| n.0 as f32)
 }
 
+/// `Time.getVirtualTimeF()`: virtual seconds, the clock effects and quakes run on.
+pub(crate) fn virtual_time(vm: &SQVM) -> f32 {
+	SqTable::root(vm)
+		.get::<SqStrongRef>("Time")
+		.and_then(|t| t.call_method_ret::<Number, _>(vm, "getVirtualTimeF", ()).ok().flatten())
+		.map_or(0.0, |n| n.0 as f32)
+}
+
 /// A fade in progress.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Fade {

@@ -58,6 +58,7 @@ pub struct Engine<S: ScriptSource> {
 	world_camera: crate::native::world_camera::WorldCamera,
 	world_particles: crate::native::particles::ParticlesHandle,
 	tactical_particles: crate::native::particles::ParticlesHandle,
+	battle_effects: crate::native::battle_effects::BattleEffectsHandle,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -98,6 +99,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// One id space for the world's entities and the battle's units, as the original's.
 		tactical_entities.share_ids(world_entities.ids());
 		tactical_entities.set_sprites(natives.sprites.clone());
+		tactical_entities.set_battle_effects(natives.tactical.effects.clone());
 		tactical_entities.install(&mut vm);
 		// The battle map, with units and objects placed on it by the entity host.
 		let tactical_grid = TacticalGrid::new();
@@ -156,6 +158,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			world_camera: natives.world_camera.clone(),
 			world_particles: natives.world_particles.clone(),
 			tactical_particles: natives.tactical.particles.clone(),
+			battle_effects: natives.tactical.effects.clone(),
 			time,
 			modules,
 			vm,
@@ -220,7 +223,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 
 	/// The battle map as the scripts have set it up, for a renderer.
 	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
+		let (effects, pools) = self
+			.battle_effects
+			.borrow_mut()
+			.scene(self.time.virtual_seconds() as f32, |tile| self.tactical_grid.tile_world_pos(tile));
 		crate::scene::tactical::TacticalScene {
+			effects,
+			pools,
 			transitions: self.transitions.borrow().clone(),
 			entities: self.tactical_entities.scene_entities(&self.vm),
 			light: {
@@ -306,14 +315,15 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let scale = self.video.scene_scale() as f32;
 		let zoom_min = if scale != 0.0 { 1.0 / scale } else { 1.0 };
 		let dt = (real_delta_ms / 1000.0) as f32;
+		let now = self.time.virtual_seconds() as f32;
 		{
 			let mut camera = self.world_camera.borrow_mut();
 			camera.set_screen(screen);
 			camera.set_zoom_min(zoom_min);
-			camera.update(dt);
+			camera.update(dt, now);
 		}
 		// The battle camera, when it glides.
-		self.tactical_grid.move_camera(screen, zoom_min, dt);
+		self.tactical_grid.move_camera(screen, zoom_min, dt, now);
 	}
 
 	/// Turn every sprite with a torque to the virtual clock (see `native::spin`).

@@ -190,6 +190,8 @@ struct TacticalMachine {
 	grid: Option<crate::native::tactical_grid::Grid>,
 	/// Resolves sprite brushes (set by the host before `install`).
 	sprites: Sprites,
+	/// The battle's visual effects (see `effects`).
+	effects: Option<crate::native::battle_effects::BattleEffectsHandle>,
 }
 
 impl TacticalMachine {
@@ -585,6 +587,7 @@ impl TacticalEntities {
 				methods: Vec::new(),
 				grid: None,
 				sprites: Sprites::default(),
+				effects: None,
 			})),
 		}
 	}
@@ -597,6 +600,12 @@ impl TacticalEntities {
 
 	pub fn set_sprites(&self, sprites: Sprites) {
 		self.machine.borrow_mut().sprites = sprites;
+	}
+
+	/// Where the `Tactical.spawn…Effect` natives put their effects. Call before
+	/// [`install`](Self::install).
+	pub(crate) fn set_battle_effects(&self, effects: crate::native::battle_effects::BattleEffectsHandle) {
+		self.machine.borrow_mut().effects = Some(effects);
 	}
 
 	/// Build the roster + sprite classes and the injected unit methods, then wire

@@ -501,7 +501,17 @@ impl TacticalGrid {
 			clouds: Vec::new(),
 			hide_trees: false,
 			particles: Vec::new(),
+			effects: Vec::new(),
+			pools: Vec::new(),
 		}
+	}
+
+	/// Tile `id`'s world position, its level included.
+	pub(crate) fn tile_world_pos(&self, id: usize) -> Option<(f32, f32)> {
+		self.grid.borrow().tiles.get(id).map(|t| {
+			let (x, y) = t.world_pos();
+			(x as f32, y as f32)
+		})
 	}
 
 	/// How the battle camera moves (see [`camera::BattleCamera`]).
@@ -509,13 +519,13 @@ impl TacticalGrid {
 		self.grid.borrow_mut().camera.set_mode(mode);
 	}
 
-	/// A gliding battle camera's frame: `dt` seconds of real time on a
-	/// `screen`-sized screen, zooming in no closer than `zoom_min`.
-	pub(crate) fn move_camera(&self, screen: (i32, i32), zoom_min: f32, dt: f32) {
+	/// A gliding battle camera's frame: `dt` seconds of real time at virtual time
+	/// `now`, on a `screen`-sized screen, zooming in no closer than `zoom_min`.
+	pub(crate) fn move_camera(&self, screen: (i32, i32), zoom_min: f32, dt: f32, now: f32) {
 		if let Some(c) = self.grid.borrow_mut().camera.glide.as_mut() {
 			c.set_screen(screen);
 			c.set_zoom_min(zoom_min);
-			c.update(dt);
+			c.update(dt, now);
 		}
 	}
 

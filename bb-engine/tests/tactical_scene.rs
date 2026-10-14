@@ -87,4 +87,25 @@ fn a_battle_map_is_ready_to_draw() {
 		.map(|o| o.icons)
 		.expect("the unit's bars");
 	assert!(icons.iter().any(|i| i == "status_effect_05_mini"), "the stun's icon: {icons:?}");
+
+	// Effects are game state: an icon shows for its phases, a pool stays.
+	engine
+		.run_script(
+			"local t = ::Tactical.getTileSquare(16, 16); local S = ::Const.Tactical.Settings; \
+			 ::Tactical.spawnIconEffect(\"status_effect_87\", t, S.SkillIconOffsetX, S.SkillIconOffsetY, S.SkillIconScale, \
+			   S.SkillIconFadeInDuration, S.SkillIconStayDuration, S.SkillIconFadeOutDuration, S.SkillIconMovement); \
+			 ::Tactical.spawnPoolEffect(::Const.BloodPoolDecals[::Const.BloodType.Red][0], t, 1.0, 1.0, 0);",
+			"effects",
+		)
+		.expect("effects");
+	let scene = engine.tactical_scene();
+	assert_eq!(scene.effects.iter().filter(|e| e.brush == "status_effect_87").count(), 1, "the icon shows");
+	let pools = scene.pools.len();
+	assert!(pools >= 1);
+	for _ in 0..90 {
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	}
+	let scene = engine.tactical_scene();
+	assert!(scene.effects.iter().all(|e| e.brush != "status_effect_87"), "the icon is over after 1.5 s");
+	assert!(scene.pools.len() >= pools, "pools stay");
 }
