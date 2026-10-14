@@ -2,10 +2,13 @@
 //!
 //! The original lists the monitor's modes, widest first (taller first among equal
 //! widths), for each color depth (32-, then 16-, then 8-bit), and filters them by a
-//! minimum width, height and depth (probed 2026-10-13). Headless there is no monitor,
-//! so a fixed set of common 32-bit modes up to the default video mode stands in until
-//! the windowing layer can enumerate the real one. The Options screen asks
-//! only for 32-bit modes, so the missing 16/8-bit copies are invisible to it.
+//! minimum width, height and depth (probed 2026-10-13). The host reports the monitor's
+//! modes ([`super::VideoSettings::set_monitor_modes`]); headless, a fixed set of common
+//! 32-bit modes stands in. The Options screen asks only for 32-bit modes, so the
+//! missing 16/8-bit copies are invisible to it.
+//!
+//! The game's current size is listed too when the monitor has no such mode (a window
+//! the player sized, which the original can't have), so the Options screen shows it.
 
 /// One display mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,12 +37,27 @@ const MODES: &[(i64, i64)] = &[
 	(640, 480),
 ];
 
+/// What the list is made of: the monitor's resolutions (`None`: the stand-in list) and
+/// the game's current size.
+#[derive(Clone, Copy)]
+pub(crate) struct Source<'a> {
+	pub monitor: Option<&'a [(i64, i64)]>,
+	pub current: (i64, i64),
+}
+
 /// The modes at least `min_width` × `min_height` with at least `min_bits` color bits,
 /// as `Settings.queryResolutions(min_width, min_height, min_bits)` lists them.
-pub(crate) fn query(min_width: i64, min_height: i64, min_bits: i64) -> Vec<DisplayMode> {
-	MODES
-		.iter()
-		.map(|&(width, height)| DisplayMode {
+pub(crate) fn query(source: Source, min_width: i64, min_height: i64, min_bits: i64) -> Vec<DisplayMode> {
+	let mut sizes: Vec<(i64, i64)> = source.monitor.unwrap_or(MODES).to_vec();
+	if !sizes.contains(&source.current) {
+		sizes.push(source.current);
+	}
+	// Widest first, taller first among equal widths.
+	sizes.sort_by(|a, b| b.cmp(a));
+	sizes.dedup();
+	sizes
+		.into_iter()
+		.map(|(width, height)| DisplayMode {
 			width,
 			height,
 			color_bits: 32,
@@ -49,8 +67,8 @@ pub(crate) fn query(min_width: i64, min_height: i64, min_bits: i64) -> Vec<Displ
 }
 
 /// The index of `mode`'s resolution in [`query`]'s list, or `-1`.
-pub(crate) fn index_of(mode: DisplayMode, min_width: i64, min_height: i64, min_bits: i64) -> i64 {
-	query(min_width, min_height, min_bits)
+pub(crate) fn index_of(source: Source, mode: DisplayMode, min_width: i64, min_height: i64, min_bits: i64) -> i64 {
+	query(source, min_width, min_height, min_bits)
 		.iter()
 		.position(|m| *m == mode)
 		.map_or(-1, |i| i as i64)
@@ -58,15 +76,37 @@ pub(crate) fn index_of(mode: DisplayMode, min_width: i64, min_height: i64, min_b
 
 #[cfg(test)]
 mod tests {
-	use super::{DisplayMode, index_of, query};
+	use super::{DisplayMode, Source, index_of, query};
+
+	const STAND_IN: Source = Source {
+		monitor: None,
+		current: (1920, 1080),
+	};
 
 	#[test]
 	fn filters_by_the_minimum_and_keeps_the_order() {
-		let modes = query(1024, 768, 32);
+		let modes = query(STAND_IN, 1024, 768, 32);
 		assert_eq!(modes.first().map(|m| (m.width, m.height)), Some((1920, 1080)));
 		assert!(modes.iter().all(|m| m.width >= 1024 && m.height >= 768));
 		assert!(modes.windows(2).all(|w| (w[0].width, w[0].height) > (w[1].width, w[1].height)));
-		assert!(query(4000, 3000, 32).is_empty());
+		assert!(query(STAND_IN, 4000, 3000, 32).is_empty());
+	}
+
+	#[test]
+	fn the_monitors_modes_and_the_current_size() {
+		let monitor = [(2560, 1440), (1920, 1080), (1280, 720)];
+		let source = Source {
+			monitor: Some(&monitor),
+			current: (1700, 900),
+		};
+		let sizes: Vec<(i64, i64)> = query(source, 1024, 768, 32).iter().map(|m| (m.width, m.height)).collect();
+		assert_eq!(sizes, [(2560, 1440), (1920, 1080), (1700, 900)], "the player's size in order; 1280 too small");
+		let current = DisplayMode {
+			width: 1700,
+			height: 900,
+			color_bits: 32,
+		};
+		assert_eq!(index_of(source, current, 1024, 768, 32), 2);
 	}
 
 	#[test]
@@ -76,12 +116,12 @@ mod tests {
 			height: 1080,
 			color_bits: 32,
 		};
-		assert_eq!(index_of(full_hd, 1024, 768, 32), 0);
+		assert_eq!(index_of(STAND_IN, full_hd, 1024, 768, 32), 0);
 		let odd = DisplayMode {
 			width: 1234,
 			height: 567,
 			color_bits: 32,
 		};
-		assert_eq!(index_of(odd, 1024, 768, 32), -1);
+		assert_eq!(index_of(STAND_IN, odd, 1024, 768, 32), -1);
 	}
 }

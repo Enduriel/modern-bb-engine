@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Native, SQVM, SqClass, SqStrongRef};
 
-use super::display_modes::DisplayMode;
+use super::display_modes::{DisplayMode, Source};
 
 /// The frame-rate cap with VSync off.
 const FRAME_CAP_WITHOUT_VSYNC: i64 = 144;
@@ -108,6 +108,8 @@ struct VideoState {
 	changes: u64,
 	/// A mode the scripts asked to keep, until the host takes it.
 	save: Option<VideoMode>,
+	/// The monitor's resolutions, as the host reports them (`None` headless).
+	monitor: Option<Vec<(i64, i64)>>,
 }
 
 /// The mode the game runs in, shared by the scripts' `Settings` and the host. The host
@@ -123,6 +125,7 @@ impl Default for VideoSettings {
 			mode: VideoMode::DEFAULT,
 			changes: 0,
 			save: None,
+			monitor: None,
 		})))
 	}
 }
@@ -141,6 +144,20 @@ impl VideoSettings {
 	/// How many times the scripts have set a mode: the host applies it when this moves.
 	pub fn changes(&self) -> u64 {
 		self.0.borrow().changes
+	}
+
+	/// Report the monitor's resolutions, which the Options screen lists.
+	pub fn set_monitor_modes(&self, modes: Vec<(i64, i64)>) {
+		self.0.borrow_mut().monitor = Some(modes);
+	}
+
+	/// What `f` lists the resolutions from (see `display_modes`).
+	pub(crate) fn with_modes<R>(&self, f: impl FnOnce(Source) -> R) -> R {
+		let s = self.0.borrow();
+		f(Source {
+			monitor: s.monitor.as_deref(),
+			current: (s.mode.width, s.mode.height),
+		})
 	}
 
 	/// The mode the scripts last asked to keep, once.

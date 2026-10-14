@@ -42,24 +42,25 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 	let video_natives = video_mode::natives(vm, &video, &current);
 	// The display modes (minimum width, height and color bits); see `display_modes`.
 	let query_resolutions = {
-		let video = video.clone();
+		let (video, current) = (video.clone(), current.clone());
 		vm.make_closure(move |vm: &SQVM, w: i64, h: i64, bits: i64| {
 			let mut list = SqArray::new(vm);
-			for mode in display_modes::query(w, h, bits) {
+			for mode in current.with_modes(|source| display_modes::query(source, w, h, bits)) {
 				list.push(video.instantiate(vm, ModeRef::Copy(VideoMode::of(mode))));
 			}
 			list.to_strong()
 		})
 	};
-	let query_index_by_video_mode = vm.make_closure(
-		|mode: Native<ModeRef>, w: i64, h: i64, bits: i64| -> i64 {
-			display_modes::index_of(mode.0.get().display_mode(), w, h, bits)
-		},
-	);
+	let query_index_by_video_mode = {
+		let current = current.clone();
+		vm.make_closure(move |mode: Native<ModeRef>, w: i64, h: i64, bits: i64| -> i64 {
+			current.with_modes(|source| display_modes::index_of(source, mode.0.get().display_mode(), w, h, bits))
+		})
+	};
 	let query_by_index = {
-		let video = video.clone();
+		let (video, current) = (video.clone(), current.clone());
 		vm.make_closure(move |vm: &SQVM, index: i64, w: i64, h: i64, bits: i64| {
-			let modes = display_modes::query(w, h, bits);
+			let modes = current.with_modes(|source| display_modes::query(source, w, h, bits));
 			usize::try_from(index)
 				.ok()
 				.and_then(|i| modes.get(i))
