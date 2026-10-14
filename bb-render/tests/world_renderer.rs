@@ -1,6 +1,7 @@
 //! Atlases load on demand: a live frame skips a sprite whose atlas is
 //! still loading, a frame for a screenshot waits for it, and later frames reuse it.
-//! Skips when no GPU adapter is available.
+//! The fog of war covers what the engine's mask keeps fogged. Skips when no GPU
+//! adapter is available.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,7 +11,8 @@ use bb_assets::{
 };
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Gpu, RenderTarget, WorldRenderer};
-use squirrel_bb::scene::{SceneTile, WorldScene};
+use squirrel_bb::scene::{SceneFog, SceneTile, WorldScene};
+use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
 struct Files(HashMap<String, Vec<u8>>);
 
@@ -20,15 +22,20 @@ impl FileSource for Files {
 	}
 }
 
-fn atlas_png() -> Vec<u8> {
+/// A 2×2 PNG of one colour.
+fn solid_png(rgba: [u8; 4]) -> Vec<u8> {
 	let mut out = Vec::new();
 	let mut encoder = png::Encoder::new(&mut out, 2, 2);
 	encoder.set_color(png::ColorType::Rgba);
 	encoder.set_depth(png::BitDepth::Eight);
 	let mut writer = encoder.write_header().unwrap();
-	writer.write_image_data(&[255; 16]).unwrap();
+	writer.write_image_data(&rgba.repeat(4)).unwrap();
 	writer.finish().unwrap();
 	out
+}
+
+fn atlas_png() -> Vec<u8> {
+	solid_png([255; 4])
 }
 
 fn registry() -> SpriteRegistry {
@@ -92,10 +99,12 @@ fn atlases_load_on_first_use() {
 			row: 0,
 			pos: (0.0, 0.0),
 			terrain: 2,
+			discovered: true,
 			brush: "dot".into(),
 			details: Vec::new(),
 		}],
 		entities: Vec::new(),
+		fog: SceneFog::default(),
 	};
 	let registry = registry();
 	let view = WorldView {
@@ -123,4 +132,76 @@ fn atlases_load_on_first_use() {
 		&[255, 255, 255, 255],
 		"the sprite is drawn"
 	);
+}
+
+#[test]
+fn fog_covers_what_the_mask_keeps() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	let files = Files(HashMap::from([(
+		"gfx/fow.png".to_string(),
+		solid_png([100, 100, 100, 255]),
+	)]));
+	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	// A 4×4-unit map, fogged on its left half and uncovered on its right.
+	let size = FOG_MASK_SIZE as u32;
+	let alpha = (0..size * size)
+		.map(|i| if i % size < size / 2 { 255 } else { 0 })
+		.collect();
+	let scene = WorldScene {
+		tiles: Vec::new(),
+		entities: Vec::new(),
+		fog: SceneFog {
+			on: true,
+			extent: (4.0, 4.0),
+		},
+	};
+	let view = WorldView {
+		center: [2.0, 2.0],
+		zoom: 1.0,
+		width: 4,
+		height: 4,
+	};
+	let target = RenderTarget::new(&gpu, 4, 4);
+	let registry = SpriteRegistry::new();
+	let pixel = |image: &bb_assets::Image, x: usize, y: usize| {
+		let at = (y * 4 + x) * 4;
+		image.rgba[at..at + 4].to_vec()
+	};
+
+	renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+	let image = target.read(&gpu).expect("read back");
+	assert_eq!(pixel(&image, 0, 1), [0, 0, 0, 255], "no mask yet, no fog");
+
+	renderer.update_fog(
+		&gpu,
+		&FogPatch {
+			x: 0,
+			y: 0,
+			width: size,
+			height: size,
+			alpha,
+		},
+	);
+	renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+	let image = target.read(&gpu).expect("read back");
+	// Three samples at a third each: 99 of the texture's 100.
+	assert_eq!(pixel(&image, 0, 1), [99, 99, 99, 255], "fogged");
+	assert_eq!(pixel(&image, 3, 1), [0, 0, 0, 255], "uncovered");
+
+	let off = WorldScene {
+		fog: SceneFog {
+			on: false,
+			..scene.fog
+		},
+		..scene
+	};
+	renderer.draw(&gpu, &target, &off, &registry, &view, Atlases::WaitForAll);
+	let image = target.read(&gpu).expect("read back");
+	assert_eq!(pixel(&image, 0, 1), [0, 0, 0, 255], "fog of war off");
 }

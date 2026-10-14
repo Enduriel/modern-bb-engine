@@ -9,8 +9,10 @@
 use std::sync::Arc;
 
 use bb_assets::{BitmapFont, FileSource, Image, ImageLoader, Slot, SpriteRegistry, TextureCache};
+use squirrel_bb::FogPatch;
 use squirrel_bb::scene::WorldScene;
 
+use crate::fog::FogPass;
 use crate::gpu::Gpu;
 use crate::labels::{LabelFont, WHITE};
 use crate::sprite::{Quad, SpriteRenderer};
@@ -45,7 +47,13 @@ pub struct WorldRenderer {
 	label_font: Option<(BitmapFont, String)>,
 	/// 1×1 white, for solid fills (label plates).
 	white: GpuTexture,
+	fog: FogPass,
+	/// Seconds of real time, for the fog's drift.
+	real_time: f32,
 }
+
+/// The fog of war's texture.
+const FOG_TEXTURE: &str = "gfx/fow.png";
 
 /// The font world labels are drawn in.
 const LABEL_FONT: &str = "gfx/fonts/cinzel_bold_20";
@@ -67,7 +75,19 @@ impl WorldRenderer {
 			textures: TextureCache::new(ImageLoader::new(files, threads)),
 			label_font,
 			white: GpuTexture::upload(gpu, "white", &white),
+			fog: FogPass::new(gpu),
+			real_time: 0.0,
 		}
+	}
+
+	/// Take a change to the fog of war's mask (from `WorldGrid::take_fog_patch`).
+	pub fn update_fog(&mut self, gpu: &Gpu, patch: &FogPatch) {
+		self.fog.update_mask(gpu, patch);
+	}
+
+	/// The real time in seconds (`Time.getRealTimeF()`): the fog drifts with it.
+	pub fn set_real_time(&mut self, seconds: f32) {
+		self.real_time = seconds;
 	}
 
 	/// Start loading `paths` (the scripts' hints) in the background. Only images are
@@ -79,7 +99,9 @@ impl WorldRenderer {
 		}
 	}
 
-	/// Draw `scene` into `target`, clearing it first.
+	/// Draw `scene` into `target`, clearing it first: the map, then the fog of war
+	/// where its mask has it (once [`update_fog`](Self::update_fog) gave one), then the
+	/// labels.
 	pub fn draw(
 		&mut self,
 		gpu: &Gpu,
@@ -95,8 +117,18 @@ impl WorldRenderer {
 			.label_font
 			.as_ref()
 			.map(|(font, texture)| LabelFont { font, texture });
-		let (quads, list) = world_quads(scene, registry, view, font);
-		for path in list.paths.iter().filter(|p| *p != WHITE) {
+		let world = world_quads(scene, registry, view, font);
+		let mut needed: Vec<&str> = world
+			.atlases
+			.paths
+			.iter()
+			.map(String::as_str)
+			.filter(|p| *p != WHITE)
+			.collect();
+		if scene.fog.on {
+			needed.push(FOG_TEXTURE);
+		}
+		for path in needed {
 			match atlases {
 				Atlases::WaitForAll => {
 					let _ = self.textures.get_now(path, upload);
@@ -107,10 +139,11 @@ impl WorldRenderer {
 			}
 		}
 
-		// The atlases this frame can use, renumbered; `None` for one not usable.
+		// The frame's atlases, renumbered; `None` for one not usable.
 		let mut stats = FrameStats::default();
 		let mut ready: Vec<&GpuTexture> = Vec::new();
-		let slots: Vec<Option<usize>> = list
+		let slots: Vec<Option<usize>> = world
+			.atlases
 			.paths
 			.iter()
 			.map(|path| match self.textures.slot(path) {
@@ -129,25 +162,46 @@ impl WorldRenderer {
 				_ => None,
 			})
 			.collect();
-		let drawn: Vec<Quad> = quads
-			.iter()
-			.filter_map(|quad| {
-				let slot = slots[quad.texture];
-				if slot.is_none() {
-					stats.waiting += 1;
-				}
-				slot.map(|texture| Quad { texture, ..*quad })
-			})
-			.collect();
-		stats.quads = drawn.len();
+		let mut usable = |quads: &[Quad]| -> Vec<Quad> {
+			quads
+				.iter()
+				.filter_map(|quad| {
+					let slot = slots[quad.texture];
+					if slot.is_none() {
+						stats.waiting += 1;
+					}
+					slot.map(|texture| Quad { texture, ..*quad })
+				})
+				.collect()
+		};
+		let map = usable(&world.quads[..world.labels_from]);
+		let labels = usable(&world.quads[world.labels_from..]);
+		stats.quads = map.len() + labels.len();
+		let uniforms = view.uniforms();
 		self.sprites.draw(
 			gpu,
 			target,
-			&view.uniforms(),
+			&uniforms,
 			Some([0.0, 0.0, 0.0, 1.0]),
-			&drawn,
+			&map,
 			&ready,
 		);
+
+		if scene.fog.on {
+			if let Some(Slot::Ready(fog_texture)) = self.textures.slot(FOG_TEXTURE) {
+				self.fog.draw(
+					gpu,
+					target,
+					view,
+					fog_texture,
+					scene.fog.extent,
+					self.real_time,
+				);
+			}
+		}
+
+		self.sprites
+			.draw(gpu, target, &uniforms, None, &labels, &ready);
 		stats
 	}
 }

@@ -11,6 +11,7 @@
 //! - [`world`]: the world map, from the game's [`WorldScene`](squirrel_bb::scene::WorldScene).
 //! - [`WorldRenderer`]: draws it frame by frame, loading atlases on demand.
 
+mod fog;
 mod gpu;
 pub mod labels;
 mod screenshot;

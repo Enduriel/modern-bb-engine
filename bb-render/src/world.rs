@@ -98,13 +98,21 @@ enum Layer {
 	Labels,
 }
 
-/// The quads that draw `scene` in `view`, and the atlases they index.
+/// A frame's quads in drawing order, and the atlases they index.
+pub struct WorldQuads {
+	pub quads: Vec<Quad>,
+	pub atlases: AtlasList,
+	/// Where the labels start in `quads` (they draw over the fog of war).
+	pub labels_from: usize,
+}
+
+/// The quads that draw `scene` in `view`.
 pub fn world_quads<'a>(
 	scene: &'a WorldScene,
 	sprites: &'a SpriteRegistry,
 	view: &WorldView,
 	labels: Option<LabelFont<'a>>,
-) -> (Vec<Quad>, AtlasList) {
+) -> WorldQuads {
 	// Tile sprites reach well past their hex (400 x 200 around a 180 x 120 cell).
 	let [left, right, bottom, top] = view.bounds(400.0);
 	let on_screen = |(x, y): (f64, f64)| {
@@ -227,6 +235,10 @@ pub fn world_quads<'a>(
 			.then(a.order.cmp(&b.order))
 	});
 	let mut atlases = AtlasList::default();
+	let labels_from = drawables
+		.iter()
+		.position(|d| d.layer == Layer::Labels)
+		.unwrap_or(drawables.len());
 	let quads = drawables
 		.into_iter()
 		.map(|d| Quad {
@@ -234,7 +246,11 @@ pub fn world_quads<'a>(
 			..d.quad
 		})
 		.collect();
-	(quads, atlases)
+	WorldQuads {
+		quads,
+		atlases,
+		labels_from,
+	}
 }
 
 /// How a sprite is drawn, besides where.

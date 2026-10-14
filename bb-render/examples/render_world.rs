@@ -71,6 +71,10 @@ fn main() {
 	let gpu = Gpu::headless().expect("gpu");
 	let files = Arc::new(GameFiles::open(harness::data_archives(dir).unwrap()).expect("files"));
 	let mut renderer = WorldRenderer::new(&gpu, files, 8);
+	if let Some(patch) = engine.world_grid().take_fog_patch() {
+		renderer.update_fog(&gpu, &patch);
+	}
+	renderer.set_real_time(engine.time().real_seconds() as f32);
 	// The atlases the scripts' brushes asked for start loading now, as in a live game.
 	let hints = engine.sprites().take_hints();
 	eprintln!("{} atlases hinted", hints.len());
