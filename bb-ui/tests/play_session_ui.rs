@@ -95,27 +95,32 @@ fn new_campaign(p: &Play) -> Result<(), String> {
 /// Walk the company to the nearest town (with `building`, if given) and into it,
 /// answering what comes up on the way. A town it's in already is left first.
 fn enter_town(p: &Play, building: Option<&str>) -> Result<String, String> {
-	if let Some(b) = building {
-		let here = format!("::World.State.m.WorldTownScreen.isVisible() && ::World.State.getCurrentTown().hasBuilding(\"{b}\") ? 1 : 0");
-		if p.int(&here)? == 1 {
-			return p.text("::World.State.getCurrentTown().getName()");
-		}
+	match building {
+		Some(b) => enter_town_where(p, &format!("s.hasBuilding(\"{b}\")")),
+		None => enter_town_where(p, "true"),
 	}
-	if p.int("::World.State.m.WorldTownScreen.isVisible() ? 1 : 0")? == 1 {
-		during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
-		p.until("!::World.State.m.WorldTownScreen.isVisible()", STEP)?;
+}
+
+/// Walk the company to the nearest town for which the script condition `cond` (over
+/// `s`, the settlement) holds, and into it, answering what comes up on the way. The
+/// town it's in stays if it qualifies, else it's left first.
+fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
+	let here = format!("::World.State.m.WorldTownScreen.isVisible() && (function(s) {{ return {cond}; }})(::World.State.getCurrentTown()) ? 1 : 0");
+	if p.int(&here)? == 1 {
+		p.script("::__town <- ::World.State.getCurrentTown();")?;
+		return p.text("::World.State.getCurrentTown().getName()");
 	}
-	let wanted = building.map_or("null".to_string(), |b| format!("\"{b}\""));
+	leave_town(p)?;
 	p.script(&format!(
 		r#"
-		local player = ::World.State.getPlayer(), best = null, d = 0, wanted = {wanted};
+		local player = ::World.State.getPlayer(), best = null, d = 0;
 		foreach (s in ::World.EntityManager.getSettlements())
 		{{
-			if (!s.isEnterable() || (wanted != null && !s.hasBuilding(wanted))) continue;
+			if (!s.isEnterable() || !({cond})) continue;
 			local dist = s.getTile().getDistanceTo(player.getTile());
 			if (best == null || dist < d) {{ best = s; d = dist; }}
 		}}
-		if (best == null) throw "no town with " + wanted;
+		if (best == null) throw "no town for the session's need";
 		::__town <- best;
 		"#
 	))?;
@@ -221,10 +226,24 @@ fn right_click(p: &Play, x: i32, y: i32) -> Result<(), String> {
 	Ok(())
 }
 
-/// Open the town's building `id` by clicking its picture.
+/// Open the town's building `id` by clicking its picture (`slotN`, N its place in the
+/// town's buildings, empty places counted).
 fn open_building(p: &Play, id: &str) -> Result<(), String> {
+	// Most buildings close at night: wait for the morning outside, as a player does.
+	let closed = format!(
+		"!::World.getTime().IsDaytime && ::World.State.getCurrentTown().getBuilding(\"{id}\").isClosedAtNight() ? 1 : 0"
+	);
+	if p.int(&closed)? == 1 {
+		let town = p.int("::World.State.getCurrentTown().getID()")?;
+		println!("{id} is closed at night: waiting for the morning");
+		leave_town(p)?;
+		p.script("::World.State.setPause(false); ::World.setSpeedMult(4.0);")?;
+		during("waiting for the morning", out_on_the_map_until(p, "::World.getTime().IsDaytime", STEP * 3))?;
+		p.script("::World.setSpeedMult(1.0);")?;
+		enter_town_where(p, &format!("s.getID() == {town}"))?;
+	}
 	let slot = p.int(&format!(
-		"(function() {{ local i = 0; foreach (b in ::__town.m.Buildings) {{ if (b == null) continue; if (b.getID() == \"{id}\") return i; i++; }} return -1; }})()"
+		"(function() {{ foreach (i, b in ::World.State.getCurrentTown().m.Buildings) if (b != null && b.getID() == \"{id}\") return i; return -1; }})()"
 	))?;
 	ensure(slot >= 0, format!("no {id} in the town"))?;
 	during(&format!("clicking the {id}"), p.session.click_when_ready(&format!("css:img.slot{slot}:not(.no-pointer-events)"), STEP))
@@ -359,16 +378,20 @@ fn hire(p: &Play) -> Result<(), String> {
 /// does: the first option carries a negotiation on, until the offer and then the
 /// overview can be accepted. The advance is paid on taking it.
 fn contract(p: &Play) -> Result<(), String> {
+	// One that takes the company to another town and seldom comes to blows (a delivery,
+	// an escort), in the nearest town offering one.
+	p.script(
+		r#"::__calmContract <- function(s) {
+			foreach (i, c in s.getContracts())
+				if (["contract.deliver_item", "contract.escort_envoy"].find(c.getType()) != null) return i;
+			return -1;
+		};"#,
+	)?;
+	let town = enter_town_where(p, "::__calmContract(s) >= 0")?;
 	let money = || p.int("::World.Assets.getMoney()");
 	let start = money()?;
-	// One whose target the map marks: a place to clear or a camp to destroy.
-	let index = p.int(r#"(function() {
-		local wanted = ["contract.restore_location", "contract.drive_away_bandits", "contract.drive_away_barbarians",
-			"contract.drive_away_nomads", "contract.destroy_goblin_camp", "contract.destroy_orc_camp",
-			"contract.raze_attached_location", "contract.root_out_undead", "contract.investigate_cemetery"];
-		foreach (i, c in ::__town.getContracts()) if (wanted.find(c.getType()) != null) return i;
-		return 0;
-	})()"#)?;
+	let index = p.int("::__calmContract(::World.State.getCurrentTown())")?;
+	println!("a contract in {town}: {}", p.text(&format!("::World.State.getCurrentTown().getContracts()[{index}].getType()"))?);
 	during("opening a contract", p.session.click_when_ready(&format!("css:img.is-contract.contract{index}"), STEP))?;
 	let mut advance = 0;
 	for round in 0..10 {
@@ -566,6 +589,154 @@ fn battle(p: &Play) -> Result<(), String> {
 	Ok(())
 }
 
+/// Run the world, out on the map, until `cond` holds, answering events meanwhile and
+/// keeping the world running (an event pauses it).
+fn out_on_the_map_until(p: &Play, cond: &str, timeout: Duration) -> Result<(), String> {
+	let deadline = std::time::Instant::now() + timeout;
+	while p.int(&format!("({cond}) ? 1 : 0"))? == 0 {
+		ensure(std::time::Instant::now() < deadline, format!("still not true: {cond}"))?;
+		if p.text(FACING)? == "event" {
+			answer_event(p)?;
+		} else {
+			p.script("if (::World.State.isPaused()) ::World.State.setPause(false);")?;
+			p.session.step(1000.0 / 60.0)?;
+		}
+	}
+	Ok(())
+}
+
+/// Leave the town the company is in, if any, and wait until it's out.
+fn leave_town(p: &Play) -> Result<(), String> {
+	if p.int("::World.State.m.WorldTownScreen.isVisible() ? 1 : 0")? == 1 {
+		during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+	}
+	during("leaving the town", p.until("!::World.State.m.WorldTownScreen.isVisible() && ::World.State.m.LastEnteredTown == null", STEP))
+}
+
+/// The retinue: a seat opens at 'Recognized' renown (250), and the cook joins once
+/// the stash holds eight kinds of provisions; open the campfire, pick the free seat,
+/// hire him for his price.
+fn retinue(p: &Play) -> Result<(), String> {
+	leave_town(p)?;
+	p.script(
+		r#"
+		foreach (f in ["bread", "dried_fish", "goat_cheese", "ground_grains", "smoked_ham", "dried_fruits", "beer", "mead"])
+			::World.Assets.getStash().add(::new("scripts/items/supplies/" + f + "_item"));
+		// The renown of a few contracts done.
+		::World.Assets.addBusinessReputation(300);
+		"#,
+	)?;
+	during("opening the retinue", p.session.click_when_ready("css:img[src$=\"ui/icons/campfire.png\"]", STEP))?;
+	let free = "img[src$=\"ui/campfire/free_slot.png\"]:not(.no-pointer-events)";
+	during("waiting for the campfire", settled(p, |p| nth(p, free, 0).is_ok()))?;
+	p.shot("campfire");
+	let (x, y) = nth(p, free, 0)?;
+	p.session.click_at(x, y)?;
+	during("waiting for the followers", settled(p, |p| nth(p, ".list-entry", 0).is_ok()))?;
+	p.shot("followers");
+	let cost = p.int("::World.Retinue.getFollower(\"follower.cook\").getCost()")?;
+	let unlocked = p.int("::World.Retinue.getFollower(\"follower.cook\").isUnlocked() ? 1 : 0")?;
+	ensure(unlocked == 1, "the cook isn't unlocked with eight kinds of provisions")?;
+	during("picking the cook", p.session.click_when_ready("The Cook", STEP))?;
+	let before = p.int("::World.Assets.getMoney()")?;
+	during("hiring the cook", p.session.click_when_ready("Hire", STEP))?;
+	paid(p, before, cost, "the cook")?;
+	ensure(p.int("::World.Retinue.hasFollower(\"follower.cook\") ? 1 : 0")? == 1, "no cook in the retinue")?;
+	p.shot("cook");
+	for _ in 0..2 {
+		if p.session.shows_text("Leave")? {
+			during("leaving the campfire", p.session.click_when_ready("Leave", STEP))?;
+			p.session.pump_until(Duration::from_secs(2), |s| !s.animating().unwrap_or(true));
+		}
+	}
+	Ok(())
+}
+
+/// Pick the campaign entry `label` in the save or load list (its `.ui-control.campaign`;
+/// the list's scroll container is a control with the same text when it holds one
+/// entry), clicking again until it shows as picked: the list is filled in again when
+/// the saves' data comes.
+fn pick_campaign(p: &Play, label: &str) -> Result<(), String> {
+	let entry = format!(
+		r#"(function () {{
+			var hit = null;
+			jQuery('.ui-control.campaign:visible').each(function () {{ if (hit === null && this.textContent.trim().indexOf({label:?}) === 0) hit = this; }});
+			if (hit === null) return null;
+			var r = hit.getBoundingClientRect();
+			return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2), hit.classList.contains('is-selected') ? 1 : 0];
+		}})()"#
+	);
+	let at = |p: &Play| p.session.eval(&entry).ok().and_then(|v| v.as_array().map(|a| a.iter().map(|n| n.as_i64().unwrap_or(0)).collect::<Vec<_>>()));
+	for _ in 0..10 {
+		during(&format!("finding {label}"), settled(p, |p| at(p).is_some()))?;
+		let v = at(p).ok_or(format!("no {label} in the list"))?;
+		if v[2] == 1 {
+			return Ok(());
+		}
+		p.session.click_at(v[0] as i32, v[1] as i32)?;
+		p.session.pump_until(Duration::from_millis(500), |p2| at(p).is_some_and(|v| v[2] == 1) || !p2.animating().unwrap_or(true) && false);
+	}
+	Err(format!("{label} won't be picked"))
+}
+
+/// What a loaded campaign must have as it was saved, in one line.
+const CAMPAIGN: &str = r#"(function() {
+	local t = ::World.getTime(), a = ::World.Assets, pos = ::World.State.getPlayer().getPos();
+	local s = "day " + t.Days + " hour " + t.Hours + " money " + a.getMoney() + " food " + a.getFood() + " ammo " + a.getAmmo()
+		+ " parts " + a.getArmorParts() + " meds " + a.getMedicine() + " renown " + a.getBusinessReputation()
+		+ " pos " + pos.X.tointeger() + "," + pos.Y.tointeger();
+	s += " | bros";
+	foreach (b in ::World.getPlayerRoster().getAll())
+		s += " " + b.getName() + "/" + b.getBackground().getID() + "/L" + b.getLevel() + "/xp" + b.getXP() + "/hp" + b.getHitpoints() + "/" + b.getMoodState();
+	s += " | stash";
+	foreach (it in a.getStash().getItems()) if (it != null) s += " " + it.getID();
+	s += " | contract " + (::World.Contracts.getActiveContract() == null ? "-" : ::World.Contracts.getActiveContract().getName());
+	s += " | ambition " + (::World.Ambitions.hasActiveAmbition() ? ::World.Ambitions.getActiveAmbition().getID() : "-");
+	s += " | retinue";
+	foreach (f in ::World.Retinue.m.Followers) if (::World.Retinue.hasFollower(f.getID())) s += " " + f.getID();
+	return s;
+})()"#;
+
+/// Save the campaign from the in-game menu (Escape, "Save Campaign", a new save named
+/// `name`), then load it ("Load Campaign", the save, "Load"): the campaign loaded is
+/// the one saved.
+fn save_and_load(p: &Play, name: &str) -> Result<(), String> {
+	leave_town(p)?;
+	p.script("::World.State.setPause(true);")?;
+	let saved = p.text(CAMPAIGN)?;
+	player::press_key(p.session.engine(), 41)?;
+	during("the menu", p.session.click_when_ready("Save Campaign", STEP))?;
+	during("waiting for the saves", settled(p, |p| nth(p, ".ui-control.campaign", 0).is_ok()))?;
+	p.shot("save");
+	during("a new save", pick_campaign(p, "New Savegame"))?;
+	during("saving", p.session.click_when_ready("Save", STEP))?;
+	during("naming the save", p.session.fill_field(".enter-name-container input", name))?;
+	during("confirming the name", p.session.click_when_ready("Ok", STEP))?;
+	let listed = format!("(function() {{ foreach (s in ::PersistenceManager.queryStorages()) if (s.getName() == \"{name}\") return 1; return 0; }})()");
+	during("the save being written", p.session.pump_until(Duration::from_secs(20), |_| p.int(&listed).is_ok_and(|n| n == 1)).then_some(()).ok_or("no save named so".to_string()))?;
+	p.shot("saved");
+	// Back to the menu's first page, then load what was saved.
+	p.session.pump_until(Duration::from_secs(2), |s| !s.animating().unwrap_or(true));
+	if !p.session.shows_text("Load Campaign")? {
+		player::press_key(p.session.engine(), 41)?;
+	}
+	during("the menu", p.session.click_when_ready("Load Campaign", STEP))?;
+	during("waiting for the saves", settled(p, |p| nth(p, ".ui-control.campaign", 0).is_ok()))?;
+	during("picking the save", pick_campaign(p, name))?;
+	p.shot("load");
+	during("loading", p.session.click_when_ready("Load", STEP))?;
+	p.session.pump_until(Duration::from_secs(2), |_| false);
+	if p.session.shows_text("Ok")? {
+		during("confirming the load", p.session.click_when_ready("Ok", STEP))?;
+	}
+	during("the loaded campaign", p.until("(\"State\" in ::World) && ::World.State != null && !::LoadingScreen.isVisible() && ::World.State.m.WorldScreen.isVisible()", STEP))?;
+	p.shot("loaded");
+	let loaded = p.text(CAMPAIGN)?;
+	ensure(loaded == saved, format!("the loaded campaign differs:\nsaved  {saved}\nloaded {loaded}"))?;
+	println!("saved and loaded: {saved}");
+	Ok(())
+}
+
 /// What the town screen is, as the scripts and the page see it: one line.
 fn town_state(p: &Play) -> String {
 	let sq = p
@@ -593,8 +764,11 @@ fn trace_town(p: &Play, what: &str, frames: u32) -> Result<(), String> {
 	Ok(())
 }
 
-/// For the page owner: enter a town, leave it, and on the next frame head straight back
-/// in, as a player clicking the town again does. The town screen should show again.
+/// Enter a town, leave it, and on the next frame head straight back in, during the
+/// leave's fade. The town ends entered with its screen hidden: vanilla's own race (the
+/// page's show() only shortens the fade-out, whose completion then hides the screen
+/// again), which the original shows too (probed).
+/// The session waits for the fade before going back in, as a player does.
 fn town_reentry(p: &Play) -> Result<(), String> {
 	let town = enter_town(p, None)?;
 	println!("[reentry] in {town}: {}", town_state(p));
@@ -629,12 +803,19 @@ fn play(p: &Play) -> Result<(), String> {
 			new_campaign(p)?;
 			return town_leave(p);
 		}
+		Ok("retinue") => {
+			new_campaign(p)?;
+			retinue(p)?;
+			return save_and_load(p, "play session");
+		}
 		_ => {}
 	}
 	new_campaign(p)?;
 	// No battles until the page's result screen stops stalling (the Velocity stall):
 	// nobody attacks the company.
 	p.script("local pl = ::World.State.getPlayer(); pl.m.IsAttackable = false; pl.m.IsAttackableByAI = false;")?;
+	// A richer company than a new one, so that every purchase and hire can happen.
+	p.script("::World.Assets.addMoney(10000);")?;
 	let town = enter_town(p, None)?;
 	println!("entered {town}");
 	shop(p, "building.marketplace")?;
@@ -645,6 +826,10 @@ fn play(p: &Play) -> Result<(), String> {
 	for smith in ["building.weaponsmith", "building.armorsmith"] {
 		shop(p, smith)?;
 	}
+	retinue(p)?;
+	save_and_load(p, "play session")?;
+	contract(p)?;
+	adventure(p)?;
 	let problems: Vec<String> = p
 		.session
 		.log()
