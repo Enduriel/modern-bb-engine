@@ -644,6 +644,8 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
 				let class = m.borrow().label_class.clone()?;
+				// The original's label is a scene entity (a child `Text`), which takes an id.
+				m.borrow().ids.next();
 				let label = class.instantiate(vm, LabelData::default());
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.labels.insert(name, label.clone());

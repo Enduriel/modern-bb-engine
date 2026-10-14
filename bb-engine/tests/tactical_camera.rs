@@ -44,6 +44,9 @@ fn a_gliding_battle_camera_moves_over_frames() {
 		let a = SqTable::root(engine.vm()).get::<SqArray>("__cam").expect("answers");
 		(0..a.len()).map(|i| a.get::<squirrel::Number>(i).map_or_else(|| format!("{:?}", a.get::<bool>(i)), |n| n.0.to_string())).collect()
 	};
+	// The battle paused, so no unit's turn takes the camera elsewhere meanwhile (the
+	// camera moves on real time).
+	engine.run_script("::Tactical.State.setPause(true);", "pause").expect("pause");
 	let start = camera("c.setPos(::Tactical.getTileSquare(22, 18).Pos); c.moveToTile(far)");
 	assert_eq!(&start[..3], ["Some(true)", "Some(false)", "Some(true)"], "under way: {start:?}");
 	let mut frames = 0;

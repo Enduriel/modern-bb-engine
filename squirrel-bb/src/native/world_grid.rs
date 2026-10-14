@@ -20,7 +20,7 @@ use super::fog_mask::{FogMask, FogPatch, FogStamp};
 use crate::scene::SceneRegionText;
 use super::overload::{Overload, make_dispatcher, overload_key};
 use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
-use crate::native::{EngineRng, Sprites};
+use crate::native::{EngineRng, EntityIds, Sprites};
 use super::world_layout;
 use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
@@ -84,6 +84,7 @@ impl super::save::SavePart for GridPart {
 		g.fog.save(&mut w);
 		w.u32(g.region_texts.len() as u32);
 		for t in &g.region_texts {
+			w.i64(t.id);
 			w.bytes(&t.text);
 			for v in [t.scale, t.rotation, t.pos.0, t.pos.1] {
 				w.f32(v);
@@ -123,6 +124,7 @@ impl super::save::SavePart for GridPart {
 		g.region_texts = (0..count)
 			.map(|_| {
 				Ok(SceneRegionText {
+					id: r.i64()?,
 					text: r.bytes()?,
 					scale: r.f32()?,
 					rotation: r.f32()?,
@@ -194,6 +196,8 @@ struct GridState {
 	sprites: Sprites,
 	/// The engine's random stream: new details' mirroring, scale and rotation.
 	engine_rng: EngineRng,
+	/// The entity ids every entity shares; details take theirs from it.
+	ids: EntityIds,
 	/// The details that may turn (see `world_detail::Spinning`).
 	spinning: world_detail::Spinning,
 	/// The camera the map keeps in view (see [`bound_camera`]).
@@ -285,6 +289,7 @@ impl WorldGrid {
 				nav_path_class: None,
 				sprites: Sprites::default(),
 				engine_rng: EngineRng::unseeded(),
+				ids: EntityIds::default(),
 				spinning: Rc::default(),
 				camera: None,
 				fog_on: true,
@@ -297,6 +302,11 @@ impl WorldGrid {
 	/// Draw new details' random looks from `rng`. Call before [`install`](Self::install).
 	pub fn set_engine_rng(&self, rng: EngineRng) {
 		self.grid.borrow_mut().engine_rng = rng;
+	}
+
+	/// The entity ids details take theirs from (shared with every entity).
+	pub fn set_entity_ids(&self, ids: EntityIds) {
+		self.grid.borrow_mut().ids = ids;
 	}
 
 	/// Keep `camera`'s view on the map. Call before [`install`](Self::install).
@@ -663,7 +673,11 @@ impl WorldGrid {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, name: SqBytes, scale: Number, rotation: Number, pos: Retained| {
 				let coord = |axis: &str| pos.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
-				g.borrow_mut().region_texts.push(SceneRegionText {
+				let mut g = g.borrow_mut();
+				// It's a scene entity in the original, so it takes an id.
+				let id = g.ids.next();
+				g.region_texts.push(SceneRegionText {
+					id,
 					text: name.0,
 					scale: scale.0 as f32,
 					rotation: rotation.0 as f32,
@@ -925,15 +939,27 @@ fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Opti
 /// with flag `0x1000` (ground scatter: grass, bones, coast details) gets a random
 /// scale in `[0.6, 1.0]`. Drawn in that order. A rotating brush's speed is the
 /// detail's torque (see `spin`).
-fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: bool) -> Option<SqStrongRef> {
+fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: bool, offset: (f32, f32)) -> Option<SqStrongRef> {
 	let class = t.grid.borrow().detail_class.clone()?;
-	let (sprites, rng, spinning) = {
+	let (sprites, rng, spinning, ids) = {
 		let g = t.grid.borrow();
-		(g.sprites.clone(), g.engine_rng.clone(), g.spinning.clone())
+		(g.sprites.clone(), g.engine_rng.clone(), g.spinning.clone(), g.ids.clone())
 	};
 	if random_flip {
 		data.flipped = rng.range(0, 1) == 0;
 	}
+	// An unknown brush spawns nothing (the original returns null; before brushes are
+	// loaded every name is kept).
+	if sprites.resolve(&data.brush).is_empty() {
+		return None;
+	}
+	// Its id, place and draw order, as the original's decal gets them (`0x4fb5d0`).
+	data.id = ids.next();
+	let (col, row, r) = t.with(|d| (d.col, d.row, d.r));
+	let (cx, cy) = world_layout::tile_pos(col, row);
+	data.pos = (cx as f32 + offset.0, offset.1 + cy as f32);
+	let depth_bias = sprites.with(|r| r.get(&data.brush).map_or(0, |(_, s)| i32::from(s.depth_bias)));
+	data.z = (data.pos.1 as i32) + depth_bias + data.z_level as i32 - (r & 1) as i32;
 	let looks = sprites.with(|r| r.get(&data.brush).map(|(_, s)| (s.flags, s.rotation_speed)));
 	if let Some((flags, rotation_speed)) = looks {
 		data.flipped &= flags & 0x400 != 0;
@@ -1223,26 +1249,13 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			|t: &mut TileHandle, other: Native<TileHandle>| -> i64 { direction8_to(t, &other.0) },
 		);
 
-	// `spawnDetail` is a Sqrat overload (arities 1/3/4/5/6 — from verified call sites).
-	// The leaves add a detail to the tile and mint its `WorldDetail`; the strict
-	// dispatcher routes by arg count and is hookable per-overload. Worldgen uses the
-	// 3-arg form (brush, z, type) and the 4-arg form adds a flag (always `false` at the
-	// call sites, see `world_detail`). The trailing arguments are read leniently.
+	// `spawnDetail` is a Sqrat overload of arities 3/4/5/6 (disassembled, `0x4fb000`):
+	// (brush, z, type) mirrors at random; then (…, flipped), (…, flipped, fadeIn) and
+	// (…, flipped, fadeIn, offset). A fading-in detail is drawn at full alpha once
+	// drawn, which is how a save keeps it, so the fade isn't modelled. The leaves add a
+	// detail to the tile and mint its `WorldDetail`; the strict dispatcher routes by arg
+	// count and is hookable per-overload. The trailing arguments are read leniently.
 	b = b
-		.method(
-			&overload_key("spawnDetail", 1),
-			|t: &mut TileHandle, vm: &SQVM, brush: &str| -> Option<SqStrongRef> {
-				make_detail(
-					t,
-					vm,
-					DetailData {
-						brush: brush.to_string(),
-						..DetailData::default()
-					},
-					true,
-				)
-			},
-		)
 		.method(
 			&overload_key("spawnDetail", 3),
 			|t: &mut TileHandle, vm: &SQVM, brush: &str, z: i64, flags: i64| -> Option<SqStrongRef> {
@@ -1256,6 +1269,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 						..DetailData::default()
 					},
 					true,
+					(0.0, 0.0),
 				)
 			},
 		)
@@ -1268,7 +1282,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 flags: Retained,
 			 flipped: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false)
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false, (0.0, 0.0))
 			},
 		)
 		.method(
@@ -1279,9 +1293,9 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 z: Retained,
 			 flags: Retained,
 			 flipped: Retained,
-			 _offset: Retained|
+			 _fade_in: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false)
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false, (0.0, 0.0))
 			},
 		)
 		.method(
@@ -1292,10 +1306,12 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 z: Retained,
 			 flags: Retained,
 			 flipped: Retained,
-			 _extra: Retained,
-			 _offset: Retained|
+			 _fade_in: Retained,
+			 offset: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false)
+				let coord = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
+				let offset = (coord("X"), coord("Y"));
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false, offset)
 			},
 		)
 		.native_method(

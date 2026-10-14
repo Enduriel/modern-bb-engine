@@ -111,6 +111,8 @@ pub struct SceneRegionText {
 	pub rotation: f32,
 	/// Where it is centred, in world units.
 	pub pos: (f32, f32),
+	/// Its entity id (the original's is a scene entity, which takes one).
+	pub id: i64,
 }
 
 /// One world tile.

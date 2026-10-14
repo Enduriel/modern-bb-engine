@@ -42,6 +42,14 @@ pub struct DetailData {
 	/// the original's colour.
 	pub tint: u32,
 	pub ignore_ambient: bool,
+	/// Its entity id: a detail takes one from the counter every entity shares, as the
+	/// original's decals do (worldgen spawns some 18,000).
+	pub id: i64,
+	/// Where it is: its spawn tile's centre plus the spawn's offset, in world units.
+	pub pos: (f32, f32),
+	/// Its draw order key (the original's Z): `trunc(y)` + the brush's depth bias + the
+	/// z level − the spawn tile's axial-r parity.
+	pub z: i32,
 }
 
 impl Default for DetailData {
@@ -58,6 +66,9 @@ impl Default for DetailData {
 			scale: 1.0,
 			tint: 0x00ff_ffff,
 			ignore_ambient: false,
+			id: 0,
+			pos: (0.0, 0.0),
+			z: 0,
 		}
 	}
 }

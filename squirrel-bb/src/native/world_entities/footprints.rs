@@ -48,6 +48,8 @@ pub(crate) struct Footprint {
 	pub visibility: f32,
 	/// `Const.World.FootprintsType`.
 	pub kind: i64,
+	/// Its entity id (the original's footprint is a scene entity, which takes one).
+	pub id: i64,
 }
 
 /// The footprints, oldest first.
@@ -63,15 +65,22 @@ fn distance(a: (f32, f32), b: (f32, f32)) -> f32 {
 }
 
 impl Footprints {
-	/// `spawnFootprint`, with the player's view at `view` and the virtual time `now`.
-	pub fn spawn(&mut self, footprint: Footprint, stay: f32, view: (f32, f32), now: f32) {
+	/// `spawnFootprint`, with the player's view at `view` and the virtual time `now`. A
+	/// footprint that is made takes an id from `ids`.
+	pub fn spawn(&mut self, footprint: Footprint, stay: f32, view: (f32, f32), now: f32, ids: &crate::native::EntityIds) {
 		if stay == 0.0 && distance(view, footprint.pos) >= SPAWN_REACH {
 			return;
 		}
 		self.list.push(Footprint {
 			expires: now + stay,
+			id: ids.next(),
 			..footprint
 		});
+	}
+
+	/// The footprints, oldest first.
+	pub fn all(&self) -> &[Footprint] {
+		&self.list
 	}
 
 	/// A footprint as a save had it (the newest last).
@@ -150,6 +159,7 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 				let (view, _) = view_of(&m);
 				let mut machine = m.borrow_mut();
 				machine.footprints.expire(now);
+				let ids = machine.ids.clone();
 				machine.footprints.spawn(
 					Footprint {
 						pos: (x as f32, y as f32),
@@ -158,10 +168,12 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 						expires: 0.0,
 						visibility: visibility.0 as f32,
 						kind: kind.0 as i64,
+						id: 0,
 					},
 					stay.0 as f32,
 					view,
 					now,
+					&ids,
 				);
 			},
 		)
@@ -208,16 +220,17 @@ mod tests {
 			expires: 0.0,
 			visibility: 1.0,
 			kind,
+			id: 0,
 		}
 	}
 
 	#[test]
 	fn ordinary_steps_are_only_made_near_the_player() {
 		let mut f = Footprints::default();
-		f.spawn(print((5000.0, 0.0), 1), 0.0, (0.0, 0.0), 10.0);
+		f.spawn(print((5000.0, 0.0), 1), 0.0, (0.0, 0.0), 10.0, &crate::native::EntityIds::default());
 		assert!(f.list.is_empty(), "3000 units or more away");
-		f.spawn(print((2999.0, 0.0), 1), 0.0, (0.0, 0.0), 10.0);
-		f.spawn(print((5000.0, 0.0), 1), 30.0, (0.0, 0.0), 10.0);
+		f.spawn(print((2999.0, 0.0), 1), 0.0, (0.0, 0.0), 10.0, &crate::native::EntityIds::default());
+		f.spawn(print((5000.0, 0.0), 1), 30.0, (0.0, 0.0), 10.0, &crate::native::EntityIds::default());
 		assert_eq!(f.list.len(), 2, "near, or lasting");
 		assert_eq!(f.list[1].expires, 40.0);
 	}
@@ -225,8 +238,8 @@ mod tests {
 	#[test]
 	fn expiry_stops_at_the_first_footprint_still_around() {
 		let mut f = Footprints::default();
-		f.spawn(print((0.0, 0.0), 1), 100.0, (0.0, 0.0), 0.0);
-		f.spawn(print((0.0, 0.0), 1), 0.0, (0.0, 0.0), 0.0);
+		f.spawn(print((0.0, 0.0), 1), 100.0, (0.0, 0.0), 0.0, &crate::native::EntityIds::default());
+		f.spawn(print((0.0, 0.0), 1), 0.0, (0.0, 0.0), 0.0, &crate::native::EntityIds::default());
 		f.expire(100.0);
 		assert_eq!(f.list.len(), 2, "the first lasts until 160 s, and keeps the second");
 		f.expire(160.0);
@@ -236,9 +249,9 @@ mod tests {
 	#[test]
 	fn the_lookout_sees_types_near_the_position_within_vision() {
 		let mut f = Footprints::default();
-		f.spawn(print((50.0, 0.0), 2), 30.0, (0.0, 0.0), 0.0);
-		f.spawn(print((150.0, 0.0), 3), 30.0, (0.0, 0.0), 0.0);
-		f.spawn(print((0.0, 900.0), 4), 30.0, (0.0, 0.0), 0.0);
+		f.spawn(print((50.0, 0.0), 2), 30.0, (0.0, 0.0), 0.0, &crate::native::EntityIds::default());
+		f.spawn(print((150.0, 0.0), 3), 30.0, (0.0, 0.0), 0.0, &crate::native::EntityIds::default());
+		f.spawn(print((0.0, 900.0), 4), 30.0, (0.0, 0.0), 0.0, &crate::native::EntityIds::default());
 		let at = f.types_at((0.0, 0.0), 6, (0.0, 0.0), 500.0);
 		assert_eq!(at, [false, false, true, false, false, false]);
 		// Seen only within vision × visibility of the player's view.
@@ -250,7 +263,7 @@ mod tests {
 	#[test]
 	fn footprints_fade_after_their_stay() {
 		let mut f = Footprints::default();
-		f.spawn(print((0.0, 0.0), 1), 10.0, (0.0, 0.0), 0.0);
+		f.spawn(print((0.0, 0.0), 1), 10.0, (0.0, 0.0), 0.0, &crate::native::EntityIds::default());
 		assert_eq!(f.drawn(5.0, (0.0, 0.0), 100.0)[0].1, 0.8 * 255.0);
 		assert_eq!(f.drawn(40.0, (0.0, 0.0), 100.0)[0].1, 0.5 * 0.8 * 255.0);
 	}

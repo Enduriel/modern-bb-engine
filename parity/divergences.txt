@@ -20,6 +20,3 @@ menu/strings | format %5.1f|%-4d| | an exact tie (2.25 to 1 decimal) rounds to e
 menu/color_vec | createColor #xyz RGBA | malformed '#' colour: the original returns stack garbage
 menu/color_vec | createColor RGBA | empty colour string: the original returns stack garbage
 
-# The original's object counter also counts other objects; ours counts entities only.
-# Only the order is visible to scripts, and it matches ("settlement ids ascending").
-campaign/entities | settlement id gaps | the original spends 2 IDs per settlement, ours 1

@@ -99,6 +99,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let world_entities = WorldEntities::new(modules.instantiator());
 		world_entities.set_sprites(natives.sprites.clone());
 		world_entities.install(&mut vm);
+		// Details take their ids from the counter every entity shares.
+		world_grid.set_entity_ids(world_entities.ids());
 		// After the World table exists: the roster/tactical-unit host (provides
 		// World.getRoster/getPlayerRoster/createRoster, replacing the bare stubs).
 		let tactical_entities = TacticalEntities::new(modules.instantiator());

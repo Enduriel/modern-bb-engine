@@ -3,14 +3,16 @@
 //! The original takes them from a single object counter that many engine objects draw
 //! from, so a settlement, a party and a brother never share an id, and none collides
 //! with a faction id: settlements and factions key their rosters in the same
-//! `World.getRoster(id)` space. Its first entity ids land in the tens of thousands; ours
-//! start at [`FIRST`] and keep the original's order (parity probe `campaign/entities`).
+//! `World.getRoster(id)` space. It starts at 1, and worldgen's ~19,000 decorations (and
+//! every name label) take ids before the settlements do, so a new campaign's entity ids
+//! land in the tens of thousands; ours are the original's (a new campaign's ids match
+//! the original's save of it).
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-/// The first id handed out: well above any faction id.
-pub const FIRST: i64 = 10_000;
+/// The first id handed out, as in the original (its first decoration's).
+pub const FIRST: i64 = 1;
 
 /// The shared counter (cheap to clone; clones share it).
 #[derive(Clone)]
