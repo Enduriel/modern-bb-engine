@@ -146,6 +146,7 @@ pub fn install_autoplay(engine: &GameEngine) -> Result<(), String> {
 /// plays the player's turns instead (it is called every frame of the battle).
 const AUTOPLAY: &str = r#"
 ::__autoplayEngage <- false;
+::__autoplayEngaged <- false;
 ::__autoplayFight <- false;
 ::__autoplayPlayer <- null;
 ::__autoplay <- function()
@@ -198,8 +199,14 @@ const AUTOPLAY: &str = r#"
 	local state = ::World.State;
 	local screen = state.getEventScreen();
 	if (screen != null && screen.isVisible() && !screen.isAnimating()) screen.onButtonPressed(0);
+	// Engage once per offer, as a player clicks once.
 	local dialog = state.m.CombatDialog;
-	if (::__autoplayEngage && dialog != null && dialog.isVisible() && !dialog.isAnimating()) dialog.onEngageButtonPressed();
+	if (dialog == null || !dialog.isVisible()) ::__autoplayEngaged = false;
+	else if (::__autoplayEngage && !::__autoplayEngaged && !dialog.isAnimating())
+	{
+		::__autoplayEngaged = true;
+		dialog.onEngageButtonPressed();
+	}
 };
 "#;
 
