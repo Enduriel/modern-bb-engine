@@ -471,10 +471,12 @@ pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
 			look.tint[2],
 			look.alpha.clamp(0.0, 255.0) as u8,
 		],
+		corner_colors: None,
 		overlay: [0; 4],
 		factor: 0.0,
 		saturation: 1.0,
 		flags: 0,
+		level: 0,
 	}
 }
 

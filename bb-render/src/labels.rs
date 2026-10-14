@@ -65,10 +65,12 @@ pub(crate) fn label_quads<'a>(
 					corners: [[pen, top], [right, top], [right, bottom], [pen, bottom]],
 					uv: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
 					color,
+					corner_colors: None,
 					overlay: [0; 4],
 					factor: 0.0,
 					saturation: 1.0,
 					flags: 1,
+					level: 0,
 				},
 			));
 		}
@@ -85,10 +87,12 @@ fn solid(top_left: [f32; 2], bottom_right: [f32; 2], color: [u8; 4]) -> Quad {
 		corners: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
 		uv: [[0.5, 0.5]; 4],
 		color,
+		corner_colors: None,
 		overlay: [0; 4],
 		factor: 0.0,
 		saturation: 1.0,
 		flags: 1,
+		level: 0,
 	}
 }
 

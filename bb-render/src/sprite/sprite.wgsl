@@ -5,12 +5,17 @@
 // atlases by index. GLSL may sample inside that branch; WGSL needs uniform control
 // flow for implicit derivatives, so the derivatives are taken first and the branch
 // samples with them explicitly (the same texels and mip level).
+//
+// With a depth-of-field strength (the battle's `sprite_dof` program) a sprite levels
+// below the camera blends in its mip level 2: `mix(lod2, texel, 1 - strength × n)`.
 
 struct Uniforms {
 	translation: vec2<f32>,
 	scale: vec3<f32>,
 	ambient_saturation: f32,
 	ambient_color: vec4<f32>,
+	// x: the camera's level, y: the depth of field's strength.
+	dof: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -41,6 +46,7 @@ struct VertexIn {
 	@location(5) saturation: f32,
 	@location(6) factor: f32,
 	@location(7) flags: u32,
+	@location(8) level: u32,
 }
 
 struct VertexOut {
@@ -52,6 +58,7 @@ struct VertexOut {
 	@location(4) saturation: f32,
 	@location(5) factor: f32,
 	@location(6) @interpolate(flat) flags: u32,
+	@location(7) dof: f32,
 }
 
 @vertex
@@ -70,7 +77,22 @@ fn vs_main(v: VertexIn) -> VertexOut {
 	out.saturation = v.saturation;
 	out.factor = v.factor;
 	out.flags = v.flags;
+	out.dof = min(1.0, 1.0 - u.dof.y * max(0.0, u.dof.x - f32(v.level)));
 	return out;
+}
+
+fn sample_atlas_lod2(index: u32, uv: vec2<f32>) -> vec4<f32> {
+	switch index {
+		case 0u: { return textureSampleLevel(tex0, smp0, uv, 2.0); }
+		case 1u: { return textureSampleLevel(tex1, smp1, uv, 2.0); }
+		case 2u: { return textureSampleLevel(tex2, smp2, uv, 2.0); }
+		case 3u: { return textureSampleLevel(tex3, smp3, uv, 2.0); }
+		case 4u: { return textureSampleLevel(tex4, smp4, uv, 2.0); }
+		case 5u: { return textureSampleLevel(tex5, smp5, uv, 2.0); }
+		case 6u: { return textureSampleLevel(tex6, smp6, uv, 2.0); }
+		case 7u: { return textureSampleLevel(tex7, smp7, uv, 2.0); }
+		default: { return vec4<f32>(0.0); }
+	}
 }
 
 fn sample_atlas(index: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec4<f32> {
@@ -95,6 +117,9 @@ fn fs_main(f: VertexOut) -> @location(0) vec4<f32> {
 	let tex0 = sample_atlas(f.texture, f.tex_coords, ddx, ddy);
 
 	var col = f.color0 * tex0;
+	if f.dof < 1.0 {
+		col = f.color0 * mix(sample_atlas_lod2(f.texture, f.tex_coords), tex0, f.dof);
+	}
 	let saturation = f.saturation * u.ambient_saturation;
 	if saturation != 1.0 {
 		let desaturated = (1.0 - saturation) * (col.r + col.g + col.b) * 0.333333333;

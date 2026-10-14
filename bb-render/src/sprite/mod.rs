@@ -16,8 +16,12 @@ use crate::texture::GpuTexture;
 pub const SLOTS: usize = 8;
 
 /// Bytes per vertex: position (4 × f32), two colours (4 × u8 each), texture
-/// coordinates (2 × f32), atlas slot (u32), saturation and factor (f32), flags (u32).
-const VERTEX_SIZE: u64 = 48;
+/// coordinates (2 × f32), atlas slot (u32), saturation and factor (f32), flags (u32),
+/// level (u32).
+const VERTEX_SIZE: u64 = 52;
+
+/// Bytes of the uniform block.
+const UNIFORM_SIZE: u64 = 64;
 
 /// The shader's uniforms: the camera and the scene's ambient light.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,6 +34,12 @@ pub struct SceneUniforms {
 	pub ambient_color: [f32; 4],
 	/// Multiplies each sprite's saturation.
 	pub ambient_saturation: f32,
+	/// The battle camera's level and the depth of field's strength: a sprite `n` levels
+	/// below the camera blends `strength × n` of its mip level 2 in (the original's
+	/// `sprite_dof` program, `DOF_STRENGTH` 0.25). Strength 0 draws everything sharp,
+	/// as the world's `sprite` program does.
+	pub camera_level: f32,
+	pub dof_strength: f32,
 }
 
 impl SceneUniforms {
@@ -41,11 +51,13 @@ impl SceneUniforms {
 			scale: [2.0 / width, 2.0 / height, 1.0],
 			ambient_color: [1.0; 4],
 			ambient_saturation: 1.0,
+			camera_level: 0.0,
+			dof_strength: 0.0,
 		}
 	}
 
-	fn bytes(&self) -> [u8; 48] {
-		let mut out = [0u8; 48];
+	fn bytes(&self) -> [u8; UNIFORM_SIZE as usize] {
+		let mut out = [0u8; UNIFORM_SIZE as usize];
 		let floats = [
 			self.translation[0],
 			self.translation[1],
@@ -59,6 +71,10 @@ impl SceneUniforms {
 			self.ambient_color[1],
 			self.ambient_color[2],
 			self.ambient_color[3],
+			self.camera_level,
+			self.dof_strength,
+			0.0,
+			0.0,
 		];
 		for (chunk, value) in out.chunks_exact_mut(4).zip(floats) {
 			chunk.copy_from_slice(&value.to_le_bytes());
@@ -78,12 +94,17 @@ pub struct Quad {
 	pub uv: [[f32; 2]; 4],
 	/// Multiplies the texel (the sprite's colour and alpha).
 	pub color: [u8; 4],
+	/// Per-corner colours in place of `color`, for a gradient (a battle tile's wall
+	/// darkens towards its foot).
+	pub corner_colors: Option<[[u8; 4]; 4]>,
 	/// Blended over the result by `factor` (the shaker's flash colour).
 	pub overlay: [u8; 4],
 	pub factor: f32,
 	pub saturation: f32,
 	/// 0 = lit by the ambient colour, anything else = unlit.
 	pub flags: u32,
+	/// The height level it's drawn at, for the depth of field.
+	pub level: u32,
 }
 
 /// The sprite program and its fixed GPU objects.
@@ -112,7 +133,7 @@ impl SpriteRenderer {
 				ty: wgpu::BindingType::Buffer {
 					ty: wgpu::BufferBindingType::Uniform,
 					has_dynamic_offset: false,
-					min_binding_size: NonZeroU64::new(48),
+					min_binding_size: NonZeroU64::new(UNIFORM_SIZE),
 				},
 				count: None,
 			}],
@@ -156,6 +177,7 @@ impl SpriteRenderer {
 			5 => Float32,
 			6 => Float32,
 			7 => Uint32,
+			8 => Uint32,
 		];
 		// glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA), applied to alpha as well.
 		let blend = wgpu::BlendComponent {
@@ -197,7 +219,7 @@ impl SpriteRenderer {
 		});
 		let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("sprite uniforms"),
-			size: 48,
+			size: UNIFORM_SIZE,
 			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
@@ -389,7 +411,8 @@ fn push_vertex(out: &mut Vec<u8>, quad: &Quad, corner: usize, slot: u32) {
 	for value in [x, y, 0.0, 1.0] {
 		out.extend_from_slice(&value.to_le_bytes());
 	}
-	out.extend_from_slice(&quad.color);
+	let color = quad.corner_colors.map_or(quad.color, |colors| colors[corner]);
+	out.extend_from_slice(&color);
 	out.extend_from_slice(&quad.overlay);
 	for value in quad.uv[corner] {
 		out.extend_from_slice(&value.to_le_bytes());
@@ -398,6 +421,7 @@ fn push_vertex(out: &mut Vec<u8>, quad: &Quad, corner: usize, slot: u32) {
 	out.extend_from_slice(&quad.saturation.to_le_bytes());
 	out.extend_from_slice(&quad.factor.to_le_bytes());
 	out.extend_from_slice(&quad.flags.to_le_bytes());
+	out.extend_from_slice(&quad.level.to_le_bytes());
 }
 
 fn buffer(gpu: &Gpu, label: &str, bytes: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
@@ -432,10 +456,12 @@ mod tests {
 			corners: [[0.0; 2]; 4],
 			uv: [[0.0; 2]; 4],
 			color: [255; 4],
+			corner_colors: None,
 			overlay: [0; 4],
 			factor: 0.0,
 			saturation: 1.0,
 			flags: 0,
+			level: 0,
 		}
 	}
 
@@ -475,6 +501,8 @@ mod tests {
 			scale: [3.0, 4.0, 5.0],
 			ambient_color: [6.0, 7.0, 8.0, 9.0],
 			ambient_saturation: 10.0,
+			camera_level: 11.0,
+			dof_strength: 12.0,
 		};
 		let floats: Vec<f32> = scene
 			.bytes()
@@ -483,7 +511,7 @@ mod tests {
 			.collect();
 		assert_eq!(
 			floats,
-			[1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 5.0, 10.0, 6.0, 7.0, 8.0, 9.0]
+			[1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 5.0, 10.0, 6.0, 7.0, 8.0, 9.0, 11.0, 12.0, 0.0, 0.0]
 		);
 	}
 }

@@ -89,10 +89,12 @@ pub(crate) fn glyph_quads<'a>(run: &TextRun<'a>) -> Vec<(&'a str, Quad)> {
 					],
 					uv: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
 					color: run.color,
+					corner_colors: None,
 					overlay: [0; 4],
 					factor: 0.0,
 					saturation: 1.0,
 					flags: 1,
+					level: 0,
 				},
 			));
 		}
