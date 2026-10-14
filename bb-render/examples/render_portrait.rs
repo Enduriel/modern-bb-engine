@@ -41,7 +41,19 @@ fn main() {
 	std::fs::create_dir_all(&out).expect("out dir");
 	for (i, path) in paths.iter().enumerate() {
 		let request = PortraitRequest::parse(path).expect("a procedural path");
-		let portrait = engine.portrait(request.id).expect("the entity");
+		let mut portrait = engine.portrait(request.id).expect("the entity");
+		// BB_SHOW=a,b: force those sprites visible (to compare with the original).
+		if let Ok(show) = std::env::var("BB_SHOW") {
+			for s in portrait.sprites.iter_mut().filter(|s| show.split(',').any(|n| n == s.name)) {
+				s.visible = true;
+			}
+		}
+		// BB_LIST_SPRITES=1: what the portrait draws from.
+		if std::env::var_os("BB_LIST_SPRITES").is_some() {
+			for s in &portrait.sprites {
+				eprintln!("  {} {:?} visible {} in_portrait {} offset {:?}", s.name, s.brush, s.visible, s.in_portrait, s.offset);
+			}
+		}
 		let image = engine
 			.sprites()
 			.with(|registry| renderer.compose_portrait(&gpu, &portrait, &request.hidden, registry))

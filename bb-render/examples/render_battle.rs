@@ -9,8 +9,8 @@
 //!
 //! `BB_PARTICLES=NAME` spawns `Const.Tactical.<NAME>` (e.g. `FireParticles`) on the
 //! camera's tile half a second before the shot. `BB_SCRIPT=CODE` runs Squirrel a tenth
-//! of a second before it. `BB_LIST_UNITS=1` lists the units with their screen positions and bars
-//! (`BB_LIST_ALL=1`: every entity, with its brushes).
+//! of a second before it. `BB_LIST_UNITS=1` lists the units with their screen positions, bars and
+//! visible sprites (`BB_LIST_ALL=1`: every entity).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -122,7 +122,12 @@ fn main() {
 		for e in scene.entities.iter().filter(|e| e.is_actor || std::env::var_os("BB_LIST_ALL").is_some()) {
 			let sx = (e.pos.0 as f32 - scene.camera.pos.0 as f32) * camera_zoom + width as f32 / 2.0;
 			let sy = height as f32 / 2.0 - (e.pos.1 as f32 - scene.camera.pos.1 as f32) * camera_zoom;
-			let brushes: Vec<&str> = e.sprites.iter().map(|s| s.brush.as_str()).collect();
+			let brushes: Vec<String> = e
+				.sprites
+				.iter()
+				.filter(|s| s.visible && !s.brush.is_empty())
+				.map(|s| format!("{}:{}@{:?}#{:08x}x{}", s.name, s.brush, s.offset, s.color, s.scale))
+				.collect();
 			eprintln!("unit {} at {:?}, screen {sx},{sy}, overlay {:?} {brushes:?}", e.id, e.pos, e.overlay);
 		}
 	}
