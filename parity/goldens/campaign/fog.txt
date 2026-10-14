@@ -1,0 +1,4 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE discovered at start = integer 13560
+PROBE after uncover 7000,9000 r500 = integer 13716
+PROBE after uncover 2000,3000 r1234.5 = integer 14212

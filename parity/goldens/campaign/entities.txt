@@ -1,0 +1,19 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE settlement count = integer 21
+PROBE settlement 0 = string Seedeich @132,51
+PROBE settlement 4 = string Eisengrab @67,106
+PROBE settlement 8 = string Eidsvik @112,148
+PROBE settlement 12 = string Skallewold @133,144
+PROBE settlement 16 = string Wurmfeste @98,45
+PROBE settlement 20 = string Dahab @84,25
+PROBE settlement id gaps = integer 2
+PROBE settlement ids ascending = bool true
+PROBE player tile = string 78,139
+PROBE player pos = string 14160,16740
+PROBE entities at player r500 = integer 4
+PROBE entities at player r2000 = integer 10
+PROBE entity by id = string Heuweiler
+PROBE player entity is player = bool true
+PROBE factions = integer 30
+PROBE money = integer 2400
+PROBE roster size = integer 3

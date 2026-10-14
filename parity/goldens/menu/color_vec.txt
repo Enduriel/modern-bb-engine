@@ -1,0 +1,27 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE createColor R = integer 128
+PROBE createColor G = integer 64
+PROBE createColor B = integer 32
+PROBE createColor A = integer 255
+PROBE createColor short = integer 0
+PROBE createColorRGB = integer 236
+PROBE createColorWhite A = string ERROR wrong number of parameters
+PROBE vec X = float 3
+PROBE vec Y = float 4
+PROBE getVecDistance = float 5
+PROBE getVecDir X = float 0.6
+PROBE getVecDir Y = float 0.8
+PROBE vec add = string ERROR arith op + on between 'instance' and 'instance'
+PROBE createColor fffffff00 RGBA = string 0,0,0,0
+PROBE createColor fffffffe0 RGBA = string 0,0,0,0
+PROBE createColor ffffffff0 RGBA = string 0,0,0,0
+PROBE createColor #ff804020 RGBA = string 128,64,32,255
+PROBE createColor ff804020 RGBA = string 255,128,64,32
+PROBE createColor #80402 RGBA = string 8,4,2,255
+PROBE createColor #xyz RGBA = string 192,73,164,2
+PROBE createColor zz RGBA = string 0,0,0,0
+PROBE createColor RGBA = string 192,73,164,2
+PROBE createColor 0x10203040 RGBA = string 16,32,48,64
+PROBE createColor #0x112233 RGBA = string 17,34,51,255
+PROBE createColorRGB 0.5,1.0,0.25 = string 127,255,63,255
+PROBE createColorRGB -0.1,2.0,1.001 = string 231,254,255,255

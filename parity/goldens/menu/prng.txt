@@ -1,0 +1,11 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE seed42 rand(0,1000) = string 937,528,922,669,643,433,172,413,606,570,379,511
+PROBE seed42 then rand(-5,5) = string 1,-5,-3,-3,4,5,-2,-3,-2,-5,-5,3
+PROBE rand(5,5) = integer 5
+PROBE rand(10,1) = integer 10
+PROBE rand(0.5,3.7) = string 1,0,1,0,2,0
+PROBE seed0 rand(1,100) = string 95,68,34,79,97,19,64,45
+PROBE seed-7 rand(1,100) = string 66,49,91,24,97,4,46,65
+PROBE seed2^32+5 rand(1,100) = string 43,29,1,99,45,58,32,90
+PROBE seedString rand(0,99) = string 51,25,18,49,45,1,10,91,93,86,73,14
+PROBE seedString empty rand(0,99) = string 94,67,33,78,96,18,63,44

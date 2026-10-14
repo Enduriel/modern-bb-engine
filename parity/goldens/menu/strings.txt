@@ -1,0 +1,25 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE buildTextFromTemplate = string Hi Bob, 12 gold
+PROBE isFirstCharacter yes = bool false
+PROBE isFirstCharacter no = bool false
+PROBE removeFromBeginningOfText = string def
+PROBE hexStringToInt ff = integer 255
+PROBE hexStringToInt #1A2b = integer 6699
+PROBE String.contains = bool true
+PROBE String.replace = string a+b+c
+PROBE String.remove = string abc
+PROBE format %d %s %.2f = string 42 x 3.14
+PROBE format %5.1f|%-4d| = string 2.3|7 |
+PROBE strip = string a b|
+PROBE lstrip = string a |
+PROBE rstrip = string a|
+PROBE tointeger 12abc = integer 12
+PROBE tointeger 0x1F = integer 0
+PROBE tofloat 2.50 = float 2.5
+PROBE tofloat 1e3 = float 1000
+PROBE slice = string bcde
+PROBE find = integer 5
+PROBE toupper = string ABC
+PROBE len = integer 6
+PROBE regexp match = bool false
+PROBE regexp capture = bool true
