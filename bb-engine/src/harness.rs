@@ -42,19 +42,53 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// The installed mods in `dir`: every `.zip`, in the order the original mounts them
 /// after the `data_*.dat` archives (by name; a later archive wins). The probe harness's
 /// own zip (`mod_zz_bb_probe`, present only while a probe runs) is left out.
+///
+/// While a probe runs, the probe runner moves the installed mods (all but Modern Hooks) out
+/// of `data/` into [`HELD_MODS`] beside it and puts them back afterwards; they count as
+/// installed all the same, so tests see the installed mods whether or not a probe runs.
 pub fn mod_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
-	let mut zips: Vec<PathBuf> = std::fs::read_dir(dir)?
-		.flatten()
-		.map(|e| e.path())
-		.filter(|p| {
-			p.file_name().is_some_and(|n| {
-				let n = n.to_string_lossy();
-				n.ends_with(".zip") && !n.starts_with("mod_zz_bb_probe")
+	let zips_in = |d: &Path| -> io::Result<Vec<PathBuf>> {
+		Ok(std::fs::read_dir(d)?
+			.flatten()
+			.map(|e| e.path())
+			.filter(|p| {
+				p.file_name().is_some_and(|n| {
+					let n = n.to_string_lossy();
+					n.ends_with(".zip") && !n.starts_with("mod_zz_bb_probe")
+				})
 			})
-		})
-		.collect();
-	zips.sort();
+			.collect())
+	};
+	let mut zips = zips_in(dir)?;
+	if let Some(held) = dir.parent().map(|g| g.join(HELD_MODS)).filter(|h| h.is_dir()) {
+		for zip in zips_in(&held).unwrap_or_default() {
+			if !zips.iter().any(|z| z.file_name() == zip.file_name()) {
+				zips.push(zip);
+			}
+		}
+	}
+	zips.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 	Ok(zips)
+}
+
+/// Where a probe run keeps the installed mods, beside the install's `data/`.
+pub const HELD_MODS: &str = "_bb_probe_held_mods";
+
+/// Where a mod [`mod_archives`] listed is now: `path`, or the same zip moved by a probe
+/// since (into [`HELD_MODS`], or back into `data/`). An opened archive survives the
+/// move; this is for opening one by its listed path.
+pub fn locate_mod(path: &Path) -> PathBuf {
+	if path.exists() {
+		return path.to_path_buf();
+	}
+	let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+		return path.to_path_buf();
+	};
+	let other = if dir.file_name().is_some_and(|n| n == HELD_MODS) { "data" } else { HELD_MODS };
+	dir.parent()
+		.map(|game| game.join(other).join(name))
+		.filter(|moved| moved.exists())
+		.unwrap_or_else(|| path.to_path_buf())
 }
 
 /// An engine over the install at `dir` with its mods mounted ([`mod_archives`]), as the
@@ -93,6 +127,7 @@ pub fn open_mounted(
 ) -> io::Result<GameEngine> {
 	let mut mounts = vec![dir.to_path_buf()];
 	mounts.extend(dir.parent().map(Path::to_path_buf));
+	let archives: Vec<PathBuf> = archives.iter().map(|a| locate_mod(a)).collect();
 	let source = DatScriptSource::open(archives)?
 		.with_cache(ScriptCache::from_env())
 		.with_mounts(Mounts::new(mounts));
@@ -333,4 +368,28 @@ pub fn run_frame(engine: &GameEngine, real_delta_ms: f64) -> Result<(), String> 
 	engine.pump_ui().map_err(|e| format!("ui client: {e}"))?;
 	let autoplay = squirrel::SqTable::root(engine.vm()).get::<squirrel::SqStrongRef>("__autoplay");
 	autoplay.map_or(Ok(()), |f| f.call(engine.vm(), ())).map_err(|e| format!("autoplay: {e}"))
+}
+
+#[cfg(test)]
+mod mod_archive_tests {
+	use super::*;
+
+	#[test]
+	fn mods_a_probe_holds_still_count() {
+		let game = std::env::temp_dir().join(format!("bb-held-mods-{}", std::process::id()));
+		let (data, held) = (game.join("data"), game.join(HELD_MODS));
+		std::fs::create_dir_all(&data).unwrap();
+		std::fs::create_dir_all(&held).unwrap();
+		for (d, name) in [(&data, "mod_modern_hooks.zip"), (&data, "mod_zz_bb_probe.zip"), (&held, "mod_msu.zip"), (&held, "a_mod.zip")] {
+			std::fs::write(d.join(name), b"").unwrap();
+		}
+		let mods = mod_archives(&data).unwrap();
+		let names: Vec<String> = mods.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+		assert_eq!(names, ["a_mod.zip", "mod_modern_hooks.zip", "mod_msu.zip"]);
+		// The probe ends and puts MSU back: its listed path finds it in data/.
+		let msu = mods.iter().find(|p| p.ends_with("mod_msu.zip")).unwrap().clone();
+		std::fs::rename(held.join("mod_msu.zip"), data.join("mod_msu.zip")).unwrap();
+		assert_eq!(locate_mod(&msu), data.join("mod_msu.zip"));
+		std::fs::remove_dir_all(&game).unwrap();
+	}
 }

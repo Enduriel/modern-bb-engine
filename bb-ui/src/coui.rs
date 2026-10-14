@@ -114,8 +114,10 @@ impl UiFiles {
 	}
 }
 
+/// Open the archives, following a mod a probe has moved since it was listed (see
+/// [`bb_engine::harness::locate_mod`]).
 fn open_all(paths: &[PathBuf]) -> io::Result<Vec<DatArchive>> {
-	paths.iter().map(DatArchive::open).collect()
+	paths.iter().map(|p| DatArchive::open(bb_engine::harness::locate_mod(p))).collect()
 }
 
 /// The archive path a `coui://` URL names: scheme, query and fragment stripped,
