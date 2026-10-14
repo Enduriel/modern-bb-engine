@@ -8,12 +8,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use bb_assets::{ImageLoader, Slot, TextureCache};
 use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, STEAM_DATA_DIR};
-use bb_render::sprite::SpriteRenderer;
-use bb_render::world::{WorldView, world_quads};
-use bb_render::{Gpu, GpuTexture, RenderTarget, save_png};
+use bb_render::world::WorldView;
+use bb_render::{Atlases, Gpu, RenderTarget, WorldRenderer, save_png};
 use squirrel::{Number, SqStrongRef, SqTable};
 
 fn main() {
@@ -61,44 +59,18 @@ fn main() {
 		width,
 		height,
 	};
-	let (quads, atlases) = engine
-		.sprites()
-		.with(|registry| world_quads(&scene, registry, &view));
-	eprintln!("{} quads from {} atlases", quads.len(), atlases.paths.len());
-
 	let gpu = Gpu::headless().expect("gpu");
 	let files = Arc::new(GameFiles::open(harness::data_archives(dir).unwrap()).expect("files"));
-	let mut cache: TextureCache<GpuTexture> = TextureCache::new(ImageLoader::new(files, 8));
-	for path in &atlases.paths {
-		cache.prefetch(path);
-	}
-	while atlases
-		.paths
-		.iter()
-		.any(|p| matches!(cache.slot(p), Some(Slot::Loading)))
-	{
-		cache.pump(|path, image| GpuTexture::upload(&gpu, path, &image));
-		std::thread::sleep(std::time::Duration::from_millis(2));
-	}
-	let textures: Vec<&GpuTexture> = atlases
-		.paths
-		.iter()
-		.map(|p| match cache.slot(p) {
-			Some(Slot::Ready(t)) => t,
-			other => panic!("{p}: {other:?}", other = other.map(|_| "not ready")),
-		})
-		.collect();
-
-	let renderer = SpriteRenderer::new(&gpu);
+	let mut renderer = WorldRenderer::new(&gpu, files, 8);
+	// The atlases the scripts' brushes asked for start loading now, as in a live game.
+	let hints = engine.sprites().take_hints();
+	eprintln!("{} atlases hinted", hints.len());
+	renderer.prefetch(hints);
 	let target = RenderTarget::new(&gpu, width, height);
-	renderer.draw(
-		&gpu,
-		&target,
-		&view.uniforms(),
-		Some([0.0, 0.0, 0.0, 1.0]),
-		&quads,
-		&textures,
-	);
+	let stats = engine.sprites().with(|registry| {
+		renderer.draw(&gpu, &target, &scene, registry, &view, Atlases::WaitForAll)
+	});
+	eprintln!("{stats:?}");
 	let image = target.read(&gpu).expect("read back");
 	save_png(&out, &image).expect("save");
 	eprintln!("wrote {out}");
