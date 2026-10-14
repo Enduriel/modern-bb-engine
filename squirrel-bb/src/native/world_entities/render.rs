@@ -12,6 +12,9 @@
 //! The fades (`0x4e7b4d`; disassembled 2026-10-14) are its sprites': coming into
 //! sight, every sprite's alpha drops to 0 at once and fades in over 300 ms of real
 //! time; going out of sight, every sprite fades out over 300 ms (and stays, clear).
+//! Every colourised sprite, that is: like the entity-level fades they are, they leave
+//! a sprite with `setSpriteColorization(name, false)` alone (the slot's `+0x1c`), so a
+//! settlement's `lighting`, which its script keeps clear by day, stays clear.
 //! Its labels aren't sprites and don't fade: they follow the entity's state.
 //!
 //! Also `World.render()`, which with fog on uncovers the map around the player's view
@@ -31,9 +34,9 @@ use super::{EntityMachine, ignore_missing, view};
 /// How long a fade between hidden and visible takes, in real-time ms.
 const FADE_MS: i64 = 300;
 
-/// An entity-level fade, done to each of its sprites (the original's `fadeIn`
-/// `0x4a9930`, `fadeOut` `0x4a99c0` and `setAlpha` `0x4a9ac0`, which the scripts can
-/// also call on the entity).
+/// An entity-level fade, done to each of its colourised sprites (the original's
+/// `fadeIn` `0x4a9930`, `fadeOut` `0x4a99c0` and `setAlpha` `0x4a9ac0`, which the
+/// scripts can also call on the entity; each skips a slot whose `+0x1c` is off).
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Fade {
 	/// To full alpha over ms.
@@ -53,10 +56,15 @@ pub(super) fn fade_sprites(m: &Machine, vm: &SQVM, idx: usize, fade: Fade, now: 
 	};
 	let Some(class) = class else { return };
 	for handle in handles {
-		class.with_payload(vm, &handle, |s| match fade {
-			Fade::In(ms) => s.color.fade_in(ms, now),
-			Fade::Out(ms) => s.color.fade_out(ms, now, false),
-			Fade::Alpha(alpha) => s.color.snap_alpha(alpha),
+		class.with_payload(vm, &handle, |s| {
+			if !s.colorization {
+				return;
+			}
+			match fade {
+				Fade::In(ms) => s.color.fade_in(ms, now),
+				Fade::Out(ms) => s.color.fade_out(ms, now, false),
+				Fade::Alpha(alpha) => s.color.snap_alpha(alpha),
+			}
 		});
 	}
 }
