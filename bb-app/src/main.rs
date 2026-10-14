@@ -78,6 +78,7 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	bb_app::platform::tune_allocator();
 	// The game's total CPU and memory, with its CEF processes, every 5 s.
 	if std::env::var_os("BB_STATS").is_some_and(|v| v != "0") {
 		bb_app::stats::spawn_logger(std::time::Duration::from_secs(5));

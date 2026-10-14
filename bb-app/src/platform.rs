@@ -14,3 +14,34 @@ pub fn exclusive_fullscreen(event_loop: &ActiveEventLoop) -> bool {
 pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
 	true
 }
+
+/// The smallest buffer the allocator always takes from the system and gives back when
+/// freed: the size of the smallest atlas (2048×1024 RGBA).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const SYSTEM_BUFFER: i32 = 8 << 20;
+
+/// Tune the C allocator for the game's work, before any thread starts. Atlases decode
+/// on worker threads into buffers of 8 to 64 MiB, which the game's thread frees after
+/// uploading them. glibc raises its threshold for taking a buffer straight from the
+/// system after each such free (up to 32 MiB), so later buffers come from the
+/// workers' arenas instead, and stay held there once freed: on a fresh world (measured
+/// 2026-10-14) 393 MB resident, 304 MB with the threshold fixed at 8 MiB
+/// (`M_MMAP_THRESHOLD`; the frame cost unchanged). Buffers below it (a frame's
+/// vertices, the scripts') stay with the allocator. Other systems' allocators give
+/// buffers this large back on their own.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn tune_allocator() {
+	/// glibc's `mallopt` parameter for the threshold (`malloc.h`).
+	const M_MMAP_THRESHOLD: i32 = -3;
+	unsafe extern "C" {
+		fn mallopt(param: i32, value: i32) -> i32;
+	}
+	// SAFETY: `mallopt` only sets the allocator's parameter; called before any thread
+	// starts, as it should be.
+	if unsafe { mallopt(M_MMAP_THRESHOLD, SYSTEM_BUFFER) } != 1 {
+		eprintln!("allocator: could not set the mmap threshold");
+	}
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn tune_allocator() {}
