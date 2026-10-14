@@ -241,6 +241,14 @@ impl<B: Backend> KiraOut<B> {
 		})
 	}
 
+	/// The voices the output holds, those whose sound never started (still paused since
+	/// `start`), and those that ended but weren't released.
+	pub fn voice_use(&self) -> (usize, usize, usize) {
+		let pending = self.voices.values().filter(|v| v.pending.is_some()).count();
+		let ended = self.voices.values().filter(|v| v.handle.as_ref().is_some_and(Handle::ended)).count();
+		(self.voices.len(), pending, ended)
+	}
+
 	/// What the sound bank holds: see [`SoundBank::memory_use`].
 	pub fn bank_use(&self) -> (usize, usize, usize, usize) {
 		self.bank.memory_use()
@@ -400,7 +408,9 @@ impl<B: Backend> AudioOut for KiraOut<B> {
 		}
 	}
 
-	fn update(&mut self, _now_ms: u32) {}
+	fn update(&mut self, _now_ms: u32) {
+		self.bank.tick();
+	}
 
 	fn status(&mut self) -> Option<String> {
 		(self.status)(&mut self.manager)

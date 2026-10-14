@@ -285,8 +285,10 @@ struct Sample {
 	dead_units: usize,
 	world_entities: usize,
 	saves: (usize, usize),
-	/// The sound bank: sounds, decoded bytes, streamed bytes playing, prefetches unplayed.
+	/// The sound bank: sounds, decoded bytes, streamed bytes playing, bytes read ahead.
 	sounds: (usize, usize, usize, usize),
+	/// The sound output's voices: all, never started, ended but not released.
+	voices: (usize, usize, usize),
 	ui_log: Option<usize>,
 }
 
@@ -441,6 +443,7 @@ impl Session<'_> {
 			world_entities: engine.world_entities().count(),
 			saves: engine.saves().memory_use(),
 			sounds: self.sound.borrow().bank_use(),
+			voices: self.sound.borrow().voice_use(),
 			ui_log,
 		};
 		eprintln!(
@@ -758,7 +761,8 @@ fn report(o: &Options, samples: &[Sample], battles: &[String], stopped: Option<&
 	row("sound bank: sounds", &|s| s.sounds.0.to_string());
 	row("&nbsp;&nbsp;decoded (trimmed at 32)", &|s| mb(s.sounds.1 as u64));
 	row("&nbsp;&nbsp;long sounds playing (their files)", &|s| mb(s.sounds.2 as u64));
-	row("&nbsp;&nbsp;prefetched, not yet played", &|s| s.sounds.3.to_string());
+	row("&nbsp;&nbsp;read ahead, not yet played", &|s| mb(s.sounds.3 as u64));
+	row("sound voices (never started, ended)", &|s| format!("{} ({}, {})", s.voices.0, s.voices.1, s.voices.2));
 	if ui {
 		row("UI log lines", &|s| s.ui_log.map_or("-".to_string(), |n| n.to_string()));
 	}

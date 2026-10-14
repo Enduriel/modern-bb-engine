@@ -28,13 +28,15 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-# The allocator, the standard library and containers: a stack is charged to the first frame
-# past these.
+# The allocator, the standard library and containers, and the archives' file reads: a stack
+# is charged to the first frame past these.
 SKIP = re.compile(
     r"^(\?\?|malloc|calloc|realloc|free|posix_memalign|aligned_alloc|je_|_rjem|imalloc|__rust_|__rdl|"
     r"alloc::|core::|std::|hashbrown::|<alloc::|<core::|<std::|<hashbrown::|operator new|"
     r"sq_vm_malloc|sq_vm_realloc|<T as |<\[T\]|<Vec|<\[|__libc|_dl_|smallvec|<smallvec|indexmap::|"
-    r"<indexmap|arrayvec|<&|<str |memchr|bytemuck|<u8|SQ_MALLOC|sqvector<)"
+    r"<indexmap|arrayvec|<&|<str |memchr|bytemuck|<u8|SQ_MALLOC|sqvector<|"
+    # A file read from the archives is its reader's: the sound bank's, the renderer's.
+    r"<bb_engine::vfs::DatArchive>::read|<bb_engine::files::GameFiles>::read)"
 )
 
 # Owners, by the charged frame's symbol: the first that matches.
