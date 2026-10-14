@@ -9,7 +9,11 @@
 //! - arrays become arrays and **keep their `null` slots** (screens use fixed positions,
 //!   e.g. empty paperdoll slots);
 //! - floats arrive as the original's 32-bit floats widened (`0.1` →
-//!   `0.10000000149011612`), which our f32 math mode already stores.
+//!   `0.10000000149011612`), which our f32 math mode already stores;
+//! - strings are decoded as UTF-8 (probed 2026-10-14, `probes/text_bytes.*`): a string
+//!   that isn't valid UTF-8 (`0xE9.tochar()`, Windows-1252's é) arrives **empty**, and
+//!   one with a NUL byte is cut off there. Table keys are assumed to go the same way
+//!   (unprobed).
 //!
 //! JS → SQ:
 //! - **every number becomes an integer, truncated toward zero** (`2.7` → `2`; the
@@ -47,7 +51,7 @@ fn convert(value: &SqRef, depth: usize) -> Option<Json> {
 		SqRef::Integer(n) => Json::Int(*n),
 		SqRef::Float(f) => Json::Float(*f),
 		SqRef::Bool(b) => Json::Bool(*b),
-		SqRef::String(s) => Json::Str(s.clone()),
+		SqRef::String(_) | SqRef::Bytes(_) => Json::Str(text(value)?),
 		SqRef::Array(array) => Json::Array(
 			(0..array.len())
 				.map(|i| {
@@ -62,14 +66,21 @@ fn convert(value: &SqRef, depth: usize) -> Option<Json> {
 			table
 				.entries()
 				.into_iter()
-				.filter_map(|(key, value)| match key {
-					SqRef::String(key) => Some((key, convert(&value, depth + 1)?)),
-					_ => None,
-				})
+				.filter_map(|(key, value)| Some((text(&key)?, convert(&value, depth + 1)?)))
 				.collect(),
 		),
 		_ => return None,
 	})
+}
+
+/// The page's string for a script string, as the original converts it: up to the first
+/// NUL, and empty if it isn't UTF-8. `None` if `value` isn't a string.
+fn text(value: &SqRef) -> Option<String> {
+	match value {
+		SqRef::String(s) => Some(s.split('\0').next().unwrap_or_default().to_string()),
+		SqRef::Bytes(_) => Some(String::new()),
+		_ => None,
+	}
 }
 
 /// A JS number as the original hands it to a script: truncated toward zero to a
@@ -126,6 +137,18 @@ mod tests {
 			.unwrap();
 		let json = strong_to_json(&vm, &global(&vm, "v")).unwrap();
 		assert_eq!(json.to_text(), r#"[null,1,2.5,"x",{"a":true},null]"#);
+	}
+
+	#[test]
+	fn strings_cross_as_utf8_up_to_a_nul() {
+		let vm = SQVM::new(1024);
+		vm.run_script(
+			r#"local c = @(n) n.tochar(); ::v <- [c(0xC3) + c(0xA9), c(0xE9), "a" + c(0) + "b", "x"];"#,
+			"t",
+		)
+		.unwrap();
+		let json = strong_to_json(&vm, &global(&vm, "v")).unwrap();
+		assert_eq!(json.to_text(), r#"["é","","a","x"]"#);
 	}
 
 	#[test]
