@@ -31,7 +31,7 @@
 	p.TerrainTemplate = "tactical.hills";
 	p.CombatID = "Trace";
 	::Const.World.Common.addUnitsToCombat(p.Entities, ::Const.World.Spawn.BanditDefenders, 100, ::World.FactionManager.getFactionOfType(::Const.FactionType.Bandits).getID());
-	st.startScriptedCombat(p, true, true, true);
+	st.startScriptedCombat(p, false, false, true);
 };
 // What a player does until the battle: the open event's first button, then engage once.
 ::__engaged <- false;
