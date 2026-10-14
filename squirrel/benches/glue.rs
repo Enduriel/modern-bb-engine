@@ -76,7 +76,7 @@ fn vm_with_tile() -> SQVM {
 	});
 	let stack = vm.make_closure(|vm: &SQVM, this: This, args: Variadic<StackArg>| {
 		let key = format!("__sqrat_ol_ add_{}", args.0.len());
-		this.forward_member(vm, &key, &args.0)?
+		this.forward_member(vm, key.as_str(), args.0.as_slice())?
 			.ok_or("no overload".to_string())
 	});
 	let leaf = vm.make_closure(|a: i64, b: i64| a + b);
