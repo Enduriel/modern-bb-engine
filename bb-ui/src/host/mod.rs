@@ -46,6 +46,7 @@ mod targets;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -210,6 +211,7 @@ impl UiHost {
 			browser: Mutex::new(None),
 			frame: Mutex::new(None),
 			size: Mutex::new((config.width as i32, config.height as i32)),
+			images_served: AtomicU64::new(0),
 		});
 		let mut factory = scheme::CouiFactory::new(files, shared.clone());
 		if register_scheme_handler_factory(Some(&SCHEME.into()), None, Some(&mut factory)) != 1 {
@@ -382,6 +384,12 @@ impl UiHost {
 	/// Whether the page is parked.
 	pub fn is_parked(&self) -> bool {
 		self.parked.get()
+	}
+
+	/// How many images the page has loaded from the game's files so far (each fetch
+	/// counts, not each picture).
+	pub fn images_served(&self) -> u64 {
+		self.shared.images_served.load(Ordering::Relaxed)
 	}
 
 	/// What went wrong between the game and the page since the last call: e.g. one of

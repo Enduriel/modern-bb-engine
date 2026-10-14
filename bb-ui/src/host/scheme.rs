@@ -15,6 +15,7 @@
 //!   can't (or doesn't answer), a transparent placeholder. The original also answers
 //!   200 with a fallback image when composing fails, never a load error.
 
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cef::*;
@@ -225,6 +226,9 @@ wrap_resource_handler! {
 				.map(|data| Body { mime: mime_type(&path), data, offset: 0 });
 			match body {
 				Some(body) => {
+					if body.mime.starts_with("image/") {
+						self.shared.images_served.fetch_add(1, Ordering::Relaxed);
+					}
 					*self.body.lock().unwrap_or_else(|e| e.into_inner()) = Some(body);
 					1
 				}

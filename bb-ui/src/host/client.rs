@@ -4,6 +4,7 @@
 //! They run on CEF's own threads and only hand events to the game thread through
 //! [`Shared`]; nothing here touches the Squirrel VM.
 
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, mpsc};
 
 use cef::*;
@@ -66,6 +67,8 @@ pub(super) struct Shared {
 	pub frame: Mutex<Option<FrameBuffer>>,
 	/// The view's width and height (CSS pixels); see [`UiHost::resize`](super::UiHost::resize).
 	pub size: Mutex<(i32, i32)>,
+	/// How many images `coui://` has served from the game's files.
+	pub images_served: AtomicU64,
 }
 
 impl Shared {

@@ -10,10 +10,13 @@ use cef::*;
 use super::ipc::{self, Arg};
 
 /// The JS installed before any page script, in order: the bridge (see the file for the
-/// protocol), then the emulation of Coherent's layout and style differences.
-const SCRIPTS: [(&str, &str); 2] = [
+/// protocol), the emulation of Coherent's layout and style differences, its image
+/// cache, then the unbinding of handlers the UI's plugins leave behind.
+const SCRIPTS: [(&str, &str); 4] = [
 	("bb://bootstrap.js", include_str!("bootstrap.js")),
 	("bb://compat.js", include_str!("compat.js")),
+	("bb://image_cache.js", include_str!("image_cache.js")),
+	("bb://teardown.js", include_str!("teardown.js")),
 ];
 
 /// Call `window.<function>(argument)` in `frame`'s context; its string result.

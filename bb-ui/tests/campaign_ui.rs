@@ -2,6 +2,9 @@
 //! a player does it ("New Campaign", pick "A New Company", "Next", "Next", hover the
 //! map seed for its tooltip and type it, "Start"), through worldgen and the loading
 //! screen, to the origin's intro event and, after "Huzzah!", the running world screen.
+//! Then back to the main menu and into a new campaign, twice: the second time round,
+//! the page loads none of the pictures again (they stay loaded, as in Coherent's image
+//! cache), and the screens taken down leave no handlers behind.
 //! The game's `ui/` runs in the Chromium host (offscreen, headless) against the real
 //! scripts. Skips if there is no Steam install.
 //!
@@ -114,6 +117,7 @@ fn play(session: &UiSession) -> Result<(), String> {
 			.contains(&"WorldState".to_string()),
 		"no WorldState after the campaign started",
 	)?;
+	back_to_the_menu_and_into_new_campaigns(session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -124,6 +128,82 @@ fn play(session: &UiSession) -> Result<(), String> {
 	ensure(
 		problems.is_empty(),
 		format!("page or bridge errors:\n{}", problems.join("\n")),
+	)
+}
+
+/// Every jQuery handler on the page's attached elements, the document and the window.
+const HANDLERS: &str = r#"(function () {
+	var count = 0;
+	function add(el) {
+		var events = jQuery._data(el, 'events');
+		for (var type in events || {}) count += events[type].length;
+	}
+	Array.prototype.forEach.call(document.getElementsByTagName('*'), add);
+	add(document);
+	add(window);
+	return count;
+})()"#;
+
+/// Quit to the main menu, as its Quit does, and wait for the menu.
+fn back_to_the_menu(session: &UiSession) -> Result<(), String> {
+	session
+		.engine()
+		.run_script("::World.State.exitGame();", "quit to the menu")?;
+	let deadline = std::time::Instant::now() + STEP;
+	loop {
+		session.run_frames(0.2)?;
+		let names = session.engine().root_state().state_names();
+		if !names.iter().any(|n| n == "WorldState")
+			&& session
+				.visible_buttons()?
+				.iter()
+				.any(|b| b == "New Campaign")
+		{
+			break;
+		}
+		ensure(
+			std::time::Instant::now() < deadline,
+			format!("never got back to the main menu: {names:?}"),
+		)?;
+	}
+	session.run_frames(1.0)
+}
+
+/// From the main menu, a new campaign to its world screen.
+fn new_campaign(session: &UiSession) -> Result<(), String> {
+	session.start_campaign(SEED)?;
+	during(
+		"waiting for the intro event",
+		session.wait_for_text("Huzzah!", STEP),
+	)?;
+	during(
+		"clicking \"Huzzah!\"",
+		session.click_when_ready("Huzzah!", STEP),
+	)?;
+	during(
+		"waiting for the world screen",
+		session.wait_for_text("Day 1", STEP),
+	)
+}
+
+fn back_to_the_menu_and_into_new_campaigns(session: &UiSession) -> Result<(), String> {
+	back_to_the_menu(session)?;
+	new_campaign(session)?;
+	back_to_the_menu(session)?;
+	let handlers = session.eval(HANDLERS)?.as_i64();
+	let served = session.host().images_served();
+	new_campaign(session)?;
+	back_to_the_menu(session)?;
+	// At most the loading screen's pictures, which it picks at random, are new.
+	let again = session.host().images_served() - served;
+	ensure(
+		again <= 4,
+		format!("the page loaded {again} images again for the same screens"),
+	)?;
+	let after = session.eval(HANDLERS)?.as_i64();
+	ensure(
+		after == handlers,
+		format!("the page's handlers went from {handlers:?} to {after:?} over a campaign"),
 	)
 }
 
