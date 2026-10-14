@@ -168,7 +168,7 @@ pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHan
 			d.color.color = crate::native::sprite_color::brighten(d.color.color, v as f32);
 		})
 		.method("setBrush", move |d: &mut DetailHandle, vm: &SQVM, brush: String| {
-			let brush = sprites.resolve(&brush);
+			let brush = sprites.resolve_battle(&brush);
 			let mut d = d.0.borrow_mut();
 			let d = &mut *d;
 			d.spin.rebrush(&sprites, &d.brush, &brush);

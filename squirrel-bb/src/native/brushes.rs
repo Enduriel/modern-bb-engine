@@ -18,7 +18,11 @@
 //! call with `Name` and `TextureName` (its atlas, e.g. `gfx/world_weather.png`).
 //!
 //! Loading hints: a brush set on a sprite and a script's `Tactical.addResource(path)`
-//! queue a path the renderer can start loading before it is drawn.
+//! queue a path the renderer can start loading before it is drawn. A battle
+//! sprite's (a unit's, a battle tile's detail, an effect's) go in a queue of their own
+//! ([`Sprites::take_battle_hints`]): the company's units keep their sprites on the world
+//! map, where no battle draws them, so the host warms those only while a battle map is
+//! set up. A path is queued again once taken (the host may have dropped it since).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -31,10 +35,30 @@ use squirrel::{Retained, SQVM, SqStrongRef, SqTable};
 struct State {
 	registry: RefCell<SpriteRegistry>,
 	loaded: Cell<bool>,
-	/// Paths hinted since the last [`Sprites::take_hints`], in order.
-	hints: RefCell<Vec<String>>,
-	/// Every path ever hinted, so each is queued once.
-	hinted: RefCell<HashSet<String>>,
+	/// Paths hinted since the last [`Sprites::take_hints`], in order, each once.
+	hints: RefCell<Queue>,
+	/// Battle sprites' atlases since the last [`Sprites::take_battle_hints`].
+	battle_hints: RefCell<Queue>,
+}
+
+/// Paths in the order they came, each once.
+#[derive(Default)]
+struct Queue {
+	paths: Vec<String>,
+	seen: HashSet<String>,
+}
+
+impl Queue {
+	fn push(&mut self, path: &str) {
+		if !path.is_empty() && self.seen.insert(path.to_string()) {
+			self.paths.push(path.to_string());
+		}
+	}
+
+	fn take(&mut self) -> Vec<String> {
+		self.seen.clear();
+		std::mem::take(&mut self.paths)
+	}
 }
 
 /// The engine's sprite registry, shared with the natives that read it. It holds no
@@ -56,27 +80,39 @@ impl Sprites {
 
 	/// Queue `path` (an atlas, or any resource a script names) as about to be needed.
 	pub fn hint(&self, path: &str) {
-		if !path.is_empty() && self.0.hinted.borrow_mut().insert(path.to_string()) {
-			self.0.hints.borrow_mut().push(path.to_string());
-		}
+		self.0.hints.borrow_mut().push(path);
 	}
 
 	/// The paths hinted since the last call, each once, in the order they came.
 	pub fn take_hints(&self) -> Vec<String> {
-		std::mem::take(&mut self.0.hints.borrow_mut())
+		self.0.hints.borrow_mut().take()
+	}
+
+	/// The battle sprites' atlases hinted since the last call (see the module's doc).
+	pub fn take_battle_hints(&self) -> Vec<String> {
+		self.0.battle_hints.borrow_mut().take()
 	}
 
 	/// What a sprite slot keeps after `setBrush(name)`: the name of a loaded brush (and
 	/// its atlas is hinted), or `""` for an unknown one. Before brushes are loaded,
 	/// every name is kept.
 	pub(crate) fn resolve(&self, name: &str) -> String {
+		self.resolve_into(name, &self.0.hints)
+	}
+
+	/// As [`Sprites::resolve`], for a battle sprite (its atlas in the battle queue).
+	pub(crate) fn resolve_battle(&self, name: &str) -> String {
+		self.resolve_into(name, &self.0.battle_hints)
+	}
+
+	fn resolve_into(&self, name: &str, queue: &RefCell<Queue>) -> String {
 		if !self.0.loaded.get() {
 			return name.to_string();
 		}
 		let texture = self.with(|r| r.get(name).map(|(sheet, _)| sheet.sheet.texture.clone()));
 		match texture {
 			Some(texture) => {
-				self.hint(&texture);
+				queue.borrow_mut().push(&texture);
 				name.to_string()
 			}
 			None => String::new(),
@@ -177,7 +213,7 @@ mod tests {
 		sprites.set(registry());
 		assert_eq!(sprites.resolve("world_birds_01"), "world_birds_01");
 		assert_eq!(sprites.resolve("world_birds_01"), "world_birds_01");
-		assert_eq!(sprites.take_hints(), ["gfx/world_weather.png"]);
+		assert_eq!(sprites.take_hints(), ["gfx/world_weather.png"], "once a take");
 		assert!(sprites.take_hints().is_empty());
 	}
 
@@ -199,6 +235,15 @@ mod tests {
 		}
 		assert_eq!(sprites.take_hints(), ["sounds/a.wav", "gfx/b.png"]);
 		sprites.hint("gfx/b.png");
+		assert_eq!(sprites.take_hints(), ["gfx/b.png"], "queued again once taken");
+	}
+
+	#[test]
+	fn a_battle_sprites_atlas_goes_in_the_battle_queue() {
+		let sprites = Sprites::default();
+		sprites.set(registry());
+		assert_eq!(sprites.resolve_battle("world_birds_01"), "world_birds_01");
 		assert!(sprites.take_hints().is_empty());
+		assert_eq!(sprites.take_battle_hints(), ["gfx/world_weather.png"]);
 	}
 }

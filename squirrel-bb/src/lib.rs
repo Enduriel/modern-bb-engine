@@ -15,6 +15,7 @@
 
 mod class;
 mod collect;
+pub use collect::Discard;
 mod compile_context;
 mod engine;
 mod error;

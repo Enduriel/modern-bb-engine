@@ -464,6 +464,11 @@ impl TacticalGrid {
 	}
 
 	/// The tiles with items on the ground (`IsContainingItems`).
+	/// Whether a battle map is set up.
+	pub fn has_map(&self) -> bool {
+		!self.grid.borrow().tiles.is_empty()
+	}
+
 	pub(crate) fn tiles_with_items(&self) -> Vec<usize> {
 		let g = self.grid.borrow();
 		(0..g.tiles.len()).filter(|&i| g.tiles[i].is_containing_items).collect()

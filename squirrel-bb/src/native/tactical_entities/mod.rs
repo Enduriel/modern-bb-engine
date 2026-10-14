@@ -400,7 +400,7 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 			},
 		)
 		.method("setBrush", move |s: &mut UnitSpriteData, vm: &SQVM, brush: &str| {
-			let brush = set_with.resolve(brush);
+			let brush = set_with.resolve_battle(brush);
 			s.spin.rebrush(&set_with, &s.brush, &brush);
 			s.anim.rebrush(&set_with, &s.brush, &brush, virtual_ms(vm));
 			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);

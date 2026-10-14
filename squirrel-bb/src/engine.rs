@@ -326,6 +326,17 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			.or_else(|| self.world_entities.portrait(&self.vm, id))
 	}
 
+	/// The scenes the game discarded since the last call (a battle's end, the campaign
+	/// left, a save loaded), in order, for the host to drop what they drew.
+	pub fn take_discards(&self) -> Vec<crate::Discard> {
+		self.collector.take_discards()
+	}
+
+	/// Whether a battle map is set up (from its building to `Tactical.clearScene`).
+	pub fn has_battle_map(&self) -> bool {
+		self.tactical_grid.has_map()
+	}
+
 	/// The battle map as the scripts have set it up, for a renderer.
 	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
 		let (effects, pools) = self

@@ -12,18 +12,33 @@
 //! - `World.load()`: a save replaces the campaign.
 //!
 //! These are moments behind a loading screen, so the pass costs nothing a player sees.
+//! The host hears of each too ([`Discard`], `Engine::take_discards`): the renderer
+//! drops the textures the discarded scene drew there.
 //! The original collects at the end of `World.clearScene` and on a 60 s clock in its
 //! frame loop (`0x4eff63`, `0x5394c0`); the difference is an intentional divergence
 //! (`docs/differences.md`).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
-/// A collection the next frame's end owes, and the natives that ask for one.
+/// A scene the game discarded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Discard {
+	/// `Tactical.clearScene()`: a battle ended.
+	Battle,
+	/// `World.clearScene()`: the campaign was left.
+	Campaign,
+	/// `World.load()`: a save replaced the campaign.
+	Load,
+}
+
+/// A collection the next frame's end owes, the discards since the host last asked, and
+/// the natives that ask for them.
 pub(crate) struct Collector {
 	requested: Rc<Cell<bool>>,
+	discards: Rc<RefCell<Vec<Discard>>>,
 }
 
 impl Collector {
@@ -31,15 +46,17 @@ impl Collector {
 	/// Call once they are all installed (the wrappers call whatever is there then).
 	pub(crate) fn install(vm: &mut SQVM) -> Collector {
 		let requested = Rc::new(Cell::new(false));
+		let discards: Rc<RefCell<Vec<Discard>>> = Rc::default();
 		let native = |vm: &SQVM, table: &str, name: &str| {
 			SqTable::root(vm).get::<SqTable>(table).and_then(|t| t.get::<SqStrongRef>(name))
 		};
-		for table in ["Tactical", "World"] {
+		for (table, discard) in [("Tactical", Discard::Battle), ("World", Discard::Campaign)] {
 			let Some(inner) = native(vm, table, "clearScene") else { continue };
-			let flag = requested.clone();
+			let (flag, seen) = (requested.clone(), discards.clone());
 			let clear = vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				inner.call(vm, ())?;
 				flag.set(true);
+				seen.borrow_mut().push(discard);
 				Ok(())
 			});
 			if let Some(mut owner) = SqTable::root(vm).get::<SqTable>(table) {
@@ -47,17 +64,23 @@ impl Collector {
 			}
 		}
 		if let Some(inner) = native(vm, "World", "load") {
-			let flag = requested.clone();
+			let (flag, seen) = (requested.clone(), discards.clone());
 			let load = vm.make_closure(move |vm: &SQVM, file: String| -> Result<(), String> {
 				inner.call(vm, (file,))?;
 				flag.set(true);
+				seen.borrow_mut().push(Discard::Load);
 				Ok(())
 			});
 			if let Some(mut world) = SqTable::root(vm).get::<SqTable>("World") {
 				world.set("load", load);
 			}
 		}
-		Collector { requested }
+		Collector { requested, discards }
+	}
+
+	/// The scenes discarded since the last call, in order.
+	pub(crate) fn take_discards(&self) -> Vec<Discard> {
+		std::mem::take(&mut self.discards.borrow_mut())
 	}
 
 	/// Collect if a discard asked for it since the last frame.
