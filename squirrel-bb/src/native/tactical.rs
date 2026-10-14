@@ -193,17 +193,10 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng, crt: &super:
 
 	// Tactical.getCamera() comes with the battle map (see `tactical_grid::camera`).
 
-	// Tactical.getShaker() (hit shakes) and getHighlighter() (tile highlights, overlay
-	// icons): visual only, and no script reads anything back from them.
+	// Tactical.getShaker() comes with the units (see `tactical_entities::shaker`).
+	// Tactical.getHighlighter() (tile highlights, overlay icons): visual only, and no
+	// script reads anything back from it.
 	let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let shaker = {
-		let mut t = SqTable::new(vm);
-		for name in ["shake", "cancel"] {
-			t.set(name, noop.clone());
-		}
-		t.to_strong()
-	};
-	let get_shaker = vm.make_closure(move || shaker.clone());
 	let highlighter = {
 		let mut t = SqTable::new(vm);
 		for name in ["addOverlayIcon", "clear", "clearOverlayIcons", "highlightRangeOfSkill", "highlightZoneOfControl"] {
@@ -264,7 +257,6 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng, crt: &super:
 	let get_weather = vm.make_closure(move || weather.clone());
 	let mut tactical = SqTable::new(vm);
 	tactical.set("getWeather", get_weather);
-	tactical.set("getShaker", get_shaker);
 	tactical.set("getHighlighter", get_highlighter);
 	tactical.set("setTransitions", set_transitions);
 	tactical.set("setActive", set_active);

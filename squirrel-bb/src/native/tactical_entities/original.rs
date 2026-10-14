@@ -81,6 +81,7 @@ impl TacticalEntities {
 	/// Forget every unit and roster (the original's `World.clear` before a load).
 	pub(crate) fn clear_for_load(&self) {
 		let mut m = self.machine.borrow_mut();
+		m.shakes.clear();
 		m.rosters.clear();
 		m.units.clear();
 		m.by_identity.clear();

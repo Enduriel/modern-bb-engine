@@ -112,6 +112,10 @@ pub struct SceneTacticalSprite {
 	/// Degrees.
 	pub rotation: f32,
 	pub saturation: f32,
+	/// `Highlight` (ARGB), blended over the sprite by `highlight_factor` (0: none): a
+	/// hit's flash (see the shaker).
+	pub highlight: u32,
+	pub highlight_factor: f32,
 	pub visible: bool,
 	pub flipped: bool,
 	/// From the entity's position, in world units with y up.

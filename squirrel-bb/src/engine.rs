@@ -125,6 +125,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		tactical_entities.attach_map(&tactical_grid);
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
 		tactical_navigator.install(&mut vm);
+		// After the navigator's update and the map's clearScene, which it wraps.
+		tactical_entities.install_shaker(&mut vm);
 		crate::native::tactical::install_effects(&mut vm, &natives.tactical);
 		// Leaving a campaign empties the world (after every `World` native exists).
 		crate::native::world_clear_scene::install(

@@ -28,6 +28,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 		w.f64(v);
 	}
 	w.f64(s.highlight_factor);
+	w.u32(s.highlight);
 	w.f64(f64::from(s.spin.torque));
 	for b in [
 		s.visible,
@@ -36,7 +37,6 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 		s.raising_shield,
 		s.lowering_shield,
 		s.flipped,
-		s.highlight,
 		s.finished,
 		s.fading,
 		s.color.is_fading_done(),
@@ -70,6 +70,8 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		saturation: r.f64()?,
 		render_anim_start: r.f64()?,
 		highlight_factor: r.f64()?,
+		highlight: r.u32()?,
+		stored: None,
 		spin: crate::native::spin::Spin::new(r.f64()? as f32),
 		visible: r.bool()?,
 		raising_weapon: r.bool()?,
@@ -77,7 +79,6 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		raising_shield: r.bool()?,
 		lowering_shield: r.bool()?,
 		flipped: r.bool()?,
-		highlight: r.bool()?,
 		finished: r.bool()?,
 		fading: r.bool()?,
 		ignore_ambient: {

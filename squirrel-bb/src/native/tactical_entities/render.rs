@@ -15,7 +15,7 @@ use crate::native::tactical_grid::visibility::PLAYER;
 type Machine = Rc<RefCell<TacticalMachine>>;
 
 /// `Time.getVirtualTimeF()`, the clock sprite animations run on.
-fn virtual_seconds(vm: &SQVM) -> Result<f64, String> {
+pub(super) fn virtual_seconds(vm: &SQVM) -> Result<f64, String> {
 	let f = SqTable::root(vm)
 		.get::<SqTable>("Time")
 		.and_then(|t| t.get::<SqStrongRef>("getVirtualTimeF"))

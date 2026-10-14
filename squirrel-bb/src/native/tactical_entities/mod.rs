@@ -31,6 +31,7 @@ mod original;
 mod overlay;
 mod placement;
 mod render;
+mod shaker;
 mod vision;
 use crate::module::Instantiator;
 use crate::native::spin::Spin;
@@ -87,8 +88,11 @@ struct UnitSpriteData {
 	lowering_shield: bool,
 	/// `setHorizontalFlipping` / `isFlippedHorizontally`.
 	flipped: bool,
-	highlight: bool,
+	/// `Highlight` (ARGB), blended over the sprite by `HighlightFactor`: a hit's flash.
+	highlight: u32,
 	highlight_factor: f64,
+	/// The colours a shake keeps to put back (see `shaker`).
+	stored: Option<shaker::Stored>,
 	finished: bool,
 	fading: bool,
 	/// Its `Torque` (see `spin`).
@@ -121,8 +125,9 @@ impl UnitSpriteData {
 			raising_shield: false,
 			lowering_shield: false,
 			flipped: false,
-			highlight: false,
+			highlight: 0,
 			highlight_factor: 0.0,
+			stored: None,
 			finished: false,
 			fading: false,
 			spin: Spin::default(),
@@ -174,6 +179,8 @@ struct UnitRecord {
 	render_callback: bool,
 	/// Named sprites, in the order they were added (their layering).
 	sprites: super::sprite_slots::Slots,
+	/// A shake keeps some of its sprites' colours (`entity+0x50`; see `shaker`).
+	colors_stored: bool,
 }
 
 /// Shared host state: the rosters, the unit registry, the `this.new` capability, the stub
@@ -194,6 +201,8 @@ struct TacticalMachine {
 	sprites: Sprites,
 	/// The battle's visual effects (see `effects`).
 	effects: Option<crate::native::battle_effects::BattleEffectsHandle>,
+	/// The units shaking now, in the order they started (see `shaker`).
+	shakes: Vec<shaker::Shake>,
 }
 
 impl TacticalMachine {
@@ -271,6 +280,7 @@ fn create_unit(
 			dead: false,
 			render_callback: false,
 			sprites: super::sprite_slots::Slots::default(),
+			colors_stored: false,
 		});
 		idx
 	};
@@ -387,7 +397,14 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 		.method("setHorizontalFlipping", |s: &mut UnitSpriteData, f: bool| s.flipped = f)
 		.method("isFlippedHorizontally", |s: &mut UnitSpriteData| s.flipped)
 		.property("HasBrush", |s: &UnitSpriteData| !s.brush.is_empty(), |_s: &mut UnitSpriteData, _v: bool| {})
-		.property("Highlight", |s: &UnitSpriteData| s.highlight, |s: &mut UnitSpriteData, v: bool| s.highlight = v)
+		.property_obj_rw(
+			"Highlight",
+			|s: &UnitSpriteData, vm: &SQVM| super::color::color_object(vm, s.highlight),
+			|s: &mut UnitSpriteData, vm: &SQVM, v: SqStrongRef| {
+				s.highlight = super::color::color_argb(vm, &v).ok_or("Highlight: not a color")?;
+				Ok(())
+			},
+		)
 		.property("HighlightFactor", |s: &UnitSpriteData| s.highlight_factor, |s: &mut UnitSpriteData, v: f64| s.highlight_factor = v)
 		.property("Finished", |s: &UnitSpriteData| s.finished, |s: &mut UnitSpriteData, v: bool| s.finished = v)
 		.property("Fading", |s: &UnitSpriteData| s.fading, |s: &mut UnitSpriteData, v: bool| s.fading = v)
@@ -605,6 +622,7 @@ impl TacticalEntities {
 				grid: None,
 				sprites: Sprites::default(),
 				effects: None,
+				shakes: Vec::new(),
 			})),
 		}
 	}
@@ -1200,6 +1218,8 @@ impl TacticalEntities {
 							scale: s.scale as f32,
 							rotation: s.rotation as f32,
 							saturation: s.saturation as f32,
+							highlight: s.highlight,
+							highlight_factor: s.highlight_factor as f32,
 							visible: s.visible,
 							flipped: s.flipped,
 							offset: (s.offset.0 as f32, s.offset.1 as f32),
@@ -1242,6 +1262,13 @@ impl TacticalEntities {
 		})
 	}
 
+	/// The shaker (`Tactical.getShaker()`), over the units. Call after the navigator and
+	/// the battle map are installed: it runs after their `Tactical.update()` and before
+	/// their `Tactical.clearScene()`.
+	pub fn install_shaker(&self, vm: &mut SQVM) {
+		shaker::install(&self.machine, vm);
+	}
+
 	/// Total units created (host/test inspection).
 	pub fn unit_count(&self) -> usize {
 		self.machine.borrow().units.len()
@@ -1251,6 +1278,7 @@ impl TacticalEntities {
 	/// Call before the VM is closed.
 	pub fn clear(&self) {
 		let mut m = self.machine.borrow_mut();
+		m.shakes.clear();
 		m.rosters.clear();
 		m.units.clear();
 		m.by_identity.clear();
