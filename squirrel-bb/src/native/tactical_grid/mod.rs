@@ -15,6 +15,7 @@ pub(crate) mod faction_set;
 pub(crate) mod heads;
 mod heat;
 mod picking;
+mod camera_callbacks;
 mod tile;
 #[cfg(test)]
 mod vis_ground_truth;
@@ -610,7 +611,7 @@ impl TacticalGrid {
 		let sprites = self.grid.borrow().sprites.clone();
 		let detail_class = detail::build_class(vm, &sprites);
 		let properties_delegate = tile::properties_delegate(vm, &self.grid);
-		let camera_class = camera::build_class(vm);
+		let camera_class = camera::build_class(vm, &self.grid);
 		let camera = camera::instance(vm, &camera_class, &self.grid);
 		{
 			let mut g = self.grid.borrow_mut();
@@ -799,6 +800,7 @@ impl TacticalGrid {
 		g.occupant_lookup = None;
 		g.clear_hook = None;
 		g.camera_class = None;
+		g.camera.callbacks = Default::default();
 	}
 }
 

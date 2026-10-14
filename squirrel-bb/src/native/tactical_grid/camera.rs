@@ -58,6 +58,8 @@ pub(crate) struct CameraState {
 	/// The gliding camera, with [`BattleCamera::Glides`]: it holds the position and
 	/// zoom then.
 	pub glide: Option<Camera>,
+	/// `registerCallbacks`' functions (see `camera_callbacks`).
+	pub callbacks: super::camera_callbacks::MovementCallbacks,
 }
 
 impl CameraState {
@@ -100,6 +102,7 @@ impl Default for CameraState {
 			pos: (0.0, 0.0),
 			overlays: Vec::new(),
 			glide: None,
+			callbacks: Default::default(),
 		}
 	}
 }
@@ -215,7 +218,7 @@ fn adjusts_level(vm: &SQVM) -> bool {
 		.unwrap_or(true)
 }
 
-pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
+pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 	let mut b = ClassBuilder::<CameraHandle>::new("TacticalCamera")
 		.property("Level", |c: &CameraHandle| c.0.borrow().camera.level, |c: &mut CameraHandle, v: i64| {
 			c.0.borrow_mut().camera.level = v;
@@ -384,7 +387,8 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 		}
 	});
 	// The level's easing and the overlays' screen positions: visual only.
-	for name in ["registerCallbacks", "unregisterCallbacks", "climbBy", "update", "render", "updateEntityOverlays"] {
+	b = super::camera_callbacks::add(b, grid);
+	for name in ["climbBy", "render", "updateEntityOverlays"] {
 		let stub = crate::native::stubs::name(format!("Tactical.getCamera().{name}"));
 		b = b.method(name, move |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| crate::native::stubs::note(stub));
 	}

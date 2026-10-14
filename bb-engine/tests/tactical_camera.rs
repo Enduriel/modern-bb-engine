@@ -1,6 +1,8 @@
 //! The battle camera as the windowed game runs it (`BattleCamera::Glides`): a move to
 //! a tile takes frames, says it's moving until it arrives, and arrives centred, while
-//! the battle carries on. Skips cleanly when the Steam install isn't there.
+//! the battle carries on. Its movement callbacks (`registerCallbacks`) are called once
+//! as it sets off and once as it stops. Skips cleanly when the Steam install isn't
+//! there.
 
 use std::path::Path;
 
@@ -47,6 +49,18 @@ fn a_gliding_battle_camera_moves_over_frames() {
 	// The battle paused, so no unit's turn takes the camera elsewhere meanwhile (the
 	// camera moves on real time).
 	engine.run_script("::Tactical.State.setPause(true);", "pause").expect("pause");
+	engine
+		.run_script(
+			"::__moves <- [0, 0]; \
+			 ::__onStart <- function() { ::__moves[0]++; }; ::__onEnd <- function() { ::__moves[1]++; }; \
+			 ::Tactical.getCamera().registerCallbacks(::__onStart, ::__onEnd);",
+			"callbacks",
+		)
+		.expect("register");
+	let moves = || -> (i64, i64) {
+		let a = SqTable::root(engine.vm()).get::<SqArray>("__moves").expect("moves");
+		(a.get::<i64>(0).unwrap(), a.get::<i64>(1).unwrap())
+	};
 	let start = camera("c.setPos(::Tactical.getTileSquare(22, 18).Pos); c.moveToTile(far)");
 	assert_eq!(&start[..3], ["Some(true)", "Some(false)", "Some(true)"], "under way: {start:?}");
 	let mut frames = 0;
@@ -61,4 +75,17 @@ fn a_gliding_battle_camera_moves_over_frames() {
 		assert!(frames < 600, "still moving after {frames} frames: {now:?}");
 	}
 	assert!(frames > 5, "a glide takes frames ({frames})");
+	harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	assert_eq!(moves(), (1, 1), "one call as it set off, one as it stopped");
+	// Unregistered, they aren't called again.
+	engine
+		.run_script(
+			"local c = ::Tactical.getCamera(); c.unregisterCallbacks(::__onStart, ::__onEnd); c.moveToTile(::Tactical.getTileSquare(22, 18));",
+			"again",
+		)
+		.expect("again");
+	for _ in 0..600 {
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	}
+	assert_eq!(moves(), (1, 1), "not after unregisterCallbacks");
 }
