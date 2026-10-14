@@ -10,9 +10,8 @@
 //!
 //! The session: a new campaign's world; `--battles` battles (default 12), each against a
 //! party of another people or beast (made by vanilla's spawn lists, next to the company),
-//! fought to the
-//! end by the AI on both sides (the company made hardy enough to survive them); `--days`
-//! days of the world running (default 10; the parties leave the company be, and a battle
+//! played by the AI on both sides until it ends (the company's AI often retreats; the
+//! company is made hardy and kept at three brothers); `--days` days of the world running (default 10; the parties leave the company be, and a battle
 //! that comes up anyway is fought out); quitting to the main menu; and a second
 //! campaign (`--until` ends it after the point whose name starts so, e.g. "after battle
 //! 1"). At each point it measures:
@@ -67,9 +66,10 @@ const IN_WORLD: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in
 
 /// The `n`th battle's opponent: a party vanilla's own spawn lists make, of the factions in
 /// turn (brigands, beasts, the undead, greenskins, barbarians, nomads), next to the company,
-/// so the battles draw other peoples and beasts; one that can't be made (a DLC's missing)
-/// falls back to the nearest hostile party. The company is made hardy (hit points) so that
-/// it lives through them all.
+/// so the battles draw other peoples and beasts (any hostile party left there from an
+/// earlier battle is removed first); one that can't be made (a DLC's missing) falls back
+/// to the nearest hostile party. The company is made hardy (hit points) and kept at three
+/// brothers at least, recruited as the scenario's are.
 const ENGAGE: &str = r#"
 local player = ::World.State.getPlayer();
 local kinds = [
@@ -81,6 +81,18 @@ local kinds = [
 	["Beasts", "Unholds", "Unhold"], ["Beasts", "Schrats", "Schrats"]
 ];
 local kind = kinds[({n} - 1) % kinds.len()];
+local roster = ::World.getPlayerRoster();
+if (roster.getSize() == 0) throw "the company is gone (wiped out in the last battle: the game is over)";
+// Three brothers at least, recruited as the scenario's are (the AI loses some).
+while (roster.getSize() < 3)
+{
+	local bro = roster.create("scripts/entity/tactical/player");
+	bro.m.HireTime = ::Time.getVirtualTimeF();
+	bro.setStartValuesEx(["companion_1h_background"]);
+}
+// A party left from an earlier battle at the company's place would join this one.
+foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 200.0))
+	if (e.isParty() && e.getID() != player.getID() && !e.isAlliedWithPlayer()) e.die();
 local target = null;
 try
 {
