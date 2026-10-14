@@ -67,8 +67,8 @@ impl Game {
 	pub fn mouse_moved(&mut self, x: i64, y: i64) -> Result<(), String> {
 		self.cursor = (x, y);
 		self.engine.ui().set_cursor(x, y, false);
-		let state = if self.buttons_down != 0 { 2 } else { 0 };
-		self.mouse(MouseInput { id: 6, state, x, y })
+		// Every pointer move is `MouseState.Moved`, button held or not (disassembled).
+		self.mouse(MouseInput { id: 6, state: 2, x, y, modifier: 0 })
 	}
 
 	/// Button `id` (1 left, 2 right, 3 middle, 4 back, 5 forward) went down or up.
@@ -85,6 +85,7 @@ impl Game {
 			state: if down { 0 } else { 1 },
 			x,
 			y,
+			modifier: 0,
 		})
 	}
 
@@ -96,6 +97,7 @@ impl Game {
 			state: if up { 3 } else { 4 },
 			x,
 			y,
+			modifier: 0,
 		})
 	}
 
@@ -105,6 +107,7 @@ impl Game {
 			key,
 			state: i64::from(down),
 			modifier,
+			fire: 0,
 		};
 		self.engine.root_state().key_input(self.engine.vm(), input).map(|_| ())
 	}

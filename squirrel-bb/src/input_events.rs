@@ -1,11 +1,16 @@
 //! The input events the engine hands the states: `onMouseInput(mouse)` and
 //! `onKeyInput(key)` receive small native objects the scripts only read.
 //!
-//! The codes are the ones the vanilla scripts test for. Mouse `getID()`: 1 the left
-//! button, 2 the right, 6 a move, 7 the wheel. Mouse `getState()`: 0 pressed, 1 released
-//! (a click acts on the release), 2 moved with a button down, 3 and 4 the wheel turned.
-//! Keys: `getKey()` is the engine's key code (e.g. 41 is Escape), `getState()` 0 or 1,
-//! `getModifier()` the held modifier.
+//! The codes are the original's, from the enums it binds (disassembled): `Mouse`
+//! (`getID()`): 1 `LeftButton`, 2 `RightButton`, 3 `MiddleButton`, 4/5 `ExtraButton1`/
+//! `2`, 6 `Pointer` (a move), 7 `Wheel`. `MouseState` (`getState()`): 0 `Down`, 1 `Up`
+//! (a click acts on the release), 2 `Moved` (every pointer move, button held or not),
+//! 3 `WheelUp`, 4 `WheelDown`; and `getModifier()`, the modifier keys held.
+//! Keys: `getKey()` is the engine's key code (e.g. 41 is Escape); `KeyState`
+//! (`getState()`): 0 `Up`, 1 `Down`, so vanilla's handlers, which test for 0, act when a
+//! key is released and scroll while one is held; `KeyModifier` (`getModifier()`), a
+//! mask: 1 `Shift`, 2 `Control`, 4 `Alt`; `KeyFire` (`getFire()`): 0 `Once`, 1
+//! `Repeated` (a held key repeating).
 
 use squirrel::{ClassBuilder, SQVM, SqClass, SqStrongRef};
 
@@ -16,27 +21,29 @@ pub struct MouseInput {
 	pub state: i64,
 	pub x: i64,
 	pub y: i64,
+	/// The modifier keys held (`KeyModifier` mask).
+	pub modifier: i64,
 }
 
 impl MouseInput {
 	/// The cursor moved to `(x, y)`.
 	pub fn moved(x: i64, y: i64) -> Self {
-		MouseInput { id: 6, state: 0, x, y }
+		MouseInput { id: 6, state: 2, x, y, modifier: 0 }
 	}
 
 	/// The left button went down at `(x, y)`.
 	pub fn left_down(x: i64, y: i64) -> Self {
-		MouseInput { id: 1, state: 0, x, y }
+		MouseInput { id: 1, state: 0, x, y, modifier: 0 }
 	}
 
 	/// The left button came up at `(x, y)` (what acts as a click).
 	pub fn left_up(x: i64, y: i64) -> Self {
-		MouseInput { id: 1, state: 1, x, y }
+		MouseInput { id: 1, state: 1, x, y, modifier: 0 }
 	}
 
 	/// The right button came up at `(x, y)` (cancels the current action).
 	pub fn right_up(x: i64, y: i64) -> Self {
-		MouseInput { id: 2, state: 1, x, y }
+		MouseInput { id: 2, state: 1, x, y, modifier: 0 }
 	}
 }
 
@@ -46,17 +53,18 @@ pub struct KeyInput {
 	pub key: i64,
 	pub state: i64,
 	pub modifier: i64,
+	pub fire: i64,
 }
 
 impl KeyInput {
-	/// Key `key` went down, no modifier held.
+	/// Key `key` went down (`KeyState.Down`), no modifier held.
 	pub fn pressed(key: i64) -> Self {
-		KeyInput { key, state: 0, modifier: 0 }
+		KeyInput { key, state: 1, modifier: 0, fire: 0 }
 	}
 
-	/// Key `key` came up.
+	/// Key `key` came up (`KeyState.Up`), which is when vanilla's key handlers act.
 	pub fn released(key: i64) -> Self {
-		KeyInput { key, state: 1, modifier: 0 }
+		KeyInput { key, state: 0, modifier: 0, fire: 0 }
 	}
 }
 
@@ -73,11 +81,13 @@ impl InputClasses {
 			.method("getState", |e: &mut MouseInput| e.state)
 			.method("getX", |e: &mut MouseInput| e.x)
 			.method("getY", |e: &mut MouseInput| e.y)
+			.method("getModifier", |e: &mut MouseInput| e.modifier)
 			.build(vm);
 		let key = ClassBuilder::<KeyInput>::new("KeyEvent")
 			.method("getKey", |e: &mut KeyInput| e.key)
 			.method("getState", |e: &mut KeyInput| e.state)
 			.method("getModifier", |e: &mut KeyInput| e.modifier)
+			.method("getFire", |e: &mut KeyInput| e.fire)
 			.build(vm);
 		InputClasses { mouse, key }
 	}
