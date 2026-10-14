@@ -150,6 +150,23 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		format!("after JSHandle.call the MOTD is {}", motd.to_text()),
 	)?;
 
+	// Hot reload restyles the running page: every style sheet loads again, and the
+	// menu is laid out as before (the compat rewrites apply to the new sheets too).
+	let button_box = "(function () { var r = document.querySelector('.main-menu-module .ui-control').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })()";
+	let before = session.eval(button_box)?;
+	let sheets = session.reload_styles()?;
+	ensure(sheets > 10, format!("only {sheets} style sheets reloaded"))?;
+	session.run_frames(1.0)?;
+	let after = session.eval(button_box)?;
+	ensure(
+		after == before,
+		format!(
+			"the first menu button moved from {} to {} after restyling",
+			before.to_text(),
+			after.to_text()
+		),
+	)?;
+
 	let problems: Vec<String> = session
 		.log()
 		.into_iter()
