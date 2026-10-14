@@ -177,12 +177,20 @@ pub(super) fn type_text(host: &BrowserHost, text: &str) {
 	}
 }
 
+/// What the original's page gets per notch of the wheel, as a wheel delta: its UI hands
+/// Coherent a `WheelY` of ±30 per notch (`0x56cae9`, `0x56caf8`; disassembled
+/// 2026-10-14), which Coherent's WebKit counts as 30 ticks of 120 (`0x10603c4d`), so
+/// `wheelDelta` is ±3600. Vanilla's lists scroll by `wheelDelta / 120` (jquery.mousewheel)
+/// times twice their own delta (aciScrollBar), so a notch scrolls 30 times what a 120
+/// would. Chromium counts the same ticks from this delta.
+pub const WHEEL_DELTA_PER_NOTCH: i32 = 30 * 120;
+
 /// Turn the wheel `notches` times over (x, y): positive is away from the player
 /// (scrolling up), as `wheelDelta` counts.
 pub(super) fn wheel(host: &BrowserHost, x: i32, y: i32, notches: i32) {
 	let event = MouseEvent { x, y, modifiers: 0 };
 	host.send_mouse_move_event(Some(&event), 0);
-	host.send_mouse_wheel_event(Some(&event), 0, 120 * notches);
+	host.send_mouse_wheel_event(Some(&event), 0, WHEEL_DELTA_PER_NOTCH * notches);
 }
 
 #[cfg(test)]

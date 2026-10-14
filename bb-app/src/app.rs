@@ -9,7 +9,7 @@ use std::time::Instant;
 use bb_render::{Gpu, Presenter, RenderTarget, save_png};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::PhysicalKey;
 use winit::window::{CustomCursor, Window, WindowId};
@@ -17,6 +17,7 @@ use winit::window::{CustomCursor, Window, WindowId};
 use bb_app::front::Key;
 use bb_app::game::Game;
 use bb_app::keys;
+use bb_app::wheel::{self, Notches};
 
 /// What to start, from the command line.
 pub struct Options {
@@ -44,6 +45,8 @@ struct Running {
 	system_cursor: Option<(bool, String)>,
 	/// The hardware cursors, by name (`<install>/cursors/*.cur`).
 	cursors: HashMap<String, CustomCursor>,
+	/// The wheel's turn short of a whole notch (see `wheel`).
+	wheel: Notches,
 }
 
 /// The original's hardware cursors: each `<install>/cursors/<name>.cur` (the install
@@ -141,6 +144,7 @@ impl App {
 			frames: 0,
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
+			wheel: Notches::default(),
 		})
 	}
 
@@ -225,12 +229,13 @@ impl Running {
 				};
 				self.game.mouse_button(id, *state == ElementState::Pressed)
 			}
+			// Whole notches, each to the UI or the states (see `wheel`).
 			WindowEvent::MouseWheel { delta, .. } => {
-				let y = match delta {
-					MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
-					MouseScrollDelta::PixelDelta(p) => p.y,
-				};
-				if y == 0.0 { Ok(()) } else { self.game.wheel(y > 0.0) }
+				let turned = self.wheel.add(wheel::notches(delta, self.window.scale_factor()));
+				for _ in 0..turned.unsigned_abs() {
+					self.game.wheel(turned > 0)?;
+				}
+				Ok(())
 			}
 			// A key held as the window loses the keyboard would never see its release.
 			WindowEvent::Focused(false) => {

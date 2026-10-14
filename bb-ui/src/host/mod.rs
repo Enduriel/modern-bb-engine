@@ -46,7 +46,7 @@ use cef::*;
 
 use client::Shared;
 pub use client::{Event, FrameBuffer};
-pub use input::Key;
+pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
 use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton};
 pub use scheme::{RequestKind, Responder};

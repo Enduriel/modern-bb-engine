@@ -30,6 +30,15 @@ fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 
 /// Run the game until a button labelled `label` is visible and the page has stopped
 /// animating, as a player would wait before clicking. Fails after `timeout`.
+/// Set the UI scale as the Options screen does, and let the page lay itself out again.
+fn set_ui_scale(session: &UiSession, scale: f64) -> Result<(), String> {
+	session.engine().run_script(
+		&format!("local m = ::Settings.getVideoMode(); m.UIScale = {scale:.2}; ::Settings.setVideoMode(m);"),
+		"ui_scale",
+	)?;
+	session.run_frames(1.0)
+}
+
 fn wait_for_button(session: &UiSession, label: &str, timeout: Duration) -> Result<(), String> {
 	let deadline = Instant::now() + timeout;
 	loop {
@@ -99,26 +108,48 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		"the origin list is missing 'A New Company'",
 	)?;
 
-	// The wheel scrolls the origin list (aciScrollBar reads jquery.mousewheel's
-	// `wheelDelta / 120`): two notches down, then back up to the top.
+	// The wheel scrolls the origin list as far as the original's does. A notch is 30
+	// ticks of 120 there (`WHEEL_DELTA_PER_NOTCH`), aciScrollBar reads jquery.mousewheel's
+	// `wheelDelta / 120` and moves twice the list's delta (5) a tick: 300 CSS pixels a
+	// notch, or to the end, at any UI scale.
 	let list = ".new-campaign-menu-module .l-list-container .aciSb_cnt";
-	let scroll_top = || {
-		session
-			.eval(&format!("document.querySelector({list:?}).scrollTop"))
-			.map(|top| top.as_i64().unwrap_or(-1))
+	let number = |code: String| {
+		session.eval(&code).map(|v| match v {
+			Json::Int(n) => n as f64,
+			Json::Float(f) => f,
+			_ => -1.0,
+		})
 	};
-	session.wheel_over(list, -2)?;
-	let down = scroll_top()?;
-	ensure(
-		down > 0,
-		format!("two notches down left the origin list at {down}"),
+	let notch = f64::from(bb_ui::host::WHEEL_DELTA_PER_NOTCH / 120 * 2 * 5);
+	ensure(notch == 300.0, format!("a notch is {notch} pixels"))?;
+	// The page's own wheel events, before the list's handler takes them.
+	session.eval(
+		"window.__wheelDeltas = []; document.addEventListener('mousewheel', function (e) { window.__wheelDeltas.push(e.wheelDelta); }, true); 0",
 	)?;
-	session.wheel_over(list, 2)?;
-	let up = scroll_top()?;
-	ensure(
-		up == 0,
-		format!("two notches back up left the origin list at {up}"),
-	)?;
+	for scale in [1.0, 1.5] {
+		set_ui_scale(&session, scale)?;
+		let end = number(format!(
+			"(function (e) {{ return e.scrollHeight - e.clientHeight; }})(document.querySelector({list:?}))"
+		))?;
+		let top = || number(format!("document.querySelector({list:?}).scrollTop"));
+		ensure(end > 0.0, format!("the origin list doesn't scroll at UI scale {scale}"))?;
+		session.eval("window.__wheelDeltas = []; 0")?;
+		session.wheel_over(list, -1)?;
+		let deltas = session.eval("window.__wheelDeltas.join(',')")?;
+		ensure(
+			deltas.as_str() == Some("-3600"),
+			format!("a notch down reached the page as wheelDelta {deltas:?} at UI scale {scale}, not -3600"),
+		)?;
+		let down = top()?;
+		ensure(
+			down == notch.min(end),
+			format!("a notch down moved the origin list to {down} at UI scale {scale}, not {}", notch.min(end)),
+		)?;
+		session.wheel_over(list, 1)?;
+		let up = top()?;
+		ensure(up == 0.0, format!("a notch back up left the origin list at {up} at UI scale {scale}"))?;
+	}
+	set_ui_scale(&session, 1.0)?;
 
 	session.click_button("Cancel")?;
 	wait_for_button(&session, "New Campaign", Duration::from_secs(10))?;
