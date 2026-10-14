@@ -25,7 +25,8 @@
 
 use bb_assets::SpriteRegistry;
 use squirrel_bb::scene::tactical::{
-	SceneEffect, SceneOverlay, ScenePathStep, ScenePool, SceneTacticalEntity, SceneTacticalTile, TacticalScene,
+	SceneEffect, SceneOverlay, ScenePathStep, ScenePool, SceneRainSplat, SceneTacticalEntity, SceneTacticalTile,
+	TacticalScene,
 };
 
 use crate::sprite::Quad;
@@ -177,10 +178,16 @@ impl Builder<'_> {
 
 	/// A detail or an entity's sprite: placed by the brush's offset and frame.
 	fn placed(&mut self, brush: &str, anchor: [f32; 2], look: Look, saturation: f32, level: u32) {
+		self.placed_frame(brush, 0, anchor, look, saturation, level);
+	}
+
+	/// As [`Builder::placed`], showing frame `frame` of the brush (its animation's; see
+	/// `squirrel_bb::native::sprite_anim`).
+	fn placed_frame(&mut self, brush: &str, frame: u32, anchor: [f32; 2], look: Look, saturation: f32, level: u32) {
 		let Some((sheet, sprite)) = self.sprites.get(brush) else {
 			return;
 		};
-		let Some(frame) = sprite.frames.first() else {
+		let Some(frame) = sprite.frames.get(frame as usize).or(sprite.frames.first()) else {
 			return;
 		};
 		let anchor = [
@@ -339,20 +346,21 @@ impl Fade {
 	}
 }
 
+/// What lies and stands on a tile, besides its details.
+#[derive(Default)]
+struct OnTile<'a> {
+	pools: Vec<&'a ScenePool>,
+	standing: Vec<&'a SceneTacticalEntity>,
+	steps: Vec<&'a ScenePathStep>,
+	splats: Vec<&'a SceneRainSplat>,
+}
+
 /// A tile's details and what stands on it, each entity followed by its overlay (the
 /// original draws a unit's bars with it, `0x4c3547`, so a unit in front covers the
 /// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
 /// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
-/// desaturated. Then the path's footsteps on the tile.
-fn draw_dressing(
-	b: &mut Builder,
-	tile: &SceneTacticalTile,
-	pools: &[&ScenePool],
-	standing: &[&SceneTacticalEntity],
-	steps: &[&ScenePathStep],
-	fade: Fade,
-	overlay_level: u32,
-) {
+/// desaturated. Then the path's footsteps on the tile, and the rain's splats.
+fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
 	let hidden = if tile.visible { 1.0 } else { FOGGED_SATURATION };
@@ -366,10 +374,10 @@ fn draw_dressing(
 			tint: [r, g, b_],
 		};
 		let anchor = [x + detail.offset.0, y + detail.offset.1];
-		b.placed(&detail.brush, anchor, look, detail.saturation * hidden, level);
+		b.placed_frame(&detail.brush, detail.frame, anchor, look, detail.saturation * hidden, level);
 	}
 	// The pools on the ground (`spawnPoolEffect`), under what stands there.
-	for pool in pools {
+	for pool in &on.pools {
 		let [a, r, g, b_] = pool.color.to_be_bytes();
 		let look = Look {
 			scale: pool.scale,
@@ -380,7 +388,7 @@ fn draw_dressing(
 		};
 		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
-	for entity in standing.iter().filter(|e| tile.visible || e.visible_in_fog) {
+	for entity in on.standing.iter().filter(|e| tile.visible || e.visible_in_fog) {
 		draw_entity_sprites(b, entity, Some(fade), hidden, level);
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
@@ -390,7 +398,7 @@ fn draw_dressing(
 	// larger first (`0x55d170`), and a footstep's key is its brush's depth bias (-64)
 	// where a unit's or an object's is 0. It draws on any tile at full colour, unlike a
 	// unit (`0x4ba2f0`).
-	for step in steps {
+	for step in &on.steps {
 		let [a, r, g, b_] = step.color.to_be_bytes();
 		let look = Look {
 			alpha: f32::from(a),
@@ -398,6 +406,17 @@ fn draw_dressing(
 			..Look::PLAIN
 		};
 		b.placed(&step.brush, [step.pos.0 as f32, step.pos.1 as f32], look, 1.0, level);
+	}
+	// A rain splat is attached to the tile under it, key -100: after the footsteps.
+	for splat in &on.splats {
+		let [a, r, g, b_] = splat.color.to_be_bytes();
+		let look = Look {
+			scale: splat.scale,
+			alpha: f32::from(a),
+			tint: [r, g, b_],
+			..Look::PLAIN
+		};
+		b.placed_frame(&splat.brush, splat.frame, [splat.pos.0, splat.pos.1], look, 1.0, level);
 	}
 }
 
@@ -421,7 +440,7 @@ fn draw_entity_sprites(b: &mut Builder, entity: &SceneTacticalEntity, fade: Opti
 		};
 		let at = [anchor[0] + sprite.offset.0 * sprite.scale, anchor[1] + sprite.offset.1 * sprite.scale];
 		let before = b.quads.len();
-		b.placed(&sprite.brush, at, look, sprite.saturation * saturation, level);
+		b.placed_frame(&sprite.brush, sprite.frame, at, look, sprite.saturation * saturation, level);
 		if sprite.highlight_factor != 0.0 {
 			let [ha, hr, hg, hb] = sprite.highlight.to_be_bytes();
 			for quad in &mut b.quads[before..] {
@@ -566,21 +585,26 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		(std::cmp::Reverse(r), std::cmp::Reverse(q))
 	});
 
-	let mut pools: std::collections::HashMap<usize, Vec<&ScenePool>> = Default::default();
+	let mut on: std::collections::HashMap<usize, OnTile> = Default::default();
 	for pool in &scene.pools {
-		pools.entry(pool.tile).or_default().push(pool);
+		on.entry(pool.tile).or_default().pools.push(pool);
 	}
-	let mut steps: std::collections::HashMap<usize, Vec<&ScenePathStep>> = Default::default();
 	for step in &scene.path {
-		steps.entry(step.tile).or_default().push(step);
+		on.entry(step.tile).or_default().steps.push(step);
 	}
 	// Flying units aren't on a tile: they draw after the tiles (see below).
-	let mut standing: std::collections::HashMap<usize, Vec<&SceneTacticalEntity>> = Default::default();
 	for entity in scene.entities.iter().filter(|e| !e.flying) {
 		if let Some(tile) = entity.tile {
-			standing.entry(tile).or_default().push(entity);
+			on.entry(tile).or_default().standing.push(entity);
 		}
 	}
+	// A splat off the map has no tile to be drawn with.
+	for splat in &scene.rain_splats {
+		if let Some(tile) = splat.tile {
+			on.entry(tile).or_default().splats.push(splat);
+		}
+	}
+	let nothing = OnTile::default();
 
 	// The tiles units stand on, for what fades in front of them.
 	let unit_tiles: std::collections::HashSet<usize> =
@@ -597,11 +621,8 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	let overlay_level = scene.camera.level.clamp(0, 3) as u32;
 	for tile in &order {
 		let index = (tile.row * scene.width + tile.col) as usize;
-		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
-		let pooled = pools.get(&index).map_or(&[][..], |v| &v[..]);
-		let stepped = steps.get(&index).map_or(&[][..], |v| &v[..]);
 		let fade = Fade::of(scene, tile, &unit_tiles);
-		draw_dressing(&mut b, tile, pooled, on_it, stepped, fade, overlay_level);
+		draw_dressing(&mut b, tile, on.get(&index).unwrap_or(&nothing), fade, overlay_level);
 	}
 	// The marks on the tiles map objects stand on (`HighlightBlockedTiles`): sprites in
 	// the effects layer, made at the battle's setup before anything else there (so over
@@ -654,6 +675,17 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		};
 		b.placed(&icon.brush, [icon.pos.0, icon.pos.1], look, 1.0, overlay_level);
 	}
+	// The rain's drops (key -100 in the effects layer), then the weather's clouds.
+	for drop in &scene.rain {
+		let [a, r, g, b_] = drop.color.to_be_bytes();
+		let look = Look {
+			scale: drop.scale,
+			alpha: f32::from(a),
+			tint: [r, g, b_],
+			..Look::PLAIN
+		};
+		b.placed(&drop.brush, [drop.pos.0, drop.pos.1], look, 1.0, overlay_level);
+	}
 	draw_clouds(&mut b, scene, view);
 	let labels_from = b.quads.len();
 	WorldQuads {
@@ -690,60 +722,11 @@ mod tests {
 		assert_eq!(Fade::None.alpha(top), 1.0);
 	}
 
-	use bb_assets::{BrushFrame, BrushSheet, BrushSprite, SheetHeader, name_hash};
-	use squirrel_bb::scene::tactical::{SceneOverlayIcon, SceneTacticalSprite, SceneTacticalTile};
+	use squirrel_bb::scene::tactical::{
+		SceneOverlayIcon, SceneRainDrop, SceneRainSplat, SceneTacticalDetail, SceneTacticalSprite, SceneTacticalTile,
+	};
 
-	/// The test sprites, each a 2×2 picture in its own column of the sheet (see `name_of`).
-	const NAMES: [&str; 6] = ["tile", "unit", "rock", "mark", "step", "icon"];
-
-	/// Which test sprite a quad shows.
-	fn name_of(quad: &Quad) -> &'static str {
-		let u = quad.uv.iter().map(|uv| uv[0]).fold(f32::MAX, f32::min);
-		NAMES[(u * 10.0).round() as usize]
-	}
-
-	fn registry() -> SpriteRegistry {
-		let sprite = |i: usize| BrushSprite {
-			hash: name_hash(NAMES[i].as_bytes()),
-			name: NAMES[i].into(),
-			material: 0,
-			width: 2,
-			height: 2,
-			offset_x: 0,
-			offset_y: 0,
-			depth_bias: 0,
-			frame_time_ms: 0,
-			unknown_pause: [0, 0],
-			rotation_speed: 0.0,
-			flags: 0,
-			unknown_offset: [0.0, 0.0],
-			color: [255; 4],
-			unknown_scale: 1.0,
-			frames: vec![BrushFrame {
-				name: String::new(),
-				uv: [i as f32 * 0.1, i as f32 * 0.1 + 0.05, 0.0, 1.0],
-				rect: [-1.0, 1.0, -1.0, 1.0],
-			}],
-			trailer: [0; 3],
-		};
-		let mut registry = SpriteRegistry::new();
-		registry.add_sheet(
-			"brushes/test.brush",
-			BrushSheet {
-				texture: "gfx/test.png".into(),
-				header: SheetHeader {
-					width: 2,
-					height: 2,
-					flags: [0; 12],
-					sprite_count: NAMES.len() as u32,
-					reserved: [0; 2],
-					max_level: 1000,
-				},
-				sprites: (0..NAMES.len()).map(sprite).collect(),
-			},
-		);
-		registry
-	}
+	use crate::test_sprites::{frame_of, name_of, registry};
 
 	fn tile(col: i64, visible: bool) -> SceneTacticalTile {
 		SceneTacticalTile {
@@ -785,6 +768,7 @@ mod tests {
 				offset: (0.0, 0.0),
 				ignore_ambient: false,
 				occlusion: None,
+				frame: 0,
 			}],
 		}
 	}
@@ -910,6 +894,63 @@ mod tests {
 			assert_eq!(quads[m].color[3], 0xa8);
 			assert_eq!(quads[m].saturation, if seen { 1.0 } else { FOGGED_SATURATION }, "seen: {seen}");
 		}
+	}
+
+	#[test]
+	fn frames_splats_and_rain_draw_where_the_original_puts_them() {
+		let mut ground = tile(0, true);
+		ground.details.push(SceneTacticalDetail {
+			brush: "anim".into(),
+			flags: 0,
+			mirrored: false,
+			offset: (0.0, 0.0),
+			rotation: 0.0,
+			scale: 1.0,
+			saturation: 1.0,
+			color: 0xffff_ffff,
+			frame: 2,
+		});
+		let mut unit = entity(1, 1, "anim", false, false);
+		unit.sprites[0].frame = 1;
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![ground, tile(1, true)],
+			entities: vec![unit],
+			path: vec![step(1, 0xffe0_e5a2)],
+			rain_splats: vec![SceneRainSplat {
+				tile: Some(1),
+				brush: "anim".into(),
+				pos: (120.0, 0.0),
+				scale: 1.0,
+				color: 0xc0ff_ffff,
+				frame: 2,
+			}],
+			rain: vec![SceneRainDrop {
+				brush: "drop".into(),
+				pos: (60.0, 30.0),
+				scale: 0.5,
+				color: 0x60ff_ffff,
+			}],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let names: Vec<&str> = quads.iter().map(name_of).collect();
+		let at = |name: &str, on_tile_1: bool, frame: u32| {
+			(0..quads.len()).find(|&i| {
+				names[i] == name && (quads[i].corners[0][0] > 60.0) == on_tile_1 && frame_of(&quads[i]) == frame
+			})
+		};
+		let detail = at("anim", false, 2).expect("the detail, at its frame");
+		let unit = at("anim", true, 1).expect("the unit's sprite, at its frame");
+		let splat = at("anim", true, 2).expect("the splat, at its frame");
+		let step = names.iter().position(|&n| n == "step").expect("the footstep");
+		// On the splat's tile: the unit, its footstep, then the splat. Tile 0, in front,
+		// comes after (its detail).
+		assert!(unit < step && step < splat && splat < detail, "{names:?}");
+		assert_eq!(quads[splat].color[3], 0xc0);
+		assert_eq!(names.last(), Some(&"drop"), "the rain over the map: {names:?}");
+		assert_eq!(quads.last().map(|q| q.color[3]), Some(0x60));
 	}
 
 	#[test]

@@ -23,6 +23,8 @@ mod screenshot;
 pub mod sprite;
 pub mod tactical;
 mod target;
+#[cfg(test)]
+mod test_sprites;
 mod text;
 mod texture;
 mod ui_layer;

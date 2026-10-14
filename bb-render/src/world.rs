@@ -138,6 +138,14 @@ enum Layer {
 	Labels,
 }
 
+/// A bird's alpha, and its shadow's alpha, scale and offset down (the bird's two
+/// sprites, `0x4e3ad0`). The shadow's colour comes from a global set at startup
+/// (`0x68f0a8`) that hasn't been read; it's black here, as the clouds' shadows are.
+const BIRD_ALPHA: u8 = 0xa8;
+const BIRD_SHADOW_ALPHA: u8 = 0x10;
+const BIRD_SHADOW_SCALE: f32 = 1.25;
+const BIRD_SHADOW_DROP: f32 = 150.0;
+
 /// A frame's quads in drawing order, and the atlases they index.
 pub struct WorldQuads {
 	pub quads: Vec<Quad>,
@@ -160,13 +168,15 @@ pub fn world_quads<'a>(
 	            layer: Layer,
 	            key: i64,
 	            brush: &str,
+	            frame: u32,
 	            anchor: [f32; 2],
 	            offset: [f32; 2],
 	            look: Look| {
 		let Some((sheet, sprite)) = sprites.get(brush) else {
 			return;
 		};
-		let Some(frame) = sprite.frames.first() else {
+		// The frame its animation shows (see `squirrel_bb::native::sprite_anim`).
+		let Some(frame) = sprite.frames.get(frame as usize).or(sprite.frames.first()) else {
 			return;
 		};
 		// Offsets scale with the sprite (so an unscaled sprite keeps its screen
@@ -195,6 +205,7 @@ pub fn world_quads<'a>(
 				Layer::Terrain,
 				key,
 				&tile.brush,
+				0,
 				anchor,
 				[0.0; 2],
 				Look::PLAIN,
@@ -223,6 +234,7 @@ pub fn world_quads<'a>(
 				Layer::Details,
 				key,
 				&detail.brush,
+				detail.frame,
 				anchor,
 				[0.0; 2],
 				look,
@@ -263,6 +275,7 @@ pub fn world_quads<'a>(
 				Layer::Entities,
 				anchor[1] as i64,
 				&sprite.brush,
+				sprite.frame,
 				anchor,
 				offset,
 				look,
@@ -291,6 +304,7 @@ pub fn world_quads<'a>(
 			Layer::Effects,
 			cloud.key + 2000,
 			cloud.brush,
+			0,
 			below,
 			[0.0; 2],
 			shadow,
@@ -306,6 +320,7 @@ pub fn world_quads<'a>(
 			Layer::Effects,
 			cloud.key,
 			cloud.brush,
+			0,
 			anchor,
 			[0.0; 2],
 			look,
@@ -358,6 +373,7 @@ pub fn world_quads<'a>(
 			Layer::Details,
 			0,
 			&footprint.brush,
+			0,
 			anchor,
 			[0.0; 2],
 			look,
@@ -378,6 +394,7 @@ pub fn world_quads<'a>(
 			Layer::Effects,
 			0,
 			&wave.brush,
+			0,
 			[wave.pos.0, wave.pos.1],
 			[0.0; 2],
 			look,
@@ -399,10 +416,39 @@ pub fn world_quads<'a>(
 			Layer::Effects,
 			0,
 			&particle.brush,
+			0,
 			[particle.pos.0, particle.pos.1],
 			[0.0; 2],
 			look,
 		);
+	}
+
+	// The birds, sorted by their keys among the effects: each white at alpha 0xa8 over
+	// its shadow, the same frame at alpha 0x10, 1.25 times as large and offset 150 down
+	// (an offset scales with its sprite).
+	for bird in scene.birds.iter().filter(|b| on_screen((b.pos.0.into(), b.pos.1.into()))) {
+		let anchor = [bird.pos.0, bird.pos.1];
+		let shadow = Look {
+			scale: BIRD_SHADOW_SCALE,
+			alpha: f32::from(BIRD_SHADOW_ALPHA),
+			tint: [0; 3],
+			..Look::PLAIN
+		};
+		push(
+			&mut drawables,
+			Layer::Effects,
+			bird.key,
+			bird.brush,
+			bird.frame,
+			anchor,
+			[0.0, -BIRD_SHADOW_DROP],
+			shadow,
+		);
+		let look = Look {
+			alpha: f32::from(BIRD_ALPHA),
+			..Look::PLAIN
+		};
+		push(&mut drawables, Layer::Effects, bird.key, bird.brush, bird.frame, anchor, [0.0; 2], look);
 	}
 
 	if let Some(font) = fonts.label {
@@ -524,6 +570,46 @@ pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::test_sprites::{frame_of, registry};
+	use squirrel_bb::scene::{SceneBird, WorldScene};
+
+	/// The middle of a quad, and its width.
+	fn middle_and_width(q: &Quad) -> ([f32; 2], f32) {
+		let xs = q.corners.map(|c| c[0]);
+		let ys = q.corners.map(|c| c[1]);
+		let (lo_x, hi_x) = (xs.iter().copied().fold(f32::MAX, f32::min), xs.iter().copied().fold(f32::MIN, f32::max));
+		let (lo_y, hi_y) = (ys.iter().copied().fold(f32::MAX, f32::min), ys.iter().copied().fold(f32::MIN, f32::max));
+		([(lo_x + hi_x) / 2.0, (lo_y + hi_y) / 2.0], hi_x - lo_x)
+	}
+
+	#[test]
+	fn a_bird_draws_over_its_shadow_at_its_frame() {
+		let scene = WorldScene {
+			birds: vec![SceneBird {
+				brush: "anim",
+				pos: (0.0, 0.0),
+				velocity: 50.0,
+				key: -4500,
+				frame: 2,
+			}],
+			..WorldScene::default()
+		};
+		let view = WorldView {
+			center: [0.0, 0.0],
+			zoom: 1.0,
+			width: 800,
+			height: 600,
+		};
+		let quads = world_quads(&scene, &registry(), &view, WorldFonts::default()).quads;
+		assert_eq!(quads.len(), 2, "the shadow, then the bird");
+		let (shadow, bird) = (&quads[0], &quads[1]);
+		assert_eq!((frame_of(shadow), frame_of(bird)), (2, 2));
+		assert_eq!(shadow.color, [0, 0, 0, BIRD_SHADOW_ALPHA]);
+		assert_eq!(bird.color, [255, 255, 255, BIRD_ALPHA]);
+		let ((s_at, s_width), (b_at, b_width)) = (middle_and_width(shadow), middle_and_width(bird));
+		assert_eq!(s_width, b_width * BIRD_SHADOW_SCALE);
+		assert_eq!(s_at[1], b_at[1] - BIRD_SHADOW_DROP * BIRD_SHADOW_SCALE, "below it, the offset scaled");
+	}
 
 	fn frame(rect: [f32; 4]) -> BrushFrame {
 		BrushFrame {
