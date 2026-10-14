@@ -40,7 +40,7 @@ fn open_with(prefixes: &[&str]) -> Option<harness::GameEngine> {
 		};
 		archives.push(zip);
 	}
-	Some(harness::open_archives(archives, |_| {}).expect("open the archives"))
+	Some(harness::open_mounted(dir, archives, |_| {}).expect("open the archives"))
 }
 
 fn check(engine: &harness::GameEngine, what: &str, expr: &str) {
@@ -64,4 +64,5 @@ fn modern_hooks_boots_the_menu() {
 	check(&engine, "the main menu's own onInit ran", "::Hooks.MainMenuState.m.MainMenuScreen != null");
 	check(&engine, "the stdlib split survives", "typeof ::split == \"function\" && ::split(\"a,b\", \",\").len() == 2");
 	check(&engine, "MH found vanilla's split class", "\"scripts/skills/actives/split\" in ::Hooks.BBClass");
+	check(&engine, "its UI files are listed", "::IO.enumerateFiles(\"ui/mods/\").find(\"ui/mods/modern_hooks/main\") != null");
 }

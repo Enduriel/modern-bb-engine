@@ -41,11 +41,11 @@ pub(crate) fn install<S: ScriptSource + 'static>(vm: &mut SQVM, state: &SharedSt
 	};
 	let enumerate = {
 		let state = state.clone();
-		vm.make_closure(move |vm: &SQVM, prefix: &str| -> Option<SqStrongRef> {
+		vm.make_closure(move |vm: &SQVM, prefix: Option<String>| -> Option<SqStrongRef> {
 			// `None` (a missing directory) becomes Squirrel `null`, which
-			// `preload.nut`'s DLC sweep guards against. Otherwise return an array
-			// of `include`-able paths.
-			let paths = state.borrow().source.list_prefix(prefix)?;
+			// `preload.nut`'s DLC sweep guards against; so does a `null` directory
+			// (probed). Otherwise an array of the files there, without extensions.
+			let paths = state.borrow().source.list_prefix(&prefix?)?;
 			let mut files = SqArray::new(vm);
 			for path in paths {
 				files.push(path);

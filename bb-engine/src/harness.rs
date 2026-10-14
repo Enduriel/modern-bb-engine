@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use squirrel_bb::{Engine, NativeConfig, installed_dlc};
 
 use crate::assets::{load_fog_stamp, load_sprites};
+use crate::mounts::Mounts;
 use crate::{DatScriptSource, ScriptCache};
 
 /// The data directory of a default Linux Steam install.
@@ -55,7 +56,7 @@ pub fn mod_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 pub fn open_install_with_mods(dir: &Path) -> io::Result<GameEngine> {
 	let mut archives = data_archives(dir)?;
 	archives.extend(mod_archives(dir)?);
-	open_archives(archives, |_| {})
+	open_mounted(dir, archives, |_| {})
 }
 
 /// An engine over the install at `dir`, configured as the original sees a Steam install:
@@ -66,20 +67,29 @@ pub fn open_install_with_mods(dir: &Path) -> io::Result<GameEngine> {
 /// to load is reported on stderr, and so is a missing fog-of-war stamp. The engine's own random stream is unpredictably
 /// seeded like the original's, unless `BB_ENGINE_SEED` gives a seed (for reproducible renders).
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
-	open_archives(data_archives(dir)?, |_| {})
+	open_mounted(dir, data_archives(dir)?, |_| {})
 }
 
 /// [`open_install`], letting the caller adjust the engine's [`NativeConfig`] first. The
 /// windowed game sets `exact_clock` to [`ExactClock::Live`](squirrel_bb::ExactClock), as
 /// the original's clock is; the harness and tests keep frame time.
 pub fn open_install_with(dir: &Path, configure: impl FnOnce(&mut NativeConfig)) -> io::Result<GameEngine> {
-	open_archives(data_archives(dir)?, configure)
+	open_mounted(dir, data_archives(dir)?, configure)
 }
 
-/// An engine over `archives` (in mount order), configured as [`open_install`] says, then
-/// by `configure`.
-pub fn open_archives(archives: Vec<PathBuf>, configure: impl FnOnce(&mut NativeConfig)) -> io::Result<GameEngine> {
-	let source = DatScriptSource::open(archives)?.with_cache(ScriptCache::from_env());
+/// An engine over `archives` (in mount order) with the data folder `dir` and the install
+/// folder above it mounted beside them ([`Mounts`]), configured as [`open_install`] says,
+/// then by `configure`.
+pub fn open_mounted(
+	dir: &Path,
+	archives: Vec<PathBuf>,
+	configure: impl FnOnce(&mut NativeConfig),
+) -> io::Result<GameEngine> {
+	let mut mounts = vec![dir.to_path_buf()];
+	mounts.extend(dir.parent().map(Path::to_path_buf));
+	let source = DatScriptSource::open(archives)?
+		.with_cache(ScriptCache::from_env())
+		.with_mounts(Mounts::new(mounts));
 	let sprites = source.with_archives(|archives| load_sprites(archives));
 	for failure in &sprites.failures {
 		eprintln!("[Error] brush {failure}");

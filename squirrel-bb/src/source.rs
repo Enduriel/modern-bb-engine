@@ -28,9 +28,10 @@ pub trait ScriptSource {
 	/// provides it.
 	fn load(&self, path: &str) -> Option<LoadedScript>;
 
-	/// List every script under `prefix`, **recursively**, as `load`-able
-	/// extension-less paths in deterministic (lexicographic) order — or `None` if
-	/// `prefix` names no directory.
+	/// List every file under `prefix`, **recursively**, as extension-less paths (a
+	/// script's is its `load`-able path) in deterministic (lexicographic) order — or
+	/// `None` if `prefix` names no directory. The original lists every file, not just
+	/// scripts (mods find their JS under `ui/mods/` this way).
 	///
 	/// This backs `IO.enumerateFiles`, which `preload.nut` calls to sweep
 	/// `scripts/config/`, `scripts/dlc/`, and `scripts/`. The `None` return is
@@ -40,7 +41,7 @@ pub trait ScriptSource {
 	///
 	/// Implementations must:
 	/// - return paths in the same extension-less, forward-slash form `load` takes
-	///   (strip any `.nut`), recursing into subdirectories;
+	///   (strip the file name's extension), recursing into subdirectories;
 	/// - **never panic** — this is reached through the native trampoline (an
 	///   `extern "C"` boundary where unwinding is UB), so a filesystem error must
 	///   become `None`/empty, not an `unwrap`.
