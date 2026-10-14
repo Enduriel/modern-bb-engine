@@ -193,6 +193,17 @@ impl EntityMachine {
 	}
 }
 
+/// Whether the world scene is shown (`World.isVisible()`). The world state hides it
+/// while a battle (or a loading screen) is up, and then the world scene doesn't run:
+/// no entity thinks or is discovered. Probed (2026-10-14): during a battle started
+/// from the map, with the world unpaused at speed 1, no world party ran `onUpdate`
+/// in 900 frames. The original's scene update and render both check the scene's
+/// flags first.
+pub(super) fn scene_shown(vm: &SQVM) -> Result<bool, String> {
+	let world = SqTable::root(vm).get::<SqStrongRef>("World").ok_or("World missing")?;
+	Ok(world.call_method_ret::<bool, _>(vm, "isVisible", ())?.unwrap_or(true))
+}
+
 /// Ignore a "no method" error (an optional hook the entity didn't define), but
 /// propagate a real error raised inside one that does.
 fn ignore_missing(result: Result<(), String>) -> Result<(), String> {

@@ -3,7 +3,8 @@
 //! original's disassembly (2026-10-13).
 //!
 //! The pass runs from `State.updateScene()` (the world scene's update), and only
-//! while the world speed is non-zero. It visits thinkers in registration order,
+//! while the world is shown (not during a battle; see [`super::scene_shown`]) and its
+//! speed is non-zero. It visits thinkers in registration order,
 //! including any registered during the pass. Each one:
 //!
 //! * is dropped if it is no longer in the scene (it died);
@@ -99,7 +100,7 @@ fn script_number(vm: &SQVM, table: &str, getter: &str) -> Result<f64, String> {
 
 /// One think pass (see the module docs). No machine borrow is held while scripts run.
 pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
-	if script_number(vm, "World", "getSpeedMult")? == 0.0 {
+	if !super::scene_shown(vm)? || script_number(vm, "World", "getSpeedMult")? == 0.0 {
 		return Ok(());
 	}
 	let now = script_number(vm, "Time", "getVirtualTimeF")? as f32;

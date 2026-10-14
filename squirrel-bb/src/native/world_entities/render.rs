@@ -68,6 +68,9 @@ pub(super) fn real_time_ms(vm: &SQVM) -> Result<i64, String> {
 /// One render pass over the live entities, in id order. No machine borrow is held
 /// while scripts run.
 pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
+	if !super::scene_shown(vm)? {
+		return Ok(());
+	}
 	let fog = fog_on(vm)?;
 	let now = real_time_ms(vm)?;
 	let order: Vec<usize> = {
