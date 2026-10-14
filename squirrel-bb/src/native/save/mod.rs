@@ -18,6 +18,7 @@
 //! it wrote, in order. Keeping the engine parts behind [`SavePart`] leaves room for a
 //! later importer of the original's save files.
 
+mod persistence;
 mod storage;
 pub(crate) mod stream;
 
@@ -25,7 +26,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use squirrel::{SQVM, SqArray, SqStrongRef, SqTable};
+use squirrel::{SQVM, SqStrongRef, SqTable};
 
 use storage::Storage;
 use stream::{Meta, SaveReader, SaveWriter, StreamClasses};
@@ -243,26 +244,7 @@ impl SaveSystem {
 			let inner = self.inner.clone();
 			vm.make_closure(move |name: String| !inner.busy.get() && inner.storage.borrow().exists(&name))
 		};
-		// PersistenceManager: the saves' metadata for the menus, and deleting a save.
-		let query_storages = {
-			let inner = self.inner.clone();
-			let classes = classes.clone();
-			vm.make_closure(move |vm: &SQVM| -> SqStrongRef {
-				let mut list = SqArray::new(vm);
-				let storage = inner.storage.borrow();
-				for name in storage.names() {
-					let Ok((meta, _)) = storage.read(&name).and_then(storage::decode) else {
-						continue;
-					};
-					list.push(classes.meta_object(vm, Rc::new(RefCell::new(meta))));
-				}
-				list.to_strong()
-			})
-		};
-		let delete_storage = {
-			let inner = self.inner.clone();
-			vm.make_closure(move |name: String| inner.storage.borrow().delete(&name))
-		};
+		let persistence_natives = persistence::natives(&self.inner, vm);
 
 		let mut world = SqTable::root(vm)
 			.get::<SqTable>("World")
@@ -276,8 +258,9 @@ impl SaveSystem {
 		world.set("canLoad", can_load);
 		world.set("load", load);
 		let mut persistence = SqTable::new(vm);
-		persistence.set("queryStorages", query_storages);
-		persistence.set("deleteStorage", delete_storage);
+		for (name, f) in persistence_natives {
+			persistence.set(name, f);
+		}
 		SqTable::root(vm).set("PersistenceManager", persistence);
 	}
 

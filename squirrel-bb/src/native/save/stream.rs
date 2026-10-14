@@ -161,11 +161,16 @@ pub(crate) struct StreamClasses {
 	meta: SqClass<SharedMeta>,
 }
 
+/// What a storage's `endWrite()` does with what was written (see [`StreamClasses::storage`]).
+pub(crate) type EndWrite = Rc<dyn Fn(&Meta, &[u8]) -> Result<(), String>>;
+
 #[derive(Clone)]
 struct OutStream {
 	writer: Rc<RefCell<SaveWriter>>,
 	meta: SharedMeta,
 	meta_class: SqClass<SharedMeta>,
+	/// A storage's: `endWrite()` stores it.
+	end_write: Option<EndWrite>,
 }
 
 #[derive(Clone)]
@@ -173,6 +178,29 @@ struct InStream {
 	reader: Rc<RefCell<SaveReader>>,
 	meta: SharedMeta,
 	meta_class: SqClass<SharedMeta>,
+}
+
+/// `getCreationDate()`: the original's `dd.mm.yy HH:MM:SS` (probed `14.10.26 03:47:33`).
+/// The original shows local time; without a time-zone source this is UTC.
+fn creation_date(secs: i64) -> String {
+	let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+	// Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+	let z = days + 719_468;
+	let era = z.div_euclid(146_097);
+	let doe = z - era * 146_097;
+	let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	let mp = (5 * doy + 2) / 153;
+	let day = doy - (153 * mp + 2) / 5 + 1;
+	let month = if mp < 10 { mp + 3 } else { mp - 9 };
+	let year = yoe + era * 400 + i64::from(month <= 2);
+	format!(
+		"{day:02}.{month:02}.{:02} {:02}:{:02}:{:02}",
+		year.rem_euclid(100),
+		rem / 3600,
+		rem % 3600 / 60,
+		rem % 60
+	)
 }
 
 /// A script integer argument as the original casts it (floats truncate).
@@ -187,7 +215,7 @@ impl StreamClasses {
 			.method("setVersion", |m: &mut SharedMeta, v: Number| m.borrow_mut().version = int(v))
 			.method("getName", |m: &mut SharedMeta| m.borrow().name.clone())
 			.method("getFileName", |m: &mut SharedMeta| m.borrow().file_name.clone())
-			.method("getCreationDate", |m: &mut SharedMeta| m.borrow().created)
+			.method("getCreationDate", |m: &mut SharedMeta| creation_date(m.borrow().created))
 			.method("getInt", |m: &mut SharedMeta, k: String| m.borrow().ints.get(&k).copied().unwrap_or(0))
 			.method("setInt", |m: &mut SharedMeta, k: String, v: Number| {
 				m.borrow_mut().ints.insert(k, int(v));
@@ -210,6 +238,14 @@ impl StreamClasses {
 			.method("writeString", |s: &mut OutStream, v: String| s.writer.borrow_mut().str(&v))
 			.method("getMetaData", |s: &mut OutStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
+			})
+			// A storage is written between beginWrite() and endWrite().
+			.method("beginWrite", |s: &mut OutStream| s.writer.borrow_mut().buf.clear())
+			.method("endWrite", |s: &mut OutStream| -> Result<(), String> {
+				match &s.end_write {
+					Some(end) => end(&s.meta.borrow(), &s.writer.borrow().buf),
+					None => Ok(()),
+				}
 			})
 			.build(vm);
 
@@ -237,6 +273,9 @@ impl StreamClasses {
 			.method("getMetaData", |s: &mut InStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
 			})
+			// A loaded storage is read between beginRead() and endRead().
+			.method("beginRead", |_s: &mut InStream| {})
+			.method("endRead", |_s: &mut InStream| {})
 			.build(vm);
 
 		StreamClasses { out, input, meta }
@@ -248,6 +287,19 @@ impl StreamClasses {
 			writer,
 			meta,
 			meta_class: self.meta.clone(),
+			end_write: None,
+		};
+		self.out.instantiate(vm, stream)
+	}
+
+	/// A storage for `PersistenceManager.createStorage`: an output stream with `meta`,
+	/// whose `endWrite()` hands what was written to `end_write`.
+	pub fn storage(&self, vm: &SQVM, meta: SharedMeta, end_write: EndWrite) -> SqStrongRef {
+		let stream = OutStream {
+			writer: Rc::default(),
+			meta,
+			meta_class: self.meta.clone(),
+			end_write: Some(end_write),
 		};
 		self.out.instantiate(vm, stream)
 	}
@@ -295,6 +347,14 @@ mod tests {
 		assert_eq!(r.str().unwrap(), "Grimald");
 		assert_eq!(r.i64().unwrap(), -123_456_789_012);
 		assert!(r.u8().is_err());
+	}
+
+	#[test]
+	fn creation_dates_read_like_the_original() {
+		// 2026-10-14 01:47:33 UTC.
+		assert_eq!(creation_date(1_791_942_453), "14.10.26 01:47:33");
+		assert_eq!(creation_date(0), "01.01.70 00:00:00");
+		assert_eq!(creation_date(951_782_400), "29.02.00 00:00:00");
 	}
 
 	#[test]
