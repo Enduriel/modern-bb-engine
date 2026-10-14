@@ -232,9 +232,8 @@ pub(super) fn travel(nav: &Rc<RefCell<NavState>>, vm: &SQVM, entity: &SqStrongRe
 	Ok(true)
 }
 
-/// A unit that took free attacks on arriving starts and finishes a move again where it
-/// stands (the original then re-settles it on the last empty tile it reached, which
-/// is where it stands).
+/// After a move the player doesn't see: a unit that took free attacks on arriving starts
+/// and finishes a move again, re-settled on the last empty tile it reached, at once.
 fn resettle_after_free_attack(
 	vm: &SQVM,
 	grid: &Grid,
@@ -302,8 +301,11 @@ fn advance(nav: &Rc<RefCell<NavState>>, vm: &SQVM) -> Result<bool, String> {
 			units.set_pos(identity, grid.borrow().tiles[here].world_pos());
 			movement_finish(vm, &t.entity, tile(&grid, vm, here)?)?;
 			nav.borrow_mut().path.clear();
-			if t.attacked_on_arrival {
-				resettle_after_free_attack(vm, &grid, &units, identity, &t.entity, t.last_empty)?;
+			// After a move the player sees, the re-settle is a teleport (`0x4ca7a0`): none
+			// if the last empty tile is taken or is where the unit stands; otherwise
+			// `onMovementStart(tile, 0)` now and a hop there.
+			if t.attacked_on_arrival && free_attack(vm, &grid, here, &t.entity, true)? && is_alive(vm, &t.entity) {
+				super::teleport::start(nav, vm, identity, t.last_empty, None, 1.0, true)?;
 			}
 			Ok(false)
 		}

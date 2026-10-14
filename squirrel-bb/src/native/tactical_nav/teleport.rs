@@ -33,9 +33,8 @@ pub(crate) struct Teleport {
 	entity: SqStrongRef,
 	start: usize,
 	dest: usize,
-	/// `onDone`, if not null.
-	callback: Option<SqStrongRef>,
-	tag: SqStrongRef,
+	/// `onDone`, if not null, and what it's handed.
+	callback: Option<(SqStrongRef, SqStrongRef)>,
 	hop: Hop,
 	speed: f32,
 	/// The script's `flag`: fade at the edge of the player's view.
@@ -46,7 +45,7 @@ pub(crate) struct Teleport {
 
 impl Teleport {
 	#[allow(clippy::too_many_arguments)]
-	fn new(grid: &tactical_grid::Grid, identity: i64, entity: SqStrongRef, start: usize, dest: usize, callback: Option<SqStrongRef>, tag: SqStrongRef, speed: f32, fades: bool, now: f32) -> Self {
+	fn new(grid: &tactical_grid::Grid, identity: i64, entity: SqStrongRef, start: usize, dest: usize, callback: Option<(SqStrongRef, SqStrongRef)>, speed: f32, fades: bool, now: f32) -> Self {
 		let at = |id: usize| grid.borrow().tiles[id].world_pos();
 		Teleport {
 			identity,
@@ -54,7 +53,6 @@ impl Teleport {
 			start,
 			dest,
 			callback,
-			tag,
 			hop: Hop::new(at(start), at(dest), 1.0 / speed, now),
 			speed,
 			fades,
@@ -76,15 +74,33 @@ pub(super) fn teleport(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Retained]
 		Some(s) => s.0.get_value::<Number>(vm).ok_or("teleport: expected a speed")?.0 as f32,
 		None => 1.0,
 	};
-	let (grid, units) = {
-		let st = nav.borrow();
-		if st.travel.is_some() {
-			return Ok(false);
-		}
-		(st.grid.clone(), st.units.clone())
-	};
+	if nav.borrow().travel.is_some() {
+		return Ok(false);
+	}
+	let grid = nav.borrow().grid.clone();
 	let identity = unit_identity(vm, &args[0].0);
 	let dest = tactical_grid::tile_id_of(&grid, vm, &args[1].0).ok_or("teleport: expected a tile")?;
+	let callback = (!is_null(vm, &args[2].0)).then(|| (args[2].0.clone(), args[3].0.clone()));
+	let fades = args[4].0.get_value::<bool>(vm).unwrap_or(false);
+	start(nav, vm, identity, dest, callback, speed, fades)
+}
+
+/// Teleport unit `identity` to tile `dest` (`0x4ca7a0`), as `teleport` does once its
+/// arguments are read; also the re-settle after free attacks on arrival. Whether it
+/// went.
+pub(super) fn start(
+	nav: &Rc<RefCell<NavState>>,
+	vm: &SQVM,
+	identity: i64,
+	dest: usize,
+	callback: Option<(SqStrongRef, SqStrongRef)>,
+	speed: f32,
+	fades: bool,
+) -> Result<bool, String> {
+	let (grid, units) = {
+		let st = nav.borrow();
+		(st.grid.clone(), st.units.clone())
+	};
 	let (Some(mover), Some(start)) = (units.entity(identity), units.info(identity).and_then(|u| u.tile)) else {
 		return Ok(false);
 	};
@@ -94,19 +110,16 @@ pub(super) fn teleport(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Retained]
 	if nav.borrow().teleports.iter().any(|t| t.identity == identity) {
 		return Ok(false);
 	}
-	let callback = (!is_null(vm, &args[2].0)).then(|| args[2].0.clone());
-	let tag = args[3].0.clone();
-	let fades = args[4].0.get_value::<bool>(vm).unwrap_or(false);
 
 	units.cancel_shake(vm, identity);
 	movement_start(vm, &mover, tile(&grid, vm, start)?, 0)?;
 	if speed != 0.0 && (seen_by_player(&grid, start) || seen_by_player(&grid, dest)) {
-		let t = Teleport::new(&grid, identity, mover, start, dest, callback, tag, speed, fades, hop::virtual_now(vm));
+		let t = Teleport::new(&grid, identity, mover, start, dest, callback, speed, fades, hop::virtual_now(vm));
 		nav.borrow_mut().teleports.push(t);
 		return Ok(true);
 	}
 	units.move_to(identity, dest)?;
-	land(vm, &grid, &mover, dest, callback.as_ref(), &tag)?;
+	land(vm, &grid, &mover, dest, callback.as_ref())?;
 	Ok(true)
 }
 
@@ -133,6 +146,7 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 	let callback = (!is_null(vm, &args[2].0)).then(|| args[2].0.clone());
 	let tag = args[3].0.clone();
 	let speed = args[4].0.get_value::<Number>(vm).map_or(1.0, |n| n.0 as f32);
+	let landed_with = callback.clone().map(|f| (f, tag.clone()));
 
 	movement_start(vm, &ea, tile(&grid, vm, ta)?, 0)?;
 	movement_start(vm, &eb, tile(&grid, vm, tb)?, 0)?;
@@ -153,7 +167,7 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 	let speed = if speed > 0.0 { speed } else { 1.0 };
 	let mut st = nav.borrow_mut();
 	for (identity, entity, start, dest) in [(a, ea, ta, tb), (b, eb, tb, ta)] {
-		st.teleports.push(Teleport::new(&grid, identity, entity, start, dest, callback.clone(), tag.clone(), speed, false, now));
+		st.teleports.push(Teleport::new(&grid, identity, entity, start, dest, landed_with.clone(), speed, false, now));
 	}
 	Ok(true)
 }
@@ -164,11 +178,10 @@ fn land(
 	grid: &tactical_grid::Grid,
 	mover: &SqStrongRef,
 	here: usize,
-	callback: Option<&SqStrongRef>,
-	tag: &SqStrongRef,
+	callback: Option<&(SqStrongRef, SqStrongRef)>,
 ) -> Result<(), String> {
 	movement_finish(vm, mover, tile(grid, vm, here)?)?;
-	if let Some(f) = callback {
+	if let Some((f, tag)) = callback {
 		f.call(vm, (mover.clone(), tag.clone())).map_err(|e| format!("teleport callback: {e}"))?;
 	}
 	Ok(())
@@ -239,14 +252,14 @@ fn advance(nav: &Rc<RefCell<NavState>>, vm: &SQVM, identity: i64) -> Result<(), 
 			if fades && !seen_by_player(&grid, dest) {
 				units.opaque(vm, identity);
 			}
-			let (entity, callback, tag) = {
+			let (entity, callback) = {
 				let st = nav.borrow();
 				let t = st.teleports.iter().find(|t| t.identity == identity).expect("teleporting");
-				(t.entity.clone(), t.callback.clone(), t.tag.clone())
+				(t.entity.clone(), t.callback.clone())
 			};
 			let here = units.info(identity).and_then(|u| u.tile).unwrap_or(dest);
 			units.set_pos(identity, grid.borrow().tiles[here].world_pos());
-			let landed = land(vm, &grid, &entity, here, callback.as_ref(), &tag);
+			let landed = land(vm, &grid, &entity, here, callback.as_ref());
 			nav.borrow_mut().teleports.retain(|t| t.identity != identity);
 			landed?;
 		}
