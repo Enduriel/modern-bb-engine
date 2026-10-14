@@ -9,6 +9,7 @@
 //! - [`sprite`]: the original's sprite program and the quad batcher.
 //! - [`world`]: the world map, from the game's [`WorldScene`](squirrel_bb::scene::WorldScene).
 //! - [`WorldRenderer`]: draws it frame by frame, loading atlases on demand.
+//! - [`UiLayer`]: the UI page blended over a frame.
 //! - [`Presenter`]: copies a finished frame onto a window's surface.
 //! - [`portrait`]: an entity drawn on its own, for the UI's procedural images.
 
@@ -23,6 +24,7 @@ pub mod tactical;
 mod target;
 mod text;
 mod texture;
+mod ui_layer;
 mod water;
 pub mod world;
 mod world_pass;
@@ -33,4 +35,5 @@ pub use present::Presenter;
 pub use screenshot::{save_png, write_png};
 pub use target::{RenderTarget, TARGET_FORMAT};
 pub use texture::{GpuTexture, TEXTURE_FORMAT, mip_chain};
+pub use ui_layer::UiLayer;
 pub use world_renderer::{Atlases, Clock, FrameStats, WorldRenderer};
