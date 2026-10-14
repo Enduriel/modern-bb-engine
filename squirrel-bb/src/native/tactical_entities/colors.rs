@@ -159,6 +159,7 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 				};
 				class.with_payload(vm, &to, |s| {
 					s.spin.rebrush(&sprites, &s.brush, &brush);
+					s.anim.rebrush(&sprites, &s.brush, &brush, crate::native::sprite_anim::virtual_ms(vm));
 					s.brush_bits = sprites.brush_bits(&brush, s.brush_bits);
 					s.brush = brush;
 					s.color.color = color;

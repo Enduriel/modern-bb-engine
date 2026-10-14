@@ -898,10 +898,14 @@ impl WorldGrid {
 		g.fog_on = true;
 	}
 
-	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`).
-	pub(crate) fn turn(&self, now: f32) {
-		let spinning = self.grid.borrow().spinning.clone();
-		world_detail::turn_all(&spinning, now);
+	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
+	/// and step the animated ones to virtual millisecond `now_ms` (see `sprite_anim`).
+	pub(crate) fn turn(&self, now: f32, now_ms: u32) {
+		let (spinning, sprites) = {
+			let g = self.grid.borrow();
+			(g.spinning.clone(), g.sprites.clone())
+		};
+		world_detail::turn_all(&spinning, &sprites, now, now_ms);
 	}
 }
 

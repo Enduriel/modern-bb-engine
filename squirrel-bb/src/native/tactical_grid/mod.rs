@@ -482,6 +482,7 @@ impl TacticalGrid {
 							scale: d.scale,
 							saturation: d.saturation,
 							color: d.color.shown(now),
+							frame: d.anim.frame(),
 						}
 					})
 					.collect(),
@@ -747,13 +748,18 @@ impl TacticalGrid {
 		}
 	}
 
-	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`).
-	pub(crate) fn turn(&self, now: f32) {
-		for t in &self.grid.borrow().tiles {
+	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
+	/// and step their animations to virtual millisecond `now_ms` (see `sprite_anim`).
+	pub(crate) fn turn(&self, now: f32, now_ms: u32) {
+		let g = self.grid.borrow();
+		for t in &g.tiles {
 			for d in &t.details {
 				let mut d = d.borrow_mut();
 				let d = &mut *d;
 				d.rotation = d.spin.turn(d.rotation, now);
+				if let Some(scale) = d.anim.step_on(&g.sprites, &d.brush, now_ms) {
+					d.scale = scale;
+				}
 			}
 		}
 	}

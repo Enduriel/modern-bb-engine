@@ -140,6 +140,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let tactical_rain = crate::native::tactical_rain::TacticalRain::new(
 			&tactical_grid,
 			natives.video.clone(),
+			natives.sprites.clone(),
 			config.engine_seed.map_or_else(crate::native::EngineRng::unseeded, |s| crate::native::EngineRng::seeded(s ^ RAIN_SEED)),
 		);
 		tactical_rain.install(&mut vm);
@@ -285,7 +286,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				crate::scene::SceneLight { color, saturation }
 			},
 			clouds: self.clouds.borrow().clouds().to_vec(),
-			birds: self.birds.borrow().birds().to_vec(),
+			birds: self.birds.borrow().birds(),
 			footprints: self.world_entities.scene_footprints(&self.vm),
 			waves: self.waves.borrow().scene(),
 			camera: self.world_camera(),
@@ -446,13 +447,15 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.tactical_grid.move_camera(screen, zoom_min, dt, now);
 	}
 
-	/// Turn every sprite with a torque to the virtual clock (see `native::spin`).
+	/// Turn every sprite with a torque, and step every animated one, to the virtual
+	/// clock (see `native::spin`, `native::sprite_anim`).
 	fn turn_sprites(&self) {
-		let now = self.time.virtual_seconds() as f32;
-		self.world_grid.turn(now);
-		self.world_entities.turn(&self.vm, now);
-		self.tactical_grid.turn(now);
-		self.tactical_entities.turn(&self.vm, now);
+		let secs = self.time.virtual_seconds();
+		let (now, now_ms) = (secs as f32, (secs * 1000.0) as u32);
+		self.world_grid.turn(now, now_ms);
+		self.world_entities.turn(&self.vm, now, now_ms);
+		self.tactical_grid.turn(now, now_ms);
+		self.tactical_entities.turn(&self.vm, now, now_ms);
 	}
 
 	/// Install logging to a custom sink (defaults to stderr/stdout otherwise).

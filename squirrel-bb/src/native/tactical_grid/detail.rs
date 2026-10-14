@@ -23,6 +23,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, SQVM, SqClass, SqStrongRef};
 
 use crate::native::spin::Spin;
+use crate::native::sprite_anim::{Anim, virtual_ms};
 use crate::native::sprite_color::{SpriteColor, real_time};
 use crate::native::{EngineRng, Sprites};
 
@@ -39,6 +40,8 @@ pub(crate) struct DetailData {
 	pub rotation: f32,
 	/// Its `Torque` (see `spin`).
 	pub spin: Spin,
+	/// The frame of its brush it shows (see `sprite_anim`).
+	pub anim: Anim,
 	pub scale: f32,
 	pub saturation: f32,
 	pub color: SpriteColor,
@@ -63,7 +66,14 @@ pub(super) struct Spawn {
 
 /// What a tile's `spawnDetail` does to its `details`: the detail to hand back (new or
 /// already there), or `None` for an unknown brush.
-pub(super) fn spawn(details: &mut Vec<Detail>, spawn: Spawn, sprites: &Sprites, rng: &EngineRng, now: f32) -> Option<Detail> {
+pub(super) fn spawn(
+	details: &mut Vec<Detail>,
+	spawn: Spawn,
+	sprites: &Sprites,
+	rng: &EngineRng,
+	now: f32,
+	now_ms: u32,
+) -> Option<Detail> {
 	let looks = sprites.with(|r| {
 		if r.is_empty() {
 			// No brushes loaded (headless tests): keep everything, plainly.
@@ -98,7 +108,9 @@ pub(super) fn spawn(details: &mut Vec<Detail>, spawn: Spawn, sprites: &Sprites, 
 		color.set_alpha(0);
 		color.fade_in(100, now);
 	}
+	let anim = Anim::on(sprites, &spawn.brush, now_ms);
 	let detail = Rc::new(RefCell::new(DetailData {
+		anim,
 		brush: spawn.brush,
 		flags: spawn.flags,
 		mirrored,
@@ -155,11 +167,12 @@ pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHan
 			let mut d = d.0.borrow_mut();
 			d.color.color = crate::native::sprite_color::brighten(d.color.color, v as f32);
 		})
-		.method("setBrush", move |d: &mut DetailHandle, brush: String| {
+		.method("setBrush", move |d: &mut DetailHandle, vm: &SQVM, brush: String| {
 			let brush = sprites.resolve(&brush);
 			let mut d = d.0.borrow_mut();
 			let d = &mut *d;
 			d.spin.rebrush(&sprites, &d.brush, &brush);
+			d.anim.rebrush(&sprites, &d.brush, &brush, virtual_ms(vm));
 			d.brush = brush;
 		})
 		.method("fadeIn", |d: &mut DetailHandle, vm: &SQVM, ms: i64| {
@@ -192,10 +205,10 @@ mod tests {
 	fn the_same_brush_and_mirroring_is_reused() {
 		let (sprites, rng) = (Sprites::default(), EngineRng::seeded(1));
 		let mut details = Vec::new();
-		let a = spawn(&mut details, plain("blood_01"), &sprites, &rng, 0.0).unwrap();
-		let b = spawn(&mut details, plain("blood_01"), &sprites, &rng, 0.0).unwrap();
+		let a = spawn(&mut details, plain("blood_01"), &sprites, &rng, 0.0, 0).unwrap();
+		let b = spawn(&mut details, plain("blood_01"), &sprites, &rng, 0.0, 0).unwrap();
 		assert!(Rc::ptr_eq(&a, &b));
-		spawn(&mut details, plain("blood_02"), &sprites, &rng, 0.0).unwrap();
+		spawn(&mut details, plain("blood_02"), &sprites, &rng, 0.0, 0).unwrap();
 		assert_eq!(details.len(), 2);
 	}
 
@@ -203,9 +216,9 @@ mod tests {
 	fn flag_8_clears_flag_0x10_details_first() {
 		let (sprites, rng) = (Sprites::default(), EngineRng::seeded(1));
 		let mut details = Vec::new();
-		spawn(&mut details, Spawn { flags: 0x10, ..plain("corpse") }, &sprites, &rng, 0.0);
-		spawn(&mut details, Spawn { flags: 0x2, ..plain("grass") }, &sprites, &rng, 0.0);
-		spawn(&mut details, Spawn { flags: 8, ..plain("icon") }, &sprites, &rng, 0.0);
+		spawn(&mut details, Spawn { flags: 0x10, ..plain("corpse") }, &sprites, &rng, 0.0, 0);
+		spawn(&mut details, Spawn { flags: 0x2, ..plain("grass") }, &sprites, &rng, 0.0, 0);
+		spawn(&mut details, Spawn { flags: 8, ..plain("icon") }, &sprites, &rng, 0.0, 0);
 		let left: Vec<String> = details.iter().map(|d| d.borrow().brush.clone()).collect();
 		assert_eq!(left, ["grass", "icon"]);
 	}
@@ -214,7 +227,7 @@ mod tests {
 	fn a_fading_detail_starts_transparent() {
 		let (sprites, rng) = (Sprites::default(), EngineRng::seeded(1));
 		let mut details = Vec::new();
-		let d = spawn(&mut details, Spawn { fade_in: true, ..plain("blood") }, &sprites, &rng, 5.0).unwrap();
+		let d = spawn(&mut details, Spawn { fade_in: true, ..plain("blood") }, &sprites, &rng, 5.0, 0).unwrap();
 		let d = d.borrow();
 		assert_eq!(d.color.alpha(), 0);
 		assert!(!d.color.is_fading_done());

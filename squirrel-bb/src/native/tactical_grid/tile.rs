@@ -157,11 +157,12 @@ fn spawn_detail(t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained
 		offset,
 	};
 	let now = crate::native::sprite_color::real_time(vm);
+	let now_ms = crate::native::sprite_anim::virtual_ms(vm);
 	let (class, sprites, rng) = {
 		let g = t.grid.borrow();
 		(g.detail_class.clone()?, g.sprites.clone(), g.engine_rng.clone())
 	};
-	let detail = t.with_mut(|d| detail::spawn(&mut d.details, spawn, &sprites, &rng, now))?;
+	let detail = t.with_mut(|d| detail::spawn(&mut d.details, spawn, &sprites, &rng, now, now_ms))?;
 	Some(class.instantiate(vm, detail::DetailHandle(detail)))
 }
 

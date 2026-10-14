@@ -64,7 +64,8 @@ pub(crate) fn install(
 ) -> (super::world_time::Clock, Clouds, super::world_birds::Birds, Waves, super::world_camera::WorldCamera, super::particles::ParticlesHandle) {
 	let world_clock: super::world_time::Clock = Default::default();
 	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
-	let birds: super::world_birds::Birds = Rc::new(RefCell::new(super::world_birds::Flock::new(bird_rng.clone())));
+	let birds: super::world_birds::Birds =
+		Rc::new(RefCell::new(super::world_birds::Flock::new(bird_rng.clone(), sprites.clone())));
 	let waves: Waves = Rc::default();
 	// Rosters (getRoster/getPlayerRoster/createRoster/deleteRoster) are provided by the
 	// host-owned `TacticalEntities` service (real rosters whose `create` mints units),
@@ -133,6 +134,7 @@ pub(crate) fn install(
 		Rc::new(move |vm: &SQVM, delta, speed| {
 			clouds.borrow_mut().advance(delta, speed);
 			birds.borrow_mut().advance(delta, speed);
+			birds.borrow_mut().flap(super::sprite_anim::virtual_ms(vm));
 			waves.borrow_mut().advance(delta, speed);
 			super::particles::advance_now(vm, &particles, delta);
 		})

@@ -36,6 +36,7 @@ mod shaker;
 mod vision;
 use crate::module::Instantiator;
 use crate::native::spin::Spin;
+use crate::native::sprite_anim::{Anim, virtual_ms};
 use crate::native::prng::Prng;
 use crate::native::sprite_color::{self, SpriteColor, real_time};
 use crate::native::{EntityIds, Sprites};
@@ -100,6 +101,8 @@ struct UnitSpriteData {
 	fading: bool,
 	/// Its `Torque` (see `spin`).
 	spin: Spin,
+	/// The frame of its brush it shows (see `sprite_anim`).
+	anim: Anim,
 	ignore_ambient: bool,
 	ignore_camera_flip: bool,
 	/// `setSpriteOcclusion(name, a, b, c)`, kept on the sprite's slot (`0x4a8950`):
@@ -135,6 +138,7 @@ impl UnitSpriteData {
 			finished: false,
 			fading: false,
 			spin: Spin::default(),
+			anim: Anim::default(),
 			ignore_ambient: false,
 			ignore_camera_flip: false,
 			occlusion: None,
@@ -386,9 +390,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 				Ok(())
 			},
 		)
-		.method("setBrush", move |s: &mut UnitSpriteData, brush: &str| {
+		.method("setBrush", move |s: &mut UnitSpriteData, vm: &SQVM, brush: &str| {
 			let brush = set_with.resolve(brush);
 			s.spin.rebrush(&set_with, &s.brush, &brush);
+			s.anim.rebrush(&set_with, &s.brush, &brush, virtual_ms(vm));
 			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);
 			s.brush = brush;
 		})
@@ -443,9 +448,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 			s.color.fade_to(target, ms, real_time(vm), false);
 			Ok(())
 		})
-		.method("play", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("stop", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
-		.method("finish", |_s: &mut UnitSpriteData, _a: Variadic<Retained>| {})
+		// Its brush's frames (see `sprite_anim`).
+		.method("play", |s: &mut UnitSpriteData, vm: &SQVM, _a: Variadic<Retained>| s.anim.play(virtual_ms(vm)))
+		.method("stop", |s: &mut UnitSpriteData, _a: Variadic<Retained>| s.anim.stop())
+		.method("finish", |s: &mut UnitSpriteData, _a: Variadic<Retained>| s.anim.finish())
 		.method("setOffset", |s: &mut UnitSpriteData, vm: &SQVM, offset: Retained| {
 			let c = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
 			s.offset = (c("X"), c("Y"));
@@ -1205,14 +1211,18 @@ impl TacticalEntities {
 	/// The units and objects on the battle map, with their sprites in layering order,
 	/// as a renderer reads them.
 	/// Turn the placed units' sprites that have a torque to virtual time `now`, in
-	/// seconds (see `spin`).
-	pub(crate) fn turn(&self, vm: &SQVM, now: f32) {
+	/// seconds (see `spin`), and step their animations to virtual millisecond `now_ms`
+	/// (see `sprite_anim`).
+	pub(crate) fn turn(&self, vm: &SQVM, now: f32, now_ms: u32) {
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return };
 		for u in m.units.iter().filter(|u| !u.dead && u.tile.is_some()) {
 			for (_, handle) in u.sprites.iter() {
 				class.with_payload(vm, handle, |s| {
 					s.rotation = f64::from(s.spin.turn(s.rotation as f32, now));
+					if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
+						s.scale = f64::from(scale);
+					}
 				});
 			}
 		}
@@ -1270,6 +1280,7 @@ impl TacticalEntities {
 							offset: (s.offset.0 as f32, s.offset.1 as f32),
 							ignore_ambient: s.ignore_ambient,
 							occlusion: s.occlusion,
+							frame: s.anim.frame(),
 						})
 					})
 					.collect(),

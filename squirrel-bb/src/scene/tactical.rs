@@ -71,6 +71,9 @@ pub struct SceneRainSplat {
 	pub scale: f32,
 	/// ARGB: white, fading out.
 	pub color: u32,
+	/// The frame of its brush it shows: `rainsplat_01` plays its four once (see
+	/// `native::sprite_anim`).
+	pub frame: u32,
 }
 
 /// An icon over a tile (`Tactical.getHighlighter().addOverlayIcon`).
@@ -193,6 +196,8 @@ pub struct SceneTacticalSprite {
 	pub ignore_ambient: bool,
 	/// `setSpriteOcclusion`'s three values, for a tree's or boulder's top.
 	pub occlusion: Option<(i64, i64, i64)>,
+	/// The frame of its brush it shows (see `native::sprite_anim`).
+	pub frame: u32,
 }
 
 /// One battle tile.
@@ -237,6 +242,8 @@ pub struct SceneTacticalDetail {
 	pub saturation: f32,
 	/// ARGB as drawn now (a fade in progress included).
 	pub color: u32,
+	/// The frame of its brush it shows (see `native::sprite_anim`).
+	pub frame: u32,
 }
 
 /// The battle camera.

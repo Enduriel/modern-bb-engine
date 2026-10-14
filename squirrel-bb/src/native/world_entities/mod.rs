@@ -34,6 +34,7 @@ use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
 use crate::native::{EntityIds, Sprites};
 use crate::native::spin::Spin;
+use crate::native::sprite_anim::{Anim, virtual_ms};
 use crate::native::sprite_color::{SpriteColor, real_time};
 
 mod footprints;
@@ -73,6 +74,8 @@ struct SpriteData {
 	rotation: f32,
 	/// Its `Torque` (see `spin`).
 	spin: Spin,
+	/// The frame of its brush it shows (see `sprite_anim`).
+	anim: Anim,
 	/// The flag bits its brush calls left (see [`Sprites::brush_bits`]), which the
 	/// original saves.
 	brush_bits: u32,
@@ -93,6 +96,7 @@ impl SpriteData {
 			in_portrait: true,
 			rotation: 0.0,
 			spin: Spin::default(),
+			anim: Anim::default(),
 			brush_bits: 0,
 		}
 	}
@@ -448,9 +452,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 			},
 		)
 		.property("HasBrush", |s: &SpriteData| !s.brush.is_empty(), |_s: &mut SpriteData, _v: bool| {})
-		.method("setBrush", move |s: &mut SpriteData, brush: &str| {
+		.method("setBrush", move |s: &mut SpriteData, vm: &SQVM, brush: &str| {
 			let brush = set_with.resolve(brush);
 			s.spin.rebrush(&set_with, &s.brush, &brush);
+			s.anim.rebrush(&set_with, &s.brush, &brush, virtual_ms(vm));
 			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);
 			s.brush = brush;
 		})
@@ -465,6 +470,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 			s.offset = vec_xy(vm, &offset.0)
 		})
 		.method("setHorizontalFlipping", |s: &mut SpriteData, flipped: bool| s.flipped = flipped)
+		// Its brush's frames (see `sprite_anim`).
+		.method("play", |s: &mut SpriteData, vm: &SQVM| s.anim.play(virtual_ms(vm)))
+		.method("stop", |s: &mut SpriteData| s.anim.stop())
+		.method("finish", |s: &mut SpriteData| s.anim.finish())
 		// Fades run on real time and finish when the sprite is drawn (see `SpriteColor`).
 		.method("fadeIn", |s: &mut SpriteData, vm: &SQVM, ms: i64| s.color.fade_in(ms, real_time(vm)))
 		.method("fadeOut", |s: &mut SpriteData, vm: &SQVM, ms: i64| {
@@ -1008,13 +1017,19 @@ impl WorldEntities {
 	}
 
 	/// Turn the live entities' sprites that have a torque to virtual time `now`, in
-	/// seconds (see `spin`).
-	pub(crate) fn turn(&self, vm: &SQVM, now: f32) {
+	/// seconds (see `spin`), and step their animations to virtual millisecond `now_ms`
+	/// (see `sprite_anim`).
+	pub(crate) fn turn(&self, vm: &SQVM, now: f32, now_ms: u32) {
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return };
 		for rec in m.entities.iter().filter(|rec| rec.alive) {
 			for (_, handle) in rec.sprites.iter() {
-				class.with_payload(vm, handle, |s| s.rotation = s.spin.turn(s.rotation, now));
+				class.with_payload(vm, handle, |s| {
+					s.rotation = s.spin.turn(s.rotation, now);
+					if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
+						s.scale = f64::from(scale);
+					}
+				});
 			}
 		}
 	}
@@ -1083,6 +1098,7 @@ impl WorldEntities {
 							ignore_ambient: s.ignore_ambient,
 							scaling: s.scaling,
 							colorization: s.colorization,
+							frame: s.anim.frame(),
 						})
 					})
 					.collect(),

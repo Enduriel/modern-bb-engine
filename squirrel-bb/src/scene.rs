@@ -183,6 +183,8 @@ pub struct SceneSprite {
 	pub ignore_ambient: bool,
 	pub scaling: bool,
 	pub colorization: bool,
+	/// The frame of its brush it shows (see `native::sprite_anim`).
+	pub frame: u32,
 }
 
 /// A bird over the world map (see `native::world_birds`). It's drawn white at alpha
@@ -197,4 +199,6 @@ pub struct SceneBird {
 	pub velocity: f32,
 	/// Sort key in the effects layer.
 	pub key: i64,
+	/// The frame of its brush it shows (see `native::sprite_anim`).
+	pub frame: u32,
 }

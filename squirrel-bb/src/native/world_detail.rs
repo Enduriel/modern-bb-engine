@@ -21,6 +21,7 @@ use squirrel::{ClassBuilder, SQVM, SqClass};
 
 use crate::native::Sprites;
 use crate::native::spin::Spin;
+use crate::native::sprite_anim::{Anim, virtual_ms};
 
 /// One detail on a tile.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +35,10 @@ pub struct DetailData {
 	pub alpha: i64,
 	/// Its `Torque` (see `spin`).
 	pub(crate) spin: Spin,
+	/// Its brush's frames (see `sprite_anim`); it starts at its first step.
+	pub(crate) anim: Anim,
+	/// The frame of its brush it shows.
+	pub frame: u32,
 	/// Rotation in degrees (the original's `Rotation`, field `+0x40`).
 	pub rotation: f64,
 	pub saturation: f64,
@@ -63,6 +68,8 @@ impl Default for DetailData {
 			flipped: false,
 			alpha: 255,
 			spin: Spin::default(),
+			anim: Anim::default(),
+			frame: 0,
 			rotation: 0.0,
 			saturation: 1.0,
 			scale: 1.0,
@@ -79,13 +86,14 @@ impl Default for DetailData {
 /// A detail as shared by its tile and its script object.
 pub(crate) type Detail = Rc<RefCell<DetailData>>;
 
-/// The details that may turn (those given a torque), so a frame needn't visit every
-/// detail on the map.
+/// The details that may turn (those given a torque) or animate, so a frame needn't
+/// visit every detail on the map.
 pub(crate) type Spinning = Rc<RefCell<Vec<Weak<RefCell<DetailData>>>>>;
 
-/// Keep `detail` turning if it has a torque.
+/// Keep `detail` turning if it has a torque, and stepping while its animation may
+/// (one not started yet included: its first step drops a still brush).
 pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
-	if detail.borrow().spin.torque == 0.0 {
+	if !moves(&detail.borrow()) {
 		return;
 	}
 	let mut spinning = spinning.borrow_mut();
@@ -95,15 +103,24 @@ pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
 	}
 }
 
-/// Turn the spinning details to virtual time `now` (seconds), and forget those gone
-/// or without a torque.
-pub(crate) fn turn_all(spinning: &Spinning, now: f32) {
+/// Whether a frame may change `d`: a torque, or an animation still running.
+fn moves(d: &DetailData) -> bool {
+	d.spin.torque != 0.0 || d.anim.running()
+}
+
+/// Turn the spinning details to virtual time `now` (seconds) and step the animated
+/// ones to virtual millisecond `now_ms`, and forget those gone or still.
+pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, now: f32, now_ms: u32) {
 	spinning.borrow_mut().retain(|d| {
 		let Some(d) = d.upgrade() else { return false };
 		let mut d = d.borrow_mut();
 		let d = &mut *d;
 		d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
-		d.spin.torque != 0.0
+		if let Some(scale) = d.anim.step_on(sprites, &d.brush, now_ms) {
+			d.scale = f64::from(scale);
+		}
+		d.frame = d.anim.frame();
+		moves(d)
 	});
 }
 
@@ -157,9 +174,11 @@ pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites, spinning: &Spinning)
 			|d: &mut DetailHandle, v: bool| d.set(|d| d.ignore_ambient = v),
 		)
 		// A new brush brings its own rotation speed as the torque.
-		.method("setBrush", move |d: &mut DetailHandle, brush: &str| {
+		.method("setBrush", move |d: &mut DetailHandle, vm: &SQVM, brush: &str| {
+			let now = virtual_ms(vm);
 			d.set(|d| {
 				d.spin.rebrush(&sprites, &d.brush, brush);
+				d.anim.rebrush(&sprites, &d.brush, brush, now);
 				d.brush_bits = sprites.brush_bits(brush, d.brush_bits);
 				d.brush = brush.to_string();
 			});

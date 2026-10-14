@@ -24,8 +24,9 @@ use std::rc::Rc;
 
 use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
+use super::sprite_anim::{Anim, virtual_ms};
 use super::sprite_color::{SpriteColor, real_time};
-use super::{EngineRng, TacticalGrid, VideoSettings};
+use super::{EngineRng, Sprites, TacticalGrid, VideoSettings};
 use crate::scene::tactical::{SceneRainDrop, SceneRainSplat};
 
 /// How far past the view's sides (and above its top) new drops start.
@@ -92,11 +93,14 @@ struct Splat {
 	pos: (f32, f32),
 	scale: f32,
 	color: SpriteColor,
+	/// Its brush's frames, from its first update (see `sprite_anim`).
+	anim: Anim,
 }
 
 struct State {
 	grid: TacticalGrid,
 	video: VideoSettings,
+	sprites: Sprites,
 	rng: EngineRng,
 	settings: Settings,
 	/// The drop count `buildRain` chose (settings `+0x24`).
@@ -164,6 +168,7 @@ impl State {
 			pos,
 			scale,
 			color,
+			anim: Anim::default(),
 		});
 	}
 
@@ -174,8 +179,9 @@ impl State {
 		self.splats.clear();
 	}
 
-	/// One `Tactical.update()`: `delta` seconds of virtual time on, at real time `now`.
-	fn advance(&mut self, delta: f32, now: f32) {
+	/// One `Tactical.update()`: `delta` seconds of virtual time on, at real time `now`
+	/// and virtual millisecond `now_ms`.
+	fn advance(&mut self, delta: f32, now: f32, now_ms_virtual: u32) {
 		if self.drops.is_empty() && self.splats.is_empty() && self.chosen == 0 {
 			return;
 		}
@@ -214,6 +220,9 @@ impl State {
 				break;
 			}
 			self.new_splat(&v, now);
+		}
+		for sp in &mut self.splats {
+			sp.anim.step_on(&self.sprites, &sp.brush, now_ms_virtual);
 		}
 	}
 
@@ -264,10 +273,11 @@ fn read_settings(vm: &SQVM, t: &SqStrongRef, s: &mut Settings) {
 }
 
 impl TacticalRain {
-	pub(crate) fn new(grid: &TacticalGrid, video: VideoSettings, rng: EngineRng) -> Self {
+	pub(crate) fn new(grid: &TacticalGrid, video: VideoSettings, sprites: Sprites, rng: EngineRng) -> Self {
 		TacticalRain(Rc::new(RefCell::new(State {
 			grid: grid.clone(),
 			video,
+			sprites,
 			rng,
 			settings: Settings::default(),
 			chosen: 0,
@@ -386,7 +396,7 @@ impl TacticalRain {
 					.and_then(|f| f.call_ret::<Number, _>(vm, ()).ok().flatten())
 					.map_or(0.0, |n| n.0 as f32);
 				let mut s = st.borrow_mut();
-				s.advance(delta, real_time(vm));
+				s.advance(delta, real_time(vm), virtual_ms(vm));
 				s.note_raining(vm);
 				Ok(())
 			})
@@ -443,6 +453,7 @@ impl TacticalRain {
 				pos: sp.pos,
 				scale: sp.scale,
 				color: sp.color.shown(now),
+				frame: sp.anim.frame(),
 			})
 			.collect();
 		(drops, splats)

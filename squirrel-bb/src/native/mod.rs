@@ -37,6 +37,7 @@ mod screen;
 mod settings;
 pub(crate) mod spin;
 pub(crate) use settings::temp_gameplay_flag;
+pub(crate) mod sprite_anim;
 pub(crate) mod sprite_color;
 pub(crate) mod sprite_slots;
 mod strings;

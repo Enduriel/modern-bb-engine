@@ -17,8 +17,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::EngineRng;
+use super::sprite_anim::Anim;
 use super::world_clouds::MapSpan;
+use super::{EngineRng, Sprites};
 use crate::scene::SceneBird;
 
 const BRUSHES: [&str; 2] = ["world_birds_02", "world_birds_03"];
@@ -37,21 +38,29 @@ pub struct BirdSettings {
 /// The birds over the world map.
 pub struct Flock {
 	rng: EngineRng,
+	sprites: Sprites,
 	settings: BirdSettings,
 	span: Option<MapSpan>,
 	/// Their way, normalised.
 	dir: (f32, f32),
-	birds: Vec<SceneBird>,
+	birds: Vec<Bird>,
+}
+
+/// A bird, and its wings' frames (see `sprite_anim`), from its first update.
+struct Bird {
+	look: SceneBird,
+	anim: Anim,
 }
 
 /// A shared handle (the weather natives and the world update both use it).
 pub type Birds = Rc<RefCell<Flock>>;
 
 impl Flock {
-	pub fn new(rng: EngineRng) -> Self {
+	pub fn new(rng: EngineRng, sprites: Sprites) -> Self {
 		let k = 1.0 / 1.25f64.sqrt() as f32;
 		Flock {
 			rng,
+			sprites,
 			settings: BirdSettings::default(),
 			span: None,
 			dir: (-k, 0.5 * k),
@@ -59,8 +68,22 @@ impl Flock {
 		}
 	}
 
-	pub fn birds(&self) -> &[SceneBird] {
-		&self.birds
+	/// The birds as drawn now.
+	pub fn birds(&self) -> Vec<SceneBird> {
+		self.birds
+			.iter()
+			.map(|b| SceneBird {
+				frame: b.anim.frame(),
+				..b.look.clone()
+			})
+			.collect()
+	}
+
+	/// Step their wings to virtual millisecond `now` (sprites play on virtual time).
+	pub fn flap(&mut self, now: u32) {
+		for b in &mut self.birds {
+			b.anim.step_on(&self.sprites, b.look.brush, now);
+		}
 	}
 
 	/// The margins below and above an axis's span for direction component `d`: on the
@@ -70,7 +93,7 @@ impl Flock {
 		if d >= 0.0 { (margin, 0.0) } else { (0.0, margin) }
 	}
 
-	fn bird(&self, pos: Option<(f32, f32)>, span: MapSpan) -> SceneBird {
+	fn bird(&self, pos: Option<(f32, f32)>, span: MapSpan) -> Bird {
 		let brush = BRUSHES[self.rng.range(0, 1) as usize];
 		let pos = pos.unwrap_or_else(|| {
 			let (lo_x, hi_x) = self.upwind(self.dir.0);
@@ -79,11 +102,15 @@ impl Flock {
 			(x, self.rng.between(span.min.1 - lo_y, span.max.1 + hi_y))
 		});
 		let velocity = self.rng.between(self.settings.min_velocity, self.settings.max_velocity);
-		SceneBird {
-			brush,
-			pos,
-			velocity,
-			key: self.rng.range(0, 1000) - 5000,
+		Bird {
+			look: SceneBird {
+				brush,
+				pos,
+				velocity,
+				key: self.rng.range(0, 1000) - 5000,
+				frame: 0,
+			},
+			anim: Anim::default(),
 		}
 	}
 
@@ -114,7 +141,7 @@ impl Flock {
 		let (dx, dy) = self.dir;
 		let bounds = (span.min.0 - MARGIN, span.min.1 - MARGIN, span.max.0 + MARGIN, span.max.1 + MARGIN);
 		let mut gone = 0;
-		self.birds.retain_mut(|b| {
+		self.birds.retain_mut(|Bird { look: b, .. }| {
 			b.pos.0 += dx * b.velocity * delta;
 			b.pos.1 += dy * b.velocity * delta;
 			let out = (dx <= 0.0 && b.pos.0 < bounds.0)
@@ -149,7 +176,7 @@ mod tests {
 
 	#[test]
 	fn a_flock_flies_west_and_comes_back_east() {
-		let mut f = Flock::new(EngineRng::seeded(7));
+		let mut f = Flock::new(EngineRng::seeded(7), Sprites::default());
 		f.build(BirdSettings { min_birds: 12, max_birds: 12, min_velocity: 45.0, max_velocity: 65.0 }, span());
 		assert_eq!(f.birds().len(), 12);
 		let before: Vec<(f32, f32)> = f.birds().iter().map(|b| b.pos).collect();

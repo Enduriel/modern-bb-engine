@@ -74,6 +74,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		stored: super::shaker::Stored::default(),
 		is_stored: false,
 		spin: crate::native::spin::Spin::new(r.f64()? as f32),
+		anim: Default::default(),
 		visible: r.bool()?,
 		raising_weapon: r.bool()?,
 		lowering_weapon: r.bool()?,

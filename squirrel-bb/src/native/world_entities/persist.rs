@@ -99,6 +99,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 		in_portrait: r.bool()?,
 		rotation: r.f32()?,
 		spin: crate::native::spin::Spin::new(r.f32()?),
+		anim: Default::default(),
 		brush_bits: r.u32()?,
 	})
 }
