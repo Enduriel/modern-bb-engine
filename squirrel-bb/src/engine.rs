@@ -314,6 +314,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			particles: self.tactical_particles.borrow().scene(),
 			overlay_icons: self.tactical_highlighter.scene_icons(crate::native::sprite_color::real_time(&self.vm)),
 			path: self.tactical_navigator.scene_path(),
+			blocked_tiles: self.tactical_highlighter.scene_blocked(),
 			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
 		}
 	}

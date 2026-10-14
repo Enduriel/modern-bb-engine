@@ -39,6 +39,10 @@ pub struct TacticalScene {
 	/// The footsteps of the move the player is about to make, standing on their tiles
 	/// like units.
 	pub path: Vec<ScenePathStep>,
+	/// The marks on the tiles map objects stand on, shown with the
+	/// `HighlightBlockedTiles` setting, in the effects layer (`zone_target_overlay` at
+	/// alpha 0xa8).
+	pub blocked_tiles: Vec<SceneOverlayIcon>,
 }
 
 /// An icon over a tile (`Tactical.getHighlighter().addOverlayIcon`).

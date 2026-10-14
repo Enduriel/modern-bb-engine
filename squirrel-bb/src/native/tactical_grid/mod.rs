@@ -507,6 +507,7 @@ impl TacticalGrid {
 			pools: Vec::new(),
 			overlay_icons: Vec::new(),
 			path: Vec::new(),
+			blocked_tiles: Vec::new(),
 		}
 	}
 
@@ -711,7 +712,7 @@ impl TacticalGrid {
 			tactical.set(name, f);
 		}
 		tactical.set("addResource", add_resource);
-		for name in ["createBlockedTileHighlights", "clearBlockedTileHighlights", "setBlockedTileHighlightsVisibility", "loadResources", "setAmbientColor"] {
+		for name in ["loadResources", "setAmbientColor"] {
 			tactical.set(name, noop.clone());
 		}
 	}

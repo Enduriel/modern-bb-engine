@@ -12,6 +12,8 @@
 //! - `addOverlayIcon(brush, tile, x, y)` and `clearOverlayIcons()` (`0x4b5200`,
 //!   `0x4b5350`, see `icons`);
 //! - `clearHighlights()` (`0x4b5140`) and `clear()` (`0x4b53e0`, both).
+//!
+//! It also keeps the blocked-tile highlights the `Tactical` table makes (see `blocked`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,6 +24,7 @@ use crate::native::tactical_entities::{Units, unit_identity};
 use crate::native::tactical_grid::{Grid, TacticalGrid};
 use crate::scene::tactical::SceneOverlayIcon;
 
+mod blocked;
 mod icons;
 mod range;
 mod zones;
@@ -58,6 +61,7 @@ struct State {
 	/// Some tile has a highlight (`clearHighlights` only walks the map then).
 	dirty: bool,
 	icons: icons::Icons,
+	blocked: blocked::Blocked,
 	/// The one `Tactical.getHighlighter()` instance.
 	instance: Option<SqStrongRef>,
 }
@@ -76,12 +80,14 @@ impl TacticalHighlighter {
 			units,
 			dirty: false,
 			icons: icons::Icons::default(),
+			blocked: blocked::Blocked::default(),
 			instance: None,
 		})))
 	}
 
-	/// Set `Tactical.getHighlighter()`, and end the icons in `Tactical.clearScene()`.
-	/// Call after the battle map is installed (its `clearScene` is wrapped).
+	/// Set `Tactical.getHighlighter()` and the blocked-tile highlights' natives, and end
+	/// the icons and marks in `Tactical.clearScene()`. Call after the battle map is
+	/// installed (its `clearScene` is wrapped).
 	pub fn install(&self, vm: &mut SQVM) {
 		let class = build_class(vm);
 		let instance = class.instantiate(vm, Handle(self.0.clone()));
@@ -94,6 +100,7 @@ impl TacticalHighlighter {
 				{
 					let mut st = st.borrow_mut();
 					st.icons = icons::Icons::default();
+					st.blocked = blocked::Blocked::default();
 					st.dirty = false;
 				}
 				match &inner_clear {
@@ -102,15 +109,42 @@ impl TacticalHighlighter {
 				}
 			})
 		};
+		let create_blocked = {
+			let st = self.0.clone();
+			vm.make_closure(move |vm: &SQVM| {
+				let shown = crate::native::temp_gameplay_flag(vm, "HighlightBlockedTiles");
+				let mut st = st.borrow_mut();
+				let grid = st.grid.clone();
+				st.blocked.create(&grid.borrow(), shown);
+			})
+		};
+		let show_blocked = {
+			let st = self.0.clone();
+			vm.make_closure(move |on: bool| st.borrow_mut().blocked.show(on))
+		};
+		let clear_blocked = {
+			let st = self.0.clone();
+			vm.make_closure(move || st.borrow_mut().blocked.clear())
+		};
 		if let Some(mut t) = SqTable::root(vm).get::<SqTable>("Tactical") {
 			t.set("getHighlighter", get);
 			t.set("clearScene", clear_scene);
+			t.set("createBlockedTileHighlights", create_blocked);
+			t.set("setBlockedTileHighlightsVisibility", show_blocked);
+			t.set("clearBlockedTileHighlights", clear_blocked);
 		}
 	}
 
 	/// The overlay icons as drawn at real time `now` (seconds); faded-out ones go.
 	pub(crate) fn scene_icons(&self, now: f32) -> Vec<SceneOverlayIcon> {
 		self.0.borrow_mut().icons.scene(now)
+	}
+
+	/// The blocked-tile highlights as drawn now (none while hidden).
+	pub(crate) fn scene_blocked(&self) -> Vec<SceneOverlayIcon> {
+		let st = self.0.borrow();
+		let g = st.grid.borrow();
+		st.blocked.scene(&g)
 	}
 
 	/// Release the script instance. Call before the VM is closed.

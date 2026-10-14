@@ -1,8 +1,8 @@
 //! What a battle highlights for the player, as the battle's scene exports it: the path's
 //! footsteps when a brother's move is previewed (one per step past his tile, pointing the
 //! way the path goes, pale while he can afford it and grey past that), a skill's range and
-//! targets, and the icons over tiles, which fade out when cleared. All of it goes when the
-//! scripts clear it.
+//! targets, the icons over tiles, which fade out when cleared, and, with the setting, the
+//! marks on the tiles map objects block. All of it goes when the scripts clear it.
 //!
 //! Skips without the Steam install.
 
@@ -160,4 +160,18 @@ fn the_battle_highlights_what_the_player_is_about_to_do() {
 		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
 	}
 	assert!(engine.tactical_scene().overlay_icons.is_empty(), "faded out and gone");
+
+	// The blocked tiles: a mark where a map object stands, while the setting shows them.
+	engine.run_script("::Tactical.setBlockedTileHighlightsVisibility(true);", "show").unwrap();
+	let scene = engine.tactical_scene();
+	let mut objects: Vec<(i64, i64)> = scene.entities.iter().filter(|e| !e.is_actor && e.tile.is_some()).map(|e| (e.pos.0 as i64, e.pos.1 as i64)).collect();
+	let mut marks: Vec<(i64, i64)> = scene.blocked_tiles.iter().map(|m| (m.pos.0 as i64, m.pos.1 as i64)).collect();
+	objects.sort();
+	marks.sort();
+	// Made once, at the battle's start: objects placed since have none.
+	assert!(!marks.is_empty(), "the map has objects");
+	assert!(marks.iter().all(|m| objects.contains(m)), "marks only where objects stand: {marks:?} vs {objects:?}");
+	assert!(scene.blocked_tiles.iter().all(|m| m.brush == "zone_target_overlay" && m.color == 0xa8ff_ffff));
+	engine.run_script("::Tactical.setBlockedTileHighlightsVisibility(false);", "hide").unwrap();
+	assert!(engine.tactical_scene().blocked_tiles.is_empty(), "hidden");
 }
