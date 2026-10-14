@@ -53,6 +53,10 @@ pub struct SceneOverlayIcon {
 	pub pos: (f32, f32),
 	/// ARGB; its alpha fades out after a clear.
 	pub color: u32,
+	/// The tile whose sight it's drawn by, desaturated while the player can't see it:
+	/// a blocked tile's mark (flag `0x100000`, `0x4b94bf`). An overlay icon has none
+	/// (`addOverlayIcon` ignores its tile).
+	pub tile: Option<usize>,
 }
 
 /// A footstep of the path preview (`navigator.buildVisualisation`).

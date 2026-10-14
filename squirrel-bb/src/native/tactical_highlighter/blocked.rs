@@ -54,13 +54,14 @@ impl Blocked {
 		}
 		self.tiles
 			.iter()
-			.filter_map(|&id| g.tiles.get(id))
-			.map(|t| {
+			.filter_map(|&id| g.tiles.get(id).map(|t| (id, t)))
+			.map(|(id, t)| {
 				let (x, y) = t.world_pos();
 				SceneOverlayIcon {
 					brush: BRUSH.to_string(),
 					pos: (x as f32, y as f32),
 					color: COLOR,
+					tile: Some(id),
 				}
 			})
 			.collect()

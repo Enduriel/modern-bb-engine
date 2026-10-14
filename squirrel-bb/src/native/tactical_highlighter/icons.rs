@@ -51,6 +51,7 @@ impl Icons {
 				brush: i.brush.clone(),
 				pos: i.pos,
 				color: i.color.shown(now),
+				tile: None,
 			})
 			.collect()
 	}

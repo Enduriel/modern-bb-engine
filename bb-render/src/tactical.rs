@@ -603,6 +603,21 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		let fade = Fade::of(scene, tile, &unit_tiles);
 		draw_dressing(&mut b, tile, pooled, on_it, stepped, fade, overlay_level);
 	}
+	// The marks on the tiles map objects stand on (`HighlightBlockedTiles`): sprites in
+	// the effects layer, made at the battle's setup before anything else there (so over
+	// the map, its highlights, footsteps and trees), sharp, and desaturated while the
+	// player can't see their tile (`0x4cfe9b`, `0x4b94bf`).
+	for mark in &scene.blocked_tiles {
+		let seen = mark.tile.and_then(|t| scene.tiles.get(t)).is_none_or(|t| t.visible);
+		let saturation = if seen { 1.0 } else { FOGGED_SATURATION };
+		let [a, r, g, b_] = mark.color.to_be_bytes();
+		let look = Look {
+			alpha: f32::from(a),
+			tint: [r, g, b_],
+			..Look::PLAIN
+		};
+		b.placed(&mark.brush, [mark.pos.0, mark.pos.1], look, saturation, overlay_level);
+	}
 	// A unit in the air is in the original's effects layer, drawn after the tiles and
 	// first in that layer (its box always stays in the layer's root): over everything
 	// on the map, under the effects; its sprites only (no bars), not desaturated by a
@@ -840,6 +855,7 @@ mod tests {
 				brush: "icon".into(),
 				pos: (120.0, 0.0),
 				color: 0x80ff_ffff,
+				tile: None,
 			}],
 			..TacticalScene::default()
 		};
@@ -864,6 +880,36 @@ mod tests {
 		// The icon is in the effects layer, after the map, at its colour's alpha.
 		assert_eq!(names.last(), Some(&"icon"), "{names:?}");
 		assert_eq!(quads.last().map(|q| q.color[3]), Some(0x80));
+	}
+
+	#[test]
+	fn blocked_marks_cover_the_map_and_follow_their_tiles_sight() {
+		let mark = |tile: usize| SceneOverlayIcon {
+			brush: "mark".into(),
+			pos: (tile as f32 * 120.0, 0.0),
+			color: 0xa8ff_ffff,
+			tile: Some(tile),
+		};
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![tile(0, false), tile(1, true)],
+			entities: vec![entity(1, 0, "rock", true, false), entity(2, 1, "unit", false, true)],
+			blocked_tiles: vec![mark(0), mark(1)],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let names: Vec<&str> = quads.iter().map(name_of).collect();
+		let marks: Vec<usize> = (0..quads.len()).filter(|&i| names[i] == "mark").collect();
+		let rock = names.iter().position(|&n| n == "rock").expect("the rock");
+		let flying = names.iter().position(|&n| n == "unit").expect("the flying unit");
+		assert_eq!(marks.len(), 2, "{names:?}");
+		assert!(marks.iter().all(|&m| rock < m && m < flying), "over the map, under a unit in the air: {names:?}");
+		for &m in &marks {
+			let seen = quads[m].corners[0][0] > 60.0;
+			assert_eq!(quads[m].color[3], 0xa8);
+			assert_eq!(quads[m].saturation, if seen { 1.0 } else { FOGGED_SATURATION }, "seen: {seen}");
+		}
 	}
 
 	#[test]
