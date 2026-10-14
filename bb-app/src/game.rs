@@ -292,14 +292,16 @@ impl Game {
 				squirrel_bb::Discard::Load => {}
 			}
 		}
-		self.renderer.prefetch(engine.sprites().take_hints());
-		let battle_hints = engine.sprites().take_battle_hints();
+		let sprites = engine.sprites();
+		let renderer = &mut self.renderer;
+		sprites.with(|registry| renderer.prefetch(registry, sprites.take_hints()));
+		let battle_hints = sprites.take_battle_hints();
 		let battle_map = engine.has_battle_map();
 		self.battle_atlases.extend(battle_hints.iter().cloned());
 		if battle_map && !self.battle_map {
-			self.renderer.prefetch(self.battle_atlases.iter().cloned());
+			sprites.with(|registry| renderer.prefetch(registry, self.battle_atlases.iter().cloned()));
 		} else if battle_map {
-			self.renderer.prefetch(battle_hints);
+			sprites.with(|registry| renderer.prefetch(registry, battle_hints));
 		}
 		self.battle_map = battle_map;
 	}

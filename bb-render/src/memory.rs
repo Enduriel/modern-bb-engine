@@ -29,6 +29,10 @@ pub struct RendererMemory {
 	/// Warmed images waiting on the CPU for a draw: how many, and their bytes.
 	pub held: usize,
 	pub held_bytes: u64,
+	/// Our pages of frames (`crate::pages`): how many, how many frames in them, their bytes.
+	pub pages: usize,
+	pub frames: usize,
+	pub page_bytes: u64,
 	/// The fog of war's mask.
 	pub fog_mask: u64,
 	/// The UI page's texture, when the game draws one (not the renderer's own).
@@ -45,10 +49,13 @@ impl std::fmt::Display for RendererMemory {
 		let stand_ins = self.textures.iter().filter(|t| t.stand_in).count();
 		write!(
 			f,
-			"{:.1} MiB on the GPU: {} textures {:.1} MiB ({stand_ins} standing in for missing ones), \
-			fog mask {:.1} MiB, UI page {:.1} MiB, own {:.1} MiB; {} loading, {} failed; \
+			"{:.1} MiB on the GPU: {} frames in {} pages {:.1} MiB, {} textures {:.1} MiB ({stand_ins} standing \
+			in for missing ones), fog mask {:.1} MiB, UI page {:.1} MiB, own {:.1} MiB; {} loading, {} failed; \
 			{} warmed waiting for a draw ({:.1} MiB on the CPU)",
 			mib(self.total()),
+			self.frames,
+			self.pages,
+			mib(self.page_bytes),
 			self.textures.len(),
 			mib(self.texture_bytes()),
 			mib(self.fog_mask),
@@ -70,7 +77,7 @@ impl RendererMemory {
 
 	/// Everything counted, in bytes.
 	pub fn total(&self) -> u64 {
-		self.texture_bytes() + self.fog_mask + self.ui_page + self.own
+		self.texture_bytes() + self.page_bytes + self.fog_mask + self.ui_page + self.own
 	}
 
 	/// The textures of `cache`, largest first, and its loading and failed paths.

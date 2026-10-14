@@ -98,6 +98,7 @@ fn atlases_load_on_first_use() {
 	};
 	let files = Files(HashMap::from([("gfx/test.png".to_string(), atlas_png())]));
 	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	renderer.draw_whole_atlases();
 	let scene = WorldScene {
 		tiles: vec![SceneTile {
 			col: 0,
@@ -168,6 +169,7 @@ fn a_hinted_atlas_goes_to_the_gpu_when_drawn_and_leaves_when_unused() {
 	};
 	let files = Files(HashMap::from([("gfx/test.png".to_string(), atlas_png())]));
 	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	renderer.draw_whole_atlases();
 	let registry = registry();
 	let view = WorldView {
 		center: [0.0, 0.0],
@@ -179,7 +181,7 @@ fn a_hinted_atlas_goes_to_the_gpu_when_drawn_and_leaves_when_unused() {
 	let empty = WorldScene::default();
 	let on_gpu = |r: &WorldRenderer| r.memory().textures.iter().any(|t| t.path == "gfx/test.png");
 
-	renderer.prefetch(["gfx/test.png".to_string()]);
+	renderer.prefetch(&registry, ["gfx/test.png".to_string()]);
 	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
 	while renderer.memory().held == 0 {
 		assert!(std::time::Instant::now() < deadline, "never decoded");
@@ -444,4 +446,174 @@ fn fog_covers_what_the_mask_keeps() {
 	renderer.draw(&gpu, &target, &off, &registry, &view, Atlases::WaitForAll);
 	let image = target.read(&gpu).expect("read back");
 	assert_eq!(pixel(&image, 0, 1), [0, 0, 0, 255], "fog of war off");
+}
+
+/// A sprite drawn from one of our pages of frames is drawn exactly as from its atlas,
+/// at its size and zoomed out (from a page with mips); a hint at its atlas doesn't decode
+/// the atlas whole; its frame waits one frame for the workers, and goes with the campaign.
+#[test]
+fn a_frame_from_a_page_draws_as_from_its_atlas() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	// Four texels of different colours, so filtering and mips show.
+	let mut out = Vec::new();
+	let mut encoder = png::Encoder::new(&mut out, 2, 2);
+	encoder.set_color(png::ColorType::Rgba);
+	encoder.set_depth(png::BitDepth::Eight);
+	let mut writer = encoder.write_header().unwrap();
+	writer.write_image_data(&[[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 128]].concat()).unwrap();
+	writer.finish().unwrap();
+	let files = || Arc::new(Files(HashMap::from([("gfx/test.png".to_string(), out.clone())])));
+	let scene = WorldScene {
+		tiles: vec![SceneTile {
+			col: 0,
+			row: 0,
+			pos: (0.0, 0.0),
+			terrain: 2,
+			discovered: true,
+			brush: "dot".into(),
+			flipped: false,
+			details: Vec::new(),
+		}],
+		..WorldScene::default()
+	};
+	let registry = registry();
+	for zoom in [1.0, 4.0, 0.5] {
+		let view = WorldView {
+			center: [0.0, 0.0],
+			zoom,
+			width: 8,
+			height: 8,
+		};
+		let draw = |renderer: &mut WorldRenderer| {
+			let target = RenderTarget::new(&gpu, 8, 8);
+			let stats = renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+			assert_eq!((stats.quads, stats.waiting), (1, 0));
+			target.read(&gpu).expect("read back")
+		};
+		let mut whole = WorldRenderer::new(&gpu, files(), 1);
+		whole.draw_whole_atlases();
+		let mut paged = WorldRenderer::new(&gpu, files(), 1);
+		assert!(draw(&mut whole) == draw(&mut paged), "the same pixels at zoom {zoom}");
+		let memory = paged.memory();
+		assert_eq!((memory.frames, memory.pages), (1, 1));
+		assert!(!memory.textures.iter().any(|t| t.path == "gfx/test.png"), "the atlas itself isn't on the GPU");
+	}
+
+	// Live, the frame comes from the workers (within the frame's wait budget, or a frame
+	// or more later), then draws; leaving the campaign drops it.
+	let mut renderer = WorldRenderer::new(&gpu, files(), 1);
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 8,
+		height: 8,
+	};
+	let target = RenderTarget::new(&gpu, 8, 8);
+	// A hint readies the atlas's sheet; the atlas isn't decoded whole for the CPU to hold.
+	renderer.prefetch(&registry, ["gfx/test.png".to_string()]);
+	assert_eq!(renderer.memory().held, 0, "nothing warmed whole");
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+	loop {
+		renderer.begin_frame();
+		let stats = renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::DrawReady);
+		if stats.quads == 1 {
+			break;
+		}
+		assert!(std::time::Instant::now() < deadline, "never arrived");
+		std::thread::sleep(std::time::Duration::from_millis(1));
+	}
+	renderer.begin_frame();
+	renderer.discard(Discard::Campaign);
+	assert_eq!(renderer.memory().frames, 0, "the campaign left: its frames go");
+}
+
+/// An animated sprite's frames load together: the first draw of its first frame brings
+/// the rest, so it never waits on its next frame.
+#[test]
+fn an_animations_frames_load_together() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	let mut registry = registry();
+	let frame = |u0: f32, u1: f32| BrushFrame {
+		name: String::new(),
+		uv: [u0, u1, 0.0, 1.0],
+		rect: [-1.0, 1.0, -1.0, 1.0],
+	};
+	let anim = BrushSprite {
+		hash: name_hash(b"anim"),
+		name: "anim".into(),
+		material: 0,
+		width: 1,
+		height: 2,
+		offset_x: 0,
+		offset_y: 0,
+		depth_bias: 0,
+		frame_time_ms: 100,
+		unknown_pause: [0, 0],
+		rotation_speed: 0.0,
+		flags: 0x403,
+		unknown_offset: [0.0, 0.0],
+		color: [255; 4],
+		unknown_scale: 2.0,
+		frames: vec![frame(0.0, 0.5), frame(0.5, 1.0)],
+		trailer: [0; 3],
+	};
+	registry.add_sheet(
+		"brushes/anim.brush",
+		BrushSheet {
+			texture: "gfx/test.png".into(),
+			header: SheetHeader {
+				width: 2,
+				height: 2,
+				flags: [0; 12],
+				sprite_count: 1,
+				reserved: [0; 2],
+				max_level: 1000,
+			},
+			sprites: vec![anim],
+		},
+	);
+	let files = Files(HashMap::from([("gfx/test.png".to_string(), atlas_png())]));
+	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	let scene = WorldScene {
+		tiles: vec![SceneTile {
+			col: 0,
+			row: 0,
+			pos: (0.0, 0.0),
+			terrain: 2,
+			discovered: true,
+			brush: "anim".into(),
+			flipped: false,
+			details: Vec::new(),
+		}],
+		..WorldScene::default()
+	};
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 8,
+		height: 8,
+	};
+	let target = RenderTarget::new(&gpu, 8, 8);
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+	loop {
+		renderer.begin_frame();
+		if renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::DrawReady).quads == 1 {
+			break;
+		}
+		assert!(std::time::Instant::now() < deadline, "never arrived");
+		std::thread::sleep(std::time::Duration::from_millis(1));
+	}
+	assert_eq!(renderer.memory().frames, 2, "its second frame came with the first");
 }

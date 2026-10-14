@@ -113,6 +113,70 @@ impl MipMaker {
 		MipMaker { pipeline, layout }
 	}
 
+	/// Make `texture`'s mip levels from `from` down again over the region `(x, y, w, h)`
+	/// of its level 0, each from the one above.
+	pub(crate) fn remake_region(&self, gpu: &Gpu, texture: &wgpu::Texture, (x, y, w, h): (u32, u32, u32, u32), from: u32) {
+		let levels = texture.mip_level_count();
+		let mut encoder = gpu
+			.device
+			.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("mips") });
+		for level in from.max(1)..levels {
+			let size = |v: u32| (v >> level).max(1);
+			let (lw, lh) = (size(texture.width()), size(texture.height()));
+			// The region at this level, rounded outwards.
+			let x0 = (x >> level).min(lw - 1);
+			let y0 = (y >> level).min(lh - 1);
+			let x1 = ((x + w).div_ceil(1 << level)).clamp(x0 + 1, lw);
+			let y1 = ((y + h).div_ceil(1 << level)).clamp(y0 + 1, lh);
+			self.pass(gpu, &mut encoder, texture, level, Some((x0, y0, x1 - x0, y1 - y0)));
+		}
+		gpu.queue.submit([encoder.finish()]);
+	}
+
+	/// Level `level` of `texture` made from the one above, over `scissor` (all of it if
+	/// `None`).
+	fn pass(&self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture, level: u32, scissor: Option<(u32, u32, u32, u32)>) {
+		let view = |level: u32| {
+			texture.create_view(&wgpu::TextureViewDescriptor {
+				base_mip_level: level,
+				mip_level_count: Some(1),
+				..Default::default()
+			})
+		};
+		let (src, dst) = (view(level - 1), view(level));
+		let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: Some("mips"),
+			layout: &self.layout,
+			entries: &[wgpu::BindGroupEntry {
+				binding: 0,
+				resource: wgpu::BindingResource::TextureView(&src),
+			}],
+		});
+		let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			label: Some("mips"),
+			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				view: &dst,
+				depth_slice: None,
+				resolve_target: None,
+				ops: wgpu::Operations {
+					// A region keeps the rest of the level.
+					load: if scissor.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT) },
+					store: wgpu::StoreOp::Store,
+				},
+			})],
+			depth_stencil_attachment: None,
+			timestamp_writes: None,
+			occlusion_query_set: None,
+			multiview_mask: None,
+		});
+		pass.set_pipeline(&self.pipeline);
+		pass.set_bind_group(0, &group, &[]);
+		if let Some((x, y, w, h)) = scissor {
+			pass.set_scissor_rect(x, y, w, h);
+		}
+		pass.draw(0..3, 0..1);
+	}
+
 	/// `texture` (level 0 only) again, with every mip level down to 1×1.
 	pub(crate) fn with_mips(&self, gpu: &Gpu, texture: &GpuTexture) -> GpuTexture {
 		let (width, height) = (texture.width, texture.height);
@@ -139,42 +203,8 @@ impl MipMaker {
 			.device
 			.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("mips") });
 		encoder.copy_texture_to_texture(texture.texture.as_image_copy(), mipped.as_image_copy(), size);
-		let level_view = |level: u32| {
-			mipped.create_view(&wgpu::TextureViewDescriptor {
-				base_mip_level: level,
-				mip_level_count: Some(1),
-				..Default::default()
-			})
-		};
 		for level in 1..levels {
-			let (src, dst) = (level_view(level - 1), level_view(level));
-			let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-				label: Some("mips"),
-				layout: &self.layout,
-				entries: &[wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::TextureView(&src),
-				}],
-			});
-			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label: Some("mips"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &dst,
-					depth_slice: None,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-						store: wgpu::StoreOp::Store,
-					},
-				})],
-				depth_stencil_attachment: None,
-				timestamp_writes: None,
-				occlusion_query_set: None,
-				multiview_mask: None,
-			});
-			pass.set_pipeline(&self.pipeline);
-			pass.set_bind_group(0, &group, &[]);
-			pass.draw(0..3, 0..1);
+			self.pass(gpu, &mut encoder, &mipped, level, None);
 		}
 		gpu.queue.submit([encoder.finish()]);
 		let view = mipped.create_view(&wgpu::TextureViewDescriptor::default());
@@ -227,6 +257,52 @@ mod tests {
 	use crate::mip_chain;
 	use crate::target::read_level;
 	use bb_assets::Image;
+
+	#[test]
+	fn a_region_made_again_matches_the_cpus_chain() {
+		let gpu = match Gpu::headless() {
+			Ok(gpu) => gpu,
+			Err(e) => {
+				eprintln!("skipping: {e}");
+				return;
+			}
+		};
+		let (width, height) = (64, 48);
+		let mut image = Image {
+			width,
+			height,
+			rgba: (0..width * height * 4).map(|i| (i * 31 % 256) as u8).collect(),
+		};
+		let maker = MipMaker::new(&gpu);
+		let mipped = maker.with_mips(&gpu, &GpuTexture::upload_flat(&gpu, "test", &image));
+		// A frame written into an aligned region of level 0, as a page takes one.
+		let (x, y, w, h) = (16, 8, 24, 16);
+		let patch: Vec<u8> = (0..w * h * 4).map(|i| (i * 7 % 253) as u8).collect();
+		for row in 0..h {
+			let at = (((y + row) * width + x) * 4) as usize;
+			image.rgba[at..at + (w * 4) as usize].copy_from_slice(&patch[(row * w * 4) as usize..((row + 1) * w * 4) as usize]);
+		}
+		gpu.queue.write_texture(
+			wgpu::TexelCopyTextureInfo {
+				texture: &mipped.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d { x, y, z: 0 },
+				aspect: wgpu::TextureAspect::All,
+			},
+			&patch,
+			wgpu::TexelCopyBufferLayout {
+				offset: 0,
+				bytes_per_row: Some(w * 4),
+				rows_per_image: Some(h),
+			},
+			wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+		);
+		maker.remake_region(&gpu, &mipped.texture, (x, y, w, h), 1);
+		for (level, want) in mip_chain(&image).iter().enumerate() {
+			let got = read_level(&gpu, &mipped.texture, level as u32).expect("read back");
+			assert!(got == *want, "level {level}");
+		}
+	}
 
 	#[test]
 	fn the_gpus_levels_are_the_cpus() {

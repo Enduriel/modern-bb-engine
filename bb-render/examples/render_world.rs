@@ -146,7 +146,7 @@ fn main() {
 	// The atlases the scripts' brushes asked for start loading now, as in a live game.
 	let hints = engine.sprites().take_hints();
 	eprintln!("{} atlases hinted", hints.len());
-	renderer.prefetch(hints);
+	engine.sprites().with(|registry| renderer.prefetch(registry, hints));
 	let target = RenderTarget::new(&gpu, width, height);
 	let stats = engine.sprites().with(|registry| {
 		renderer.draw(&gpu, &target, &scene, registry, &view, Atlases::WaitForAll)

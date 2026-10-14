@@ -68,6 +68,11 @@ impl Residency {
 		self.budget = budget;
 	}
 
+	/// The frame now (counted from the first).
+	pub fn frame(&self) -> u64 {
+		self.frame
+	}
+
 	/// A new frame starts.
 	pub fn next_frame(&mut self) {
 		self.frame += 1;

@@ -358,7 +358,7 @@ impl Running {
 				let (waited, sprites) = std::mem::take(&mut self.stats_waiting);
 				eprintln!(
 					"frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting); \
-					{waited} drew without {sprites} sprites whose atlas was still loading"
+					{waited} drew without {sprites} sprites whose frame or atlas was still loading"
 				);
 			}
 			self.next_stats = Some(now + Duration::from_secs(5));
