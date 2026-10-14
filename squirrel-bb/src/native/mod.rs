@@ -12,7 +12,7 @@
 //! (logging → a host handler), and [`platform`] (build flags / achievements /
 //! `GameInfo` stubs). The engine-state natives (Time scheduler, World) land later.
 
-mod audio;
+pub(crate) mod audio;
 pub(crate) mod battle_effects;
 mod brushes;
 pub(crate) mod camera_motion;
@@ -196,7 +196,6 @@ impl NativeConfig {
 		let (world_clock, clouds, waves, world_camera, world_particles) = world::install(vm, &engine_rng, &sprites);
 		let tactical = tactical::install(vm, &engine_rng, &crt);
 		let video = settings::install(vm);
-		audio::install(vm);
 		execute::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);

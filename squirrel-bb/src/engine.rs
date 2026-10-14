@@ -26,6 +26,10 @@ use crate::native::{NativeConfig, Sprites, TacticalEntities, TacticalGrid, Tacti
 use crate::source::ScriptSource;
 use crate::state_stack::RootState;
 
+/// Mixed into `NativeConfig::engine_seed` for the audio's own stream, so a seeded run
+/// is reproducible without the audio sharing the engine's stream.
+const AUDIO_SEED: u64 = 0xA0D1_05EE_D000_0001;
+
 /// The engine host: the VM plus all stateful services, with correct teardown.
 ///
 /// Field order is load-bearing: Rust drops fields top-to-bottom, so `vm` is declared
@@ -59,6 +63,8 @@ pub struct Engine<S: ScriptSource> {
 	world_particles: crate::native::particles::ParticlesHandle,
 	tactical_particles: crate::native::particles::ParticlesHandle,
 	battle_effects: crate::native::battle_effects::BattleEffectsHandle,
+	/// The game's sound (no VM handles).
+	audio: crate::native::audio::Audio,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -112,6 +118,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
 		tactical_navigator.install(&mut vm);
 		crate::native::tactical::install_effects(&mut vm, &natives.tactical);
+		// Silent until the host gives it an output; its own random stream, as the original's.
+		let audio = crate::native::audio::Audio::new(
+			Box::new(crate::native::audio::NullOut::new(modules.file_reader())),
+			config.engine_seed.map_or_else(crate::native::EngineRng::unseeded, |s| crate::native::EngineRng::seeded(s ^ AUDIO_SEED)),
+		);
+		let world_camera = natives.world_camera.clone();
+		audio.install(&mut vm, move || crate::native::world_camera::view(&world_camera).pos, tactical_grid.camera_reader());
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.
@@ -159,6 +172,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			world_particles: natives.world_particles.clone(),
 			tactical_particles: natives.tactical.particles.clone(),
 			battle_effects: natives.tactical.effects.clone(),
+			audio,
 			time,
 			modules,
 			vm,
@@ -184,6 +198,11 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 	pub fn time(&self) -> &TimeService {
 		&self.time
+	}
+	/// The game's sound: give it an output with [`Audio::set_out`](crate::Audio::set_out)
+	/// (the default is silent).
+	pub fn audio(&self) -> &crate::native::audio::Audio {
+		&self.audio
 	}
 	/// The video mode, shared with `Settings.getVideoMode`/`setVideoMode`.
 	pub fn video(&self) -> &VideoSettings {
@@ -306,6 +325,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.root_state.update(&self.vm)?;
 		self.move_cameras(real_delta_ms);
 		self.turn_sprites();
+		self.audio.update((self.time.real_seconds() * 1000.0) as u32);
 		self.root_state.render(&self.vm)?;
 		self.root_state.run_background(&self.vm)
 	}

@@ -227,8 +227,10 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 		let t = temp_gameplay.clone();
 		vm.make_closure(move || t.clone())
 	};
+	// The sound volumes until the engine's sound service replaces them (`audio`);
+	// hardware sound is the original's default.
 	let get_sound_volume = vm.make_closure(|Variadic(_a): Variadic<Retained>| -> f64 { 1.0 });
-	let is_hardware_sound = vm.make_closure(|| false);
+	let is_hardware_sound = vm.make_closure(|| true);
 	// Setters / persistence: no-ops (accept any args).
 	macro_rules! noop {
 		() => {

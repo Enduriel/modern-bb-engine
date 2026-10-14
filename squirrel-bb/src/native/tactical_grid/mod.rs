@@ -513,6 +513,15 @@ impl TacticalGrid {
 		})
 	}
 
+	/// Where the battle camera's centre is, read when called.
+	pub(crate) fn camera_reader(&self) -> impl Fn() -> (f32, f32) + 'static {
+		let grid = self.grid.clone();
+		move || {
+			let (x, y) = grid.borrow().camera.pos();
+			(x as f32, y as f32)
+		}
+	}
+
 	/// How the battle camera moves (see [`camera::BattleCamera`]).
 	pub fn set_battle_camera(&self, mode: camera::BattleCamera) {
 		self.grid.borrow_mut().camera.set_mode(mode);
