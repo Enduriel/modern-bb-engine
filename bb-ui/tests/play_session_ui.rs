@@ -223,12 +223,216 @@ fn hire(p: &Play) -> Result<(), String> {
 	Ok(())
 }
 
+/// A contract: open the town's first and talk it through to an agreement, as a player
+/// does: the first option carries a negotiation on, until the offer and then the
+/// overview can be accepted. The advance is paid on taking it.
+fn contract(p: &Play) -> Result<(), String> {
+	let money = || p.int("::World.Assets.getMoney()");
+	let start = money()?;
+	// One whose target the map marks: a place to clear or a camp to destroy.
+	let index = p.int(r#"(function() {
+		local wanted = ["contract.restore_location", "contract.drive_away_bandits", "contract.drive_away_barbarians",
+			"contract.drive_away_nomads", "contract.destroy_goblin_camp", "contract.destroy_orc_camp",
+			"contract.raze_attached_location", "contract.root_out_undead", "contract.investigate_cemetery"];
+		foreach (i, c in ::__town.getContracts()) if (wanted.find(c.getType()) != null) return i;
+		return 0;
+	})()"#)?;
+	during("opening a contract", p.session.click_when_ready(&format!("css:img.is-contract.contract{index}"), STEP))?;
+	let mut advance = 0;
+	for round in 0..10 {
+		if p.int("::World.Contracts.getActiveContract() != null ? 1 : 0")? == 1 {
+			break;
+		}
+		during("waiting for the next screen", settled(p, |p| p.session.eval("jQuery('[id^=\"button-\"] .ui-control:visible').length").ok().and_then(|n| n.as_i64()).unwrap_or(0) > 0))?;
+		p.shot(&format!("contract-{round}"));
+		if p.session.shows_text("I accept your offer.")? {
+			advance = p.int("::World.Contracts.m.LastShown.getPayment().getInAdvance()")?;
+			during("accepting the offer", p.session.click_when_ready("I accept your offer.", STEP))?;
+		} else if p.session.shows_text("I accept this contract.")? {
+			during("accepting the contract", p.session.click_when_ready("I accept this contract.", STEP))?;
+		} else {
+			during("carrying on", p.session.click_when_ready("css:[id^=\"button-\"] .ui-control", STEP))?;
+		}
+		p.session.pump_until(Duration::from_millis(500), |_| false);
+	}
+	during("taking the contract", p.until("::World.Contracts.getActiveContract() != null", STEP))?;
+	ensure(money()? == start + advance, format!("the advance: {start} + {advance} != {}", money()?))?;
+	let name = p.text("::World.Contracts.getActiveContract().getName()")?;
+	println!("took {name}, {advance} in advance");
+	Ok(())
+}
+
+/// What the session faces at a moment.
+const FACING: &str = r#"(function() {
+	if (("State" in ::Tactical) && ::Tactical.State != null)
+	{
+		local st = ::Tactical.State;
+		if (!st.isBattleEnded()) return "battle";
+		local r = st.m.TacticalCombatResultScreen;
+		return r != null && r.isVisible() && !r.isAnimating() ? "results" : "wait";
+	}
+	if (!("State" in ::World) || ::World.State == null || ::LoadingScreen.isVisible()) return "wait";
+	// A battle on its way in (the tactical state is added, its map not yet made).
+	if (::RootState.get("TacticalFromWorldState") != null) return "wait";
+	local w = ::World.State;
+	local ev = w.getEventScreen();
+	if (ev != null && ev.isVisible()) return ev.isAnimating() ? "wait" : "event";
+	local d = w.m.CombatDialog;
+	if (d != null && d.isVisible()) return d.isAnimating() ? "wait" : "combat";
+	if (w.m.WorldTownScreen.isVisible()) return w.m.WorldTownScreen.isAnimating() ? "wait" : "town";
+	if (::World.Contracts.getActiveContract() == null) return "done";
+	return "map";
+})()"#;
+
+/// Head for what the map marks (the contract's selection marker), entering it.
+const FOLLOW_MARKER: &str = r#"
+	local player = ::World.State.getPlayer(), target = null;
+	foreach (e in ::World.getAllEntitiesAtPos(::createVec(0, 0), 10000000.0))
+		if (e.hasSprite("selection") && e.getSprite("selection").Visible) { target = e; break; }
+	if (target != null && (!("__heading" in getroottable()) || ::__heading != target.getID()))
+	{
+		::__heading <- target.getID();
+		::World.State.m.AutoEnterLocation = ::WeakTableRef(target);
+		player.setDestination(target.getPos());
+	}
+	::World.State.setPause(false);
+"#;
+
+/// Answer what the session faces (see [`FACING`]) once, as a player does: an event
+/// takes its first option, the combat dialog is engaged, a battle runs a frame with the
+/// AI playing the company (the scripted player's `__autoplayFight`), the result screen
+/// goes on to the loot, takes it all and leaves, a town is left, and on the map the
+/// company heads for what the map marks. Counts the battles begun.
+fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), String> {
+	if facing != last && facing != "wait" && facing != "battle" {
+		p.shot(facing);
+	}
+	if facing != "map" && facing != "wait" {
+		// Head off anew once back on the map.
+		p.script("::__heading <- null;")?;
+	}
+	match facing {
+		"battle" => {
+			if last != "battle" {
+				*battles += 1;
+				p.shot("battle");
+			}
+			p.script("::__autoplay();")?;
+			p.session.step(1000.0 / 60.0)?;
+		}
+		"results" => {
+			// After a win, "Continue" goes on to the loot (take it all) and then leaves;
+			// after a retreat or a loss there's nothing to take, and it reads "Leave".
+			if p.session.shows_text("Continue")? {
+				during("to the loot", p.session.click_when_ready("Continue", STEP))?;
+				settled(p, |_| true)?;
+				if p.session.eval("jQuery('.loot-all-button:visible').length")?.as_i64() == Some(1) {
+					during("looting all", p.session.click_when_ready("css:.loot-all-button", STEP))?;
+					p.session.pump_until(Duration::from_secs(1), |_| false);
+					p.shot("looted");
+				}
+				during("leaving the battle", p.session.click_when_ready("Continue", STEP))?;
+			} else {
+				during("leaving the battle", p.session.click_when_ready("Leave", STEP))?;
+			}
+			p.until("!((\"State\" in ::Tactical) && ::Tactical.State != null)", STEP)?;
+		}
+		"event" => during("answering an event", p.session.click_when_ready("css:[id^=\"button-\"] .ui-control", STEP))?,
+		"combat" => {
+			// "Engage!" when the company attacks, "To Arms!" when it is attacked.
+			let button = if p.session.shows_text("To Arms!")? { "To Arms!" } else { "Engage!" };
+			during("engaging", p.session.click_when_ready(button, STEP))?;
+			// Once per offer, as a player clicks once: until the dialog goes.
+			let gone = "!::World.State.m.CombatDialog.isVisible() || ::LoadingScreen.isVisible() || ::RootState.get(\"TacticalFromWorldState\") != null";
+			during("leaving for the battle", p.until(gone, STEP))?;
+		}
+		"town" => during("leaving the town", p.session.click_when_ready("Leave", STEP))?,
+		"map" => {
+			p.script(FOLLOW_MARKER)?;
+			p.session.step(1000.0 / 60.0)?;
+		}
+		_ => p.session.step(1000.0 / 60.0)?,
+	}
+	Ok(())
+}
+
+/// Carry the contract out: follow the map's marker to its target and back, answering
+/// what comes up (see [`answer`]). Ends when the contract is paid.
+fn adventure(p: &Play) -> Result<(), String> {
+	bb_engine::harness::install_autoplay(p.session.engine())?;
+	p.script("::__autoplayFight = true;")?;
+	during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+	let money = || p.int("::World.Assets.getMoney()");
+	let start = money()?;
+	let reward = p.int("::World.Contracts.getActiveContract().getPayment().getOnCompletion()")?;
+	let deadline = std::time::Instant::now() + Duration::from_secs(900);
+	let (mut battles, mut last) = (0, String::new());
+	loop {
+		ensure(std::time::Instant::now() < deadline, format!("the contract took too long (facing {last})"))?;
+		let facing = p.text(FACING)?;
+		if facing == "done" {
+			break;
+		}
+		answer(p, &facing, &last, &mut battles)?;
+		last = facing;
+	}
+	ensure(money()? >= start + reward, format!("paid: {start} + {reward} > {}", money()?))?;
+	println!("contract done after {battles} battle(s): paid {reward}");
+	Ok(())
+}
+
+/// A battle: the company meets the nearest hostile party, engages through the combat
+/// dialog, fights it out (the AI playing the company), and takes the loot; back on the
+/// map, the stash holds what was looted.
+fn battle(p: &Play) -> Result<(), String> {
+	p.script(
+		r#"
+		local player = ::World.State.getPlayer(), target = null, best = 0;
+		foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
+		{
+			if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || e.getTroops().len() == 0) continue;
+			local d = e.getDistanceTo(player);
+			if (target == null || d < best) { target = e; best = d; }
+		}
+		if (target == null) throw "no hostile party to fight";
+		::__foe <- target.getName();
+		local tp = target.getPos();
+		player.setPos(::createVec(tp.X - 30, tp.Y));
+		::World.setPlayerPos(player.getPos());
+		::World.State.showCombatDialog(true, true, true, null, player.getPos());
+		"#,
+	)?;
+	let foe = p.text("::__foe")?;
+	let stash = || p.int("::World.Assets.getStash().getNumberOfFilledSlots()");
+	let before = stash()?;
+	let deadline = std::time::Instant::now() + Duration::from_secs(600);
+	let (mut battles, mut last) = (0, String::new());
+	let mut waited = 0;
+	loop {
+		ensure(std::time::Instant::now() < deadline, format!("the battle took too long (facing {last})"))?;
+		let facing = p.text(FACING)?;
+		waited = if battles > 0 && facing == "wait" { waited + 1 } else { 0 };
+		ensure(waited < 1800, "after the battle, still waiting 30 s on")?;
+		if battles > 0 && (facing == "map" || facing == "done") {
+			break;
+		}
+		answer(p, &facing, &last, &mut battles)?;
+		last = facing;
+	}
+	let result = p.int("::Tactical.Entities.getCombatResult()").unwrap_or(-1);
+	println!("fought {foe}: stash {before} -> {} (result {result})", stash()?);
+	Ok(())
+}
+
 fn play(p: &Play) -> Result<(), String> {
 	new_campaign(p)?;
 	let town = enter_town(p)?;
 	println!("entered {town}");
 	market(p)?;
 	hire(p)?;
+	contract(p)?;
+	adventure(p)?;
+	battle(p)?;
 	let problems: Vec<String> = p
 		.session
 		.log()
@@ -239,6 +443,32 @@ fn play(p: &Play) -> Result<(), String> {
 	ensure(problems.is_empty(), format!("page or bridge errors:\n{}", problems.join("\n")))
 }
 
+/// The stubs the scripts called this session, and the natives the original binds that
+/// this engine lacks (the parity suite's list): what the scripts ask for that this
+/// engine ignores. Printed, and saved next to the shots with `PLAY_SHOTS`.
+fn stub_report(p: &Play) {
+	let calls = p.session.engine().stub_calls();
+	let mut report = format!("Stub natives the scripts called ({}):\n", calls.len());
+	for (name, count) in &calls {
+		report += &format!("  {count:>8}  {name}\n");
+	}
+	let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/missing_natives.txt");
+	let lacking: Vec<String> = std::fs::read_to_string(&missing)
+		.unwrap_or_default()
+		.lines()
+		.filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+		.map(str::to_string)
+		.collect();
+	report += &format!("Natives the original binds that this engine lacks ({}, parity/missing_natives.txt):\n", lacking.len());
+	for line in &lacking {
+		report += &format!("  {line}\n");
+	}
+	println!("{report}");
+	if let Some(dir) = &p.shots {
+		let _ = std::fs::write(dir.join("stubs.txt"), &report);
+	}
+}
+
 fn run(data_dir: &Path) -> Result<(), String> {
 	let session = UiSession::start(data_dir, HostConfig::default(), false)?;
 	during("booting the menu", session.boot_menu())?;
@@ -247,7 +477,44 @@ fn run(data_dir: &Path) -> Result<(), String> {
 		let _ = std::fs::create_dir_all(dir);
 	}
 	let p = Play { session, shots, step: std::cell::Cell::new(0) };
-	play(&p).map_err(|error| {
+	let played = play(&p);
+	stub_report(&p);
+	played.map_err(|error| {
+		let sq = p.text(r#"(function() {
+			local l = ::LoadingScreen;
+			return "loading screen visible " + l.m.Visible + " animating " + l.m.Animating
+				+ "; world state " + (("State" in ::World) && ::World.State != null ? "visible " + ::World.State.isVisible() + " screen " + ::World.State.m.WorldScreen.isVisible() : "none")
+				+ "; tactical " + (("State" in ::Tactical) && ::Tactical.State != null ? (function(st) {
+					return "ended " + st.m.IsBattleEnded + " finishable " + st.m.IsGameFinishable + " exiting " + st.m.IsExitingToMenu
+						+ " backsteps " + st.m.MenuStack.hasBacksteps() + " results " + st.m.TacticalCombatResultScreen.isVisible()
+						+ " dialog " + st.m.TacticalDialogScreen.isVisible() + " characters " + st.m.CharacterScreen.isVisible()
+						+ " result " + ::Tactical.Entities.getCombatResult();
+				})(::Tactical.State) : "none");
+		})()"#).unwrap_or_else(|e| e);
+		let js = p.session.eval(r#"(function () {
+			var out = [];
+			jQuery('body > div, body > div > div').each(function () {
+				var e = jQuery(this);
+				if (e.css('display') === 'none') return;
+				var calls = (jQuery.Velocity && jQuery.Velocity.State) ? jQuery.Velocity.State.calls.filter(function (c) { return !!c; }).length : -1;
+				out.push((this.className || this.tagName) + ' opacity ' + e.css('opacity') + (e.is(':animated') ? ' ANIMATING' : ''));
+			});
+			var calls = (jQuery.Velocity && jQuery.Velocity.State) ? jQuery.Velocity.State.calls.filter(function (c) { return !!c; }).length : -1;
+			return 'velocity calls in flight ' + calls + '; ' + out.join(' | ');
+		})()"#).map(|v| v.to_text()).unwrap_or_else(|e| e);
+		// Whether the page still gets animation frames, and Velocity still ticks.
+		let _ = p.session.eval("window.__raf = 0; (function f() { window.__raf++; requestAnimationFrame(f); })(); window.__timer = 0; setInterval(function () { window.__timer++; }, 10); 0");
+		p.session.pump_until(Duration::from_secs(1), |_| false);
+		let frames = p.session.eval("'rAF ' + window.__raf + ', timer ' + window.__timer + ', hidden ' + document.hidden + ', velocity ticking ' + (jQuery.Velocity && jQuery.Velocity.State.isTicking)").map(|v| v.to_text()).unwrap_or_else(|e| e);
+		eprintln!("DIAG page over 1 s: {frames}");
+		// A fresh animation restarts Velocity's ticking: do the stuck ones finish then?
+		let _ = p.session.eval("jQuery('<div/>').appendTo('body').velocity({ opacity: 0 }, { duration: 10 }); 0");
+		p.session.pump_until(Duration::from_secs(2), |_| false);
+		let after = p.session.eval("'calls in flight ' + jQuery.Velocity.State.calls.filter(function (c) { return !!c; }).length + ', result screen opacity ' + jQuery('.tactical-combat-result-screen').css('opacity')").map(|v| v.to_text()).unwrap_or_else(|e| e);
+		let shown = p.text("::Tactical.State != null ? \"results visible \" + ::Tactical.State.m.TacticalCombatResultScreen.isVisible() : \"\"").unwrap_or_else(|e| e);
+		eprintln!("DIAG after a fresh animation: {after}; {shown}");
+		let log: Vec<String> = p.session.log().into_iter().rev().take(25).map(|l| format!("  [{}] {}", l.level, l.text)).collect();
+		eprintln!("DIAG {sq}\nDIAG page: {js}\nDIAG page log (newest first):\n{}", log.join("\n"));
 		let shot = std::env::temp_dir().join("play_session_ui-failure.png");
 		let saved = match p.session.screenshot(&shot) {
 			Ok(Some(_)) => format!("\nlast frame: {}", shot.display()),
