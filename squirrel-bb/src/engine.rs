@@ -13,7 +13,7 @@
 //! every service *while the VM is still fully alive*, then lets the `vm` field (the
 //! last-declared field) drop last for a clean `sq_close`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef};
@@ -75,9 +75,15 @@ pub struct Engine<S: ScriptSource> {
 	/// The mouse cursor the scripts chose (no VM handles).
 	ui_cursor: crate::native::ui_cursor::UiCursor,
 	time: TimeService,
+	/// Real time (ms) after which the next frame collects reference cycles.
+	next_collection: Cell<f64>,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
 }
+
+/// How often the original's script tick collects reference cycles: every 60 s of real
+/// time, starting with the first frame (`0x5394c0`, disassembled 2026-10-14).
+const COLLECT_EVERY_MS: f64 = 60_000.0;
 
 impl<S: ScriptSource + 'static> Engine<S> {
 	/// Build an engine over `source` with the default native config.
@@ -227,6 +233,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			keys: Default::default(),
 			ui_cursor,
 			time,
+			next_collection: Cell::new(0.0),
 			modules,
 			vm,
 		}
@@ -424,7 +431,21 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.turn_sprites();
 		self.audio.update((self.time.real_seconds() * 1000.0) as u32);
 		self.root_state.render(&self.vm)?;
-		self.root_state.run_background(&self.vm)
+		self.root_state.run_background(&self.vm)?;
+		self.collect_when_due();
+		Ok(())
+	}
+
+	/// Free the script objects only reference cycles keep alive (the AI's agents and
+	/// behaviours after a battle, for one) when the real-time clock has passed the next
+	/// collection, as the original's script tick does. The clock is the frames' real time,
+	/// so when a collection happens is deterministic for a given run of frames.
+	fn collect_when_due(&self) {
+		let now = self.time.real_seconds() * 1000.0;
+		if self.next_collection.get() < now {
+			self.next_collection.set(now + COLLECT_EVERY_MS);
+			self.vm.collect_garbage();
+		}
 	}
 
 	/// The cameras' glides and zooms, a frame of `real_delta_ms` on (see

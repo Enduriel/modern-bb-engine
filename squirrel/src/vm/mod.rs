@@ -94,6 +94,21 @@ impl SQVM {
 		unsafe { squirrel_sys::sq_collectgarbage(self.ptr) }
 	}
 
+	/// The objects that only reference cycles keep alive, as an array, without freeing
+	/// them (`None` if there are none): what [`collect_garbage`](Self::collect_garbage)
+	/// would free. For finding what leaks.
+	pub fn unreachable(&self) -> Option<crate::SqStrongRef> {
+		unsafe {
+			if squirrel_sys::sq_resurrectunreachable(self.ptr) < 0 {
+				return None;
+			}
+			let found = squirrel_sys::sq_gettype(self.ptr, -1) == squirrel_sys::tagSQObjectType_OT_ARRAY;
+			let array = found.then(|| crate::SqStrongRef::from_stack(self, -1));
+			squirrel_sys::sq_pop(self.ptr, 1);
+			array
+		}
+	}
+
 	/// The raw VM handle. Crate-internal: the safe wrappers in the sibling
 	/// modules go through this rather than touching the private `ptr` field.
 	pub(crate) fn as_ptr(&self) -> squirrel_sys::HSQUIRRELVM {
