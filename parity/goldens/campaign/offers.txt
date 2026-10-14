@@ -1,0 +1,15 @@
+# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks)
+PROBE contract actions = integer 45
+PROBE f5 investigate_cemetery_action = string score 1 contract.investigate_cemetery home Pfeilstein difficulty 0.74 paymult 0.7844 pool 0 advance 0 completion 0 per 0 to Greybeard's Crypt
+PROBE f5 item_delivery_action = string score 1 contract.deliver_item home Pfeilstein difficulty 0.98 paymult 0.9114 pool 306 advance 60 completion 230 per 0 to Jungholz
+PROBE f6 investigate_cemetery_action = string score 1 contract.investigate_cemetery home Jungholz difficulty 0.79 paymult 0.7821 pool 0 advance 0 completion 0 per 0 to Hope's Last Rest
+PROBE f6 discover_location_action = string score 1 contract.discover_location home Jungholz difficulty 0.71 paymult 0.6745 pool 300 advance 0 completion 300 per 0
+PROBE f7 escort_caravan_action = string score 1 contract.escort_caravan home Tannenweiler difficulty 0.98 paymult 0.9016 pool 680 advance 130 completion 510 per 0 to Lorrested
+PROBE f10 item_delivery_action = string score 1 contract.deliver_item home Sehlendorf difficulty 0.95 paymult 0.9975 pool 332 advance 60 completion 250 per 0 to Jungholz
+PROBE f11 escort_caravan_action = string score 1 contract.escort_caravan home Kargau difficulty 0.76 paymult 0.722 pool 214 advance 0 completion 210 per 0 to Azim Shab
+PROBE f12 investigate_cemetery_action = string score 1 contract.investigate_cemetery home Tannheim difficulty 0.8 paymult 0.744 pool 0 advance 0 completion 0 per 0 to Hope's Last Rest
+PROBE f12 restore_location_action = string score 1 contract.restore_location home - difficulty 0.72 paymult 0.6696 pool 0 advance 0 completion 0 per 0
+PROBE f13 restore_location_action = string score 1 contract.restore_location home - difficulty 0.9 paymult 0.918 pool 0 advance 0 completion 0 per 0
+PROBE f14 restore_location_action = string score 1 contract.restore_location home - difficulty 0.78 paymult 0.8424 pool 0 advance 0 completion 0 per 0
+PROBE f15 roaming_beasts_desert_action = string score 1 contract.roaming_beasts_desert home Quadim difficulty 0.75 paymult 0.7875 pool 0 advance 0 completion 0 per 0
+PROBE open contracts after = integer 0
