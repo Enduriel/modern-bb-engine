@@ -13,7 +13,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Number, SQVM, SqBytes, SqClass, SqStrongRef};
 
 pub(crate) use super::meta::Meta;
-use super::meta::date;
+use super::meta::local_date;
 
 /// How a string's length is written.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -180,8 +180,8 @@ impl StreamClasses {
 			.method("setVersion", |m: &mut SharedMeta, v: Number| m.borrow_mut().version = int(v))
 			.method("getName", |m: &mut SharedMeta| m.borrow().name.clone())
 			.method("getFileName", |m: &mut SharedMeta| m.borrow().file_name.clone())
-			.method("getCreationDate", |m: &mut SharedMeta| date(m.borrow().created))
-			.method("getModificationDate", |m: &mut SharedMeta| date(m.borrow().modified))
+			.method("getCreationDate", |m: &mut SharedMeta| local_date(m.borrow().created))
+			.method("getModificationDate", |m: &mut SharedMeta| local_date(m.borrow().modified))
 			.method("hasData", |m: &mut SharedMeta, k: String| m.borrow().has_data(&k))
 			.method("getInt", |m: &mut SharedMeta, k: String| m.borrow().get_int(&k))
 			.method("setInt", |m: &mut SharedMeta, k: String, v: Number| m.borrow_mut().set_int(k, int(v)))

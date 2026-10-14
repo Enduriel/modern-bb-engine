@@ -10,6 +10,9 @@
 
 use std::collections::BTreeMap;
 
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
+
 #[derive(Clone, Default, Debug, PartialEq)]
 pub(crate) struct Meta {
 	pub version: i64,
@@ -124,27 +127,17 @@ pub(crate) fn format_float(v: f32) -> String {
 	}
 }
 
-/// `getCreationDate()`/`getModificationDate()`: the original's `dd.mm.yy HH:MM:SS` (probed `14.10.26 03:47:33`).
-/// The original shows local time; without a time-zone source this is UTC.
-pub(crate) fn date(secs: i64) -> String {
-	let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
-	// Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-	let z = days + 719_468;
-	let era = z.div_euclid(146_097);
-	let doe = z - era * 146_097;
-	let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-	let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-	let mp = (5 * doy + 2) / 153;
-	let day = doy - (153 * mp + 2) / 5 + 1;
-	let month = if mp < 10 { mp + 3 } else { mp - 9 };
-	let year = yoe + era * 400 + i64::from(month <= 2);
-	format!(
-		"{day:02}.{month:02}.{:02} {:02}:{:02}:{:02}",
-		year.rem_euclid(100),
-		rem / 3600,
-		rem % 3600 / 60,
-		rem % 60
-	)
+/// `getCreationDate()`/`getModificationDate()`: the original's `dd.mm.yy HH:MM:SS` in
+/// local time (probed `14.10.26 03:47:33` at 01:47:33 UTC, in CEST).
+pub(crate) fn local_date(secs: i64) -> String {
+	date(secs, &TimeZone::system())
+}
+
+/// `secs` since the Unix epoch as the original's `dd.mm.yy HH:MM:SS`, in `zone`.
+/// Out-of-range times saturate (a damaged save's metadata still lists).
+pub(crate) fn date(secs: i64, zone: &TimeZone) -> String {
+	let at = Timestamp::from_second(secs).unwrap_or(if secs < 0 { Timestamp::MIN } else { Timestamp::MAX });
+	at.to_zoned(zone.clone()).strftime("%d.%m.%y %H:%M:%S").to_string()
 }
 
 #[cfg(test)]
@@ -153,10 +146,18 @@ mod tests {
 
 	#[test]
 	fn creation_dates_read_like_the_original() {
-		// 2026-10-14 01:47:33 UTC.
-		assert_eq!(date(1_791_942_453), "14.10.26 01:47:33");
-		assert_eq!(date(0), "01.01.70 00:00:00");
-		assert_eq!(date(951_782_400), "29.02.00 00:00:00");
+		// 2026-10-14 01:47:33 UTC, probed in the original as 03:47:33 (CEST).
+		let warsaw = TimeZone::posix("CET-1CEST,M3.5.0,M10.5.0/3").expect("POSIX zone");
+		assert_eq!(date(1_791_942_453, &warsaw), "14.10.26 03:47:33");
+		// The same zone in winter (CET).
+		assert_eq!(date(1_798_508_853, &warsaw), "29.12.26 02:47:33");
+		assert_eq!(date(1_791_942_453, &TimeZone::UTC), "14.10.26 01:47:33");
+		assert_eq!(date(0, &TimeZone::UTC), "01.01.70 00:00:00");
+		assert_eq!(date(951_782_400, &TimeZone::UTC), "29.02.00 00:00:00");
+		assert_eq!(date(0, &TimeZone::fixed(jiff::tz::offset(-5))), "31.12.69 19:00:00");
+		assert_eq!(date(i64::MAX, &TimeZone::UTC).len(), 17);
+		// The host's own zone: only the shape, not the wall clock.
+		assert_eq!(local_date(1_791_942_453).len(), 17);
 	}
 
 	#[test]

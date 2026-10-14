@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 squirrel = { path = "../squirrel" }
 bb-assets = { path = "../bb-assets", default-features = false }
+# Local time for saves' dates: the system zone, from
+# zoneinfo on Unix and jiff's bundled database where the platform has none (Windows).
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
