@@ -21,6 +21,7 @@
 use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::{Grid, TacticalGridState, TileHandle};
+use crate::native::overload::class_overloads;
 use crate::native::camera_motion::{Camera, GLIDE_SPEED};
 use crate::native::screen::Screen;
 
@@ -40,6 +41,9 @@ const ZOOM_LIMIT: f32 = 4.0;
 
 /// `moveToTileSlowly`'s speed (`0x4bec95`).
 const SLOW_SPEED: f32 = 512.0;
+
+/// How close `isCenteredOnPos` takes as centred (`0x63d320`).
+const CENTRED_ON_POS: f32 = 3.0;
 
 /// How close counts as centred: on a tile, on an entity (`0x4beaaa`, `0x4beb4e`).
 const CENTRED_ON_TILE: f32 = 3.0;
@@ -140,6 +144,15 @@ pub(super) fn screen_to_world(camera: &CameraState, vm: &SQVM, x: f64, y: f64) -
 	let (px, py) = camera.pos();
 	let (wx, wy) = Screen::of(vm).to_world((px as f32, py as f32), camera.zoom() as f32, x as i32, y as i32);
 	(f64::from(wx), f64::from(wy))
+}
+
+/// A position from `(x, y)` numbers, or from one vector or entity (see [`pos_of`]).
+fn pos_args(vm: &SQVM, a: &[Retained]) -> Option<(f64, f64)> {
+	match a {
+		[x, y, ..] => Some((x.0.get_value::<Number>(vm)?.0, y.0.get_value::<Number>(vm)?.0)),
+		[v] => pos_of(vm, &v.0),
+		[] => None,
+	}
 }
 
 /// A position read from a vector or from `entity.getPos()`.
@@ -254,18 +267,6 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 			let target = a.first().and_then(|t| tile_pos_of(&g, vm, t));
 			centred(&g.camera, target, CENTRED_ON_TILE)
 		})
-		.method("isInsideScreen", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			let g = c.0.borrow();
-			if g.camera.glide.is_none() {
-				return true;
-			}
-			let Some(pos) = a.first().and_then(|p| pos_of(vm, &p.0)) else { return false };
-			let margin = a.get(1).and_then(|m| m.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i32);
-			let (cx, cy) = g.camera.pos();
-			let screen = Screen::of(vm);
-			let pixel = screen.to_screen((cx as f32, cy as f32), g.camera.zoom() as f32, (pos.0 as f32, pos.1 as f32));
-			screen.contains(pixel, margin)
-		})
 		.method("isMoving", |c: &mut CameraHandle| c.0.borrow().camera.glide.as_ref().is_some_and(Camera::is_moving))
 		.method("isMovingToTile", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
 			let g = c.0.borrow();
@@ -273,28 +274,23 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 			a.first().and_then(|t| tile_pos_of(&g, vm, t)).is_some_and(|p| glide.target() == (p.0 as f32, p.1 as f32))
 		})
 		.method("getPos", |c: &mut CameraHandle, vm: &SQVM| super::vec(vm, c.0.borrow().camera.pos()))
-		// To a position, a tile or an entity: at once, or gliding (eased; a second
-		// argument is how close is close enough).
-		.method("setPos", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
-			if let Some(p) = pos_of(vm, &pos.0) {
-				jump(&mut c.0.borrow_mut().camera, p);
-			}
-		})
-		.method("moveToTile", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			let p = a.first().and_then(|t| tile_pos_of(&c.0.borrow(), vm, t));
-			if let Some(p) = p {
-				glide(&mut c.0.borrow_mut().camera, p, GLIDE_SPEED, radius(vm, &a));
-			}
-		})
 		.method("moveToTileSlowly", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
 			let p = a.first().and_then(|t| tile_pos_of(&c.0.borrow(), vm, t));
 			if let Some(p) = p {
 				glide(&mut c.0.borrow_mut().camera, p, SLOW_SPEED, radius(vm, &a));
 			}
 		})
-		.method("screenToWorld", |c: &mut CameraHandle, vm: &SQVM, x: Number, y: Number| {
-			let p = screen_to_world(&c.0.borrow().camera, vm, x.0, y.0);
-			super::vec(vm, p)
+		// Within 3 units of `pos` on both axes (`0x4a3ce0`, the camera class's).
+		.method("isCenteredOnPos", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
+			centred(&c.0.borrow().camera, pos_of(vm, &pos.0), CENTRED_ON_POS)
+		})
+		// The pixel a world position is at.
+		.method("worldToScreen", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| -> Result<Option<SqStrongRef>, String> {
+			let Some((x, y)) = pos_of(vm, &pos.0) else { return Ok(None) };
+			let (cx, cy) = c.0.borrow().camera.pos();
+			let zoom = c.0.borrow().camera.zoom() as f32;
+			let (px, py) = Screen::of(vm).to_screen((cx as f32, cy as f32), zoom, (x as f32, y as f32));
+			super::vec(vm, (f64::from(px), f64::from(py)))
 		})
 		// The orientation overlays (orientation_overlay.nut): `addEntityOverlay` gets
 		// `{ entity, image }`, `removeEntityOverlay` the entity.
@@ -319,18 +315,70 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 			let overlays = c.0.borrow().camera.overlays.clone();
 			overlay_states(vm, &overlays)
 		});
-	b = b.method("jumpTo", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
+	// Sqrat overloads, as the original's: the arities it binds. To a position, a tile or
+	// an entity: at once, or gliding (eased; a second argument is how close is close
+	// enough).
+	b = class_overloads!(b, CameraHandle, "setPos", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		if let Some(p) = pos_args(vm, a) {
+			jump(&mut c.0.borrow_mut().camera, p);
+		}
+		Ok::<(), String>(())
+	});
+	b = class_overloads!(b, CameraHandle, "jumpTo", [1], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
 		if let Some(p) = a.first().and_then(|e| pos_of(vm, &e.0)) {
 			jump(&mut c.0.borrow_mut().camera, p);
 		}
+		Ok::<(), String>(())
 	});
-	for name in ["moveTo", "moveToExactly"] {
-		b = b.method(name, |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			if let Some(p) = a.first().and_then(|e| pos_of(vm, &e.0)) {
-				glide(&mut c.0.borrow_mut().camera, p, GLIDE_SPEED, radius(vm, &a));
-			}
-		});
-	}
+	b = class_overloads!(b, CameraHandle, "moveTo", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		if let Some(p) = a.first().and_then(|e| pos_of(vm, &e.0)) {
+			glide(&mut c.0.borrow_mut().camera, p, GLIDE_SPEED, radius(vm, a));
+		}
+		Ok::<(), String>(())
+	});
+	b = class_overloads!(b, CameraHandle, "moveToTile", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let p = a.first().and_then(|t| tile_pos_of(&c.0.borrow(), vm, t));
+		if let Some(p) = p {
+			glide(&mut c.0.borrow_mut().camera, p, GLIDE_SPEED, radius(vm, a));
+		}
+		Ok::<(), String>(())
+	});
+	// (vec) and (x, y) glide eased at the usual speed; (x, y, speed) at that speed, as
+	// the world camera's (the camera class's).
+	b = class_overloads!(b, CameraHandle, "moveToPos", [1, 2, 3], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let speed = if a.len() == 3 { a[2].0.get_value::<Number>(vm).map(|n| n.0 as f32) } else { None };
+		let Some(p) = pos_args(vm, if a.len() == 3 { &a[..2] } else { a }) else { return Ok::<(), String>(()) };
+		let camera = &mut c.0.borrow_mut().camera;
+		match camera.glide.as_mut() {
+			Some(g) => g.glide((p.0 as f32, p.1 as f32), speed.unwrap_or(GLIDE_SPEED), speed.is_none(), 0.0),
+			None => camera.pos = p,
+		}
+		Ok(())
+	});
+	// (pos) or (pos, margin); an instant camera shows everything.
+	b = class_overloads!(b, CameraHandle, "isInsideScreen", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let g = c.0.borrow();
+		if g.camera.glide.is_none() {
+			return Ok::<bool, String>(true);
+		}
+		let Some(pos) = a.first().and_then(|p| pos_of(vm, &p.0)) else { return Ok(false) };
+		let margin = a.get(1).and_then(|m| m.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i32);
+		let (cx, cy) = g.camera.pos();
+		let screen = Screen::of(vm);
+		let pixel = screen.to_screen((cx as f32, cy as f32), g.camera.zoom() as f32, (pos.0 as f32, pos.1 as f32));
+		Ok(screen.contains(pixel, margin))
+	});
+	// (vec) or (x, y): the world point under a pixel.
+	b = class_overloads!(b, CameraHandle, "screenToWorld", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let (x, y) = pos_args(vm, a).unwrap_or((0.0, 0.0));
+		let p = screen_to_world(&c.0.borrow().camera, vm, x, y);
+		super::vec(vm, p)
+	});
+	b = b.method("moveToExactly", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
+		if let Some(p) = a.first().and_then(|e| pos_of(vm, &e.0)) {
+			glide(&mut c.0.borrow_mut().camera, p, GLIDE_SPEED, radius(vm, &a));
+		}
+	});
 	// Zooming and panning ease or shift only a gliding camera; instant, they're looks.
 	b = b
 		.method("zoomTo", |c: &mut CameraHandle, zoom: f64, speed: f64| {
@@ -343,47 +391,50 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 				g.zoom_by(delta as f32);
 			}
 		})
-		.method("move", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			let mut g = c.0.borrow_mut();
-			let Some(glide) = g.camera.glide.as_mut() else { return };
-			let n = |v: &Retained| v.0.get_value::<Number>(vm).map(|n| n.0 as f32);
-			match &a[..] {
-				[x, y, ..] => {
-					if let (Some(x), Some(y)) = (n(x), n(y)) {
-						glide.shift((x, y));
-					}
-				}
-				[v] => {
-					if let Some((x, y)) = pos_of(vm, &v.0) {
-						glide.shift_with_target((x as f32, y as f32));
-					}
-				}
-				[] => {}
-			}
-		})
 		.method("cancelMovement", |c: &mut CameraHandle| {
 			if let Some(g) = c.0.borrow_mut().camera.glide.as_mut() {
 				g.cancel();
 			}
 		});
+	// (dx, dy) ends a glide where it is; (vec) shifts its target too.
+	b = class_overloads!(b, CameraHandle, "move", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let mut g = c.0.borrow_mut();
+		let Some(glide) = g.camera.glide.as_mut() else { return Ok::<(), String>(()) };
+		let n = |v: &Retained| v.0.get_value::<Number>(vm).map(|n| n.0 as f32);
+		match a {
+			[x, y, ..] => {
+				if let (Some(x), Some(y)) = (n(x), n(y)) {
+					glide.shift((x, y));
+				}
+			}
+			[v] => {
+				if let Some((x, y)) = pos_of(vm, &v.0) {
+					glide.shift_with_target((x as f32, y as f32));
+				}
+			}
+			[] => {}
+		}
+		Ok(())
+	});
 	// quake(from, to, strength, out, back) along the way from one entity to the other,
 	// or quake(direction, strength, out, back): a gliding camera shakes.
-	b = b.method("quake", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
+	b = class_overloads!(b, CameraHandle, "quake", [4, 5], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
 		let mut g = c.0.borrow_mut();
-		let Some(glide) = g.camera.glide.as_mut() else { return };
+		let Some(glide) = g.camera.glide.as_mut() else { return Ok::<(), String>(()) };
 		let n = |i: usize| a.get(i).and_then(|v| v.0.get_value::<Number>(vm)).map_or(0.0, |n| n.0 as f32);
 		let now = crate::native::sprite_color::virtual_time(vm);
 		if a.len() >= 5 {
-			let (Some(from), Some(to)) = (pos_of(vm, &a[0].0), pos_of(vm, &a[1].0)) else { return };
+			let (Some(from), Some(to)) = (pos_of(vm, &a[0].0), pos_of(vm, &a[1].0)) else { return Ok(()) };
 			let (dx, dy) = ((to.0 - from.0) as f32, (to.1 - from.1) as f32);
 			if dx == 0.0 && dy == 0.0 {
-				return;
+				return Ok(());
 			}
 			let inv = 1.0 / f64::from(dy * dy + dx * dx).sqrt() as f32;
 			glide.quake((inv * dx, inv * dy), n(2), n(3), n(4), now);
 		} else if let Some(dir) = a.first().and_then(|v| pos_of(vm, &v.0)) {
 			glide.quake((dir.0 as f32, dir.1 as f32), n(1), n(2), n(3), now);
 		}
+		Ok(())
 	});
 	// The level's easing and the overlays' screen positions: visual only.
 	b = super::camera_callbacks::add(b, grid);

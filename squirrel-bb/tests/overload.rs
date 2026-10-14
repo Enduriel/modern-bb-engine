@@ -64,3 +64,26 @@ fn a_mod_can_wrap_a_single_overload() {
 	)
 	.expect("a mod replacing one overload leaf is honoured by the dispatcher");
 }
+
+#[test]
+fn a_class_method_dispatches_by_arity() {
+	// The world camera's setPos, bound as the original's: (vec) and (x, y), nothing else;
+	// leaves on the class, the strict dispatcher under the bare name.
+	vm().run_script(
+		r#"
+		local c = this.World.getCamera();
+		c.setPos(this.createVec(1000, 2000));
+		local p = c.getPos();
+		assert(p.X == 1000 && p.Y == 2000);
+		c.setPos(1300, 1400);
+		p = c.getPos();
+		assert(p.X == 1300 && p.Y == 1400);
+		assert(("__sqrat_ol_ setPos_1" in c.getclass()) && ("__sqrat_ol_ setPos_2" in c.getclass()));
+		local error = null;
+		try { c.setPos(); } catch (e) { error = e; }
+		assert(error == "No overload matching this argument list found");
+		"#,
+		"camera_set_pos",
+	)
+	.expect("setPos dispatches by argument count");
+}

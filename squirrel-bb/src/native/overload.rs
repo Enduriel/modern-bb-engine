@@ -104,6 +104,33 @@ pub(crate) fn expect_arity(args: usize, arity: usize) -> Result<(), String> {
 	if args == arity { Ok(()) } else { Err("wrong number of parameters".to_string()) }
 }
 
+/// Bind `$body` as class method `$name`, overloaded as the original's Sqrat bindings have
+/// it: a leaf per arity in `[$n, …]` under [`overload_key`] (each refusing another count,
+/// see [`expect_arity`]) and the strict dispatcher under `$name`. `$body` is
+/// `|payload: &mut $T, vm, args: &[Retained]| -> Result<_, String>`; the leaves share it.
+/// (A macro: a generic function couldn't name the leaves' return-value bound.)
+macro_rules! class_overloads {
+	($b:expr, $T:ty, $name:expr, [$($n:expr),+], $body:expr) => {{
+		let body = std::rc::Rc::new($body);
+		let b = $b;
+		$(
+			let leaf = body.clone();
+			let b = b.method(
+				&$crate::native::overload::overload_key($name, $n),
+				move |t: &mut $T, vm: &squirrel::SQVM, squirrel::Variadic(a): squirrel::Variadic<squirrel::Retained>| {
+					$crate::native::overload::expect_arity(a.len(), $n)?;
+					(*leaf)(t, vm, &a)
+				},
+			);
+		)+
+		let dispatcher = $crate::native::overload::Overload::new($name);
+		b.native_method($name, move |vm: &squirrel::SQVM, this: squirrel::This, args: squirrel::StackArgs| {
+			dispatcher.dispatch(vm, this, args)
+		})
+	}};
+}
+pub(crate) use class_overloads;
+
 /// The two slots of a native method the original binds as a Sqrat overload with a single
 /// arity (e.g. `storeSpriteColors`, only `"__sqrat_ol_ storeSpriteColors_0"`): the leaf
 /// under its key and the dispatcher under the bare name, for the `(name, closure)` method

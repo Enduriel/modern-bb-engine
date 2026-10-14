@@ -18,6 +18,8 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
 
+use super::overload::class_overloads;
+
 use super::camera_motion::{Camera, GLIDE_SPEED};
 use super::screen::Screen;
 
@@ -50,6 +52,9 @@ pub(crate) fn view(camera: &WorldCamera) -> CameraView {
 
 /// The furthest the world camera zooms out (`0x4eeaa1`).
 const ZOOM_LIMIT: f32 = 12.0;
+
+/// How near `isCenteredOnPos` takes as centred (`0x63d320`).
+const CENTRED_ON_POS: f32 = 3.0;
 
 /// Where the world camera starts (`0x4ee9c8`).
 const START: (f32, f32) = (2800.0, 2000.0);
@@ -101,11 +106,6 @@ fn round_half_away(v: f32) -> f32 {
 }
 
 fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
-	let set_pos = |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-		if let Some(p) = pos_arg(vm, &a) {
-			c.0.borrow_mut().set_pos(p);
-		}
-	};
 	let glide_to = |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
 		if let Some(p) = target_pos(vm, &target.0) {
 			c.0.borrow_mut().glide(p, GLIDE_SPEED, true, 0.0);
@@ -124,24 +124,6 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 			let (x, y) = c.0.borrow().pos;
 			vec(vm, (round_half_away(x), round_half_away(y)))
 		})
-		.method("setPos", set_pos)
-		// (x, y) and (vec) glide eased at the usual speed; (x, y, speed) at that speed.
-		.method("moveToPos", move |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			let speed = if a.len() == 3 { a[2].0.get_value::<Number>(vm).map(|n| n.0 as f32) } else { None };
-			let a = if a.len() == 3 { &a[..2] } else { &a[..] };
-			if let Some(p) = pos_arg(vm, a) {
-				c.0.borrow_mut().glide(p, speed.unwrap_or(GLIDE_SPEED), speed.is_none(), 0.0);
-			}
-		})
-		// (dx, dy) ends a glide where it is; (vec) shifts its target too.
-		.method("move", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			let Some(d) = pos_arg(vm, &a) else { return };
-			if a.len() == 1 {
-				c.0.borrow_mut().shift_with_target(d);
-			} else {
-				c.0.borrow_mut().shift(d);
-			}
-		})
 		.method("moveTo", glide_to)
 		.method("moveToTile", glide_to)
 		.method("jumpTo", |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
@@ -157,24 +139,57 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 		})
 		.method("zoomBy", |c: &mut CameraHandle, delta: f64| c.0.borrow_mut().zoom_by(delta as f32))
 		.method("cancelMovement", |c: &mut CameraHandle| c.0.borrow_mut().cancel())
-		.method("screenToWorld", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			let (x, y) = pixel_arg(vm, &a).unwrap_or((0, 0));
-			let view = view(&c.0);
-			vec(vm, Screen::of(vm).to_world(view.pos, view.zoom, x, y))
-		})
 		.method("worldToScreen", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
 			let view = view(&c.0);
 			let (x, y) = Screen::of(vm).to_screen(view.pos, view.zoom, xy(vm, &pos.0).unwrap_or((0.0, 0.0)));
 			vec(vm, (x as f32, y as f32))
 		})
-		.method("isInsideScreen", |c: &mut CameraHandle, vm: &SQVM, Variadic(a): Variadic<Retained>| {
-			// (pos, margin); the scripts always pass both.
-			let Some(pos) = a.first().and_then(|p| xy(vm, &p.0)) else { return false };
-			let margin = a.get(1).and_then(|m| m.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i32);
-			let view = view(&c.0);
-			let screen = Screen::of(vm);
-			screen.contains(screen.to_screen(view.pos, view.zoom, pos), margin)
+		// Within 3 units of `pos` on both axes (`0x4a3ce0`, the camera class's).
+		.method("isCenteredOnPos", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
+			xy(vm, &pos.0).is_some_and(|p| c.0.borrow().is_centered_on(p, CENTRED_ON_POS))
 		});
+	// Sqrat overloads, as the original's: the arities it binds.
+	// (vec) or (x, y): there at once.
+	b = class_overloads!(b, CameraHandle, "setPos", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		if let Some(p) = pos_arg(vm, a) {
+			c.0.borrow_mut().set_pos(p);
+		}
+		Ok::<(), String>(())
+	});
+	// (vec) and (x, y) glide eased at the usual speed; (x, y, speed) at that speed.
+	b = class_overloads!(b, CameraHandle, "moveToPos", [1, 2, 3], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let speed = if a.len() == 3 { a[2].0.get_value::<Number>(vm).map(|n| n.0 as f32) } else { None };
+		let a = if a.len() == 3 { &a[..2] } else { a };
+		if let Some(p) = pos_arg(vm, a) {
+			c.0.borrow_mut().glide(p, speed.unwrap_or(GLIDE_SPEED), speed.is_none(), 0.0);
+		}
+		Ok::<(), String>(())
+	});
+	// (dx, dy) ends a glide where it is; (vec) shifts its target too.
+	b = class_overloads!(b, CameraHandle, "move", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		if let Some(d) = pos_arg(vm, a) {
+			if a.len() == 1 {
+				c.0.borrow_mut().shift_with_target(d);
+			} else {
+				c.0.borrow_mut().shift(d);
+			}
+		}
+		Ok::<(), String>(())
+	});
+	// (vec) or (x, y): the world point under a pixel.
+	b = class_overloads!(b, CameraHandle, "screenToWorld", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let (x, y) = pixel_arg(vm, a).unwrap_or((0, 0));
+		let view = view(&c.0);
+		vec(vm, Screen::of(vm).to_world(view.pos, view.zoom, x, y))
+	});
+	// (pos) or (pos, margin): whether it's on screen.
+	b = class_overloads!(b, CameraHandle, "isInsideScreen", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		let Some(pos) = a.first().and_then(|p| xy(vm, &p.0)) else { return Ok::<bool, String>(false) };
+		let margin = a.get(1).and_then(|m| m.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i32);
+		let view = view(&c.0);
+		let screen = Screen::of(vm);
+		Ok(screen.contains(screen.to_screen(view.pos, view.zoom, pos), margin))
+	});
 	// `update` fires the camera's moved-callbacks (none registered here); the world
 	// camera has no levels to climb.
 	for name in ["climbBy", "update"] {
