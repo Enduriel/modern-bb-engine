@@ -160,6 +160,20 @@ impl Default for UiBridge {
 	}
 }
 
+/// Drop `h`'s connection and tell the UI host (`JSHandle.disconnect`, `0x56b290`).
+fn disconnect_handle(vm: &SQVM, h: &JsHandle) {
+	let frontend = {
+		let mut st = h.state.borrow_mut();
+		st.connections.remove(&(h.screen.clone(), h.module.clone()));
+		st.handles.remove(&h.id);
+		st.frontend.clone()
+	};
+	if let Some(frontend) = frontend {
+		let bridge = UiBridge { state: h.state.clone() };
+		frontend.disconnect(vm, &bridge, h.id, &h.screen, h.module.as_deref());
+	}
+}
+
 impl UiBridge {
 	/// A fresh bridge with an empty registry + log.
 	pub fn new() -> Self {
@@ -203,6 +217,7 @@ impl UiBridge {
 					}
 				},
 			)
+			.method("disconnect", |h: &mut JsHandle, vm: &SQVM| disconnect_handle(vm, h))
 			.method(
 				"connectToModule",
 				|h: &mut JsHandle, vm: &SQVM, module_id: String, obj: Retained| -> SqStrongRef {
@@ -259,24 +274,13 @@ impl UiBridge {
 
 		// UI.disconnect(handle) -> null: forget the connection; null so callers can
 		// do `m.JSHandle = UI.disconnect(m.JSHandle)`.
-		let disconnect = {
-			let state = self.state.clone();
-			vm.make_closure(move |vm: &SQVM, handle: Option<Native<JsHandle>>| {
-				if let Some(h) = handle {
-					let frontend = {
-						let mut st = state.borrow_mut();
-						st.connections
-							.remove(&(h.0.screen.clone(), h.0.module.clone()));
-						st.handles.remove(&h.0.id);
-						st.frontend.clone()
-					};
-					if let Some(frontend) = frontend {
-						let bridge = UiBridge { state: state.clone() };
-						frontend.disconnect(vm, &bridge, h.0.id, &h.0.screen, h.0.module.as_deref());
-					}
-				}
-			})
-		};
+		// `UI.disconnect(handle)` is the handle's own `disconnect()` (`0x539fc0` calls
+		// `0x56b290`), returning null.
+		let disconnect = vm.make_closure(move |vm: &SQVM, handle: Option<Native<JsHandle>>| {
+			if let Some(h) = handle {
+				disconnect_handle(vm, &h.0);
+			}
+		});
 
 		// The cursor (the original's `0x53a050`, `0x53a100`, `0x539fe0`): its position
 		// as last set, and whether it is over the UI, which the UI host decides.

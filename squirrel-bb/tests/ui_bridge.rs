@@ -125,3 +125,25 @@ fn disconnect_forgets_the_connection_and_returns_null() {
 
 	bridge.clear();
 }
+
+/// A handle disconnects itself as `UI.disconnect(handle)` does (which calls it in the
+/// original).
+#[test]
+fn a_handle_disconnects_itself() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let bridge = UiBridge::new();
+	bridge.install(&mut vm);
+
+	vm.run_script(
+		r#"
+		local h = this.UI.connect("Gone", { function onX() {} });
+		h.disconnect();
+		"#,
+		"ui_bridge_handle_disconnect",
+	)
+	.expect("connect + the handle's disconnect run");
+	assert!(bridge.receiver("Gone", None).is_none(), "the handle forgot its connection");
+
+	bridge.clear();
+}

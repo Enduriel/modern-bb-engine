@@ -49,7 +49,6 @@ campaign/natives_objects | get world_clouds.* | a plain table here, with the ori
 campaign/natives_objects | set world_clouds.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | get world_birds.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | set world_birds.* | a plain table here, with the original's fields; a class instance there
-campaign/natives_objects | native js_handle.disconnect | the UI handle's disconnect (worklist)
 campaign/natives_objects | get gameplay_settings.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | set gameplay_settings.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | get temp_gameplay_settings.* | a plain table here, with the original's fields; a class instance there
@@ -74,4 +73,3 @@ campaign/natives_objects | get tactical_clouds.* | a plain table here, with the 
 campaign/natives_objects | set tactical_clouds.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | get tactical_rain.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | set tactical_rain.* | a plain table here, with the original's fields; a class instance there
-campaign/natives_objects | native tactical_js_handle.disconnect | the UI handle's disconnect (worklist)
