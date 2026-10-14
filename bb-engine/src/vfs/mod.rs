@@ -5,19 +5,23 @@
 //! (e.g. `scripts/ai/tactical/agent.cnut`). The mod-overlay / file-replacement
 //! layer (multiple archives + loose mod `.zip`s, later entries shadowing earlier)
 //! will build on top of this.
+//!
+//! An archive is parsed once per process ([`opened`]): every opener of the same file
+//! shares its index.
 
-use std::fs::File;
-use std::io::{self, BufReader, Read};
+mod opened;
+mod shared_file;
+
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
+use shared_file::SharedFile;
+
 /// A single opened `.dat` (ZIP) archive.
 pub struct DatArchive {
-	/// Buffered: the `zip` crate parses the central directory and entry headers in many
-	/// small reads, each a syscall on a bare `File` (opening vanilla's archives took
-	/// ~120 ms unbuffered, ~7 ms buffered).
-	archive: ZipArchive<BufReader<File>>,
+	archive: ZipArchive<SharedFile>,
 	path: PathBuf,
 }
 
@@ -27,8 +31,7 @@ impl DatArchive {
 	/// whole).
 	pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
 		let path = path.as_ref().to_path_buf();
-		let file = BufReader::new(File::open(&path)?);
-		let archive = ZipArchive::new(file).map_err(zip_to_io)?;
+		let archive = opened::open(&path)?;
 		Ok(DatArchive { archive, path })
 	}
 
