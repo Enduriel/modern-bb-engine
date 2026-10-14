@@ -32,6 +32,32 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 	Ok(dats)
 }
 
+/// The installed mods in `dir`: every `.zip`, in the order the original mounts them
+/// after the `data_*.dat` archives (by name; a later archive wins). The probe harness's
+/// own zip (`mod_zz_bb_probe`, present only while a probe runs) is left out.
+pub fn mod_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
+	let mut zips: Vec<PathBuf> = std::fs::read_dir(dir)?
+		.flatten()
+		.map(|e| e.path())
+		.filter(|p| {
+			p.file_name().is_some_and(|n| {
+				let n = n.to_string_lossy();
+				n.ends_with(".zip") && !n.starts_with("mod_zz_bb_probe")
+			})
+		})
+		.collect();
+	zips.sort();
+	Ok(zips)
+}
+
+/// An engine over the install at `dir` with its mods mounted ([`mod_archives`]), as the
+/// original loads them.
+pub fn open_install_with_mods(dir: &Path) -> io::Result<GameEngine> {
+	let mut archives = data_archives(dir)?;
+	archives.extend(mod_archives(dir)?);
+	open_archives(archives)
+}
+
 /// An engine over the install at `dir`, configured as the original sees a Steam install:
 /// DLC ownership is whichever DLC archives Steam installed (each ships its own
 /// `scripts/dlc/` init script). Transcoded scripts are cached on disk as
@@ -40,7 +66,12 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 /// to load is reported on stderr, and so is a missing fog-of-war stamp. The engine's own random stream is unpredictably
 /// seeded like the original's, unless `BB_ENGINE_SEED` gives a seed (for reproducible renders).
 pub fn open_install(dir: &Path) -> io::Result<GameEngine> {
-	let source = DatScriptSource::open(data_archives(dir)?)?.with_cache(ScriptCache::from_env());
+	open_archives(data_archives(dir)?)
+}
+
+/// An engine over `archives` (in mount order), configured as [`open_install`] says.
+fn open_archives(archives: Vec<PathBuf>) -> io::Result<GameEngine> {
+	let source = DatScriptSource::open(archives)?.with_cache(ScriptCache::from_env());
 	let sprites = source.with_archives(|archives| load_sprites(archives));
 	for failure in &sprites.failures {
 		eprintln!("[Error] brush {failure}");
