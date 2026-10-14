@@ -1,7 +1,7 @@
 //! The game's video mode put on the window: the monitor it's on, and the window set to
 //! a [`Placement`] (see `bb_app::display`).
 
-use bb_app::display::{MonitorMode, Placement};
+use bb_app::display::{MIN_WINDOW, MonitorMode, Placement};
 use winit::dpi::PhysicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::{MonitorHandle, VideoModeHandle};
@@ -82,6 +82,7 @@ pub fn attributes(placement: Placement, monitor: &Monitor, size: (u32, u32)) -> 
 	match placement {
 		Placement::Window { decorated, width, height } => attributes
 			.with_decorations(decorated)
+			.with_min_inner_size(PhysicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1))
 			.with_inner_size(PhysicalSize::new(width, height)),
 		_ => attributes
 			.with_inner_size(PhysicalSize::new(size.0, size.1))
@@ -98,9 +99,11 @@ pub fn apply(window: &Window, placement: Placement, monitor: &Monitor, size: (u3
 			window.set_fullscreen(None);
 			window.set_decorations(decorated);
 			window.set_resizable(true);
+			window.set_min_inner_size(Some(PhysicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1)));
 			window.request_inner_size(PhysicalSize::new(width, height))
 		}
 		_ => {
+			window.set_min_inner_size(None::<PhysicalSize<u32>>);
 			let took = window.request_inner_size(PhysicalSize::new(size.0, size.1));
 			window.set_fullscreen(monitor.fullscreen(placement));
 			took

@@ -8,7 +8,13 @@
 //! - A borderless mode of the monitor's size is borderless fullscreen, which the
 //!   system then places over the whole monitor.
 //! - A window can be resized, and the game's screen follows it (the original's window
-//!   can't be).
+//!   can't be), down to [`MIN_WINDOW`].
+
+/// The smallest a window gets: the smallest resolution the Options screen lists
+/// (vanilla's `Const.Options.Video.MinResolution`). The UI isn't laid out for less,
+/// and the Options screen would list no resolution for a smaller window: its Apply then
+/// fails as a whole ("Invalid index"), whatever else was changed.
+pub const MIN_WINDOW: (u32, u32) = (1024, 768);
 
 /// One of the monitor's modes.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -55,8 +61,8 @@ impl Placement {
 		}
 		Placement::Window {
 			decorated: !mode.borderless,
-			width: size.0,
-			height: size.1,
+			width: size.0.max(MIN_WINDOW.0),
+			height: size.1.max(MIN_WINDOW.1),
 		}
 	}
 
@@ -127,7 +133,7 @@ mod tests {
 		assert_eq!(Placement::of(&borderless, (2560, 1440), &[], true), Placement::Borderless);
 		let small = VideoMode {
 			width: 1280,
-			height: 720,
+			height: 800,
 			..borderless
 		};
 		let window = Placement::of(&small, (2560, 1440), &[], true);
@@ -136,12 +142,26 @@ mod tests {
 			Placement::Window {
 				decorated: false,
 				width: 1280,
-				height: 720
+				height: 800
 			}
 		);
 		assert!(window.follows_window());
 		let decorated = Placement::of(&VideoMode { borderless: false, ..small }, (2560, 1440), &[], true);
 		assert!(matches!(decorated, Placement::Window { decorated: true, .. }));
+		let tiny = VideoMode {
+			width: 800,
+			height: 600,
+			..small
+		};
+		assert_eq!(
+			Placement::of(&tiny, (2560, 1440), &[], true),
+			Placement::Window {
+				decorated: false,
+				width: 1024,
+				height: 768
+			},
+			"no smaller than the Options screen's smallest"
+		);
 	}
 
 	#[test]

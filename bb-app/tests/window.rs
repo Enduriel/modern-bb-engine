@@ -90,16 +90,18 @@ fn bb_exits_cleanly() {
 }
 
 /// The scripts' video mode, set as the Options screen sets it, goes on the window at
-/// once: a window resized, then borderless over the monitor; and the mode they keep is
-/// kept in the settings file.
+/// once: a window resized (no smaller than the Options screen's smallest resolution,
+/// and the scripts' mode follows the window), then borderless over the monitor; and the
+/// mode they keep is kept in the settings file.
 #[test]
 fn the_video_mode_applies_live() {
 	let dir = run_dir("live");
 	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
-	let start = "video.width = 1280\nvideo.height = 720\nvideo.fullscreen = false\nvideo.borderless = false\n";
+	let start = "video.width = 1280\nvideo.height = 800\nvideo.fullscreen = false\nvideo.borderless = false\n";
 	std::fs::write(&settings, start).expect("the settings");
-	let resize = "local m = ::Settings.getVideoMode(); m.Width = 1024; m.Height = 640; \
+	let resize = "local m = ::Settings.getVideoMode(); m.Width = 800; m.Height = 600; \
 		::Settings.setVideoMode(m); ::Settings.saveWithCustomVideoMode(m);";
+	let report = "local m = ::Settings.getVideoMode(); ::logWarning(\"mode \" + m.Width + \"x\" + m.Height);";
 	let borderless = "local m = ::Settings.getVideoMode(); m.Borderless = true; m.Width = 1600; m.Height = 900; \
 		::Settings.setVideoMode(m);";
 	let args = [
@@ -108,6 +110,9 @@ fn the_video_mode_applies_live() {
 		"--at",
 		"10",
 		resize,
+		"--at",
+		"15",
+		report,
 		"--at",
 		"20",
 		borderless,
@@ -118,10 +123,11 @@ fn the_video_mode_applies_live() {
 	let Some(run) = run_bb(&dir, (1600, 900), &args) else { return };
 	assert_eq!(run.status, "0", "{}", run.stderr);
 	let placements: Vec<&str> = run.stderr.lines().filter(|l| l.starts_with("video: ")).collect();
-	assert!(placements[0].starts_with("video: 1280x720 Window { decorated: true, width: 1280, height: 720 }"), "{placements:?}");
-	assert_eq!(placements[1..], ["video: 1024x640 Window { decorated: true, width: 1024, height: 640 }", "video: 1600x900 Borderless"]);
+	assert!(placements[0].starts_with("video: 1280x800 Window { decorated: true, width: 1280, height: 800 }"), "{placements:?}");
+	assert_eq!(placements[1..], ["video: 800x600 Window { decorated: true, width: 1024, height: 768 }", "video: 1600x900 Borderless"]);
+	assert!(run.stderr.contains("mode 1024x768"), "the window kept at the smallest, the mode following it:\n{}", run.stderr);
 	assert_eq!(png_size(&shot), (1600, 900), "borderless over the monitor");
 	let kept = std::fs::read_to_string(&settings).expect("the settings");
-	assert!(kept.contains("video.width = 1024\n") && kept.contains("video.height = 640\n"), "the mode kept:\n{kept}");
+	assert!(kept.contains("video.width = 800\n") && kept.contains("video.height = 600\n"), "the mode kept:\n{kept}");
 	assert!(kept.contains("video.borderless = false\n"), "the borderless mode wasn't kept:\n{kept}");
 }
