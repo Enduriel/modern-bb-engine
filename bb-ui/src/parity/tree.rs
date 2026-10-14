@@ -350,6 +350,14 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
 			golden_style("position") == Some("absolute")
 				&& matches!((margin("margin-top"), margin("margin-bottom")), (Some(t), Some(b)) if (t - b).abs() <= 1.0)
 		}
+		// Seen on the battle screen: for a box centred by `margin: auto` (the turn bar's
+		// 100rem-wide middle, `position: relative`), old WebKit reports the used margins
+		// (780px either side) and Chromium 0px, with the box in the same place.
+		"margin-left" | "margin-right" => {
+			let margin = |key: &str| golden_style(key).and_then(pixels);
+			mine == "0px"
+				&& matches!((margin("margin-left"), margin("margin-right")), (Some(l), Some(r)) if (l - r).abs() <= 1.0)
+		}
 		// A transform's translation is in pixels: it follows the box's size, which may be
 		// a pixel off (`translateY(-50%)` of an 18px or a 19px label).
 		"transform" => {
