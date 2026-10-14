@@ -1,7 +1,7 @@
-//! [`Gpu`]: the wgpu device and queue, opened without a window.
+//! [`Gpu`]: the wgpu device and queue, opened without a window or for one.
 //!
-//! Rendering starts headless: frames go to offscreen targets that tests
-//! read back as images. A window surface comes later and uses the same device.
+//! Frames render into offscreen targets: tests read them back as images, and a window
+//! presents them on its surface ([`Presenter`](crate::Presenter)).
 
 use std::future::Future;
 use std::pin::pin;
@@ -14,6 +14,8 @@ pub struct Gpu {
 	pub queue: wgpu::Queue,
 	/// The adapter's name and backend, for logs.
 	pub adapter: String,
+	/// The adapter, kept when opened for a window (to query its surface).
+	surface_adapter: Option<wgpu::Adapter>,
 }
 
 impl Gpu {
@@ -40,7 +42,39 @@ impl Gpu {
 			device,
 			queue,
 			adapter: format!("{} ({:?})", info.name, info.backend),
+			surface_adapter: None,
 		})
+	}
+
+	/// Open an adapter that can present to `surface` (made from `instance`).
+	pub fn for_surface(instance: &wgpu::Instance, surface: &wgpu::Surface) -> Result<Gpu, String> {
+		let options = wgpu::RequestAdapterOptions {
+			power_preference: wgpu::PowerPreference::from_env()
+				.unwrap_or(wgpu::PowerPreference::HighPerformance),
+			compatible_surface: Some(surface),
+			..Default::default()
+		};
+		let adapter = block_on(instance.request_adapter(&options))
+			.map_err(|e| format!("no GPU adapter for the window: {e}"))?;
+		let info = adapter.get_info();
+		let descriptor = wgpu::DeviceDescriptor {
+			label: Some("bb-render"),
+			..Default::default()
+		};
+		let (device, queue) = block_on(adapter.request_device(&descriptor))
+			.map_err(|e| format!("no GPU device: {e}"))?;
+		Ok(Gpu {
+			device,
+			queue,
+			adapter: format!("{} ({:?})", info.name, info.backend),
+			surface_adapter: Some(adapter),
+		})
+	}
+
+	/// The formats, present modes and alpha modes `surface` supports on this device's
+	/// adapter (`None` for a headless device).
+	pub fn surface_capabilities(&self, surface: &wgpu::Surface) -> Option<wgpu::SurfaceCapabilities> {
+		self.surface_adapter.as_ref().map(|a| surface.get_capabilities(a))
 	}
 
 	/// Block until the GPU has finished all submitted work.
