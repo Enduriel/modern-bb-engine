@@ -46,6 +46,11 @@ impl SQVM {
 		SQVM { ptr }
 	}
 
+	fn context_ref(&self) -> &VmContext {
+		// SAFETY: as `context`; shared access only.
+		unsafe { &*(squirrel_sys::sq_getforeignptr(self.ptr) as *const VmContext) }
+	}
+
 	fn context(&mut self) -> &mut VmContext {
 		// SAFETY: `new` installed a non-null `VmContext` as the foreign pointer and
 		// only `Drop` clears it; `&mut self` ensures exclusive access.
@@ -70,9 +75,15 @@ impl SQVM {
 	/// Install the Squirrel stdlib error handlers: an unhandled runtime error then
 	/// prints a full call stack (function + source:line + locals) via the print
 	/// handler before the call returns. Invaluable for locating a script error;
-	/// call after [`set_print_handler`](Self::set_print_handler).
+	/// call after [`set_print_handler`](Self::set_print_handler). Compile errors keep
+	/// going to [`set_compile_error_handler`](Self::set_compile_error_handler) (the
+	/// stdlib would take those over too), so [`compile_capturing`](Self::compile_capturing)
+	/// still works.
 	pub fn install_standard_error_handlers(&mut self) {
-		unsafe { squirrel_sys::sqstd_seterrorhandlers(self.as_ptr()) };
+		unsafe {
+			squirrel_sys::sqstd_seterrorhandlers(self.as_ptr());
+			squirrel_sys::sq_setcompilererrorhandler(self.as_ptr(), Some(compile_error_trampoline));
+		}
 	}
 
 	/// The raw VM handle. Crate-internal: the safe wrappers in the sibling

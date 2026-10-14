@@ -59,6 +59,22 @@ impl SQVM {
 		}
 	}
 
+	/// Compile `source` like [`compile`](Self::compile), but hand a compile error back
+	/// (message, line, column) instead of reporting it to the compile-error handler.
+	pub fn compile_capturing(&self, source: &str, source_name: &str) -> Result<SqStrongRef, crate::CompileError> {
+		self.context_ref().begin_capture();
+		let result = self.compile(source, source_name);
+		let captured = self.context_ref().end_capture();
+		result.map_err(|fallback| {
+			captured.unwrap_or(crate::CompileError {
+				message: fallback,
+				source: source_name.to_string(),
+				line: 0,
+				column: 0,
+			})
+		})
+	}
+
 	/// Compile `source` into a closure without running it (e.g. to flag it with
 	/// [`SqStrongRef::set_f32_math`] first). Run it with [`SqStrongRef::call`].
 	pub fn compile(&self, source: &str, source_name: &str) -> Result<SqStrongRef, String> {
@@ -208,5 +224,18 @@ mod tests {
 		// The VM is still usable after both error kinds.
 		vm.run_script("::ok <- 1;", "after")
 			.expect("vm still usable");
+	}
+
+	#[test]
+	fn a_compile_error_comes_back_with_its_position() {
+		let mut vm = SQVM::new(1024);
+		let reported = Rc::new(std::cell::Cell::new(false));
+		let flag = reported.clone();
+		vm.set_compile_error_handler(move |_e| flag.set(true));
+		let err = vm.compile_capturing("this is not squirrel (", "test").err().expect("a compile error");
+		assert_eq!((err.line, err.column), (1, 7), "{}", err.message);
+		assert!(!err.message.is_empty());
+		assert!(!reported.get(), "the handler was called too");
+		assert!(vm.compile_capturing("return 1;", "ok").is_ok());
 	}
 }

@@ -37,6 +37,9 @@ pub(crate) struct VmContext {
 	print: Option<Box<dyn Fn(&str)>>,
 	error: Option<Box<dyn Fn(&str)>>,
 	compile_error: Option<Box<dyn Fn(&CompileError)>>,
+	/// While set, compile errors are kept here instead of going to the handler
+	/// ([`SQVM::compile_capturing`](super::SQVM::compile_capturing)).
+	captured: std::cell::RefCell<Option<Option<CompileError>>>,
 }
 
 impl VmContext {
@@ -45,6 +48,7 @@ impl VmContext {
 			print: None,
 			error: None,
 			compile_error: None,
+			captured: std::cell::RefCell::new(None),
 		})
 	}
 
@@ -56,6 +60,16 @@ impl VmContext {
 	}
 	pub(crate) fn set_compile_error(&mut self, handler: Box<dyn Fn(&CompileError)>) {
 		self.compile_error = Some(handler);
+	}
+
+	/// Start keeping compile errors instead of reporting them.
+	pub(crate) fn begin_capture(&self) {
+		*self.captured.borrow_mut() = Some(None);
+	}
+
+	/// Stop keeping them; the error kept since [`begin_capture`](Self::begin_capture).
+	pub(crate) fn end_capture(&self) -> Option<CompileError> {
+		self.captured.borrow_mut().take().flatten()
 	}
 }
 
@@ -146,7 +160,14 @@ pub(crate) unsafe extern "C" fn compile_error_trampoline(
 		.unwrap_or("invalid UTF-8 in source")
 		.to_owned();
 
-	match unsafe { context(vm) }.and_then(|c| c.compile_error.as_ref()) {
+	let ctx = unsafe { context(vm) };
+	if let Some(slot) = ctx.map(|c| &c.captured) {
+		if let Some(captured) = slot.borrow_mut().as_mut() {
+			*captured = Some(CompileError { message, source, line, column });
+			return;
+		}
+	}
+	match ctx.and_then(|c| c.compile_error.as_ref()) {
 		Some(handler) => handler(&CompileError {
 			message,
 			source,
