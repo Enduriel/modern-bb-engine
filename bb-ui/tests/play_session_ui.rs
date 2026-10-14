@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_engine::tactical_player as player;
@@ -66,17 +66,43 @@ impl Play {
 
 	/// Run the game until the scripts' `cond` holds.
 	fn until(&self, cond: &str, timeout: Duration) -> Result<(), String> {
-		let deadline = std::time::Instant::now() + timeout;
+		let deadline = self.deadline(timeout)?;
 		loop {
 			if self.int(&format!("({cond}) ? 1 : 0"))? == 1 {
 				return Ok(());
 			}
-			if std::time::Instant::now() > deadline {
+			if self.past(&deadline)? {
 				return Err(format!("still not true: {cond}"));
 			}
 			self.session.step(1000.0 / 60.0)?;
 		}
 	}
+
+	/// The game's own clock (s): its frames' time (`Time.getRealTimeF`, a 60th of a
+	/// second a step here), which a busy machine doesn't run short as it does the
+	/// clock's.
+	fn game_time(&self) -> Result<f64, String> {
+		Ok(self.int("(::Time.getRealTimeF() * 1000).tointeger()")? as f64 / 1000.0)
+	}
+
+	/// A limit `after` from now in the game's time. The clock only stops a loop that
+	/// no longer advances the game, at ten times as long.
+	fn deadline(&self, after: Duration) -> Result<Deadline, String> {
+		Ok(Deadline {
+			game: self.game_time()? + after.as_secs_f64(),
+			clock: Instant::now() + after * 10,
+		})
+	}
+
+	fn past(&self, deadline: &Deadline) -> Result<bool, String> {
+		Ok(self.game_time()? > deadline.game || Instant::now() > deadline.clock)
+	}
+}
+
+/// See [`Play::deadline`].
+struct Deadline {
+	game: f64,
+	clock: Instant,
 }
 
 fn new_campaign(p: &Play) -> Result<(), String> {
@@ -133,10 +159,10 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 		player.setDestination(::__town.getPos());
 		::World.State.setPause(false);
 	"#;
-	let deadline = std::time::Instant::now() + STEP * 3;
+	let deadline = p.deadline(STEP * 3)?;
 	let mut last = String::new();
 	loop {
-		ensure(std::time::Instant::now() < deadline, format!("still travelling to {town} (facing {last})"))?;
+		ensure(!p.past(&deadline)?, format!("still travelling to {town} (facing {last})"))?;
 		if p.int("::World.State.m.LastEnteredTown != null && ::World.State.m.WorldTownScreen.isVisible() && ::World.State.getCurrentTown().getID() == ::__town.getID() ? 1 : 0")? == 1 {
 			break;
 		}
@@ -558,10 +584,10 @@ fn adventure(p: &Play) -> Result<(), String> {
 	let money = || p.int("::World.Assets.getMoney()");
 	let active = || p.int("::World.Contracts.getActiveContract() != null ? 1 : 0");
 	let reward = p.int("::World.Contracts.getActiveContract().getPayment().getOnCompletion()")?;
-	let deadline = std::time::Instant::now() + Duration::from_secs(900);
+	let deadline = p.deadline(Duration::from_secs(900))?;
 	let (mut battles, mut last, mut paid) = (0, String::new(), None);
 	loop {
-		ensure(std::time::Instant::now() < deadline, format!("the contract took too long (facing {last})"))?;
+		ensure(!p.past(&deadline)?, format!("the contract took too long (facing {last})"))?;
 		let facing = p.text(FACING)?;
 		if facing == "done" {
 			break;
@@ -613,11 +639,11 @@ fn battle(p: &Play) -> Result<(), String> {
 	let foe = p.text("::__foe")?;
 	let stash = || p.int("::World.Assets.getStash().getNumberOfFilledSlots()");
 	let before = stash()?;
-	let deadline = std::time::Instant::now() + Duration::from_secs(600);
+	let deadline = p.deadline(Duration::from_secs(600))?;
 	let (mut battles, mut last) = (0, String::new());
 	let mut waited = 0;
 	loop {
-		ensure(std::time::Instant::now() < deadline, format!("the battle took too long (facing {last})"))?;
+		ensure(!p.past(&deadline)?, format!("the battle took too long (facing {last})"))?;
 		let facing = p.text(FACING)?;
 		waited = if battles > 0 && facing == "wait" { waited + 1 } else { 0 };
 		ensure(waited < 1800, "after the battle, still waiting 30 s on")?;
@@ -638,9 +664,9 @@ fn battle(p: &Play) -> Result<(), String> {
 /// Run the world, out on the map, until `cond` holds, answering events meanwhile and
 /// keeping the world running (an event pauses it).
 fn out_on_the_map_until(p: &Play, cond: &str, timeout: Duration) -> Result<(), String> {
-	let deadline = std::time::Instant::now() + timeout;
+	let deadline = p.deadline(timeout)?;
 	while p.int(&format!("({cond}) ? 1 : 0"))? == 0 {
-		ensure(std::time::Instant::now() < deadline, format!("still not true: {cond}"))?;
+		ensure(!p.past(&deadline)?, format!("still not true: {cond}"))?;
 		if p.text(FACING)? == "event" {
 			answer_event(p)?;
 		} else {
@@ -655,7 +681,7 @@ fn out_on_the_map_until(p: &Play, cond: &str, timeout: Duration) -> Result<(), S
 /// may be away for a moment (a contract's or an event's screen over it): leave once
 /// it's back.
 fn leave_town(p: &Play) -> Result<(), String> {
-	let deadline = std::time::Instant::now() + STEP;
+	let deadline = p.deadline(STEP)?;
 	loop {
 		let state = p.text("(::World.State.m.WorldTownScreen.isVisible() ? \"shown\" : \"away\") + \" \" + (::World.State.m.LastEnteredTown == null ? \"out\" : \"in\")")?;
 		match state.as_str() {
@@ -667,7 +693,7 @@ fn leave_town(p: &Play) -> Result<(), String> {
 			_ if p.text(FACING)? == "event" => answer_event(p)?,
 			_ => p.session.step(1000.0 / 60.0)?,
 		}
-		ensure(std::time::Instant::now() < deadline, format!("still in town ({state})"))?;
+		ensure(!p.past(&deadline)?, format!("still in town ({state})"))?;
 	}
 }
 
