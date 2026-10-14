@@ -5,6 +5,7 @@
 //! cargo run --release -p bb-app --features ui --example memory_inventory -- \
 //!     [--battles N] [--days N] [--until POINT] [--seed SEED] [--out REPORT.md]
 //!     [--devtools PORT --hold SECONDS]
+//! cargo run --release -p bb-app --example memory_inventory -- --engine-only [--mods]
 //! ```
 //!
 //! The session: a new campaign's world; `--battles` battles (default 12), each against
@@ -25,6 +26,10 @@
 //! With `--devtools`, the page serves DevTools on that port, and `--hold` keeps the game
 //! running at its real pace that long after the last point, for Chromium's own memory
 //! dump (memory-infra over the DevTools protocol).
+//!
+//! `--engine-only` measures the engine alone, headless (no renderer, no page), at the main
+//! menu and on a new campaign's world; with `--mods`, with the install's mods mounted (bb
+//! doesn't draw mods' sprites yet, so this is how mods' share is measured).
 //!
 //! The report is Markdown, written to `--out` (or printed). Linux only for now (the
 //! processes' breakdown).
@@ -151,6 +156,8 @@ struct Options {
 	out: Option<PathBuf>,
 	devtools: Option<u16>,
 	hold: u64,
+	engine_only: bool,
+	mods: bool,
 }
 
 fn options() -> Result<Options, String> {
@@ -163,6 +170,8 @@ fn options() -> Result<Options, String> {
 		out: None,
 		devtools: None,
 		hold: 0,
+		engine_only: false,
+		mods: false,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -176,6 +185,8 @@ fn options() -> Result<Options, String> {
 			"--until" => o.until = Some(value()?),
 			"--devtools" => o.devtools = Some(value()?.parse().map_err(|_| "--devtools PORT")?),
 			"--hold" => o.hold = value()?.parse().map_err(|_| "--hold SECONDS")?,
+			"--engine-only" => o.engine_only = true,
+			"--mods" => o.mods = true,
 			_ => return Err(format!("unknown argument {arg}")),
 		}
 	}
@@ -257,8 +268,8 @@ struct Sample {
 	dead_units: usize,
 	world_entities: usize,
 	saves: (usize, usize),
-	/// The sound bank: sounds, decoded bytes, streamed bytes kept.
-	sounds: (usize, usize, usize),
+	/// The sound bank: sounds, decoded bytes, streamed bytes playing, prefetches unplayed.
+	sounds: (usize, usize, usize, usize),
 	ui_log: Option<usize>,
 }
 
@@ -556,6 +567,78 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 	Ok(())
 }
 
+/// `--engine-only`: the engine headless, with the install's mods if `--mods`, at the main
+/// menu and on a new campaign's world (MSU's new-campaign settings kept as they are).
+fn engine_only(o: &Options) -> Result<String, String> {
+	let io = |e: std::io::Error| e.to_string();
+	let mut archives = harness::data_archives(&o.data).map_err(io)?;
+	let mods = if o.mods { harness::mod_archives(&o.data).map_err(io)? } else { Vec::new() };
+	archives.extend(mods.iter().cloned());
+	let engine = harness::open_mounted(&o.data, archives, |_| {}).map_err(io)?;
+	harness::boot_menu(&engine)?;
+	let run = |frames: u32| (0..frames).try_for_each(|_| harness::run_frame(&engine, SETTLE_MS));
+	let flag = |cond: &str| player::eval_i64(&engine, &format!("({cond}) ? 1 : 0")).map(|v| v == Some(1));
+	let mut rows: Vec<(String, Vec<ProcessMemory>, u64, u64)> = Vec::new();
+	let mut sample = |point: &str| {
+		heap_profile(rows.len(), point);
+		let m = unsafe { mallinfo2() };
+		rows.push((point.to_string(), stats::tree_memory().unwrap_or_default(), (m.uordblks + m.hblkhd) as u64, m.fordblks as u64));
+	};
+	run(120)?;
+	sample("main menu");
+	const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
+	engine.run_script(&format!("{MENU}.getMainMenuModule().onNewCampaignButtonPressed();"), "new campaign")?;
+	run(1)?;
+	engine.run_script(
+		&format!(
+			"{MENU}.getNewCampaignMenuModule().onStartButtonPressed({{
+				companyName = \"Measured\", banner = \"banner_04\",
+				combatDifficulty = 1, economicDifficulty = 1, budgetDifficulty = 1,
+				ironman = false, explorationDifficulty = false,
+				lateGameCrisis = ::Const.World.GreaterEvilType.Random, permanentDestruction = false,
+				seed = \"{}\", origin = \"scenario.early_access\"
+			}});",
+			o.seed
+		),
+		"start",
+	)?;
+	let msu_settings = "(\"MSU\" in ::getroottable()) && ::MSU.SettingsScreen.isVisible()";
+	for _ in 0..6000 {
+		if flag(IN_WORLD)? {
+			break;
+		}
+		if flag(msu_settings)? {
+			engine.run_script("::MSU.SettingsScreen.onSaveButtonPressed({});", "MSU settings")?;
+		}
+		run(1)?;
+	}
+	if !flag(IN_WORLD)? {
+		return Err("the campaign didn't start".into());
+	}
+	engine.run_script("::World.State.setAutoPause(false); ::World.State.setPause(false);", "unpause")?;
+	run(600)?;
+	sample("world, fresh");
+	let mut r = format!(
+		"# Memory inventory, the engine alone\n\nHeadless (no renderer, no page), seed `{}`, {} mods. MB.\n\n| | {} |\n|---|{}\n",
+		o.seed,
+		mods.len(),
+		rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>().join(" | "),
+		"---:|".repeat(rows.len())
+	);
+	let line = |name: &str, f: &dyn Fn(&(String, Vec<ProcessMemory>, u64, u64)) -> String| {
+		format!("| {name} | {} |\n", rows.iter().map(f).collect::<Vec<_>>().join(" | "))
+	};
+	r += &line("PSS", &|r| mb(r.1.iter().map(ProcessMemory::pss).sum()));
+	for k in [MappingKind::Heap, MappingKind::Anonymous, MappingKind::Files] {
+		r += &line(&format!("&nbsp;&nbsp;{}", k.name()), &|r| {
+			mb(r.1.iter().flat_map(|p| p.kinds.iter()).filter(|(kk, _)| *kk == k).map(|(_, b)| *b).sum())
+		});
+	}
+	r += &line("malloc: in use", &|r| mb(r.2));
+	r += &line("malloc: held free", &|r| mb(r.3));
+	Ok(r)
+}
+
 /// The CEF processes' role groups, in the report's order.
 fn group(role: &str) -> &'static str {
 	match role {
@@ -639,8 +722,9 @@ fn report(o: &Options, samples: &[Sample], battles: &[String], stopped: Option<&
 	row("world entity records", &|s| s.world_entities.to_string());
 	row("saves kept in memory (MB)", &|s| format!("{} ({})", s.saves.0, mb(s.saves.1 as u64)));
 	row("sound bank: sounds", &|s| s.sounds.0.to_string());
-	row("&nbsp;&nbsp;decoded (trimmed at 64)", &|s| mb(s.sounds.1 as u64));
-	row("&nbsp;&nbsp;streamed files kept whole", &|s| mb(s.sounds.2 as u64));
+	row("&nbsp;&nbsp;decoded (trimmed at 32)", &|s| mb(s.sounds.1 as u64));
+	row("&nbsp;&nbsp;long sounds playing (their files)", &|s| mb(s.sounds.2 as u64));
+	row("&nbsp;&nbsp;prefetched, not yet played", &|s| s.sounds.3.to_string());
 	if ui {
 		row("UI log lines", &|s| s.ui_log.map_or("-".to_string(), |n| n.to_string()));
 	}
@@ -688,10 +772,19 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// As bb sets up the C allocator, for itself and the browser's processes.
+	bb_app::platform::tune_allocator();
 	let result = (|| -> Result<(), String> {
 		let o = options()?;
 		if !Path::new(&o.data).exists() {
 			return Err(format!("{} not present", o.data.display()));
+		}
+		if o.engine_only {
+			let report = engine_only(&o)?;
+			return match &o.out {
+				Some(path) => std::fs::write(path, report).map_err(|e| format!("{}: {e}", path.display())),
+				None => Ok(print!("{report}")),
+			};
 		}
 		let gpu = Gpu::headless()?;
 		let (samples, battles, stopped) = run(&gpu, &o)?;
