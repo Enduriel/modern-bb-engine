@@ -24,11 +24,39 @@
 //! from the map's bottom (y up), as the render target's are. The brush's picture comes
 //! from the host ([`FogMask::set_stamp`]); without one, uncovering leaves the mask as
 //! it is.
+//!
+//! Divergence (the world map can be any size; see `docs/differences.md`): the
+//! original's mask is always 2048². Ours is 2048² up to the vanilla map's extent and
+//! grows with a larger map, so a texel covers no more of the world than at vanilla size
+//! ([`mask_size_for`]).
 
 use super::save::stream::{SaveReader, SaveWriter};
 
-/// Texels along each side of the mask.
+/// Texels along each side of the original's mask, and of ours up to the vanilla map's
+/// extent.
 pub const MASK_SIZE: usize = 2048;
+
+/// The extent of the vanilla map (140 × 170 tiles, as `fog_extent` takes it), which a
+/// 2048² mask spans.
+fn vanilla_extent() -> (f32, f32) {
+	let (x, y) = super::world_layout::tile_pos(140, 170);
+	(x.trunc() as f32, y.trunc() as f32)
+}
+
+/// The largest mask: a GPU texture side every adapter takes.
+const MAX_MASK_SIZE: usize = 8192;
+
+/// The side of a mask spanning `world`: 2048 up to the vanilla extent, and beyond it as
+/// many texels as keep a texel's world size (in 256s), up to [`MAX_MASK_SIZE`].
+pub fn mask_size_for(world: (f32, f32)) -> usize {
+	let vanilla = vanilla_extent();
+	let scale = (world.0 / vanilla.0).max(world.1 / vanilla.1);
+	if !(scale > 1.0) {
+		return MASK_SIZE;
+	}
+	let texels = (MASK_SIZE as f32 * scale / 256.0).ceil() as usize * 256;
+	texels.clamp(MASK_SIZE, MAX_MASK_SIZE)
+}
 
 /// The brush stamped into the mask: its frame, and the alpha of the atlas it sits in.
 #[derive(Clone, Debug)]
@@ -71,6 +99,8 @@ impl FogStamp {
 /// A changed rectangle of the mask, for a renderer to upload.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FogPatch {
+	/// The whole mask's side, in texels (see [`mask_size_for`]).
+	pub mask: u32,
 	/// The first texel column and row (rows from the map's bottom).
 	pub x: u32,
 	pub y: u32,
@@ -90,12 +120,14 @@ struct Rect {
 }
 
 impl Rect {
-	const FULL: Rect = Rect {
-		x0: 0,
-		y0: 0,
-		x1: MASK_SIZE,
-		y1: MASK_SIZE,
-	};
+	fn full(size: usize) -> Rect {
+		Rect {
+			x0: 0,
+			y0: 0,
+			x1: size,
+			y1: size,
+		}
+	}
 
 	fn union(self, other: Rect) -> Rect {
 		Rect {
@@ -110,8 +142,10 @@ impl Rect {
 /// The fog-of-war mask (see the module docs).
 #[derive(Default)]
 pub struct FogMask {
-	/// `MASK_SIZE²` alpha bytes once the map exists; empty before.
+	/// `size²` alpha bytes once the map exists; empty before.
 	alpha: Vec<u8>,
+	/// Texels along each side (see [`mask_size_for`]).
+	size: usize,
 	/// The map's extent in world units that the mask spans.
 	world: (f32, f32),
 	stamp: Option<FogStamp>,
@@ -124,11 +158,18 @@ pub struct FogMask {
 impl FogMask {
 	/// Fully fogged, spanning a map that reaches `world` (world units).
 	pub fn reset(&mut self, world: (f32, f32)) {
+		self.size = mask_size_for(world);
 		self.alpha.clear();
-		self.alpha.resize(MASK_SIZE * MASK_SIZE, 255);
+		self.alpha.resize(self.size * self.size, 255);
 		self.world = world;
-		self.dirty = Some(Rect::FULL);
+		self.dirty = Some(Rect::full(self.size));
 		self.last = None;
+	}
+
+	/// Texels along each side (0 before the map exists).
+	#[cfg(test)]
+	pub fn size(&self) -> usize {
+		self.size
 	}
 
 	/// The brush that uncovering stamps.
@@ -146,7 +187,7 @@ impl FogMask {
 	/// Alpha at texel `(x, y)` (rows from the bottom), 255 before the map exists.
 	#[cfg(test)]
 	pub fn at(&self, x: usize, y: usize) -> u8 {
-		self.alpha.get(y * MASK_SIZE + x).copied().unwrap_or(255)
+		self.alpha.get(y * self.size + x).copied().unwrap_or(255)
 	}
 
 	/// Stamp the brush at world position `pos`, scaled by `scale`.
@@ -156,13 +197,13 @@ impl FogMask {
 			return;
 		}
 		self.last = Some((pos.0, pos.1, scale));
-		let size = MASK_SIZE as f32;
+		let (n, size) = (self.size, self.size as f32);
 		let (kx, ky) = (size / self.world.0, size / self.world.1);
 		let [left, right, bottom, top] = stamp.rect;
 		let (x0, x1) = (pos.0 + left * scale, pos.0 + right * scale);
 		let (y0, y1) = (pos.1 + bottom * scale, pos.1 + top * scale);
 		// The texels whose centres the quad covers.
-		let first = |edge: f32, k: f32| ((edge * k - 0.5).ceil().max(0.0) as usize).min(MASK_SIZE);
+		let first = |edge: f32, k: f32| ((edge * k - 0.5).ceil().max(0.0) as usize).min(n);
 		let (i0, i1) = (first(x0, kx), first(x1, kx));
 		let (j0, j1) = (first(y0, ky), first(y1, ky));
 		if i0 >= i1 || j0 >= j1 {
@@ -172,7 +213,7 @@ impl FogMask {
 		for j in j0..j1 {
 			let wy = (j as f32 + 0.5) / ky;
 			let v = v0 + (wy - y0) / (y1 - y0) * (v1 - v0);
-			let row = &mut self.alpha[j * MASK_SIZE..(j + 1) * MASK_SIZE];
+			let row = &mut self.alpha[j * n..(j + 1) * n];
 			for (i, texel) in row.iter_mut().enumerate().take(i1).skip(i0) {
 				if *texel == 0 {
 					continue;
@@ -198,11 +239,13 @@ impl FogMask {
 		if self.alpha.is_empty() {
 			return None;
 		}
+		let n = self.size;
 		let mut alpha = Vec::with_capacity((r.x1 - r.x0) * (r.y1 - r.y0));
 		for j in r.y0..r.y1 {
-			alpha.extend_from_slice(&self.alpha[j * MASK_SIZE + r.x0..j * MASK_SIZE + r.x1]);
+			alpha.extend_from_slice(&self.alpha[j * n + r.x0..j * n + r.x1]);
 		}
 		Some(FogPatch {
+			mask: n as u32,
 			x: r.x0 as u32,
 			y: r.y0 as u32,
 			width: (r.x1 - r.x0) as u32,
@@ -211,18 +254,19 @@ impl FogMask {
 		})
 	}
 
-	/// Replace the mask (`MASK_SIZE²` bytes, as the original saves it).
+	/// Replace the mask (`size²` bytes; the original saves a vanilla map's, 2048²).
 	pub(crate) fn set_alpha(&mut self, alpha: Vec<u8>) -> Result<(), String> {
-		if alpha.len() != MASK_SIZE * MASK_SIZE {
-			return Err(format!("a fog of war mask of {} bytes (not {MASK_SIZE}²)", alpha.len()));
+		let n = self.size;
+		if alpha.len() != n * n {
+			return Err(format!("a fog of war mask of {} bytes (not {n}²)", alpha.len()));
 		}
 		self.alpha = alpha;
-		self.dirty = Some(Rect::FULL);
+		self.dirty = Some(Rect::full(n));
 		self.last = None;
 		Ok(())
 	}
 
-	/// The mask's bytes (`MASK_SIZE²`, or none before the map exists).
+	/// The mask's bytes (`size²`, or none before the map exists).
 	pub(crate) fn alpha(&self) -> &[u8] {
 		&self.alpha
 	}
@@ -239,23 +283,27 @@ impl FogMask {
 		}
 	}
 
+	/// Read a mask [`save`](Self::save) wrote. Its size follows from the extent saved
+	/// with it, as when the map was made.
 	pub(crate) fn load(&mut self, r: &mut SaveReader) -> Result<(), String> {
 		let world = (r.f32()?, r.f32()?);
+		let n = mask_size_for(world);
 		let count = r.u32()?;
 		let mut alpha = Vec::new();
 		for _ in 0..count {
 			let (value, len) = (r.u8()?, r.u32()? as usize);
-			if alpha.len() + len > MASK_SIZE * MASK_SIZE {
+			if alpha.len() + len > n * n {
 				return Err("fog of war mask: too much data".into());
 			}
 			alpha.resize(alpha.len() + len, value);
 		}
-		if !alpha.is_empty() && alpha.len() != MASK_SIZE * MASK_SIZE {
+		if !alpha.is_empty() && alpha.len() != n * n {
 			return Err("fog of war mask: truncated".into());
 		}
 		self.alpha = alpha;
+		self.size = if self.alpha.is_empty() { 0 } else { n };
 		self.world = world;
-		self.dirty = Some(Rect::FULL);
+		self.dirty = Some(Rect::full(n));
 		self.last = None;
 		Ok(())
 	}
@@ -323,6 +371,21 @@ mod tests {
 		m.stamp((135.0, 100.0), 10.0);
 		assert_eq!(m.at(100, 100), 0);
 		assert_eq!(m.at(135, 100), 0);
+	}
+
+	#[test]
+	fn a_larger_map_gets_a_larger_mask() {
+		let vanilla = vanilla_extent();
+		assert_eq!(mask_size_for(vanilla), MASK_SIZE, "vanilla keeps the original's 2048²");
+		assert_eq!(mask_size_for((vanilla.0 / 2.0, vanilla.1)), MASK_SIZE);
+		assert_eq!(mask_size_for((vanilla.0 * 2.0, vanilla.1 * 1.65)), 4096);
+		assert_eq!(mask_size_for((vanilla.0 * 1.01, vanilla.1)), 2304, "in 256s");
+		assert_eq!(mask_size_for((vanilla.0 * 10.0, vanilla.1)), 8192, "at most a texture's side");
+		let mut mask = FogMask::default();
+		mask.reset((vanilla.0 * 2.0, vanilla.1 * 1.65));
+		assert_eq!(mask.size(), 4096);
+		let patch = mask.take_patch().expect("the new mask");
+		assert_eq!((patch.mask, patch.width, patch.height), (4096, 4096, 4096));
 	}
 
 	#[test]

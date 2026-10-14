@@ -5,8 +5,9 @@
 //! `uncoverFogOfWar` stamps clear. It spans the map's extent, and this pass takes its
 //! opacity from it. As the original's pass (`0x4a24c0`) does,
 //! it is a [`WorldPass`]:
-//! - the fog texture's coordinates are taken over 2048 units, the mask's size, not
-//!   the texture's own;
+//! - the fog texture's coordinates are taken over 2048 units, the original's mask size,
+//!   not the texture's own (kept at 2048 for a larger map's larger mask, so the clouds
+//!   look the same at any map size);
 //! - as in `shaders/fow.fs`, three samples at different scales and drift directions
 //!   are averaged, times the ambient colour, drifting with `Time.getRealTimeF() / 100`.
 
@@ -34,8 +35,8 @@ fn fs_main(f: Out) -> @location(0) vec4<f32> {
 /// The fog-of-war compositing pass, and the mask it reads.
 pub struct FogPass {
 	pass: WorldPass,
-	/// The engine's fog mask, once a patch arrived.
-	mask: Option<(wgpu::Texture, wgpu::TextureView)>,
+	/// The engine's fog mask, once a patch arrived, and its side in texels.
+	mask: Option<(wgpu::Texture, wgpu::TextureView, u32)>,
 }
 
 impl FogPass {
@@ -47,9 +48,13 @@ impl FogPass {
 	}
 
 	/// Copy a changed part of the engine's fog mask to the GPU.
+	/// A mask of another size (another map's) replaces the texture.
 	pub fn update_mask(&mut self, gpu: &Gpu, patch: &FogPatch) {
-		let size = FOG_MASK_SIZE as u32;
-		let (texture, _) = self.mask.get_or_insert_with(|| {
+		let size = patch.mask;
+		if self.mask.as_ref().is_some_and(|m| m.2 != size) {
+			self.mask = None;
+		}
+		let (texture, _, _) = self.mask.get_or_insert_with(|| {
 			let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
 				label: Some("fog mask"),
 				size: wgpu::Extent3d {
@@ -65,7 +70,7 @@ impl FogPass {
 				view_formats: &[],
 			});
 			let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-			(texture, view)
+			(texture, view, size)
 		});
 		if patch.width == 0
 			|| patch.height == 0
@@ -113,7 +118,7 @@ impl FogPass {
 		real_time: f32,
 		ambient: [f32; 4],
 	) {
-		let Some((_, mask)) = &self.mask else { return };
+		let Some((_, mask, _)) = &self.mask else { return };
 		if !(map_extent.0 > 0.0 && map_extent.1 > 0.0) {
 			return;
 		}

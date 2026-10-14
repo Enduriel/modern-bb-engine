@@ -223,6 +223,27 @@ pub fn prepare_new_campaign(engine: &GameEngine, seed: &str) -> Result<(), Strin
 	engine.init_pending_states()
 }
 
+/// Make the next campaigns' world map `cols` × `rows` tiles instead of vanilla's 140 × 170
+/// (the variable world size). As a mod has to: the size is
+/// `Const.World.Settings.SizeX/SizeY`, which scenarios and worldgen read, and the world
+/// generator's `MinX/MinY`, which MapGen copied from them when the scripts loaded. Call
+/// once the scripts are loaded ([`boot_menu`]), before a campaign starts.
+///
+/// Vanilla's worldgen rejects every layout of a square map of 130 or less (its land and
+/// desert minimums are absolute), so such a campaign never starts.
+pub fn set_world_size(engine: &GameEngine, cols: i64, rows: i64) -> Result<(), String> {
+	if cols < 1 || rows < 1 {
+		return Err(format!("a {cols} x {rows} world map"));
+	}
+	engine.run_script(
+		&format!(
+			"::Const.World.Settings.SizeX = {cols}; ::Const.World.Settings.SizeY = {rows};
+			 local g = ::MapGen.get(\"world.worldmap_generator\"); g.m.MinX = {cols}; g.m.MinY = {rows};"
+		),
+		"world size",
+	)
+}
+
 /// Run the genuine `startNewCampaign`: worldgen, assets, factions, the starting
 /// scenario, and the faction simulation.
 pub fn start_new_campaign(engine: &GameEngine) -> Result<(), String> {

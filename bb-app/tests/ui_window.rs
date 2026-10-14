@@ -143,7 +143,7 @@ fn cursor_is_drawn_at_the_mouse(game: &mut Game, gpu: &Gpu, target: &RenderTarge
 
 fn check(gpu: &Gpu) -> Result<(), String> {
 	// Silent: tests never play on the device.
-	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false)?;
+	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false, None)?;
 	let session = game.front().session();
 	// The opening event, over the world. The page is at UI scale 1: its pixels are
 	// the screen's.

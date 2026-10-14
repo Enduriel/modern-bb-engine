@@ -285,6 +285,7 @@ fn fog_covers_what_the_mask_keeps() {
 	renderer.update_fog(
 		&gpu,
 		&FogPatch {
+			mask: size,
 			x: 0,
 			y: 0,
 			width: size,
@@ -297,6 +298,25 @@ fn fog_covers_what_the_mask_keeps() {
 	// Three samples at a third each: 99 of the texture's 100.
 	assert_eq!(pixel(&image, 0, 1), [99, 99, 99, 255], "fogged");
 	assert_eq!(pixel(&image, 3, 1), [0, 0, 0, 255], "uncovered");
+
+	// A larger map's mask (twice vanilla's width gets 4096²) replaces the texture,
+	// here fogged on the right and uncovered on the left.
+	let larger = 2 * size;
+	renderer.update_fog(
+		&gpu,
+		&FogPatch {
+			mask: larger,
+			x: 0,
+			y: 0,
+			width: larger,
+			height: larger,
+			alpha: (0..larger * larger).map(|i| if i % larger < larger / 2 { 0 } else { 255 }).collect(),
+		},
+	);
+	renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+	let image = target.read(&gpu).expect("read back");
+	assert_eq!(pixel(&image, 0, 1), [0, 0, 0, 255], "the larger mask: uncovered");
+	assert_eq!(pixel(&image, 3, 1), [99, 99, 99, 255], "the larger mask: fogged");
 
 	let off = WorldScene {
 		fog_of_war: false,

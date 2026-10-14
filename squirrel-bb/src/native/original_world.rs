@@ -159,4 +159,8 @@ impl OriginalWorld for EngineWorld {
 	fn fog(&self) -> Vec<u8> {
 		self.grid.original_fog()
 	}
+
+	fn map_size(&self) -> (i64, i64) {
+		self.grid.dims()
+	}
 }

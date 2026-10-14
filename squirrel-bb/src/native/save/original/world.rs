@@ -74,6 +74,9 @@ pub(crate) trait OriginalWorld {
 
 	/// The fog of war's mask.
 	fn fog(&self) -> Vec<u8>;
+
+	/// The world map's size in tiles: columns, rows.
+	fn map_size(&self) -> (i64, i64);
 }
 
 /// The rosters as saved: the player's, the guests', then the created ones by id

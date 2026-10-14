@@ -12,9 +12,9 @@ pub struct Front {
 }
 
 impl Front {
-	/// Boot the install at `data_dir` into a new campaign on `seed`, with `sound` on the
-	/// device or silent.
-	pub fn boot(_gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool) -> Result<Front, String> {
+	/// Boot the install at `data_dir` into a new campaign on `seed` (on a world map of
+	/// `world_size` columns and rows, if given), with `sound` on the device or silent.
+	pub fn boot(_gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool, world_size: Option<(i64, i64)>) -> Result<Front, String> {
 		// A live clock behind Time.getExactTime, as the original's: the AI's background
 		// work then spreads over frames. The battle camera glides and units hop over
 		// time, as the original's.
@@ -28,6 +28,9 @@ impl Front {
 			super::play_on_device(&engine, data_dir);
 		}
 		harness::boot_menu(&engine)?;
+		if let Some((cols, rows)) = world_size {
+			harness::set_world_size(&engine, cols, rows)?;
+		}
 		harness::prepare_new_campaign(&engine, seed)?;
 		harness::start_new_campaign(&engine)?;
 		engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;

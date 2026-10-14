@@ -1,12 +1,15 @@
 //! Battle Brothers on the modern engine, in a window.
 //!
 //! ```text
-//! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--shot FRAMES OUT.png] [--mute]
+//! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--world-size COLSxROWS]
+//!                                    [--shot FRAMES OUT.png] [--mute]
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) into a new campaign
 //! and plays it: the world map or the battle, the mouse and keys going to the game.
-//! `--shot` saves the frame after that many frames and quits. Built with `--features
+//! `--world-size` makes the map that many tiles across and down instead of vanilla's
+//! 140x170 (vanilla's worldgen needs more than 130x130). `--shot` saves the frame after
+//! that many frames and quits. Built with `--features
 //! ui`, the game's real UI is drawn over it and takes the input it's under. The sound
 //! plays on the default output device, unless `--mute`.
 
@@ -24,6 +27,7 @@ fn options() -> Result<app::Options, String> {
 		seed: "rust-engine-test".to_string(),
 		shot: None,
 		mute: false,
+		world_size: None,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -32,6 +36,14 @@ fn options() -> Result<app::Options, String> {
 			"--data" => options.data_dir = PathBuf::from(value()?),
 			"--seed" => options.seed = value()?,
 			"--mute" => options.mute = true,
+			"--world-size" => {
+				let v = value()?;
+				let size = v
+					.split_once('x')
+					.and_then(|(c, r)| Some((c.parse().ok()?, r.parse().ok()?)))
+					.ok_or(format!("--world-size COLSxROWS, not {v}"))?;
+				options.world_size = Some(size);
+			}
 			"--shot" => {
 				let frames = value()?.parse().map_err(|_| "--shot FRAMES OUT.png")?;
 				options.shot = Some((frames, PathBuf::from(value()?)));

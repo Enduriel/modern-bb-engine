@@ -22,6 +22,11 @@
 //! The modules here read and write the native records as data; [`import`] runs a load
 //! through the engine's [`OriginalWorld`](world::OriginalWorld).
 
+/// The largest world map the original's engine makes: `World.resizeScene` (`0x4efac0`)
+/// clamps the scene to 140 columns and 170 rows (with the desert DLC). Its format can't
+/// describe a larger map (the variable world size), whose saves stay in our own.
+pub(crate) const MAX_MAP: (i64, i64) = (140, 170);
+
 pub(crate) mod camera;
 pub mod compare;
 pub(crate) mod export;

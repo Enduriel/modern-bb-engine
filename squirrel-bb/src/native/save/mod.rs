@@ -128,7 +128,24 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 	}));
 	// As the original's World.save, before onBeforeSave (`0x4f46e5`).
 	meta.borrow_mut().set_int("modified".to_string(), i64::from(inner.modified.get()));
-	let original = inner.format.get() == SaveFormat::Original;
+	let mut original = inner.format.get() == SaveFormat::Original;
+	if let Some(world) = inner.original.borrow().as_ref().filter(|_| original) {
+		let (w, h) = world.map_size();
+		if w > original::MAX_MAP.0 || h > original::MAX_MAP.1 {
+			// The original's engine makes no map past its clamp, so its format can't
+			// hold one: this engine's own format it is.
+			let warning = format!(
+				"Saving \"{file}\": a {w} x {h} world map is larger than the original's engine makes \
+				 ({} x {}), so it is saved in this engine's own format",
+				original::MAX_MAP.0,
+				original::MAX_MAP.1
+			);
+			if let Some(log) = squirrel::SqTable::root(vm).get::<SqStrongRef>("logWarning") {
+				log.call(vm, (warning,))?;
+			}
+			original = false;
+		}
+	}
 	let writer = Rc::new(RefCell::new(SaveWriter {
 		strings: if original { stream::StrLen::U16 } else { stream::StrLen::U32 },
 		..SaveWriter::default()

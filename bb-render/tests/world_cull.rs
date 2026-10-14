@@ -10,6 +10,16 @@ use bb_render::world::{WorldFonts, WorldView, world_quads};
 
 #[test]
 fn a_view_draws_the_same_from_only_the_tiles_it_shows() {
+	views_draw_the_same(None);
+}
+
+/// The same on a map twice vanilla's size each way.
+#[test]
+fn a_larger_map_draws_the_same_from_only_the_tiles_it_shows() {
+	views_draw_the_same(Some((280, 280)));
+}
+
+fn views_draw_the_same(size: Option<(i64, i64)>) {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
 		eprintln!("skipping: {STEAM_DATA_DIR} not present");
@@ -17,6 +27,9 @@ fn a_view_draws_the_same_from_only_the_tiles_it_shows() {
 	}
 	let engine = harness::open_install(dir).expect("open install");
 	harness::boot_menu(&engine).expect("menu");
+	if let Some((cols, rows)) = size {
+		harness::set_world_size(&engine, cols, rows).expect("world size");
+	}
 	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare");
 	harness::start_new_campaign(&engine).expect("start");
 	let whole = engine.world_scene();
