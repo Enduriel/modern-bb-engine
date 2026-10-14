@@ -75,29 +75,15 @@ pub(crate) fn install(
 	let set_on_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 	let set_on_before_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 
-	// World.getCamera(): a headless camera. Scripts move/zoom it (no-ops here) and read
-	// back `Zoom` (a plain, persistent table field) and `isInsideScreen`, which only
-	// gates visual fades; with no screen it is always false.
-	let camera = {
-		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-		let inside = vm.make_closure(|Variadic(_a): Variadic<Retained>| false);
-		let screen_to_world = vm.make_closure(|vm: &SQVM, Variadic(_a): Variadic<Retained>| -> Option<SqStrongRef> {
-			SqTable::root(vm)
-				.get::<SqStrongRef>("createVec")
-				.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (0.0, 0.0)).ok().flatten())
-		});
-		let mut cam = SqTable::new(vm);
-		cam.set("Zoom", 1.0);
-		for name in ["setPos", "moveTo", "moveToPos", "zoomTo", "zoomBy", "move", "update", "jumpTo"] {
-			cam.set(name, noop.clone());
-		}
-		cam.set("isInsideScreen", inside);
-		cam.set("screenToWorld", screen_to_world);
-		cam.to_strong()
-	};
-	let get_camera = {
-		let cam = camera.clone();
-		vm.make_closure(move || cam.clone())
+	// World.getCamera(): see `world_camera`. World.screenToTile(x, y): the tile under a
+	// pixel.
+	let (camera, world_camera) = super::world_camera::instance(vm);
+	let get_camera = vm.make_closure(move || camera.clone());
+	let screen_to_tile = {
+		let camera = world_camera.clone();
+		vm.make_closure(move |vm: &SQVM, x: Number, y: Number| {
+			super::world_camera::screen_to_tile(vm, &camera, x.0 as i32, y.0 as i32)
+		})
 	};
 
 	// World.getWeather(): visual only (see `weather`), but its clouds are kept for the
@@ -153,6 +139,7 @@ pub(crate) fn install(
 	let is_visible = vm.make_closure(move || visible.get());
 	let mut world = SqTable::new(vm);
 	world.set("getCamera", get_camera);
+	world.set("screenToTile", screen_to_tile);
 	world.set("setVisible", set_visible);
 	world.set("isVisible", is_visible);
 	world.set("getWeather", get_weather);

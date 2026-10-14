@@ -12,6 +12,7 @@
 use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::{Grid, TacticalGridState, TileHandle};
+use crate::native::screen::Screen;
 
 /// The camera's script-visible fields.
 pub(crate) struct CameraState {
@@ -59,23 +60,14 @@ fn overlay_states(vm: &SQVM, overlays: &[i64]) -> SqStrongRef {
 	list.to_strong()
 }
 
-/// The screen size (`Settings.getVideoMode()`), 1920x1080 if unreadable.
-fn screen_size(vm: &SQVM) -> (f64, f64) {
-	let mode = SqTable::root(vm)
-		.get::<SqTable>("Settings")
-		.and_then(|s| s.get::<SqStrongRef>("getVideoMode"))
-		.and_then(|f| f.call_ret::<SqStrongRef, _>(vm, ()).ok().flatten());
-	let dim = |name: &str| mode.as_ref().and_then(|m| m.get_member::<Number>(vm, name)).map(|n| n.0);
-	(dim("Width").unwrap_or(1920.0), dim("Height").unwrap_or(1080.0))
-}
-
 /// `screenToWorld(x, y)`: the world point under screen pixel `(x, y)`, the camera's
-/// position being the centre of the screen. Probed (2560x1440): pixels to the right
-/// raise world X and pixels down lower world Y, both scaled by the zoom. (The original
-/// clamps `Zoom`: 2.0 reads back as 1.640625. Ours doesn't; nothing logic-side zooms.)
+/// position being the centre of the screen: the original's rule (see [`Screen`]),
+/// probed at 2560x1440. (The original clamps `Zoom`: 2.0 reads back as 1.640625. Ours
+/// doesn't; nothing logic-side zooms.)
 pub(super) fn screen_to_world(camera: &CameraState, vm: &SQVM, x: f64, y: f64) -> (f64, f64) {
-	let (w, h) = screen_size(vm);
-	(camera.pos.0 + (x - w / 2.0) * camera.zoom, camera.pos.1 + (h / 2.0 - y) * camera.zoom)
+	let pos = (camera.pos.0 as f32, camera.pos.1 as f32);
+	let (wx, wy) = Screen::of(vm).to_world(pos, camera.zoom as f32, x as i32, y as i32);
+	(f64::from(wx), f64::from(wy))
 }
 
 /// A position read from a vector or from `entity.getPos()`.
