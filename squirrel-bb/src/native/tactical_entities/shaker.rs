@@ -90,7 +90,7 @@ fn normalize((x, y): (f32, f32)) -> Option<(f32, f32)> {
 
 /// The shaker class (`Tactical.getShaker()`'s instance).
 pub(super) fn build_class(vm: &mut SQVM) -> squirrel::SqClass<ShakerHandle> {
-	ClassBuilder::<ShakerHandle>::new("Shaker")
+	ClassBuilder::<ShakerHandle>::new("TacticalShaker")
 		.method(
 			&overload_key("shake", 3),
 			|s: &mut ShakerHandle, vm: &SQVM, entity: Retained, tile: Retained, kind: Number| -> Result<(), String> {

@@ -13,12 +13,10 @@ campaign/natives | native *.constructor | Sqrat class member
 campaign/natives | native *.weakref | Sqrat class member
 
 # Native classes the original exposes as root globals; ours has only their instances
-# (cameras, weather, the highlighter and shaker, settings objects), whose own natives these
+# (cameras, weather, settings objects), whose own natives these
 # probes don't cover yet.
 menu/natives | native PersistenceStorageMetaData.* | not a root global here
 menu/natives | native TacticalCameraBridge.* | not a root global here
-menu/natives | native TacticalHighlighter.* | not a root global here
-menu/natives | native TacticalShaker.* | not a root global here
 menu/natives | native TacticalWeather.* | not a root global here
 menu/natives | native WorldCameraBridge.* | not a root global here
 menu/natives | native WorldNavigator.* | not a root global here
