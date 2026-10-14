@@ -11,7 +11,7 @@
 //! - `getRealTime`/`getVirtualTime` are integer **milliseconds**; `getRealTimeF`,
 //!   `getVirtualTimeF`, `getExactTime` and `getDelta` are **seconds**.
 //! - `scheduleEvent` Real/Virtual delays are milliseconds, relative to the current
-//!   clock value.
+//!   clock value in whole milliseconds (the delay truncated too; disassembled).
 //! - The virtual clock runs at `getVirtualSpeed()` times real time; `World.setSpeedMult`
 //!   sets that speed (0 while the game is paused).
 //! - `getVirtualDelta` is assumed to be the frame's real delta times the virtual speed
@@ -191,14 +191,19 @@ impl TimeService {
 				vm.make_closure(
 					move |unit: i64, delay: Number, callback: SqStrongRef, userdata: Retained| {
 						let mut st = state.borrow_mut();
+						// Whole milliseconds (rounds), as the original: the clock's integer
+						// value (what getVirtualTime/getRealTime read) plus the delay
+						// truncated (disassembled). So an AI that waits `getVirtualTime() +
+						// d` and a hit due `d` later fall due together, and the event
+						// fires first (events fire at the start of the frame).
 						let base = match unit {
-							UNIT_VIRTUAL => st.virtual_time,
+							UNIT_VIRTUAL => st.virtual_time.trunc(),
 							UNIT_ROUNDS => st.round as f64,
-							_ => st.real_time, // UNIT_REAL and anything else
+							_ => st.real_time.trunc(), // UNIT_REAL and anything else
 						};
 						st.events.push(Event {
 							unit,
-							fire_threshold: base + delay.0,
+							fire_threshold: base + delay.0.trunc(),
 							callback,
 							userdata: userdata.0,
 						});
