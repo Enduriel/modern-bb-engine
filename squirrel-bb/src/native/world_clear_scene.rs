@@ -15,8 +15,8 @@
 //! The tiles stay (worldgen's `clearTiles` and `resizeScene` reset them), and so does
 //! the entity id counter, which every engine object draws from.
 //!
-//! Last, it collects the script objects only reference cycles keep alive
-//! (`sq_collectgarbage`, `0x4eff63`): the campaign's, now unreachable.
+//! The original then collects reference cycles (`sq_collectgarbage`, `0x4eff63`); the
+//! engine does at the end of the frame (see `collect`).
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
@@ -55,7 +55,6 @@ pub(crate) fn install(vm: &mut SQVM, scene: WorldScene) {
 		scene.birds.borrow_mut().clear();
 		scene.waves.borrow_mut().clear();
 		scene.particles.borrow_mut().clear();
-		vm.collect_garbage();
 		Ok(())
 	});
 	if let Some(mut world) = SqTable::root(vm).get::<SqTable>("World") {

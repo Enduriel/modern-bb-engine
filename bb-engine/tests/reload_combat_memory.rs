@@ -5,13 +5,13 @@
 //! goes back to the world, saves, and loads the fixture again.
 //!
 //! A battle leaves tens of thousands of script objects in reference cycles (its units' AI
-//! agents and behaviours), which reference counting never frees. The original's script
-//! tick collects them every 60 s of real time, and so does the engine (it never did
-//! before: they piled up battle after battle). Measured right after each load, with no
-//! collection of the test's own, the heap stays put over the cycles, the engine holds the
-//! same entities, thinkers, units, scheduled events and UI connections, and what waits in
-//! cycles is at most a battle's worth. One test in its own binary. Skips without the Steam
-//! install or the original's saves.
+//! agents and behaviours), which reference counting never frees, so they would pile up
+//! battle after battle. The engine collects them where the game discards such graphs (a
+//! battle's end, leaving a campaign, a load; squirrel-bb's `collect`). Measured right after
+//! each load, with no collection of the test's own, the heap stays put over the cycles,
+//! the engine holds the same entities, thinkers, units,
+//! scheduled events and UI connections, and nothing waits in cycles. One test in its own
+//! binary. Skips without the Steam install or the original's saves.
 
 use std::path::Path;
 
@@ -194,13 +194,12 @@ fn battles_between_loads_do_not_grow_memory() {
 	}
 	let measured = &after[WARM_UP..];
 	let (base_heap, base_held, _) = &measured[0];
-	let most = measured.iter().map(|a| a.2).max().unwrap_or(0);
-	for (i, (_, h, _)) in measured.iter().enumerate() {
-		assert_eq!(h, base_held, "cycle {}: the engine holds more after a battle", WARM_UP + i + 1);
+	for (i, (_, h, waiting)) in after.iter().enumerate() {
+		assert_eq!(*waiting, 0, "cycle {}: objects left in reference cycles: {}", i + 1, cycle_summary(&engine));
+		if i >= WARM_UP {
+			assert_eq!(h, base_held, "cycle {}: the engine holds more after a battle", i + 1);
+		}
 	}
-	// A battle's agents and behaviours wait for the next collection (at most 60 s);
-	// more than a few battles' worth means nothing collects them.
-	assert!(most < 150_000, "{most} objects wait in reference cycles: {}", cycle_summary(&engine));
 	let last = measured.last().unwrap().0;
 	eprintln!("heap {:.2} → {:.2} MB over {} cycles", mb(*base_heap), mb(last), measured.len());
 	assert!(last <= base_heap + 2 * 1_048_576, "the heap grew {:.2} MB over {} cycles", mb(last.saturating_sub(*base_heap)), measured.len());
