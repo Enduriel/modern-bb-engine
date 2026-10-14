@@ -280,7 +280,7 @@ impl WorldRenderer {
 			dof_strength: crate::tactical::DOF_STRENGTH,
 			..view.uniforms()
 		};
-		self.draw_quads(gpu, target, &map, &uniforms, CLEAR, atlases)
+		self.draw_quads(gpu, target, &map, &uniforms, Some(CLEAR), atlases)
 	}
 
 	/// Entity `portrait` drawn on its own, without the sprites named in `hidden` (see
@@ -299,19 +299,40 @@ impl WorldRenderer {
 		let map = crate::portrait::portrait_quads(portrait, hidden, registry);
 		let target = RenderTarget::new(gpu, width, height);
 		let uniforms = SceneUniforms::centered([0.0, 0.0], width as f32, height as f32);
-		self.draw_quads(gpu, &target, &map, &uniforms, [0.0; 4], Atlases::WaitForAll);
+		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll);
 		target.read(gpu).map(Some)
 	}
 
-	/// Draw `map`'s quads into `target` over `clear`, with the atlases they use as ready
-	/// (or waited for).
+	/// Draw the mouse cursor's sprite `brush` over what `target` holds, its frame `since`
+	/// seconds into its animation, at `at`: screen pixels from the centre, y up, as the
+	/// original draws its software cursor (last, over the UI, unscaled; see
+	/// `squirrel_bb::native::ui_cursor`). An unknown brush, or an atlas still loading,
+	/// draws nothing.
+	pub fn draw_cursor(
+		&mut self,
+		gpu: &Gpu,
+		target: &RenderTarget,
+		registry: &SpriteRegistry,
+		brush: &str,
+		since: f32,
+		at: [f32; 2],
+	) -> FrameStats {
+		let Some(map) = crate::cursor::cursor_quads(registry, brush, since, at) else {
+			return FrameStats::default();
+		};
+		let uniforms = SceneUniforms::centered([0.0, 0.0], target.width as f32, target.height as f32);
+		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady)
+	}
+
+	/// Draw `map`'s quads into `target`, over `clear` or what it holds, with the atlases
+	/// they use as ready (or waited for).
 	fn draw_quads(
 		&mut self,
 		gpu: &Gpu,
 		target: &RenderTarget,
 		map: &crate::world::WorldQuads,
 		uniforms: &SceneUniforms,
-		clear: [f64; 4],
+		clear: Option<[f64; 4]>,
 		atlases: Atlases,
 	) -> FrameStats {
 		let upload = |path: &str, image: bb_assets::Image| {
@@ -362,7 +383,7 @@ impl WorldRenderer {
 			})
 			.collect();
 		stats.quads = quads.len();
-		self.sprites.draw(gpu, target, uniforms, Some(clear), &quads, &ready);
+		self.sprites.draw(gpu, target, uniforms, clear, &quads, &ready);
 		stats
 	}
 }

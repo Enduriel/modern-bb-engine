@@ -15,6 +15,7 @@ path = "src/main.rs"
 ui = ["dep:bb-ui", "bb-ui/cef", "dep:cef-dll-sys"]
 
 [dependencies]
+bb-assets = { path = "../bb-assets" }
 bb-audio = { path = "../bb-audio" }
 bb-engine = { path = "../bb-engine" }
 bb-ui = { path = "../bb-ui", optional = true }
@@ -27,7 +28,6 @@ wgpu = "30.0.1"
 winit = "0.30.13"
 
 [dev-dependencies]
-bb-assets = { path = "../bb-assets" }
 
 # Own `main`: the browser host re-runs the test binary for its child processes, and
 # starts only once per process.

@@ -41,4 +41,5 @@ pub use source::{LoadedScript, ScriptSource};
 pub use input_events::{KeyInput, MouseInput};
 pub use state_stack::RootState;
 pub use native::{EngineRng, FOG_MASK_SIZE, FogPatch, FogStamp, Sprites, VideoSettings};
+pub use native::ui_cursor::CursorLook;
 pub use native::audio::{Audio, AudioOut, NullOut, Playing, Voice, sound_length_ms};

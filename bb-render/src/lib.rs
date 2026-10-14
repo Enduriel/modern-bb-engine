@@ -13,6 +13,7 @@
 //! - [`Presenter`]: copies a finished frame onto a window's surface.
 //! - [`portrait`]: an entity drawn on its own, for the UI's procedural images.
 
+mod cursor;
 mod fog;
 mod gpu;
 pub mod labels;

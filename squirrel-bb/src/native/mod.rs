@@ -50,6 +50,7 @@ mod tile_of_type;
 mod weather;
 mod time;
 mod ui_bridge;
+pub(crate) mod ui_cursor;
 mod vec;
 mod world;
 pub(crate) mod world_camera;

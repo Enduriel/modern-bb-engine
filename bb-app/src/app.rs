@@ -1,7 +1,8 @@
 //! The window: winit's event loop driving the [`Game`] a frame per redraw, with the
 //! player's mouse and keys passed on, and each frame presented on the window's surface.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -11,7 +12,7 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::PhysicalKey;
-use winit::window::{Window, WindowId};
+use winit::window::{CustomCursor, Window, WindowId};
 
 use bb_app::front::Key;
 use bb_app::game::Game;
@@ -38,6 +39,35 @@ struct Running {
 	game: Game,
 	last_frame: Instant,
 	frames: u64,
+	/// Whether the system's cursor shows over the window (the game draws its own
+	/// otherwise), and which, as last set.
+	system_cursor: Option<(bool, String)>,
+	/// The hardware cursors, by name (`<install>/cursors/*.cur`).
+	cursors: HashMap<String, CustomCursor>,
+}
+
+/// The original's hardware cursors: each `<install>/cursors/<name>.cur` (the install
+/// is above the data folder), keyed by name.
+fn load_cursors(event_loop: &ActiveEventLoop, data_dir: &Path) -> HashMap<String, CustomCursor> {
+	let Some(dir) = data_dir.parent().map(|d| d.join("cursors")) else { return HashMap::new() };
+	let Ok(entries) = std::fs::read_dir(&dir) else { return HashMap::new() };
+	let mut cursors = HashMap::new();
+	for path in entries.flatten().map(|e| e.path()) {
+		let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
+		let image = std::fs::read(&path).ok().and_then(|b| bb_assets::parse_cursor(&b));
+		let Some(image) = image else {
+			eprintln!("cursor {}: unreadable", path.display());
+			continue;
+		};
+		let source = CustomCursor::from_rgba(image.rgba, image.width as u16, image.height as u16, image.hotspot.0, image.hotspot.1);
+		match source {
+			Ok(source) => {
+				cursors.insert(name, event_loop.create_custom_cursor(source));
+			}
+			Err(e) => eprintln!("cursor {}: {e}", path.display()),
+		}
+	}
+	cursors
 }
 
 pub struct App {
@@ -109,6 +139,8 @@ impl App {
 			game,
 			last_frame: Instant::now(),
 			frames: 0,
+			system_cursor: None,
+			cursors: load_cursors(event_loop, &self.options.data_dir),
 		})
 	}
 
@@ -145,6 +177,20 @@ impl Running {
 		let ms = now.duration_since(self.last_frame).as_secs_f64() * 1000.0;
 		self.last_frame = now;
 		self.game.step(ms)?;
+		// The game draws its cursor unless the scripts want the system's (the hardware
+		// cursor setting), which shows `cursors/<name>.cur` (a name without one keeps
+		// the last, as the original's); otherwise the system's is hidden.
+		let choice = self.game.cursor_choice();
+		if self.system_cursor.as_ref() != Some(&choice) {
+			let (hardware, name) = &choice;
+			if *hardware {
+				if let Some(cursor) = self.cursors.get(name) {
+					self.window.set_cursor(cursor.clone());
+				}
+			}
+			self.window.set_cursor_visible(*hardware);
+			self.system_cursor = Some(choice);
+		}
 		self.game.draw(&self.gpu, &self.target);
 		let texture = match self.surface.get_current_texture() {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,

@@ -115,6 +115,32 @@ fn portrait_reaches_the_page(game: &mut Game, gpu: &Gpu, target: &RenderTarget) 
 	Err(format!("{path} never loaded"))
 }
 
+/// The game's cursor (on the open map the scripts' boot, centred on the mouse) is drawn
+/// at the mouse, at `at`: its pixels change when the scripts switch to the system's
+/// cursor, far more than a patch of the map elsewhere.
+fn cursor_is_drawn_at_the_mouse(game: &mut Game, gpu: &Gpu, target: &RenderTarget, at: (i32, i32)) -> Result<(), String> {
+	let drawn = draw_until(game, gpu, target, |_| true)?;
+	game.front().engine().run_script("::UI.setCursorHardware(true);", "hardware")?;
+	let system = draw_until(game, gpu, target, |_| true)?;
+	game.front().engine().run_script("::UI.setCursorHardware(false);", "software")?;
+	let differing = |x0: i32, y0: i32| {
+		(-16..16)
+			.flat_map(|dy| (-16..16).map(move |dx| (x0 + dx, y0 + dy)))
+			.filter(|&(x, y)| x >= 0 && y >= 0 && (x as u32) < drawn.width && (y as u32) < drawn.height)
+			.filter(|&(x, y)| {
+				let (a, b) = (pixel(&drawn.rgba, drawn.width, x as u32, y as u32), pixel(&system.rgba, system.width, x as u32, y as u32));
+				a.iter().zip(b).any(|(p, q)| p.abs_diff(q) > 40)
+			})
+			.count()
+	};
+	let (cursor, elsewhere) = (differing(at.0, at.1), differing(at.0 + 200, at.1 + 100));
+	if cursor < 60 || elsewhere > 20 {
+		return Err(format!("the cursor isn't drawn at {at:?}: {cursor} pixels differ there, {elsewhere} elsewhere"));
+	}
+	println!("  cursor: {cursor} pixels at the mouse, {elsewhere} elsewhere");
+	Ok(())
+}
+
 fn check(gpu: &Gpu) -> Result<(), String> {
 	// Silent: tests never play on the device.
 	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false)?;
@@ -193,6 +219,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	if mouse_over_ui(&game)? {
 		return Err(format!("UI.isMouseOver() is true over the map at {mx}, {my}"));
 	}
+	cursor_is_drawn_at_the_mouse(&mut game, gpu, &target, (mx, my))?;
 	game.front().engine().run_script(MARK, "mark")?;
 	game.mouse_button(1, true)?;
 	// Our world map can't move the party yet, so the click may stop with an error

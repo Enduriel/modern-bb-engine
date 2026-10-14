@@ -67,6 +67,8 @@ pub struct Engine<S: ScriptSource> {
 	audio: crate::native::audio::Audio,
 	/// The keys the host reported, dispatched each frame (see [`crate::key_queue`]).
 	keys: crate::key_queue::KeyQueue,
+	/// The mouse cursor the scripts chose (no VM handles).
+	ui_cursor: crate::native::ui_cursor::UiCursor,
 	time: TimeService,
 	modules: ModuleSystem<S>,
 	vm: SQVM,
@@ -91,6 +93,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		time.install(&mut vm);
 		let ui = UiBridge::new();
 		ui.install(&mut vm);
+		let ui_cursor = crate::native::ui_cursor::UiCursor::default();
+		ui_cursor.install(&mut vm, &natives.sprites);
 		// After the `World` table exists (config.install), add the grid natives.
 		let world_grid = WorldGrid::new();
 		world_grid.set_sprites(natives.sprites.clone());
@@ -199,6 +203,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			battle_effects: natives.tactical.effects.clone(),
 			audio,
 			keys: Default::default(),
+			ui_cursor,
 			time,
 			modules,
 			vm,
@@ -320,6 +325,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// original's input manager does (see [`crate::key_queue`]).
 	pub fn queue_key(&self, key: i64, down: bool, modifier: i64) {
 		self.keys.push(key, down, modifier);
+	}
+
+	/// The mouse cursor to show: the sprite the scripts chose, and where they last put
+	/// it (`UI.setCursorPosition`, screen pixels), see [`crate::native::ui_cursor`].
+	pub fn cursor(&self) -> (crate::CursorLook, (i64, i64)) {
+		(self.ui_cursor.look(), self.ui.cursor())
 	}
 
 	/// The window lost the keyboard: every held key comes up.

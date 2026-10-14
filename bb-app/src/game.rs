@@ -182,6 +182,28 @@ impl Game {
 		self.front
 			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
 		self.front.draw(gpu, target);
+		self.draw_cursor(gpu, target, fit);
+	}
+
+	/// The mouse cursor the scripts chose, last, over the UI, where they last put it,
+	/// unscaled (the original's software cursor); none while the system's shows.
+	fn draw_cursor(&mut self, gpu: &Gpu, target: &RenderTarget, fit: f32) {
+		let engine = self.front.engine();
+		let (look, (x, y)) = engine.cursor();
+		let Some(brush) = look.brush.filter(|_| !look.hardware) else { return };
+		let since = engine.time().virtual_seconds() as f32 - look.since;
+		// Screen pixels from the window's centre, y up.
+		let at = [x as f32 * fit - target.width as f32 * 0.5, target.height as f32 * 0.5 - y as f32 * fit];
+		engine.sprites().with(|registry| {
+			self.renderer.draw_cursor(gpu, target, registry, &brush, since, at);
+		});
+	}
+
+	/// Whether the scripts want the system's cursor (`UseHardwareCursor`) rather than
+	/// the drawn one, and the cursor's name (its `cursors/<name>.cur`).
+	pub fn cursor_choice(&self) -> (bool, String) {
+		let (look, _) = self.engine().cursor();
+		(look.hardware, look.name)
 	}
 }
 
