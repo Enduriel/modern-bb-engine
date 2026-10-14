@@ -617,3 +617,37 @@ fn an_animations_frames_load_together() {
 	}
 	assert_eq!(renderer.memory().frames, 2, "its second frame came with the first");
 }
+
+/// The cursor draws from a page too, unscaled at its position, as from its atlas.
+#[test]
+fn the_cursor_draws_from_a_page_as_from_its_atlas() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	let registry = registry();
+	let draw = |renderer: &mut WorldRenderer| {
+		let target = RenderTarget::new(&gpu, 8, 8);
+		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+		loop {
+			renderer.begin_frame();
+			let stats = renderer.draw_cursor(&gpu, &target, &registry, "dot", 0.0, [0.0, 0.0]);
+			if stats.quads == 1 {
+				break;
+			}
+			assert!(std::time::Instant::now() < deadline, "never drawn: {stats:?}");
+			std::thread::sleep(std::time::Duration::from_millis(1));
+		}
+		target.read(&gpu).expect("read back")
+	};
+	let files = || Arc::new(Files(HashMap::from([("gfx/test.png".to_string(), atlas_png())])));
+	let mut whole = WorldRenderer::new(&gpu, files(), 1);
+	whole.draw_whole_atlases();
+	let mut paged = WorldRenderer::new(&gpu, files(), 1);
+	let (a, b) = (draw(&mut whole), draw(&mut paged));
+	assert!(a.rgba.iter().any(|&v| v != 0), "the cursor shows");
+	assert!(a == b, "the same pixels");
+}

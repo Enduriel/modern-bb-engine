@@ -299,11 +299,11 @@ impl WorldRenderer {
 					true
 				}
 				Some(p) => {
-					let sent = p.send_asks();
-					if sent > 0 {
-						p.pump_until(gpu, mips, sent, std::time::Instant::now() + crate::pages::WAIT_BUDGET);
+					let asked = p.send_asks();
+					if !asked.is_empty() {
+						p.pump_until(gpu, mips, &asked, std::time::Instant::now() + crate::pages::WAIT_BUDGET);
 					}
-					sent > 0
+					!asked.is_empty()
 				}
 				None => false,
 			};

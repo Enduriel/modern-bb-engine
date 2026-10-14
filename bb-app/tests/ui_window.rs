@@ -64,9 +64,10 @@ fn pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
 fn draw_until(game: &mut Game, gpu: &Gpu, target: &RenderTarget, ready: impl Fn(&Image) -> bool) -> Result<Image, String> {
 	for _ in 0..100 {
 		game.step(1000.0 / 60.0)?;
-		game.draw(gpu, target);
+		// A frame whose sprites are all drawn (none waiting for its frame to load).
+		let whole = game.draw(gpu, target).waiting == 0;
 		let frame = target.read(gpu)?;
-		if ready(&frame) {
+		if whole && ready(&frame) {
 			return Ok(frame);
 		}
 		std::thread::sleep(Duration::from_millis(50));

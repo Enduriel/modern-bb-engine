@@ -302,9 +302,9 @@ impl FramePages {
 	}
 
 	/// Send this frame's asks to the loader, those not on their way already, split
-	/// across the workers ([`ASK_CHUNK`] frames a request); how many requests went.
-	pub(crate) fn send_asks(&mut self) -> usize {
-		let mut sent = 0;
+	/// across the workers ([`ASK_CHUNK`] frames a request); the frames asked for.
+	pub(crate) fn send_asks(&mut self) -> Vec<(String, TexelRect)> {
+		let mut sent = Vec::new();
 		for (atlas, frames) in std::mem::take(&mut self.asks) {
 			let Some(index) = self.atlases.get(&atlas) else { continue };
 			let wanted: Vec<TexelRect> = frames
@@ -317,21 +317,17 @@ impl FramePages {
 					frames: index.frames.clone(),
 					wanted: chunk.to_vec(),
 				});
-				sent += 1;
 			}
+			sent.extend(wanted.into_iter().map(|f| (atlas.clone(), f)));
 		}
 		sent
 	}
 
-	/// Take in the loader's answers until `count` with frames (or failures) came, or
-	/// `deadline` passed. A warm-up's answer (no frames) doesn't count.
-	pub(crate) fn pump_until(&mut self, gpu: &Gpu, mips: &MipMaker, count: usize, deadline: Instant) {
-		let mut left = count;
-		while left > 0 {
+	/// Take in the loader's answers until the frames `asked` for are in (or failed), or
+	/// `deadline` passed.
+	pub(crate) fn pump_until(&mut self, gpu: &Gpu, mips: &MipMaker, asked: &[(String, TexelRect)], deadline: Instant) {
+		while asked.iter().any(|key| self.pending.contains(key)) {
 			let Some((atlas, loaded)) = self.loader.take_until(deadline) else { return };
-			if loaded.as_ref().map_or(true, |frames| !frames.is_empty()) {
-				left -= 1;
-			}
 			self.take_in(gpu, mips, atlas, loaded);
 		}
 	}
