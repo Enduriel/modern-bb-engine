@@ -163,12 +163,15 @@ fn run() -> Result<(), String> {
 			scene(&game, name)?;
 		}
 		if let Some(until) = &step.until {
-			let deadline = Instant::now() + STEP;
+			// Counted in the game's own time, not the clock's: frames come slower on a
+			// busy machine, and each still advances the game by a 60th of a second.
+			let mut waited = 0.0;
 			while !scene(&game, until)? {
-				if Instant::now() >= deadline {
-					return Err(format!("{until} never came true"));
+				if waited >= STEP.as_secs_f64() {
+					return Err(format!("{until} never came true in {waited} s of game time"));
 				}
 				play(&mut game, &gpu, &target, 0.5)?;
+				waited += 0.5;
 			}
 		}
 		play(&mut game, &gpu, &target, 3.0)?;
