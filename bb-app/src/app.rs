@@ -64,6 +64,8 @@ struct Running {
 	game: Game,
 	last_frame: Instant,
 	frames: u64,
+	/// With `BB_STATS`, when the renderer's memory is logged next.
+	next_stats: Option<Instant>,
 	/// Whether the system's cursor shows over the window (the game draws its own
 	/// otherwise), and which, as last set.
 	system_cursor: Option<(bool, String)>,
@@ -209,6 +211,7 @@ impl App {
 			game,
 			last_frame: Instant::now(),
 			frames: 0,
+			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
@@ -316,6 +319,12 @@ impl Running {
 		let ms = now.duration_since(self.last_frame).as_secs_f64() * 1000.0;
 		self.last_frame = now;
 		self.game.step(ms)?;
+		// Beside `stats`' log, what the renderer holds (every 5 s, with `BB_STATS`).
+		if self.next_stats.is_some_and(|at| now >= at) {
+			let frame = self.target.bytes() as f64 / (1024.0 * 1024.0);
+			eprintln!("renderer: {}; the frame {frame:.1} MiB", self.game.renderer_memory());
+			self.next_stats = Some(now + Duration::from_secs(5));
+		}
 		// The game draws its cursor unless the scripts want the system's (the hardware
 		// cursor setting), which shows `cursors/<name>.cur` (a name without one keeps
 		// the last, as the original's); otherwise the system's is hidden.

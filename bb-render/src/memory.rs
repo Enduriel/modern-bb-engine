@@ -34,6 +34,28 @@ pub struct RendererMemory {
 	pub own: u64,
 }
 
+/// One line: the textures (and how many stand in for missing ones), the fog mask, the
+/// UI page, the renderer's own, and the paths loading or failed. Sizes in MiB.
+impl std::fmt::Display for RendererMemory {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+		let stand_ins = self.textures.iter().filter(|t| t.stand_in).count();
+		write!(
+			f,
+			"{:.1} MiB on the GPU: {} textures {:.1} MiB ({stand_ins} standing in for missing ones), \
+			fog mask {:.1} MiB, UI page {:.1} MiB, own {:.1} MiB; {} loading, {} failed",
+			mib(self.total()),
+			self.textures.len(),
+			mib(self.texture_bytes()),
+			mib(self.fog_mask),
+			mib(self.ui_page),
+			mib(self.own),
+			self.loading,
+			self.failed,
+		)
+	}
+}
+
 impl RendererMemory {
 	/// The textures loaded by path, in bytes.
 	pub fn texture_bytes(&self) -> u64 {
