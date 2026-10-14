@@ -1,13 +1,15 @@
 //! A second campaign in one run starts as clean as the first: campaign 1 → quit to the
-//! main menu → campaign 2 with the same seed. Back at the menu, nothing of campaign 1
-//! remains (no world entity, thinker, unit or roster, no scheduled event, no background
-//! task; the same states and UI connections as before it). Campaign 2's world is
-//! campaign 1's, entity for entity, and a frame of it costs what a frame of campaign 1
-//! did.
+//! main menu → campaign 2 with the same seed → quit → campaign 3 with another. Back at
+//! the menu, nothing of a campaign remains (no world entity, thinker, unit or roster, no
+//! scheduled event, no background task; the same states and UI connections as before
+//! it). Campaign 2's world is campaign 1's, entity for entity. In every campaign the
+//! player's party, sent along a path, moves every frame until it arrives.
 //!
 //! `World.clearScene()` (the world state's `onFinish`) once cleared only the clock: every
-//! campaign's entities stayed and kept thinking, so each new campaign in a run was
-//! slower than the last (the windowed game's hitches on the second campaign).
+//! campaign's entities stayed and kept thinking. The last campaign's player party kept
+//! setting the player's position, so the new one counted as out of the player's range
+//! and moved only every 0.5 to 1.5 s: the windowed game's hitches on a second campaign,
+//! with a different seed (with the same one, both parties start on one tile).
 //!
 //! Skips without the Steam install.
 
@@ -19,6 +21,7 @@ use bb_engine::{harness, tactical_player as player};
 const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 const AT_MENU: &str = "::RootState.get(\"WorldState\") == null && ::RootState.get(\"MainMenuState\").m.MainMenuScreen.isVisible() && !::RootState.get(\"MainMenuState\").m.MainMenuScreen.isAnimating()";
 const LOADED: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
+const SEED: &str = "rust-engine-test";
 /// The world the seed made: its settlements, where they stand, and how many entities the
 /// scripts see.
 const WORLD: &str = r#"(function() {
@@ -26,6 +29,8 @@ const WORLD: &str = r#"(function() {
 	foreach (e in ::World.EntityManager.getSettlements()) s += e.getName() + "@" + e.getTile().ID + " ";
 	return s + ::World.getAllEntitiesAtPos(::createVec(0, 0), 10000000.0).len();
 })()"#;
+/// The player party's position.
+const PARTY: &str = "::World.State.getPlayer().getPos().X + \" \" + ::World.State.getPlayer().getPos().Y";
 
 fn frame(engine: &harness::GameEngine) {
 	harness::run_frame(engine, 1000.0 / 60.0).unwrap();
@@ -65,8 +70,8 @@ fn held(engine: &harness::GameEngine) -> Held {
 	}
 }
 
-/// A campaign through the menu, as a player starts one.
-fn start(engine: &harness::GameEngine, n: u32) {
+/// A campaign on `seed` through the menu, as a player starts one.
+fn start(engine: &harness::GameEngine, n: u32, seed: &str) {
 	engine.run_script(&format!("{MENU}.getMainMenuModule().onNewCampaignButtonPressed();"), "new campaign").unwrap();
 	frame(engine);
 	engine
@@ -77,7 +82,7 @@ fn start(engine: &harness::GameEngine, n: u32) {
 					combatDifficulty = 1, economicDifficulty = 1, budgetDifficulty = 1,
 					ironman = false, explorationDifficulty = false,
 					lateGameCrisis = ::Const.World.GreaterEvilType.Random, permanentDestruction = false,
-					seed = \"rust-engine-test\", origin = \"scenario.early_access\"
+					seed = \"{seed}\", origin = \"scenario.early_access\"
 				}});"
 			),
 			"start",
@@ -86,8 +91,9 @@ fn start(engine: &harness::GameEngine, n: u32) {
 	until(engine, 600, "the campaign loading", LOADED);
 }
 
-/// The median frame, in ms, while the party walks a path.
-fn walk(engine: &harness::GameEngine) -> f64 {
+/// The party's walk along a path: the median frame (ms), and the most frames in a row it
+/// stood still before it arrived.
+fn walk(engine: &harness::GameEngine) -> (f64, usize) {
 	engine.run_script("::World.State.setAutoPause(false); ::World.State.setPause(false);", "unpause").unwrap();
 	for _ in 0..120 {
 		frame(engine);
@@ -112,15 +118,19 @@ fn walk(engine: &harness::GameEngine) -> f64 {
 			"path",
 		)
 		.unwrap();
-	let mut times: Vec<f64> = (0..600)
-		.map(|_| {
-			let t = Instant::now();
-			frame(engine);
-			t.elapsed().as_secs_f64() * 1000.0
-		})
-		.collect();
+	let (mut times, mut at) = (Vec::new(), Vec::new());
+	for _ in 0..600 {
+		let t = Instant::now();
+		frame(engine);
+		times.push(t.elapsed().as_secs_f64() * 1000.0);
+		at.push(player::eval_string(engine, PARTY).unwrap().unwrap());
+	}
 	times.sort_by(f64::total_cmp);
-	times[times.len() / 2]
+	let moved: Vec<bool> = at.windows(2).map(|w| w[0] != w[1]).collect();
+	let last = moved.iter().rposition(|m| *m).expect("the party moved");
+	assert!(last > 100, "the party walked a while ({last} frames)");
+	let still = moved[..last].split(|m| *m).map(<[bool]>::len).max().unwrap_or(0);
+	(times[times.len() / 2], still)
 }
 
 fn quit(engine: &harness::GameEngine) {
@@ -143,20 +153,27 @@ fn a_second_campaign_starts_as_clean_as_the_first() {
 	until(&engine, 600, "the main menu", AT_MENU);
 	let menu = held(&engine);
 
-	start(&engine, 1);
+	start(&engine, 1, SEED);
 	let (world_1, held_1) = (player::eval_string(&engine, WORLD).unwrap(), held(&engine));
-	let frame_1 = walk(&engine);
+	let (frame_1, still_1) = walk(&engine);
 	quit(&engine);
 	assert_eq!(held(&engine), menu, "back at the menu after campaign 1");
 
-	start(&engine, 2);
+	start(&engine, 2, SEED);
 	let (world_2, held_2) = (player::eval_string(&engine, WORLD).unwrap(), held(&engine));
 	assert_eq!(world_2, world_1, "the seed's world, as campaign 1 had it");
 	assert_eq!(held_2, held_1, "campaign 2 holds what campaign 1 did");
-	let frame_2 = walk(&engine);
-	eprintln!("median frame: campaign 1 {frame_1:.2} ms, campaign 2 {frame_2:.2} ms");
-	// Lenient (the machine may be busy): campaign 1's leftovers doubled the cost.
-	assert!(frame_2 < frame_1 * 1.5 + 0.2, "a frame of campaign 2 costs {frame_2:.2} ms, of campaign 1 {frame_1:.2} ms");
+	let (frame_2, still_2) = walk(&engine);
 	quit(&engine);
 	assert_eq!(held(&engine), menu, "back at the menu after campaign 2");
+
+	// Another seed: an earlier campaign's party would start elsewhere.
+	start(&engine, 3, "probe-second-company");
+	let (frame_3, still_3) = walk(&engine);
+	eprintln!("median frame: {frame_1:.2}, {frame_2:.2}, {frame_3:.2} ms; most frames standing still: {still_1}, {still_2}, {still_3}");
+	for (n, still) in [(1, still_1), (2, still_2), (3, still_3)] {
+		assert!(still <= 1, "campaign {n}'s party stood still {still} frames in a row on its way");
+	}
+	quit(&engine);
+	assert_eq!(held(&engine), menu, "back at the menu after campaign 3");
 }
