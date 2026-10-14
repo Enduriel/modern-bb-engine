@@ -1373,6 +1373,11 @@ impl TacticalEntities {
 		self.machine.borrow().units.len()
 	}
 
+	/// The unit records kept for units that died (host/test inspection).
+	pub fn dead_unit_count(&self) -> usize {
+		self.machine.borrow().units.iter().filter(|u| u.dead).count()
+	}
+
 	/// Release every retained ref (rosters, units, their sprites, the classes, methods).
 	/// Call before the VM is closed.
 	pub fn clear(&self) {

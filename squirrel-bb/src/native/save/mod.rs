@@ -241,6 +241,15 @@ impl SaveSystem {
 		}
 	}
 
+	/// The saves kept in memory, and their bytes (none when they go to a directory).
+	pub fn memory_use(&self) -> (usize, usize) {
+		let storage = self.inner.storage.borrow();
+		match &*storage {
+			Storage::Memory(_) => (storage.names().len(), storage.memory_bytes()),
+			Storage::Dir(_) => (0, 0),
+		}
+	}
+
 	/// Keep saves as `<name>.sav` files in `dir`.
 	pub fn set_directory(&self, dir: PathBuf) {
 		*self.inner.storage.borrow_mut() = Storage::Dir(dir);

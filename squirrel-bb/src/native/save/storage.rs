@@ -73,6 +73,14 @@ impl Storage {
 		}
 	}
 
+	/// The bytes of the saves kept in memory (none for a directory).
+	pub fn memory_bytes(&self) -> usize {
+		match self {
+			Storage::Memory(m) => m.borrow().values().map(Vec::len).sum(),
+			Storage::Dir(_) => 0,
+		}
+	}
+
 	/// The names of every stored save.
 	pub fn names(&self) -> Vec<String> {
 		match self {
