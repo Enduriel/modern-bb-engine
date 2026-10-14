@@ -11,7 +11,6 @@ use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::{TacticalMachine, ignore_missing};
 use crate::native::tactical_grid::visibility::PLAYER;
-use crate::native::tactical_grid::zone::faction_bit;
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
@@ -76,7 +75,7 @@ fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 			.units
 			.iter()
 			.filter(|u| u.render_callback && !u.dead)
-			.filter(|u| u.tile.is_some_and(|t| g.tiles[t].vis_mask & faction_bit(PLAYER) != 0))
+			.filter(|u| u.tile.is_some_and(|t| g.tiles[t].vis_mask.contains(PLAYER)))
 			.map(|u| u.entity.clone())
 			.collect()
 	};

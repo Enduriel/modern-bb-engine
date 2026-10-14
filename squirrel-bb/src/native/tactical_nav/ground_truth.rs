@@ -95,7 +95,7 @@ fn parse(data: &str) -> Battle {
 						let count: u8 = rest.trim_end_matches('m').parse().unwrap();
 						t.zoc.counts[fac as usize] = count;
 						if masked {
-							t.zoc.mask |= 1 << fac;
+							t.zoc.mask.insert(fac as i64);
 						}
 					}
 				}
@@ -147,7 +147,7 @@ fn settings(u: &Unit, variant: u32) -> NavSettings {
 			s.ap_per_level = u.levels[0];
 			s.fatigue_per_level = u.levels[1];
 			s.zoc_cost = 4;
-			s.hostile = !faction_mask(&u.allied);
+			s.allied = Some(faction_mask(&u.allied));
 			s.allow_zoc_passing = true;
 			s.is_player = true;
 		}
@@ -160,7 +160,7 @@ fn settings(u: &Unit, variant: u32) -> NavSettings {
 			s.max_level_difference = u.levels[2];
 			s.allow_zoc_passing = false;
 			s.zoc_cost = 20;
-			s.hostile = !faction_mask(&u.allied);
+			s.allied = Some(faction_mask(&u.allied));
 			s.hidden_cost = -1;
 		}
 		_ => {
@@ -173,7 +173,7 @@ fn settings(u: &Unit, variant: u32) -> NavSettings {
 			s.height_level_cost = 3;
 			s.allow_zoc_passing = true;
 			s.zoc_cost = 7;
-			s.hostile = !faction_mask(&[u.faction]);
+			s.allied = Some(faction_mask(&[u.faction]));
 		}
 	}
 	s
@@ -299,7 +299,7 @@ fn clip_path_to_distance_matches_the_original() {
 		// The probe: unit 0, default settings with its allies, to square (30, 16), within 0.
 		let u = &b.units[0];
 		let mut s = NavSettings::default();
-		s.hostile = !faction_mask(&u.allied);
+		s.allied = Some(faction_mask(&u.allied));
 		let dest = g.idx(30, 16).unwrap();
 		let q = Query {
 			grid: g,
@@ -328,7 +328,7 @@ fn zones_of_control_match_the_original() {
 		(0..6)
 			.filter_map(|d| b.grid.neighbour(u.tile, d))
 			.filter(|&n| (b.grid.tiles[n].level - level).abs() <= 1)
-			.all(|n| b.grid.tiles[n].zoc.mask & (1 << u.faction) != 0)
+			.all(|n| b.grid.tiles[n].zoc.mask.contains(u.faction as i64))
 	};
 	let mut g = TacticalGridState::for_test(b.grid.width, b.grid.height);
 	for (t, src) in g.tiles.iter_mut().zip(&b.grid.tiles) {
@@ -386,11 +386,11 @@ fn range_queries_match_the_original() {
 			"R" => {
 				let (centre, min, max) = (at(f[2]), f[3].parse().unwrap(), f[4].parse().unwrap());
 				let only_empty = f[5] == "1";
-				let others = if f[6] == "-" { !0u64 } else { !faction_mask(&ints(f[6])) };
+				let allied = (f[6] != "-").then(|| faction_mask(&ints(f[6])));
 				let tv_floor = if f[7] == "-" { NO_TV_FLOOR } else { f[7].parse().unwrap() };
 				let ours: Vec<usize> = tiles_in_range(g, centre, max)
 					.into_iter()
-					.filter(|&id| tile_passes(g, centre, id, min, only_empty, tv_floor, others, b.occupant[id].is_some()))
+					.filter(|&id| tile_passes(g, centre, id, min, only_empty, tv_floor, allied.as_ref(), b.occupant[id].is_some()))
 					.collect();
 				assert_eq!(ours, list(f.get(8).copied()), "{line}");
 				checked += 1;

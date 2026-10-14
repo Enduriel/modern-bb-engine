@@ -11,6 +11,7 @@
 
 pub(crate) mod camera;
 pub(crate) mod detail;
+pub(crate) mod faction_set;
 mod heat;
 mod picking;
 mod tile;
@@ -75,7 +76,7 @@ pub(crate) struct TacticalTileData {
 	pub zoo: zone::Zone,
 	/// The factions that see it, the player's fog flag (seen before, not now), and the
 	/// stamp of the last vision update that saw it (see [`visibility`]).
-	pub vis_mask: u64,
+	pub vis_mask: faction_set::FactionSet,
 	pub fogged: bool,
 	pub vis_stamp: u32,
 	/// AI path heat (`Tactical.fillHeat`/`clearHeat`), weighted by the navigator's

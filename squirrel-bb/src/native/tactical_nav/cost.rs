@@ -4,7 +4,6 @@
 
 use super::pathfind::Step;
 use super::settings::NavSettings;
-use crate::native::tactical_grid::zone::faction_bit;
 use crate::native::tactical_grid::{TacticalGridState, hex_distance};
 
 /// `getCostForPath`'s result.
@@ -125,11 +124,11 @@ pub(crate) fn turns_required(
 		cost = cost.wrapping_add(climb.wrapping_mul(s.ap_per_level).wrapping_add(type_cost(&s.ap_costs, t.type_)));
 		if i != last {
 			let in_zone = match target {
-				None => t.zoc.mask & s.hostile != 0,
+				None => s.hostile_zone(&t.zoc),
 				Some((target, faction)) => {
-					let mut count = t.zoc.count_in(s.hostile);
+					let mut count = s.hostile_zone_count(&t.zoc);
 					if faction != 0
-						&& faction_bit(faction) & s.hostile != 0
+						&& s.is_hostile(faction)
 						&& hex_distance(&grid.tiles[target], t) == 1
 					{
 						count -= 1;

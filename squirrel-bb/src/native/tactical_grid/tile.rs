@@ -91,8 +91,8 @@ fn items(t: &TileHandle, vm: &SQVM) -> SqStrongRef {
 	a
 }
 
-/// The mask of a script array of faction ids.
-fn factions(list: &SqArray) -> u64 {
+/// The set of a script array of faction ids.
+fn factions(list: &SqArray) -> super::zone::FactionSet {
 	super::zone::faction_mask(&list.to_vec::<i64>())
 }
 
@@ -187,7 +187,7 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = ro!(b, "TVTerrain", |t: &TileHandle| t.with(|d| d.tv_terrain), i64);
 	b = ro!(b, "TVLevelDisadvantage", |t: &TileHandle| t.with(|d| d.tv_level_disadvantage), i64);
 	b = ro!(b, "TVTotal", |t: &TileHandle| t.with(|d| d.tv_total), i64);
-	b = ro!(b, "IsVisibleForPlayer", |t: &TileHandle| t.with(|d| d.vis_mask & super::zone::faction_bit(1) != 0), bool);
+	b = ro!(b, "IsVisibleForPlayer", |t: &TileHandle| t.with(|d| d.vis_mask.contains(1)), bool);
 	b = ro!(
 		b,
 		"IsVisibleForEntity",
@@ -310,22 +310,22 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		.method("getZoneOfControlCount", |t: &mut TileHandle, f: i64| -> i64 { t.with(|d| d.zoc.count(f)) })
 		.method("getZoneOfControlCountOtherThan", |t: &mut TileHandle, allied: SqArray| -> i64 {
 			let mask = factions(&allied);
-			t.with(|d| d.zoc.count_outside(mask))
+			t.with(|d| d.zoc.count_outside(&mask))
 		})
 		.method("hasZoneOfControlOtherThan", |t: &mut TileHandle, allied: SqArray| -> bool {
 			let mask = factions(&allied);
-			t.with(|d| d.zoc.has_outside(mask))
+			t.with(|d| d.zoc.has_outside(&mask))
 		})
 		.method("addZoneOfOccupation", |t: &mut TileHandle, f: i64| t.grid.borrow_mut().apply_zone(t.id, f, true, true))
 		.method("removeZoneOfOccupation", |t: &mut TileHandle, f: i64| t.grid.borrow_mut().apply_zone(t.id, f, true, false))
 		.method("getZoneOfOccupationCount", |t: &mut TileHandle, f: i64| -> i64 { t.with(|d| d.zoo.count(f)) })
 		.method("getZoneOfOccupationCountOtherThan", |t: &mut TileHandle, allied: SqArray| -> i64 {
 			let mask = factions(&allied);
-			t.with(|d| d.zoo.count_outside(mask))
+			t.with(|d| d.zoo.count_outside(&mask))
 		})
 		.method("hasZoneOfOccupationOtherThan", |t: &mut TileHandle, allied: SqArray| -> bool {
 			let mask = factions(&allied);
-			t.with(|d| d.zoo.has_outside(mask))
+			t.with(|d| d.zoo.has_outside(&mask))
 		});
 	b.build(vm)
 }

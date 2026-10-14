@@ -12,7 +12,7 @@ use squirrel::{Retained, SQVM, SqStrongRef};
 use super::{TacticalMachine, ignore_missing};
 use crate::native::overload::single_overload;
 use crate::native::tactical_grid::visibility::{Occupant, PLAYER, Sightings};
-use crate::native::tactical_grid::{self, zone::faction_bit};
+use crate::native::tactical_grid;
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
@@ -86,7 +86,7 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 	let is_hidden_to_player = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM| -> bool {
-			placed(&m, vm.this_identity()).is_some_and(|(g, t)| g.borrow().tiles[t].vis_mask & faction_bit(PLAYER) == 0)
+			placed(&m, vm.this_identity()).is_some_and(|(g, t)| !g.borrow().tiles[t].vis_mask.contains(PLAYER))
 		})
 	};
 	// Whether the terrain in front would be drawn over the unit (see the grid's

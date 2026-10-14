@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Number, SQVM, SqArray, SqClass, SqStrongRef};
 
-use crate::native::tactical_grid::{self, Grid, zone};
+use crate::native::tactical_grid::{self, Grid, zone::{self, FactionSet}};
 
 #[derive(Clone)]
 pub(crate) struct NavSettings {
@@ -33,9 +33,11 @@ pub(crate) struct NavSettings {
 	pub heat_cost: i32,
 	/// `Faction`: stored, not read by the search.
 	pub faction: i32,
-	/// The factions *not* in `AlliedFactions` (all bits set minus the allied ones once
-	/// assigned; empty after a reset).
-	pub hostile: u64,
+	/// `AlliedFactions` once assigned: every other faction is hostile. `None` after a
+	/// reset: none is. (The original keeps the hostile ones as a 64-bit mask, so a
+	/// faction id of 64 or more is never hostile there; see
+	/// `docs/differences.md`.)
+	pub allied: Option<FactionSet>,
 	pub consider_empty: Option<usize>,
 	pub avoid_tile: Option<usize>,
 }
@@ -58,10 +60,27 @@ impl Default for NavSettings {
 			avoid_max_distance: 0,
 			heat_cost: 0,
 			faction: 0,
-			hostile: 0,
+			allied: None,
 			consider_empty: None,
 			avoid_tile: None,
 		}
+	}
+}
+
+impl NavSettings {
+	/// Whether faction `f` is hostile.
+	pub fn is_hostile(&self, f: i64) -> bool {
+		self.allied.as_ref().is_some_and(|a| !a.contains(f))
+	}
+
+	/// Whether a hostile faction exerts zone `z`.
+	pub fn hostile_zone(&self, z: &zone::Zone) -> bool {
+		self.allied.as_ref().is_some_and(|a| z.has_outside(a))
+	}
+
+	/// The summed counts of zone `z` from hostile factions.
+	pub fn hostile_zone_count(&self, z: &zone::Zone) -> i64 {
+		self.allied.as_ref().map_or(0, |a| z.count_outside(a))
 	}
 }
 
@@ -152,7 +171,7 @@ pub(super) fn build_class(vm: &mut SQVM, grid: Grid) -> SqClass<SettingsHandle> 
 			|s, vm, v| {
 				let array = v.get_value::<SqArray>(vm).ok_or("AlliedFactions: expected an array")?;
 				let allied: Vec<i64> = array.to_vec::<Number>().into_iter().map(|n| n.0 as i64).collect();
-				s.with_mut(|d| d.hostile = !zone::faction_mask(&allied));
+				s.with_mut(|d| d.allied = Some(zone::faction_mask(&allied)));
 				Ok(())
 			},
 		);

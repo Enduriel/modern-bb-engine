@@ -13,14 +13,15 @@
 
 use squirrel::{Native, Retained, SQVM, SqArray, SqStrongRef};
 
-use super::zone::faction_mask;
+use super::zone::{FactionSet, faction_mask};
 use super::{Grid, TacticalGridState, TileHandle, hex_distance, range, tile_handle};
 
 /// "No floor" for `TVTotal`, as the 7-argument form passes it.
 pub(crate) const NO_TV_FLOOR: i64 = -9000;
 
 /// Whether `queryTilesInRange` reports tile `id` (`occupied` says whether a unit or
-/// object stands on a tile; `others` is the mask of factions not listed).
+/// object stands on a tile; with `allied` factions listed, a zone of control from any
+/// other faction excludes the tile).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tile_passes(
 	g: &TacticalGridState,
@@ -29,13 +30,13 @@ pub(crate) fn tile_passes(
 	min: i64,
 	only_empty: bool,
 	tv_floor: i64,
-	others: u64,
+	allied: Option<&FactionSet>,
 	occupied: bool,
 ) -> bool {
 	let t = &g.tiles[id];
 	t.type_ != 0
 		&& !(only_empty && occupied)
-		&& (others == u64::MAX || t.zoc.mask & others == 0)
+		&& allied.is_none_or(|allied| !t.zoc.has_outside(allied))
 		&& t.tv_total >= tv_floor
 		&& hex_distance(t, &g.tiles[centre]) >= min
 }
@@ -85,13 +86,13 @@ pub(super) fn query_tiles(
 	callback: &SqStrongRef,
 	userdata: &SqStrongRef,
 ) -> Result<(), String> {
-	let others = !faction_mask(allied);
+	let allied = (!allied.is_empty()).then(|| faction_mask(allied));
 	let ids = range::tiles_in_range(&g.borrow(), centre, max);
 	for id in ids {
 		let take = {
 			let gb = g.borrow();
 			let occupied = gb.tiles[id].occupant.is_some();
-			tile_passes(&gb, centre, id, min, only_empty, tv_floor, others, occupied)
+			tile_passes(&gb, centre, id, min, only_empty, tv_floor, allied.as_ref(), occupied)
 		};
 		if take {
 			let tile = tile_handle(g, vm, id).ok_or("queryTilesInRange: no tile class")?;

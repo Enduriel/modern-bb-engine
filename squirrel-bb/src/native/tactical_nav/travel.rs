@@ -30,7 +30,7 @@ use squirrel::{SQVM, SqStrongRef};
 
 use super::NavState;
 use crate::native::tactical_entities::{Units, unit_identity};
-use crate::native::tactical_grid::{self, Grid, zone::faction_bit};
+use crate::native::tactical_grid::{self, Grid};
 
 /// The player's faction (whose view decides whether a move animates).
 const PLAYER: i64 = 1;
@@ -60,7 +60,7 @@ pub(super) fn tile(g: &Grid, vm: &SQVM, id: usize) -> Result<SqStrongRef, String
 }
 
 pub(super) fn seen_by_player(g: &Grid, id: usize) -> bool {
-	g.borrow().tiles[id].vis_mask & faction_bit(PLAYER) != 0
+	g.borrow().tiles[id].vis_mask.contains(PLAYER)
 }
 
 /// The units next to tile `id` (within a level) that a mover there must reckon with,
@@ -68,7 +68,7 @@ pub(super) fn seen_by_player(g: &Grid, id: usize) -> bool {
 fn neighbours_in_zone(g: &Grid, id: usize, mover: i64) -> Vec<SqStrongRef> {
 	let gb = g.borrow();
 	let t = &gb.tiles[id];
-	if t.zoc.mask == 0 {
+	if t.zoc.mask.is_empty() {
 		return Vec::new();
 	}
 	STEP.iter()

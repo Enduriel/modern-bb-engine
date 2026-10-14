@@ -14,7 +14,6 @@
 
 use super::TacticalGridState;
 use super::walk::{self, BLOCKS, GO_ON, STOP};
-use super::zone::faction_bit;
 
 /// The player's faction.
 pub(crate) const PLAYER: i64 = 1;
@@ -41,7 +40,7 @@ impl TacticalGridState {
 	/// Mark tile `id` seen by `faction` (with the player's discovery and fog flags).
 	fn mark_seen(&mut self, id: usize, faction: i64) {
 		let t = &mut self.tiles[id];
-		t.vis_mask |= faction_bit(faction);
+		t.vis_mask.insert(faction);
 		if faction == PLAYER {
 			t.fogged = false;
 			t.is_discovered = true;
@@ -57,7 +56,7 @@ impl TacticalGridState {
 	pub(crate) fn clear_visibility(&mut self) {
 		for t in &mut self.tiles {
 			t.fogged = true;
-			t.vis_mask = 0;
+			t.vis_mask.clear();
 		}
 	}
 
@@ -73,7 +72,7 @@ impl TacticalGridState {
 				}
 			} else {
 				let t = &mut self.tiles[id];
-				t.vis_mask &= !faction_bit(faction);
+				t.vis_mask.remove(faction);
 				if faction == PLAYER {
 					t.fogged = true;
 				}
@@ -103,10 +102,10 @@ impl TacticalGridState {
 				return STOP;
 			}
 			let t = &g.tiles[id];
-			let hidden = t.is_hiding_entity && dist > 1 && t.vis_mask & faction_bit(faction) == 0;
+			let hidden = t.is_hiding_entity && dist > 1 && !t.vis_mask.contains(faction);
 			if !hidden {
 				let t = &mut g.tiles[id];
-				t.vis_mask |= faction_bit(faction);
+				t.vis_mask.insert(faction);
 				if faction == PLAYER {
 					t.fogged = false;
 				}

@@ -21,7 +21,6 @@
 
 use super::heap;
 use super::settings::NavSettings;
-use crate::native::tactical_grid::zone::faction_bit;
 use crate::native::tactical_grid::{TacticalGridState, TacticalTileData, hex_distance};
 
 /// One step of a found path: the tile entered and the direction moved to enter it.
@@ -65,11 +64,11 @@ impl Query<'_> {
 
 	/// Whether faction `f`'s unit can be walked through (allied and not faction 0).
 	fn passable_unit(&self, f: i64) -> bool {
-		f != 0 && faction_bit(f) & self.settings.hostile == 0
+		f != 0 && !self.settings.is_hostile(f)
 	}
 
 	fn in_hostile_zone(&self, t: &TacticalTileData) -> bool {
-		t.zoc.mask & self.settings.hostile != 0
+		self.settings.hostile_zone(&t.zoc)
 	}
 }
 
@@ -100,7 +99,7 @@ fn target_enterable(q: &Query, start: usize, dest: usize) -> bool {
 		}
 		match q.occupant[n] {
 			Some(f) => {
-				if faction_bit(f) & s.hostile == 0 {
+				if !s.is_hostile(f) {
 					return true;
 				}
 			}

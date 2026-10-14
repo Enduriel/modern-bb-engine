@@ -131,7 +131,7 @@ fn successive_player_views_match_the_original() {
 		b.grid.update_visibility(&mut occ, b.units[0], 7, 1);
 		b.grid.update_visibility(&mut occ, b.units[1], 7, 1);
 		assert_eq!(seen_now(&b.grid), set(&b.grid, seen), "{name}");
-		let ours: BTreeSet<usize> = (0..b.grid.tiles.len()).filter(|&i| b.grid.tiles[i].vis_mask & 2 != 0).collect();
+		let ours: BTreeSet<usize> = (0..b.grid.tiles.len()).filter(|&i| b.grid.tiles[i].vis_mask.contains(1)).collect();
 		assert_eq!(ours, set(&b.grid, player), "{name}");
 	}
 }
