@@ -322,6 +322,16 @@ impl<T> TextureCache<T> {
 		}
 	}
 
+	/// Replace `path`'s texture with what `f` makes of it, if it has one and `f` makes
+	/// something.
+	pub fn update(&mut self, path: &str, f: impl FnOnce(&T) -> Option<T>) {
+		if let Some(Slot::Ready(texture) | Slot::Missing(texture, _)) = self.slots.get_mut(path) {
+			if let Some(new) = f(texture) {
+				*texture = new;
+			}
+		}
+	}
+
 	/// The state of `path`, if it was ever asked for.
 	pub fn slot(&self, path: &str) -> Option<&Slot<T>> {
 		self.slots.get(path)

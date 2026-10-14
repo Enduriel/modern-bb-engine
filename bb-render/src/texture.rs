@@ -72,7 +72,8 @@ impl GpuTexture {
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: TEXTURE_FORMAT,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+			// COPY_SRC: level 0 is copied when its mips are made (`crate::mips`).
+			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
 			view_formats: &[],
 		});
 		let write = |level: u32, mip: &Image| {
@@ -115,7 +116,7 @@ impl GpuTexture {
 
 /// How many mip levels a `width` × `height` image has, down to 1×1 (as many as
 /// [`mip_chain`] makes).
-fn mip_count(width: u32, height: u32) -> u32 {
+pub(crate) fn mip_count(width: u32, height: u32) -> u32 {
 	32 - width.max(height).max(1).leading_zeros()
 }
 

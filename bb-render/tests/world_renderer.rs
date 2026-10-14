@@ -141,11 +141,17 @@ fn atlases_load_on_first_use() {
 		"the sprite is drawn"
 	);
 
-	// What it holds: the 2×2 atlas and its 1×1 mip, besides its own textures.
+	// What it holds: the 2×2 atlas, without mips (drawn at its size), besides its own.
 	let memory = renderer.memory();
 	let atlas = memory.textures.iter().find(|t| t.path == "gfx/test.png").expect("the atlas counted");
-	assert_eq!((atlas.width, atlas.height, atlas.bytes, atlas.stand_in), (2, 2, 20, false));
+	assert_eq!((atlas.width, atlas.height, atlas.bytes, atlas.stand_in), (2, 2, 16, false));
 	assert!(memory.own > 0 && memory.total() >= memory.texture_bytes() + memory.own);
+
+	// Drawn smaller than its texels, it gets its mips (the 1×1 level) for that frame.
+	let far = WorldView { zoom: 0.25, ..view };
+	renderer.draw(&gpu, &target, &scene, &registry, &far, Atlases::DrawReady);
+	let atlas_bytes = |r: &WorldRenderer| r.memory().textures.iter().find(|t| t.path == "gfx/test.png").map(|t| t.bytes);
+	assert_eq!(atlas_bytes(&renderer), Some(20), "with its 1×1 level");
 }
 
 /// A hinted atlas waits on the CPU until a frame draws it; then it's on the GPU until the

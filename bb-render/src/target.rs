@@ -75,54 +75,66 @@ impl RenderTarget {
 
 	/// Copy the target's pixels back (rows top to bottom).
 	pub fn read(&self, gpu: &Gpu) -> Result<Image, String> {
-		let row = self.width * 4;
-		let padded_row =
-			row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-		let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-			label: Some("readback"),
-			size: u64::from(padded_row) * u64::from(self.height),
-			usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-			mapped_at_creation: false,
-		});
-		let mut encoder = gpu
-			.device
-			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-		encoder.copy_texture_to_buffer(
-			self.texture.as_image_copy(),
-			wgpu::TexelCopyBufferInfo {
-				buffer: &buffer,
-				layout: wgpu::TexelCopyBufferLayout {
-					offset: 0,
-					bytes_per_row: Some(padded_row),
-					rows_per_image: Some(self.height),
-				},
-			},
-			wgpu::Extent3d {
-				width: self.width,
-				height: self.height,
-				depth_or_array_layers: 1,
-			},
-		);
-		gpu.queue.submit([encoder.finish()]);
-
-		let (sender, receiver) = channel();
-		buffer.map_async(wgpu::MapMode::Read, .., move |result| {
-			let _ = sender.send(result);
-		});
-		gpu.wait()?;
-		receiver
-			.recv()
-			.map_err(|e| e.to_string())?
-			.map_err(|e| e.to_string())?;
-		let mapped = buffer.get_mapped_range(..).map_err(|e| e.to_string())?;
-		let mut rgba = Vec::with_capacity((row * self.height) as usize);
-		for line in mapped.chunks(padded_row as usize) {
-			rgba.extend_from_slice(&line[..row as usize]);
-		}
-		Ok(Image {
-			width: self.width,
-			height: self.height,
-			rgba,
-		})
+		read_level(gpu, &self.texture, 0)
 	}
+
+}
+
+/// Mip level `level` of the RGBA8 `texture`, read back.
+pub(crate) fn read_level(gpu: &Gpu, texture: &wgpu::Texture, level: u32) -> Result<Image, String> {
+	let size = texture.size();
+	let (width, height) = ((size.width >> level).max(1), (size.height >> level).max(1));
+	let row = width * 4;
+	let padded_row = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+	let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+		label: Some("readback"),
+		size: u64::from(padded_row) * u64::from(height),
+		usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+		mapped_at_creation: false,
+	});
+	let mut encoder = gpu
+		.device
+		.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+	encoder.copy_texture_to_buffer(
+		wgpu::TexelCopyTextureInfo {
+			texture,
+			mip_level: level,
+			origin: wgpu::Origin3d::ZERO,
+			aspect: wgpu::TextureAspect::All,
+		},
+		wgpu::TexelCopyBufferInfo {
+			buffer: &buffer,
+			layout: wgpu::TexelCopyBufferLayout {
+				offset: 0,
+				bytes_per_row: Some(padded_row),
+				rows_per_image: Some(height),
+			},
+		},
+		wgpu::Extent3d {
+			width,
+			height,
+			depth_or_array_layers: 1,
+		},
+	);
+	gpu.queue.submit([encoder.finish()]);
+
+	let (sender, receiver) = channel();
+	buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+		let _ = sender.send(result);
+	});
+	gpu.wait()?;
+	receiver
+		.recv()
+		.map_err(|e| e.to_string())?
+		.map_err(|e| e.to_string())?;
+	let mapped = buffer.get_mapped_range(..).map_err(|e| e.to_string())?;
+	let mut rgba = Vec::with_capacity((row * height) as usize);
+	for line in mapped.chunks(padded_row as usize) {
+		rgba.extend_from_slice(&line[..row as usize]);
+	}
+	Ok(Image {
+		width,
+		height,
+		rgba,
+	})
 }

@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 
-use crate::sprite::Quad;
 use crate::world::WorldQuads;
 
 /// The side of a coverage cell, in texels.
@@ -102,7 +101,7 @@ impl TextureUsage {
 			let Some((width, height)) = size_of(path) else { continue };
 			let coverage = self.atlases.entry(path.clone()).or_insert_with(|| Coverage::new(width, height));
 			coverage.mark(&quad.uv);
-			coverage.mips |= minified(quad, zoom, width) || dof_below.is_some_and(|level| quad.level < level);
+			coverage.mips |= crate::mips::samples_mips(quad, zoom, (width, height), dof_below);
 		}
 	}
 
@@ -122,16 +121,6 @@ impl TextureUsage {
 		atlases.sort_by(|a, b| b.drawn_texels.cmp(&a.drawn_texels).then_with(|| a.path.cmp(&b.path)));
 		atlases
 	}
-}
-
-/// Whether `quad` draws fewer screen pixels across than the texels it samples (so the
-/// GPU reads its mips).
-fn minified(quad: &Quad, zoom: f32, atlas_width: u32) -> bool {
-	let (x0, x1) = span(quad.corners.iter().map(|c| c[0]));
-	let (u0, u1) = span(quad.uv.iter().map(|c| c[0]));
-	let screen = (x1 - x0) * zoom;
-	let texels = (u1 - u0) * atlas_width as f32;
-	texels > 0.0 && screen < texels * 0.99
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ pub mod frame_diff;
 mod gpu;
 pub mod labels;
 mod memory;
+mod mips;
 pub mod portrait;
 mod present;
 pub mod residency;

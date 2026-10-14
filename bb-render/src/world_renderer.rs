@@ -18,6 +18,7 @@ use squirrel_bb::scene::tactical::TacticalScene;
 use crate::fog::FogPass;
 use crate::gpu::Gpu;
 use crate::labels::{LabelFont, WHITE};
+use crate::mips::{MipMaker, samples_mips};
 use crate::residency::{Drawer, Residency};
 use crate::sprite::{Quad, SceneUniforms, SpriteRenderer};
 use crate::tactical::tactical_quads;
@@ -75,6 +76,8 @@ pub struct WorldRenderer {
 	usage: Option<crate::usage::TextureUsage>,
 	/// When each texture was last drawn, for which stay on the GPU.
 	residency: Residency,
+	/// Makes an atlas's mips when a draw first samples them.
+	mips: MipMaker,
 }
 
 /// The game's clocks, in seconds.
@@ -136,6 +139,7 @@ impl WorldRenderer {
 			depth_of_field: false,
 			usage: None,
 			residency: Residency::new(gpu.texture_budget()),
+			mips: MipMaker::new(gpu),
 		}
 	}
 
@@ -237,6 +241,31 @@ impl WorldRenderer {
 			.collect()
 	}
 
+	/// Give the atlases `map`'s quads sample the mips of (drawn at `zoom`, the depth of
+	/// field blurring below `dof_below`) their mips, before they're drawn.
+	fn add_mips(&mut self, gpu: &Gpu, map: &crate::world::WorldQuads, zoom: f32, dof_below: Option<u32>) {
+		let mut need = vec![false; map.atlases.paths.len()];
+		for quad in &map.quads {
+			if need[quad.texture] {
+				continue;
+			}
+			let path = &map.atlases.paths[quad.texture];
+			// A font never has mips: drawn smaller, it samples its full size, as the
+			// original's do (see `crate::texture`).
+			if path.starts_with(FONT_DIR) {
+				continue;
+			}
+			let Some(texture) = self.textures.slot(path).and_then(Slot::texture) else { continue };
+			if texture.texture.mip_level_count() == 1 && samples_mips(quad, zoom, (texture.width, texture.height), dof_below) {
+				need[quad.texture] = true;
+			}
+		}
+		let (mips, textures) = (&self.mips, &mut self.textures);
+		for (path, _) in map.atlases.paths.iter().zip(need).filter(|(_, need)| *need) {
+			textures.update(path, |texture| Some(mips.with_mips(gpu, texture)));
+		}
+	}
+
 	/// Keep the textures within the budget, and the warmed images too, the oldest
 	/// going first.
 	fn fit_budget(&mut self) {
@@ -268,13 +297,7 @@ impl WorldRenderer {
 		view: &WorldView,
 		atlases: Atlases,
 	) -> FrameStats {
-		let upload = |path: &str, image: bb_assets::Image| {
-			if path.starts_with(FONT_DIR) {
-				GpuTexture::upload_flat(gpu, path, &image)
-			} else {
-				GpuTexture::upload(gpu, path, &image)
-			}
-		};
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
 		self.textures.pump(upload);
 		let fonts = WorldFonts {
 			label: label_font(&self.label_font),
@@ -304,6 +327,7 @@ impl WorldRenderer {
 			}
 			self.residency.drawn(path, Drawer::World);
 		}
+		self.add_mips(gpu, &world, view.zoom, None);
 
 		// The frame's atlases, renumbered; `None` for one not usable.
 		let mut stats = FrameStats::default();
@@ -415,7 +439,8 @@ impl WorldRenderer {
 			dof_strength: crate::tactical::dof_strength(self.depth_of_field),
 			..view.uniforms()
 		};
-		let stats = self.draw_quads(gpu, target, &map, &uniforms, Some(CLEAR), atlases, Drawer::Battle);
+		let dof_below = self.depth_of_field.then_some(camera_level);
+		let stats = self.draw_quads(gpu, target, &map, &uniforms, Some(CLEAR), atlases, Drawer::Battle, (view.zoom, dof_below));
 		self.fit_budget();
 		stats
 	}
@@ -437,7 +462,7 @@ impl WorldRenderer {
 		self.record_usage(&map, 1.0, None);
 		let target = RenderTarget::new(gpu, width, height);
 		let uniforms = SceneUniforms::centered([0.0, 0.0], width as f32, height as f32);
-		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll, Drawer::Other);
+		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll, Drawer::Other, (1.0, None));
 		target.read(gpu).map(Some)
 	}
 
@@ -460,7 +485,7 @@ impl WorldRenderer {
 		};
 		let uniforms = SceneUniforms::centered([0.0, 0.0], target.width as f32, target.height as f32);
 		self.record_usage(&map, 1.0, None);
-		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady, Drawer::Other)
+		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady, Drawer::Other, (1.0, None))
 	}
 
 	/// Draw `map`'s quads into `target`, over `clear` or what it holds, with the atlases
@@ -474,14 +499,9 @@ impl WorldRenderer {
 		clear: Option<[f64; 4]>,
 		atlases: Atlases,
 		drawer: Drawer,
+		(zoom, dof_below): (f32, Option<u32>),
 	) -> FrameStats {
-		let upload = |path: &str, image: bb_assets::Image| {
-			if path.starts_with(FONT_DIR) {
-				GpuTexture::upload_flat(gpu, path, &image)
-			} else {
-				GpuTexture::upload(gpu, path, &image)
-			}
-		};
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
 		self.textures.pump(upload);
 		for path in &map.atlases.paths {
 			match atlases {
@@ -494,6 +514,7 @@ impl WorldRenderer {
 			}
 			self.residency.drawn(path, drawer);
 		}
+		self.add_mips(gpu, map, zoom, dof_below);
 		let mut stats = FrameStats::default();
 		let mut ready: Vec<&GpuTexture> = Vec::new();
 		let slots: Vec<Option<usize>> = map
@@ -532,6 +553,17 @@ impl WorldRenderer {
 		stats.quads = quads.len();
 		self.sprites.draw(gpu, target, uniforms, clear, &quads, &ready);
 		stats
+	}
+}
+
+/// A texture as it goes to the GPU: an atlas or a font with level 0 only (an atlas's
+/// mips are made when a draw first samples them, see [`crate::mips`]), the water's and
+/// the fog's with their mips (their passes tile them over the view).
+fn upload(gpu: &Gpu, path: &str, image: &Image) -> GpuTexture {
+	if path == WATER_TEXTURE || path == FOG_TEXTURE {
+		GpuTexture::upload(gpu, path, image)
+	} else {
+		GpuTexture::upload_flat(gpu, path, image)
 	}
 }
 
