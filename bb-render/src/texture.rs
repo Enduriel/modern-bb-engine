@@ -47,19 +47,20 @@ impl GpuTexture {
 		texture_bytes(&self.texture)
 	}
 
-	/// Upload `image` with every mip level down to 1×1.
+	/// Upload `image` with every mip level down to 1×1. Each level is made from the
+	/// last, uploaded and dropped: at most two are alive at once, and `image` isn't
+	/// copied (an atlas is up to 64 MiB).
 	pub fn upload(gpu: &Gpu, label: &str, image: &Image) -> GpuTexture {
-		Self::upload_levels(gpu, label, &mip_chain(image))
+		Self::upload_levels(gpu, label, image, mip_count(image.width, image.height))
 	}
 
 	/// Upload `image` without mips.
 	pub fn upload_flat(gpu: &Gpu, label: &str, image: &Image) -> GpuTexture {
-		Self::upload_levels(gpu, label, std::slice::from_ref(image))
+		Self::upload_levels(gpu, label, image, 1)
 	}
 
-	/// Upload a texture whose mip levels are `levels`, the first full size.
-	fn upload_levels(gpu: &Gpu, label: &str, levels: &[Image]) -> GpuTexture {
-		let image = &levels[0];
+	/// Upload `image` and `levels - 1` halvings of it as its mip levels.
+	fn upload_levels(gpu: &Gpu, label: &str, image: &Image, levels: u32) -> GpuTexture {
 		let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
 			label: Some(label),
 			size: wgpu::Extent3d {
@@ -67,18 +68,18 @@ impl GpuTexture {
 				height: image.height,
 				depth_or_array_layers: 1,
 			},
-			mip_level_count: levels.len() as u32,
+			mip_level_count: levels,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: TEXTURE_FORMAT,
 			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
 			view_formats: &[],
 		});
-		for (level, mip) in levels.iter().enumerate() {
+		let write = |level: u32, mip: &Image| {
 			gpu.queue.write_texture(
 				wgpu::TexelCopyTextureInfo {
 					texture: &texture,
-					mip_level: level as u32,
+					mip_level: level,
 					origin: wgpu::Origin3d::ZERO,
 					aspect: wgpu::TextureAspect::All,
 				},
@@ -94,6 +95,13 @@ impl GpuTexture {
 					depth_or_array_layers: 1,
 				},
 			);
+		};
+		write(0, image);
+		let mut last: Option<Image> = None;
+		for level in 1..levels {
+			let next = halve(last.as_ref().unwrap_or(image));
+			write(level, &next);
+			last = Some(next);
 		}
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 		GpuTexture {
@@ -103,6 +111,12 @@ impl GpuTexture {
 			height: image.height,
 		}
 	}
+}
+
+/// How many mip levels a `width` × `height` image has, down to 1×1 (as many as
+/// [`mip_chain`] makes).
+fn mip_count(width: u32, height: u32) -> u32 {
+	32 - width.max(height).max(1).leading_zeros()
 }
 
 /// `image` and each halving of it down to 1×1. An odd edge drops its last
@@ -164,6 +178,18 @@ mod tests {
 			.map(|i| (i.width, i.height))
 			.collect();
 		assert_eq!(sizes, [(8, 2), (4, 1), (2, 1), (1, 1)]);
+	}
+
+	#[test]
+	fn the_mip_count_is_the_chains_length() {
+		for (width, height) in [(1, 1), (8, 2), (5, 3), (2048, 1024), (4096, 4096), (1, 7)] {
+			let image = Image {
+				width,
+				height,
+				rgba: vec![0; (width * height * 4) as usize],
+			};
+			assert_eq!(mip_count(width, height) as usize, mip_chain(&image).len(), "{width}×{height}");
+		}
 	}
 
 	#[test]
