@@ -86,6 +86,15 @@ pub struct App {
 	pub error: Option<String>,
 }
 
+impl Drop for App {
+	// However the loop ended (see `Running::close`).
+	fn drop(&mut self) {
+		if let Some(running) = self.running.take() {
+			running.close();
+		}
+	}
+}
+
 impl App {
 	pub fn new(options: Options, instance: wgpu::Instance) -> Self {
 		App {
@@ -157,11 +166,33 @@ impl App {
 	/// Stop with `error`.
 	fn fail(&mut self, event_loop: &ActiveEventLoop, error: String) {
 		self.error.get_or_insert(error);
+		self.quit(event_loop);
+	}
+
+	/// Leave the loop.
+	fn quit(&mut self, event_loop: &ActiveEventLoop) {
+		if let Some(running) = self.running.take() {
+			running.close();
+		}
 		event_loop.exit();
 	}
 }
 
 impl Running {
+	/// Take it down at exit: the game goes, but the window and the surface drawn to it
+	/// are left to the process's end. Under gamescope's Vulkan layer
+	/// (`ENABLE_GAMESCOPE_WSI`, on in every game gamescope runs), destroying the surface
+	/// also destroys the window's own `wl_surface`, before its role (traced:
+	/// `wl_surface.destroy` among the swapchain's teardown, then winit's
+	/// `xdg_toplevel.destroy`), and the window's teardown then crashes on the freed
+	/// object in libwayland. The window can't go first: the surface must not outlive it.
+	fn close(self) {
+		let Running { window, surface, game, .. } = self;
+		drop(game);
+		std::mem::forget(surface);
+		std::mem::forget(window);
+	}
+
 	/// Window pixels to the game's screen pixels.
 	fn to_screen(&self, x: f64, y: f64) -> (i64, i64) {
 		let (w, h) = self.game.screen();
@@ -285,31 +316,28 @@ impl ApplicationHandler for App {
 
 	fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
 		let Some(running) = self.running.as_mut() else { return };
+		// Whether to quit now.
 		let result = match &event {
-			WindowEvent::CloseRequested => {
-				event_loop.exit();
-				Ok(())
-			}
+			WindowEvent::CloseRequested => Ok(true),
 			WindowEvent::Resized(size) => {
 				running.resize(*size);
-				Ok(())
+				Ok(false)
 			}
-			WindowEvent::RedrawRequested => running.frame().and_then(|frames| {
-				match &self.options.shot {
-					Some((after, path)) if frames >= *after => {
-						let image = running.target.read(&running.gpu)?;
-						save_png(path.to_string_lossy().as_ref(), &image)?;
-						eprintln!("wrote {}", path.display());
-						event_loop.exit();
-					}
-					_ => {}
+			WindowEvent::RedrawRequested => running.frame().and_then(|frames| match &self.options.shot {
+				Some((after, path)) if frames >= *after => {
+					let image = running.target.read(&running.gpu)?;
+					save_png(path.to_string_lossy().as_ref(), &image)?;
+					eprintln!("wrote {}", path.display());
+					Ok(true)
 				}
-				Ok(())
+				_ => Ok(false),
 			}),
-			other => running.event(other),
+			other => running.event(other).map(|()| false),
 		};
-		if let Err(e) = result {
-			self.fail(event_loop, e);
+		match result {
+			Ok(true) => self.quit(event_loop),
+			Ok(false) => {}
+			Err(e) => self.fail(event_loop, e),
 		}
 	}
 
