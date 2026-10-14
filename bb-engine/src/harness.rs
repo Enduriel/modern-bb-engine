@@ -124,13 +124,24 @@ pub fn load_config(engine: &GameEngine) -> Result<(), String> {
 /// which makes `::Cursor`, waits for MH's UI handshake, which the UI client answers on
 /// a pump.
 pub fn boot_menu(engine: &GameEngine) -> Result<(), String> {
+	boot_menu_with(engine, 4, || engine.pump_ui().map(|_| ()))
+}
+
+/// [`boot_menu`], with `wait` run (up to `tries` times) until root_state's own onInit has
+/// made `::Cursor`. A host with a real UI passes one that runs the page, where Modern
+/// Hooks' handshake then happens (it loads every mod's JS first).
+pub fn boot_menu_with(
+	engine: &GameEngine,
+	tries: u32,
+	mut wait: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
 	load_config(engine)?;
 	engine.boot("scripts/root_state")?;
-	for _ in 0..4 {
+	for _ in 0..tries {
 		if squirrel::SqTable::root(engine.vm()).get::<squirrel::SqTable>("Cursor").is_some() {
 			break;
 		}
-		engine.pump_ui()?;
+		wait()?;
 	}
 	engine.run_script("::Cursor.setPosition(0, 0);", "cursor")?;
 	// Let the UI answer the menu's screens (connected, shown) before anything else.
