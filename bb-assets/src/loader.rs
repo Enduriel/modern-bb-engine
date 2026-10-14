@@ -27,6 +27,13 @@ use crate::image::{Image, decode_png};
 pub trait FileSource: Send + Sync {
 	/// The bytes of the file at `path`, or `None` if no archive has it.
 	fn read(&self, path: &str) -> Option<Vec<u8>>;
+
+	/// What `path`'s content is known by: the same string only for the same bytes (the
+	/// archive it comes from, the entry's CRC32 and size), for keeping what's made from
+	/// it ([`crate::SheetCache`]). `None`: unknown, nothing is kept.
+	fn identity(&self, _path: &str) -> Option<String> {
+		None
+	}
 }
 
 /// A finished decode: the path asked for and its image or why it failed.

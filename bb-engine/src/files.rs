@@ -50,4 +50,14 @@ impl FileSource for GameFiles {
 	fn read(&self, path: &str) -> Option<Vec<u8>> {
 		GameFiles::read(self, path)
 	}
+
+	/// The archive the file comes from (the last that has it, as `read` takes), and the
+	/// CRC32 and size its central directory records.
+	fn identity(&self, path: &str) -> Option<String> {
+		self.archives.iter().rev().find_map(|archive| {
+			let mut archive = archive.lock().unwrap();
+			let (crc32, size) = archive.entry_meta(path)?;
+			Some(format!("{}|{crc32:08x}|{size}", archive.path().display()))
+		})
+	}
 }
