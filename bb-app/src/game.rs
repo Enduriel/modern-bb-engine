@@ -58,6 +58,12 @@ impl Game {
 		&self.front
 	}
 
+	/// Whether the scripts have quit: their last state finished (the main menu's Quit
+	/// does that, and Escape on the main menu), which ends the original.
+	pub fn quit(&self) -> bool {
+		self.engine().root_state().state_names().is_empty()
+	}
+
 	fn engine(&self) -> &GameEngine {
 		self.front.engine()
 	}

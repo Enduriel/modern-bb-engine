@@ -435,6 +435,9 @@ impl ApplicationHandler for App {
 				Ok(frames)
 			})
 			.and_then(|frames| match &self.options.shot {
+				// The scripts finished their last state (the main menu's Quit, or Escape
+				// there): the game is over, as the original's.
+				_ if running.game.quit() => Ok(true),
 				Some((after, path)) if frames >= *after => {
 					let image = running.target.read(&running.gpu)?;
 					save_png(path.to_string_lossy().as_ref(), &image)?;

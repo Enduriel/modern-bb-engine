@@ -103,6 +103,28 @@ fn bb_exits_cleanly() {
 	assert!(shot.exists(), "the shot taken before the exit");
 }
 
+/// The scripts quit (back to the main menu, then its Quit, which finishes their last
+/// state; Escape there does the same): `bb` ends, as the original does, rather than
+/// going on drawing nothing.
+#[test]
+fn bb_ends_when_the_scripts_quit() {
+	let dir = run_dir("quit");
+	let settings = dir.join("settings.cfg");
+	// Back to the main menu once the world is up (worldgen takes a while), as the
+	// in-game menu's Quit does; then the main menu's Quit once the world is gone.
+	let exit = r#"if (!("__exited" in getroottable()) && ("State" in ::World) && ::World.State != null && ::World.State.m.WorldScreen != null) { ::__exited <- true; ::World.State.m.MenuStack.popAll(true); ::World.State.exitGame(); }"#;
+	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__exited" in getroottable()) && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
+	let mut args = vec!["--settings", settings.to_str().unwrap()];
+	for frame in ["600", "1200", "1800", "2400"] {
+		args.extend(["--at", frame, exit]);
+	}
+	for frame in ["3000", "3600", "4200", "4800"] {
+		args.extend(["--at", frame, quit]);
+	}
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "bb's exit status\n{}", run.stderr);
+}
+
 /// The scripts' video mode, set as the Options screen sets it, goes on the window at
 /// once: a window resized (no smaller than the Options screen's smallest resolution,
 /// and the scripts' mode follows the window), then borderless over the monitor; and the

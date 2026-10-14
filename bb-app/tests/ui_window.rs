@@ -2,7 +2,8 @@
 //! offscreen (no window): the campaign starts from the menu, and its opening event is
 //! drawn over the world and takes the clicks it's under, while the open map passes
 //! them to the states. A brother's portrait the page asks for is composed by the
-//! renderer.
+//! renderer. Quitting from the in-game menu (Escape, then Quit) leads back to the main
+//! menu, and Escape there ends the game, as in the original.
 //!
 //! Skips if there is no Steam install or no GPU.
 //!
@@ -15,6 +16,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use bb_app::front::Key;
 use bb_app::game::Game;
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_assets::Image;
@@ -142,6 +144,64 @@ fn cursor_is_drawn_at_the_mouse(game: &mut Game, gpu: &Gpu, target: &RenderTarge
 	Ok(())
 }
 
+/// `seconds` of 60th-of-a-second frames, stepped and drawn.
+fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64) -> Result<(), String> {
+	for _ in 0..(seconds * 60.0) as u32 {
+		game.step(1000.0 / 60.0)?;
+		game.draw(gpu, target);
+		std::thread::sleep(Duration::from_millis(5));
+	}
+	Ok(())
+}
+
+/// Escape, as a player presses it: down, and up a moment later.
+fn escape(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	for down in [true, false] {
+		let key = Key {
+			engine: Some(41),
+			windows: Some(0x1B),
+			text: None,
+			down,
+			repeat: false,
+		};
+		game.key(&key)?;
+		play(game, gpu, target, 0.2)?;
+	}
+	Ok(())
+}
+
+/// The in-game menu's Quit, as a player quits (Escape, then a click on Quit): the main
+/// menu comes back, and the game goes on. Escape there finishes the scripts' last state,
+/// which ends the original, and `bb` exits.
+fn quits_from_the_in_game_menu(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	escape(game, gpu, target)?;
+	let (qx, qy) = game.front().session().locate_when_ready("Quit", Duration::from_secs(30))?;
+	game.mouse_moved(i64::from(qx), i64::from(qy))?;
+	game.mouse_button(1, true)?;
+	game.mouse_button(1, false)?;
+	let deadline = std::time::Instant::now() + Duration::from_secs(120);
+	loop {
+		play(game, gpu, target, 0.2)?;
+		let names = game.front().engine().root_state().state_names();
+		if names == ["MainMenuState"] && game.front().session().visible_buttons()?.iter().any(|b| b == "New Campaign") {
+			break;
+		}
+		if std::time::Instant::now() > deadline {
+			return Err(format!("Quit didn't lead back to the main menu: {names:?}"));
+		}
+	}
+	play(game, gpu, target, 2.0)?;
+	if game.quit() {
+		return Err("the game ended at the main menu".into());
+	}
+	escape(game, gpu, target)?;
+	play(game, gpu, target, 1.0)?;
+	if !game.quit() {
+		return Err("Escape on the main menu didn't end the game".into());
+	}
+	Ok(())
+}
+
 fn check(gpu: &Gpu) -> Result<(), String> {
 	// Silent: tests never play on the device.
 	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false, None, VideoMode::DEFAULT, None)?;
@@ -229,7 +289,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	if !clicked(&game)? {
 		return Err(format!("the map's click didn't reach the states ({release:?})"));
 	}
-	Ok(())
+	game.mouse_moved(0, 0)?;
+	quits_from_the_in_game_menu(&mut game, gpu, &target)
 }
 
 fn main() -> ExitCode {
