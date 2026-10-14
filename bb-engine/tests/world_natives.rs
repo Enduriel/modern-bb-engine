@@ -191,4 +191,19 @@ fn world_natives_from_the_disassembly() {
 		if (::IO.enumerateFiles("./data/") != null) wrong.push("./data/ listed");
 		"#,
 	);
+	check(
+		&engine,
+		"createRoster",
+		r#"
+		// It returns the roster (made if new), and ids that aren't numbers all name one
+		// roster, as the original's unchecked argument does (Clever Recruiter's string id).
+		local r = ::World.createRoster(424242);
+		if (r == null || r.getSize() != 0) wrong.push("createRoster didn't return the new roster");
+		local a = ::World.createRoster("mod_clever_recruiter");
+		a.create("scripts/entity/tactical/player");
+		if (::World.getRoster("another string").getSize() != 1) wrong.push("string ids name different rosters");
+		::World.deleteRoster("mod_clever_recruiter");
+		::World.deleteRoster(424242);
+		"#,
+	);
 }
