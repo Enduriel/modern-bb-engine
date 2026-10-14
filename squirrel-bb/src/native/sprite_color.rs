@@ -78,6 +78,13 @@ impl SpriteColor {
 		self.color = (self.color & 0x00ff_ffff) | ((alpha as u32 & 0xff) << 24);
 	}
 
+	/// The entity-level `setAlpha(a)` (`0x4a9ac0`): any fade ends where it is, and the
+	/// alpha is `a` at once.
+	pub fn snap_alpha(&mut self, alpha: i64) {
+		self.fade = None;
+		self.set_alpha(alpha);
+	}
+
 	/// `IsFadingDone`.
 	pub fn is_fading_done(&self) -> bool {
 		self.fade.is_none()

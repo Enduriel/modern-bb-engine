@@ -5,9 +5,14 @@
 //! With fog of war on, an entity is visible to the player when it isn't hidden from
 //! them (`isHiddenToPlayer`), or when it shows in the fog (`setVisibleInFogOfWar`) and
 //! was discovered before; with fog off everything is visible. An entity becomes
-//! visible or hidden at most once per 300 ms of real time (the fade). Every entity
-//! starts hidden, so the first time it is seen it fades in, is marked discovered
-//! (running `onDiscovered` once), and runs `onVisibleToPlayer`.
+//! visible or hidden at most once per 300 ms of real time. Every entity starts hidden,
+//! so the first time it is seen it fades in, is marked discovered (running
+//! `onDiscovered` once), and runs `onVisibleToPlayer`.
+//!
+//! The fades (`0x4e7b4d`; disassembled 2026-10-14) are its sprites': coming into
+//! sight, every sprite's alpha drops to 0 at once and fades in over 300 ms of real
+//! time; going out of sight, every sprite fades out over 300 ms (and stays, clear).
+//! Its labels aren't sprites and don't fade: they follow the entity's state.
 //!
 //! Also `World.render()`, which with fog on uncovers the map around the player's view
 //! every frame, and `World.prepareRender()`, which only prepares drawing.
@@ -25,6 +30,36 @@ use super::{EntityMachine, ignore_missing, view};
 
 /// How long a fade between hidden and visible takes, in real-time ms.
 const FADE_MS: i64 = 300;
+
+/// An entity-level fade, done to each of its sprites (the original's `fadeIn`
+/// `0x4a9930`, `fadeOut` `0x4a99c0` and `setAlpha` `0x4a9ac0`, which the scripts can
+/// also call on the entity).
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Fade {
+	/// To full alpha over ms.
+	In(i64),
+	/// To clear over ms (the sprites stay).
+	Out(i64),
+	/// This alpha at once, ending any fade.
+	Alpha(i64),
+}
+
+/// Do `fade` to every sprite of entity `idx`, at real time `now` (seconds).
+pub(super) fn fade_sprites(m: &Machine, vm: &SQVM, idx: usize, fade: Fade, now: f32) {
+	let (class, handles) = {
+		let machine = m.borrow();
+		let handles: Vec<SqStrongRef> = machine.entities[idx].sprites.iter().map(|(_, h)| h.clone()).collect();
+		(machine.sprite_class.clone(), handles)
+	};
+	let Some(class) = class else { return };
+	for handle in handles {
+		class.with_payload(vm, &handle, |s| match fade {
+			Fade::In(ms) => s.color.fade_in(ms, now),
+			Fade::Out(ms) => s.color.fade_out(ms, now, false),
+			Fade::Alpha(alpha) => s.color.snap_alpha(alpha),
+		});
+	}
+}
 
 /// The render-side state of one entity.
 #[derive(Clone, Copy)]
@@ -83,7 +118,7 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 		if super::reap(m, vm, idx, now)? {
 			continue;
 		}
-		// Decide under the borrow; run the callbacks without it.
+		// Decide under the borrow; fade and run the callbacks without it.
 		let discovered_now = {
 			let mut machine = m.borrow_mut();
 			let player_view = machine.player_view;
@@ -101,7 +136,7 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 				(false, false) => {
 					rec.render.hidden = true;
 					rec.render.next_change = now + FADE_MS;
-					continue;
+					None
 				}
 				(true, true) => {
 					let first = !rec.discovered;
@@ -113,7 +148,14 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 				_ => continue,
 			}
 		};
-		if let Some((entity, first)) = discovered_now {
+		let seconds = now as f32 * 0.001;
+		let Some((entity, first)) = discovered_now else {
+			fade_sprites(m, vm, idx, Fade::Out(FADE_MS), seconds);
+			continue;
+		};
+		fade_sprites(m, vm, idx, Fade::Alpha(0), seconds);
+		fade_sprites(m, vm, idx, Fade::In(FADE_MS), seconds);
+		{
 			if first {
 				ignore_missing(entity.call_method(vm, "onDiscovered", ()))?;
 			}
@@ -124,12 +166,13 @@ pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
 	Ok(())
 }
 
-/// Draw the shown entities' sprites at real time `now` (seconds): what a draw does to
-/// them is finish their fades (see `SpriteColor`), which may hide them.
+/// Draw the entities' sprites at real time `now` (seconds): what a draw does to them is
+/// finish their fades (see `SpriteColor`), which may hide them. The original draws an
+/// entity's sprites whether it's in sight or not (out of sight they're clear).
 fn draw_sprites(m: &Machine, vm: &SQVM, now: f32) {
 	let machine = m.borrow();
 	let Some(class) = machine.sprite_class.clone() else { return };
-	for rec in machine.entities.iter().filter(|r| r.alive && r.visible && r.render.shown()) {
+	for rec in machine.entities.iter().filter(|r| r.alive && r.visible) {
 		for (_, handle) in rec.sprites.iter() {
 			class.with_payload(vm, handle, |s| {
 				if s.visible && s.color.draw(now).hide {

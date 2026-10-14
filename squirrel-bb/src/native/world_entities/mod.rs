@@ -737,21 +737,42 @@ impl WorldEntities {
 				idx.map_or(Ok(()), |idx| kill(&m, vm, idx))
 			})
 		};
-		// fadeAndDie(): the original fades the entity out and lets it die 500 ms of real
-		// time later (from the next think or render pass after that); until then it is
-		// still alive and found by queries. Later calls don't extend the delay.
+		// fadeAndDie(): the original fades the entity's sprites out over 500 ms and lets
+		// it die 500 ms of real time later (from the next think or render pass after
+		// that; `0x4e90c0`); until then it is still alive and found by queries. Later
+		// calls don't extend the delay.
 		let fade_and_die = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				let now = render::real_time_ms(vm)?;
-				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					if rec.alive && rec.dies_at.is_none() {
-						rec.dies_at = Some(now + 500);
-					}
+				let idx = {
+					let mut machine = m.borrow_mut();
+					let idx = machine.by_identity.get(&vm.this_identity()).copied();
+					let rec = idx.and_then(|i| machine.entities.get_mut(i)).filter(|r| r.alive && r.dies_at.is_none());
+					rec.map(|r| r.dies_at = Some(now + 500)).and(idx)
+				};
+				if let Some(idx) = idx {
+					render::fade_sprites(&m, vm, idx, render::Fade::Out(500), now as f32 * 0.001);
 				}
 				Ok(())
 			})
 		};
+		// fadeIn(ms), fadeOut(ms), setAlpha(alpha): to every sprite (`0x4a9930`,
+		// `0x4a99c0`, `0x4a9ac0`), on real time.
+		let entity_fade = |make: fn(i64) -> render::Fade| {
+			let m = self.machine.clone();
+			move |vm: &SQVM, value: Number| -> Result<(), String> {
+				let idx = m.borrow().by_identity.get(&vm.this_identity()).copied();
+				if let Some(idx) = idx {
+					let now = render::real_time_ms(vm)? as f32 * 0.001;
+					render::fade_sprites(&m, vm, idx, make(value.0 as i64), now);
+				}
+				Ok(())
+			}
+		};
+		let fade_in = vm.make_closure(entity_fade(render::Fade::In));
+		let fade_out = vm.make_closure(entity_fade(render::Fade::Out));
+		let set_alpha = vm.make_closure(entity_fade(render::Fade::Alpha));
 		methods.extend(view::entity_methods(&self.machine, vm));
 		methods.extend(think::entity_methods(&self.machine, vm));
 		methods.extend(movement::entity_methods(&self.machine, vm));
@@ -762,14 +783,14 @@ impl WorldEntities {
 		methods.push(("isStoringColor", vm.make_closure(|| false)));
 		methods.push(("die", die));
 		methods.push(("fadeAndDie", fade_and_die));
+		methods.push(("fadeIn", fade_in));
+		methods.push(("fadeOut", fade_out));
+		methods.push(("setAlpha", set_alpha));
 		// Render-only natives.
 		for name in [
 			"setZ",
 			"fadeTo",
 			"fadeToStoredColors",
-			"fadeIn",
-			"fadeOut",
-			"setAlpha",
 			"setSpriteOcclusion",
 			"moveSpriteOffset",
 			"moveSpriteScale",
@@ -1039,7 +1060,13 @@ impl WorldEntities {
 			.map(|rec| crate::scene::SceneEntity {
 				id: rec.id,
 				pos: rec.pos,
-				shown: rec.render.shown(),
+				// In sight, or still fading out of it (see `render`): a shown sprite's fade
+				// (a hidden one's never finishes, as it isn't drawn).
+				shown: rec.render.shown()
+					|| rec
+						.sprites
+						.iter()
+						.any(|(_, h)| class.with_payload(vm, h, |s| s.visible && !s.color.is_fading_done()).unwrap_or(false)),
 				sprites: rec
 					.sprites
 					.iter()
@@ -1066,7 +1093,8 @@ impl WorldEntities {
 						label_class.with_payload(vm, handle, |l| crate::scene::SceneLabel {
 							name: name.clone(),
 							text: l.text.clone(),
-							visible: l.visible,
+							// Labels don't fade: they show while the entity is in sight.
+							visible: l.visible && rec.render.shown(),
 							color: l.color,
 							offset: l.offset,
 						})
