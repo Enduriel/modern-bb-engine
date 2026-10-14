@@ -89,6 +89,14 @@ impl WorldEntities {
 		m.footprints = super::footprints::Footprints::default();
 	}
 
+	/// `World.clearScene()`'s share: every entity, the thinker list and the footprints
+	/// go, and the player's vision radius is 1 again. The id counter carries on (every
+	/// engine object draws from it).
+	pub(crate) fn clear_scene(&self) {
+		self.clear_for_load();
+		self.machine.borrow_mut().player_view.vision_radius = 1.0;
+	}
+
 	/// Re-create the entity of script `path` saved as `head` + `part`, on a map
 	/// `dims` (width, height) in size. `top`: it was in the layer drawn on top.
 	pub(crate) fn load_original(

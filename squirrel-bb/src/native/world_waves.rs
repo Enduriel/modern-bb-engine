@@ -46,6 +46,11 @@ pub struct WaveField {
 pub type Waves = Rc<RefCell<WaveField>>;
 
 impl WaveField {
+	/// No waves (`World.clearScene()` clears the effects layer).
+	pub fn clear(&mut self) {
+		self.waves.clear();
+	}
+
 	pub fn spawn(&mut self, brush: &str, pos: (f32, f32), drift: (f32, f32), lifetime: f32) {
 		self.waves.push(Wave {
 			brush: brush.to_string(),

@@ -125,6 +125,11 @@ impl TimeService {
 		};
 	}
 
+	/// Number of scheduled events not yet fired (host/test inspection).
+	pub fn pending_events(&self) -> usize {
+		self.state.borrow().events.len()
+	}
+
 	/// Real time since boot in seconds (`Time.getRealTimeF()`).
 	pub fn real_seconds(&self) -> f64 {
 		self.state.borrow().real_time / 1000.0
@@ -145,6 +150,13 @@ impl TimeService {
 	/// Set the virtual time to `seconds` (a loaded save's).
 	pub(crate) fn set_virtual_seconds(&self, seconds: f64) {
 		self.state.borrow_mut().virtual_time = seconds * 1000.0;
+	}
+
+	/// Virtual time back to 0 at speed 1, as `World.clearScene()` sets it (`0x4eff3a`).
+	pub(crate) fn reset_virtual(&self) {
+		let mut st = self.state.borrow_mut();
+		st.virtual_time = 0.0;
+		st.virtual_speed = 1.0;
 	}
 
 	/// Drop all pending scheduled events (releasing their callback/userdata

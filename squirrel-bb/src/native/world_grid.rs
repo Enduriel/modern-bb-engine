@@ -878,6 +878,19 @@ impl WorldGrid {
 		g.nav_path_class = None;
 	}
 
+	/// `World.clearScene()`'s share: the details and the region names go, and fog of
+	/// war is on again. The tiles stay: worldgen's `clearTiles` and `resizeScene` reset
+	/// them.
+	pub(crate) fn clear_scene(&self) {
+		let mut g = self.grid.borrow_mut();
+		for t in &mut g.tiles {
+			t.details.clear();
+		}
+		g.spinning.borrow_mut().clear();
+		g.region_texts.clear();
+		g.fog_on = true;
+	}
+
 	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`).
 	pub(crate) fn turn(&self, now: f32) {
 		let spinning = self.grid.borrow().spinning.clone();

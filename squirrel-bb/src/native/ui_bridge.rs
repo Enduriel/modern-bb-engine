@@ -416,6 +416,11 @@ impl UiBridge {
 		self.state.borrow().log.len()
 	}
 
+	/// Number of open connections (`UI.connect` not yet disconnected).
+	pub fn connection_count(&self) -> usize {
+		self.state.borrow().handles.len()
+	}
+
 	/// Release every retained ref (connections, recorded data, the class). Call this
 	/// before the VM is closed (the drop-before-close contract for SqStrongRefs).
 	pub fn clear(&self) {

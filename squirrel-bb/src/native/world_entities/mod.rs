@@ -954,6 +954,11 @@ impl WorldEntities {
 		self.machine.borrow().entities.len()
 	}
 
+	/// Number of registered thinkers (host/test inspection).
+	pub fn thinker_count(&self) -> usize {
+		self.machine.borrow().thinkers.len()
+	}
+
 	/// The footprints drawn now: none unless `ShowTracking` is on (`0x4e49a0`).
 	pub(crate) fn scene_footprints(&self, vm: &SQVM) -> Vec<crate::scene::SceneFootprint> {
 		let tracking = SqTable::root(vm)

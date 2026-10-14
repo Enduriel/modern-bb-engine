@@ -58,6 +58,7 @@ pub(crate) mod world_detail;
 mod world_grid;
 pub(crate) mod world_clouds;
 pub(crate) mod world_waves;
+pub(crate) mod world_clear_scene;
 mod world_layout;
 mod world_query;
 pub(crate) mod world_time;

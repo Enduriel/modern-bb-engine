@@ -54,6 +54,13 @@ pub(super) struct Thinkers {
 	in_pass: bool,
 }
 
+impl Thinkers {
+	/// Registered thinkers, counting duplicates.
+	pub(super) fn len(&self) -> usize {
+		self.list.len()
+	}
+}
+
 type Machine = Rc<RefCell<EntityMachine>>;
 
 /// `registerThinker` and `unregisterThinker`, for injection onto every entity.

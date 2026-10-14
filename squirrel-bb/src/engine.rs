@@ -120,6 +120,19 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let tactical_navigator = TacticalNavigator::new(&tactical_grid, tactical_entities.units());
 		tactical_navigator.install(&mut vm);
 		crate::native::tactical::install_effects(&mut vm, &natives.tactical);
+		// Leaving a campaign empties the world (after every `World` native exists).
+		crate::native::world_clear_scene::install(
+			&mut vm,
+			crate::native::world_clear_scene::WorldScene {
+				entities: world_entities.clone(),
+				grid: world_grid.clone(),
+				units: tactical_entities.clone(),
+				time: time.clone(),
+				clouds: natives.clouds.clone(),
+				waves: natives.waves.clone(),
+				particles: natives.world_particles.clone(),
+			},
+		);
 		// Silent until the host gives it an output; its own random stream, as the original's.
 		let audio = crate::native::audio::Audio::new(
 			Box::new(crate::native::audio::NullOut::new(modules.file_reader())),
