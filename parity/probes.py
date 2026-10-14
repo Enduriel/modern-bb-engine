@@ -17,14 +17,15 @@ class Probe:
     body: str
 
 
-def load_probes(root: Path) -> list[Probe]:
+def load_probes(root: Path, prefix: str = "") -> list[Probe]:
+    """The probes under root, named by path (prefix + relative path, no extension)."""
     probes = []
     for path in sorted(root.rglob("*.nut")):
         body = path.read_text()
         m = re.search(r"^// mode: (menu|campaign)(?: seed=(\S+))?\s*$", body, re.M)
         if not m:
             raise SystemExit(f"{path}: missing '// mode: menu|campaign [seed=S]' header")
-        name = path.relative_to(root).with_suffix("").as_posix()
+        name = prefix + path.relative_to(root).with_suffix("").as_posix()
         probes.append(Probe(name, m.group(1), m.group(2), body))
     return probes
 

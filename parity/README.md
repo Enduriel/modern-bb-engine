@@ -7,6 +7,7 @@ same script in our engine and compares the two line by line.
 
 ```
 probes/<group>/<name>.nut    the probes
+ui_payloads/<name>.nut, .js  what the scripts send the UI along a walk of the game
 goldens/<group>/<name>.txt   their output in the original
 divergences.txt              known, accepted differences
 capture.py, probes.py        capture from the original
@@ -17,10 +18,12 @@ capture.py, probes.py        capture from the original
 ```bash
 cd modern_bb_engine
 cargo test --release -p bb-engine --test parity              # compare (needs the Steam install)
+cargo test --release -p bb-engine --test ui_payloads         # the UI payloads
 PARITY_DUMP=/tmp/ours cargo test --release -p bb-engine --test parity   # also write our output
 
 python3 parity/capture.py                  # recapture every golden from the original
 python3 parity/capture.py menu/math        # only the launch that contains this probe
+python3 parity/capture.py ui_payloads/world
 ```
 
 Capturing needs a probe runner that launches the original game (not part of this
@@ -52,6 +55,18 @@ Keep the output comparable:
 - Code runs with single-precision float math, as game scripts do in the original.
 - Some code crashes the original instead of raising an error, which loses the whole
   launch. Compiling `base++` does (ours reports a compile error).
+
+## UI payloads
+
+The scripts' side of the UI goldens (bb-ui keeps the DOM goldens).
+`ui_payloads/world.nut` replaces every UI handle with a stand-in that records each
+`asyncCall`/`call` payload, then walks the steps of bb-ui's world goldens: the intro
+event, its button, the character screen, the nearest town, leaving it. In the original,
+`world.js` paces the steps 3 s apart from the UI; `tests/ui_payloads.rs` runs 3 s of
+frames between them. Each distinct payload is logged once per step, one line per leaf,
+with tables in sorted key order. Values that can't match between runs are normalized in
+the recorder, the same way in both engines: numeric ids become first-seen ordinals, and
+portraits' content ids (from the unseeded C runtime `rand()`) become `rand`.
 
 ## Divergences
 
