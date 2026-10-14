@@ -180,18 +180,17 @@ impl UiSession {
 		}
 	}
 
-	/// Run the game loop for `seconds` of real time, at about 60 frames per second,
-	/// answering the page between frames as its calls arrive.
+	/// Run `seconds` of the game loop: that many 60th-of-a-second frames, each given
+	/// exactly 1/60 s, answering the page between them. Frames are paced in real time
+	/// (the page's animations run on it), but a slow frame makes the run longer instead
+	/// of the game different, so what the scripts do doesn't depend on the machine.
 	pub fn run_frames(&self, seconds: f64) -> Result<(), String> {
 		let frame = Duration::from_micros(16_667);
-		let until = Instant::now() + Duration::from_secs_f64(seconds);
-		let mut last = Instant::now();
-		while Instant::now() < until {
-			let now = Instant::now();
-			self.engine
-				.frame(now.duration_since(last).as_secs_f64() * 1000.0)?;
-			last = now;
-			self.pump_until_deadline((now + frame).min(until));
+		let frames = (seconds * 60.0).round().max(1.0) as u64;
+		for _ in 0..frames {
+			let start = Instant::now();
+			self.engine.frame(1000.0 / 60.0)?;
+			self.pump_until_deadline(start + frame);
 		}
 		Ok(())
 	}
