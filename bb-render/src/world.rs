@@ -210,6 +210,7 @@ pub fn world_quads<'a>(
 			};
 			// The original's detail key: int(y) + depth bias + z level (`0x4fb707`).
 			let key = anchor[1] as i64 + detail.z_level;
+			let pushed = drawables.len();
 			push(
 				&mut drawables,
 				Layer::Details,
@@ -219,6 +220,10 @@ pub fn world_quads<'a>(
 				[0.0; 2],
 				look,
 			);
+			// Its `Saturation` (the steppe's brush is 0.8).
+			if let Some(d) = drawables.get_mut(pushed) {
+				d.quad.saturation = detail.saturation as f32;
+			}
 		}
 	}
 	for entity in scene

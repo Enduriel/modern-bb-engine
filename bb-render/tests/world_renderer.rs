@@ -11,7 +11,7 @@ use bb_assets::{
 };
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Gpu, RenderTarget, WorldRenderer};
-use squirrel_bb::scene::{SceneTile, WorldScene};
+use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
 use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
 struct Files(HashMap<String, Vec<u8>>);
@@ -186,6 +186,57 @@ fn flipped_tiles_mirror_their_picture_in_place() {
 	};
 	assert_eq!(left_pixel(false), RED);
 	assert_eq!(left_pixel(true), BLUE, "the right column shows on the left");
+}
+
+#[test]
+fn details_draw_with_their_colour_and_saturation() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	const RED: [u8; 4] = [255, 0, 0, 255];
+	let files = Files(HashMap::from([("gfx/test.png".to_string(), solid_png(RED))]));
+	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	let registry = registry();
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 4,
+		height: 4,
+	};
+	let target = RenderTarget::new(&gpu, 4, 4);
+	let mut pixel = |tint: u32, saturation: f64| {
+		let mut detail = SceneDetail::default();
+		detail.brush = "dot".into();
+		detail.tint = tint;
+		detail.saturation = saturation;
+		let scene = WorldScene {
+			tiles: vec![SceneTile {
+				col: 0,
+				row: 0,
+				pos: (0.0, 0.0),
+				terrain: 2,
+				discovered: true,
+				brush: String::new(),
+				flipped: false,
+				details: vec![detail],
+			}],
+			fog_of_war: false,
+			..WorldScene::default()
+		};
+		renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+		let image = target.read(&gpu).expect("read back");
+		let at = (4 + 1) * 4;
+		<[u8; 4]>::try_from(&image.rgba[at..at + 4]).unwrap()
+	};
+	assert_eq!(pixel(0x00ff_ffff, 1.0), RED);
+	let dark = pixel(0x0080_8080, 1.0);
+	assert!(dark[0].abs_diff(128) <= 1 && dark[1] == 0, "darkened (setBrightness): {dark:?}");
+	let grey = pixel(0x00ff_ffff, 0.0);
+	assert!(grey[0] == grey[1] && grey[1] == grey[2] && grey[0] > 0, "desaturated: {grey:?}");
 }
 
 #[test]
