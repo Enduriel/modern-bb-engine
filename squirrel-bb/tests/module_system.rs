@@ -520,6 +520,39 @@ fn instance_levels_and_member_tables_match_the_original_layout() {
 	.expect("layout matches the original engine");
 }
 
+/// Each class gets its own copy of its ancestors' levels at `inherit` (probed in the
+/// original, 2026-10-14): the class table has no delegate, its super slot holds a linked
+/// copy (each level delegating to the next, `m` to the parent's `m`), and a write
+/// through one class's ancestor levels (as Modern Hooks' `q.m.X = v` does) reaches that
+/// class's instances only.
+#[test]
+fn each_class_has_its_own_copy_of_its_ancestors() {
+	let (vm, _m) = vm_with(&[
+		("scripts/items/item", "this.item <- { m = { BaseItemScript = null, ID = \"\" }, function create() {} }; ::item <- this.item;"),
+		("scripts/items/weapon", "this.weapon <- this.inherit(\"scripts/items/item\", { m = { Damage = 1 }, function create() { this.item.create(); } }); ::weapon <- this.weapon;"),
+		("scripts/items/mace", "this.mace <- this.inherit(\"scripts/items/weapon\", { m = {}, function create() { this.weapon.create(); } }); ::mace <- this.mace;"),
+		("scripts/items/named_mace", "this.named_mace <- this.inherit(\"scripts/items/weapon\", { m = {}, function create() { this.weapon.create(); } }); ::named_mace <- this.named_mace;"),
+	]);
+	vm.run_script(
+		r#"
+		::new("scripts/items/mace");
+		::new("scripts/items/named_mace");
+		local named = ::named_mace, mace = ::mace;
+		assert(named.getdelegate() == null && named.m.getdelegate() == null);
+		local w = named.weapon, i = w.item;
+		assert(w.getdelegate() == i && w.m.getdelegate() == i.m && i.getdelegate() == null);
+		assert(w != mace.weapon && i != mace.weapon.item && i != ::item);
+		// Where Modern Hooks' setM writes BaseItemScript for named_mace: its own copy.
+		i.m.BaseItemScript = "scripts/items/mace";
+		assert(::new("scripts/items/named_mace").m.BaseItemScript == "scripts/items/mace");
+		assert(::new("scripts/items/mace").m.BaseItemScript == null);
+		assert(::item.m.BaseItemScript == null);
+		"#,
+		"class_copies",
+	)
+	.expect("each class has its own copy of its ancestors");
+}
+
 #[test]
 fn instances_carry_the_originals_extra_slots() {
 	// What the original puts on every instance besides its classes' slots (parity probe

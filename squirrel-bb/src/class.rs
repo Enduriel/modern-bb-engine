@@ -29,6 +29,14 @@
 //! * `create()` is invoked on the leaf; each level's `create` chains up by calling
 //!   `this.<parent>.create()`.
 //!
+//! The prototypes are laid out the same way (probed 2026-10-14): `inherit` gives each
+//! class its **own copy** of its ancestors' levels, linked like an instance's, in its
+//! super slot, and the class's own table has no delegate. So a hook framework that
+//! writes a field through a class's ancestor levels (Modern Hooks' `q.m.X = v` finds
+//! the level that declares `X` by walking `p[p.SuperName]`) changes that class (and
+//! classes inheriting from it later) only: Reforged sets `BaseItemScript` on one named
+//! weapon this way. `new` builds an instance from the leaf's own chain.
+//!
 //! Re-entrancy: running a script (or a constructor) re-enters these functions, so
 //! every [`SharedState`] borrow is taken in a short scope and never held across a
 //! VM call.
@@ -104,22 +112,21 @@ pub(crate) fn inherit<S: ScriptSource>(
 	mut body: SqTable,
 ) -> Result<SqStrongRef, ScriptError> {
 	let parent = prototype(vm, state, parent_path)?;
+	let parent_levels = copy_levels(vm, &parent);
 	let parent_norm = normalize_path(parent_path);
 
 	// The child's own path is the script currently being loaded.
 	let child_path = state.borrow().load_stack.last().cloned();
 
-	// The prototype keeps only the fields it declares in its own `m` (like the
-	// original); `new` chains the per-level `m` tables by delegate.
+	// The prototype keeps only the fields it declares in its own `m`, and no delegate
+	// (like the original); `new` links an instance's levels.
 	ensure_m(vm, &mut body);
 
-	// Method inheritance via the delegate; explicit super-calls via a slot named
-	// after the parent class (`this.<parent>.create()`), recorded in `SuperName`
-	// (which hook frameworks walk: `p = p[p.SuperName]`). Both reference the parent
-	// prototype here — `new` re-points them at per-instance level tables.
-	body.set_delegate(&parent);
+	// Explicit super-calls go through a slot named after the parent class
+	// (`this.<parent>.create()`), recorded in `SuperName` (which hook frameworks walk:
+	// `p = p[p.SuperName]`). It holds this class's own copy of the parent's levels.
 	body.set("SuperName", basename(&parent_norm).to_string());
-	body.set(basename(&parent_norm), parent);
+	body.set(basename(&parent_norm), parent_levels);
 
 	if let Some(child) = child_path {
 		let hash = class_name_hash(&child);
@@ -143,34 +150,20 @@ pub(crate) fn new_instance<S: ScriptSource>(
 ) -> Result<SqStrongRef, ScriptError> {
 	let norm = normalize_path(path);
 	// Load the class (and, through `inherit`, its whole chain).
-	prototype(vm, state, &norm)?;
+	let leaf = prototype(vm, state, &norm)?;
 
-	// The chain leaf → … → base, via the recorded parent links.
-	let chain: Vec<String> = {
-		let st = state.borrow();
-		let mut chain = vec![norm.clone()];
-		let mut cur = norm.clone();
-		while let Some(parent) = st.parents.get(&cur) {
-			chain.push(parent.clone());
-			cur = parent.clone();
-		}
-		chain
-	};
+	// The class's own chain, leaf → … → base, through its super slots.
+	let mut chain = vec![leaf];
+	while let Some(parent) = super_level(chain.last().expect("the chain is never empty")) {
+		chain.push(parent);
+	}
 
 	// One table per class level, base → leaf: a shallow clone of the level's
 	// prototype (its own methods + metadata), with its own deep-cloned `m` whose
 	// delegate is the parent level's `m`, and the parent level as both delegate and
 	// super-slot.
 	let mut levels: Vec<SqTable> = Vec::with_capacity(chain.len());
-	for level in chain.iter().rev() {
-		let proto = {
-			let st = state.borrow();
-			st.prototypes
-				.get(level)
-				.expect("every prototype in the chain is cached")
-				.as_table(vm)
-				.expect("prototype is a table")
-		};
+	for proto in chain.iter().rev() {
 		let mut table = proto.shallow_clone();
 		let mut m = match proto.get_owned::<SqTable>("m") {
 			Some(own) => own.deep_clone(),
@@ -182,7 +175,7 @@ pub(crate) fn new_instance<S: ScriptSource>(
 					m.set_delegate(&parent_m);
 				}
 				table.set_delegate(parent);
-				let parent_name = basename(chain_parent(&chain, level)).to_string();
+				let parent_name = proto.get_owned::<String>("SuperName").expect("a level with a parent names it");
 				table.set(&parent_name, parent.to_strong());
 			}
 			None => table.clear_delegate(),
@@ -263,13 +256,37 @@ pub(crate) fn is_kind_of<S: ScriptSource>(
 	false
 }
 
-/// The parent path of `level` within `chain` (leaf → base order).
-fn chain_parent<'a>(chain: &'a [String], level: &str) -> &'a str {
-	let i = chain
-		.iter()
-		.position(|p| p == level)
-		.expect("level is in its own chain");
-	&chain[i + 1]
+/// The level above `level` in its class's chain: its super slot, named by `SuperName`.
+fn super_level<'vm>(level: &SqTable<'vm>) -> Option<SqTable<'vm>> {
+	let name = level.get_owned::<String>("SuperName")?;
+	level.get_owned::<SqTable>(&name)
+}
+
+/// A copy of the class level `level` and every level above it, for a derived class's
+/// super slot: each level a shallow copy with its own deep-copied `m`, delegating to the
+/// copy of its parent level (and its `m` to that level's `m`), as the original links
+/// them (probed: `del=parent`, `m` delegating to the parent's `m`).
+fn copy_levels<'vm>(vm: &'vm SQVM, level: &SqTable<'vm>) -> SqStrongRef {
+	let mut copy = level.shallow_clone();
+	let mut m = match level.get_owned::<SqTable>("m") {
+		Some(own) => own.deep_clone(),
+		None => SqTable::new(vm),
+	};
+	let parent = level.get_owned::<String>("SuperName").and_then(|name| Some((level.get_owned::<SqTable>(&name)?, name)));
+	match parent {
+		Some((parent, name)) => {
+			let parent_copy = copy_levels(vm, &parent);
+			let parent_copy = parent_copy.as_table(vm).expect("a level is a table");
+			if let Some(parent_m) = parent_copy.get_owned::<SqTable>("m") {
+				m.set_delegate(&parent_m);
+			}
+			copy.set_delegate(&parent_copy);
+			copy.set(&name, parent_copy.to_strong());
+		}
+		None => copy.clear_delegate(),
+	}
+	copy.set("m", m);
+	copy.to_strong()
 }
 
 /// Give a prototype an (empty) `m` if its script declared none, so every level's
