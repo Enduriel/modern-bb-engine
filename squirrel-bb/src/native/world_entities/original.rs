@@ -15,7 +15,7 @@ use crate::class_name_hash;
 use crate::native::save::original::game_entity::GameEntity;
 use crate::native::save::original::record::{Body, Head, SceneEntity, WorldEntityPart, type_id};
 use crate::native::save::original::sprite::{
-	ALWAYS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, SpriteEntry, VISIBLE,
+	ALWAYS, BRUSH_BITS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, SpriteEntry, VISIBLE,
 };
 use crate::native::sprite_color::SpriteColor;
 use crate::native::world_grid::brush_name;
@@ -45,12 +45,13 @@ fn apply_sprite(s: &mut SpriteData, entry: &SpriteEntry, sprites: &Sprites) {
 	s.scale = saved.scale.into();
 	s.rotation = saved.rotation;
 	s.offset = (entry.offset.0.into(), entry.offset.1.into());
+	s.brush_bits = saved.flags & BRUSH_BITS;
 }
 
 /// An entity's sprite as the original saves it.
 fn sprite_entry(name: &str, s: &SpriteData, sprites: &Sprites) -> SpriteEntry {
 	let look = sprites.with(|r| BrushLook::of(r, &s.brush));
-	let mut flags = ALWAYS | look.flags;
+	let mut flags = ALWAYS | s.brush_bits;
 	for (on, bit) in [(s.visible, VISIBLE), (s.flipped, FLIPPED), (s.ignore_ambient, IGNORE_AMBIENT_COLOR)] {
 		if on {
 			flags |= bit;
@@ -228,7 +229,7 @@ impl WorldEntities {
 					body: Body::Footprint {
 						sprite: Sprite {
 							brush: look.hash,
-							flags: ALWAYS | VISIBLE | look.flags,
+							flags: ALWAYS | VISIBLE | m.sprites.brush_bits(&f.brush, 0),
 							color: [0xff; 4],
 							scale: f.scale,
 							rotation: 0.0,

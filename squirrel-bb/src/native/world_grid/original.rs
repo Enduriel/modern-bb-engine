@@ -12,7 +12,7 @@ use std::rc::Rc;
 use super::{GridState, TileData, WorldGrid, bound_camera, fog_extent};
 use crate::native::save::original::record::{Head, SceneEntity, Text};
 use crate::native::save::original::scene::{Grid, HexTileLayer, TILE_ALWAYS};
-use crate::native::save::original::sprite::{ALWAYS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, VISIBLE};
+use crate::native::save::original::sprite::{ALWAYS, BRUSH_BITS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, Sprite, VISIBLE};
 use crate::native::world_detail::{self, DetailData};
 use crate::native::world_entities::{argb, rgba};
 use crate::native::world_layout;
@@ -157,7 +157,7 @@ impl WorldGrid {
 /// A decoration as the original saves it (a `WorldDecal`, see `spawnDetail`).
 fn decal(g: &GridState, d: &DetailData) -> SceneEntity {
 	let look = g.sprites.with(|r| BrushLook::of(r, &d.brush));
-	let mut flags = ALWAYS | VISIBLE | look.flags;
+	let mut flags = ALWAYS | VISIBLE | d.brush_bits;
 	if d.flipped {
 		flags |= FLIPPED;
 	}
@@ -245,6 +245,7 @@ fn add_decal(g: &mut GridState, e: &SceneEntity) {
 		id: e.head.id.into(),
 		pos: e.head.pos,
 		z: e.head.z,
+		brush_bits: sprite.flags & BRUSH_BITS,
 		..DetailData::default()
 	};
 	// The brush's rotation speed (torque isn't saved).

@@ -52,6 +52,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 		w.i64(b);
 		w.i64(c);
 	}
+	w.u32(s.brush_bits);
 }
 
 /// A sprite's fade isn't kept: it loads with the colour it had.
@@ -86,6 +87,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		ignore_camera_flip: r.bool()?,
 		in_portrait: r.bool()?,
 		occlusion: if r.bool()? { Some((r.i64()?, r.i64()?, r.i64()?)) } else { None },
+		brush_bits: r.u32()?,
 	})
 }
 

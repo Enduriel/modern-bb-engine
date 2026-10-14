@@ -73,6 +73,9 @@ struct SpriteData {
 	rotation: f32,
 	/// Its `Torque` (see `spin`).
 	spin: Spin,
+	/// The flag bits its brush calls left (see [`Sprites::brush_bits`]), which the
+	/// original saves.
+	brush_bits: u32,
 }
 
 impl SpriteData {
@@ -90,6 +93,7 @@ impl SpriteData {
 			in_portrait: true,
 			rotation: 0.0,
 			spin: Spin::default(),
+			brush_bits: 0,
 		}
 	}
 }
@@ -397,7 +401,7 @@ fn set_tile_occupied(vm: &SQVM, q: i64, r: i64, occupied: bool) -> Result<(), St
 /// Build the sprite class returned by `addSprite`. Brushes resolve through `sprites`
 /// (see [`Sprites::resolve`]).
 fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
-	let (set_with, get_with) = (sprites.clone(), sprites.clone());
+	let (set_with, get_with, reset_with) = (sprites.clone(), sprites.clone(), sprites.clone());
 	ClassBuilder::<SpriteData>::new("WorldEntitySprite")
 		// `Alpha` is the colour's top byte, an integer (`0x504b40` family).
 		.property(
@@ -447,9 +451,13 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
 		.method("setBrush", move |s: &mut SpriteData, brush: &str| {
 			let brush = set_with.resolve(brush);
 			s.spin.rebrush(&set_with, &s.brush, &brush);
+			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);
 			s.brush = brush;
 		})
-		.method("resetBrush", |s: &mut SpriteData| s.brush.clear())
+		.method("resetBrush", move |s: &mut SpriteData| {
+			s.brush.clear();
+			s.brush_bits = reset_with.brush_bits("", s.brush_bits);
+		})
 		.method("getBrush", move |s: &mut SpriteData, vm: &SQVM| -> Option<SqStrongRef> {
 			get_with.brush_object(vm, &s.brush)
 		})

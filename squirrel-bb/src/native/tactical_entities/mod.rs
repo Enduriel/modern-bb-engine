@@ -100,6 +100,9 @@ struct UnitSpriteData {
 	occlusion: Option<(i64, i64, i64)>,
 	/// Drawn into the unit's portrait (`setSpriteRenderToTexture`, on by default).
 	in_portrait: bool,
+	/// The flag bits its brush calls left (see [`Sprites::brush_bits`]), which the
+	/// original saves.
+	brush_bits: u32,
 }
 
 impl UnitSpriteData {
@@ -127,6 +130,7 @@ impl UnitSpriteData {
 			ignore_camera_flip: false,
 			occlusion: None,
 			in_portrait: true,
+			brush_bits: 0,
 		}
 	}
 }
@@ -300,7 +304,7 @@ fn spawn(machine: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, path: &str) -> Resul
 /// Build the unit sprite class. Brushes resolve through `sprites` (see
 /// [`Sprites::resolve`]); `vary…` draw from the C runtime's `rand()`, `crt`.
 fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<UnitSpriteData> {
-	let (set_with, get_with) = (sprites.clone(), sprites.clone());
+	let (set_with, get_with, reset_with) = (sprites.clone(), sprites.clone(), sprites.clone());
 	let (crt_color, crt_brightness, crt_saturation) = (crt.clone(), crt.clone(), crt);
 	ClassBuilder::<UnitSpriteData>::new("TacticalUnitSprite")
 		.property(
@@ -364,6 +368,7 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 		.method("setBrush", move |s: &mut UnitSpriteData, brush: &str| {
 			let brush = set_with.resolve(brush);
 			s.spin.rebrush(&set_with, &s.brush, &brush);
+			s.brush_bits = set_with.brush_bits(&brush, s.brush_bits);
 			s.brush = brush;
 		})
 		// getBrush(): `null` without a brush, else `{ Name, TextureName }`; scripts read
@@ -371,7 +376,10 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 		.method("getBrush", move |s: &mut UnitSpriteData, vm: &SQVM| -> Option<SqStrongRef> {
 			get_with.brush_object(vm, &s.brush)
 		})
-		.method("resetBrush", |s: &mut UnitSpriteData| s.brush = String::new())
+		.method("resetBrush", move |s: &mut UnitSpriteData| {
+			s.brush = String::new();
+			s.brush_bits = reset_with.brush_bits("", s.brush_bits);
+		})
 		.method(
 			"setRenderCallbackEnabled",
 			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| {},

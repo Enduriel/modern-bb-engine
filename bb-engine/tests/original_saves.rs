@@ -202,7 +202,7 @@ fn a_new_campaign_is_the_one_the_original_saved() {
 /// but for the header's times and the order of the scene's quadtree layers, which the
 /// original's own load doesn't keep either (`compare_original_saves`).
 #[test]
-#[ignore = "needs buildTextFromTemplate's {a|b} choices and the sprites' brush flags"]
+#[ignore = "needs the reference save the original writes after a seeded load"]
 fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
 	let Some((engine, dir)) = loads_in("round_trip", "new_campaign") else { return };
 	engine.saves().set_format(squirrel_bb::SaveFormat::Original);
@@ -216,8 +216,12 @@ fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
 	script(
 		&engine,
 		"load and save",
-		"::World.State.loadCampaign(\"new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
+		"::Math.seedRandom(12345); ::World.State.loadCampaign(\"new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
 	);
+	if std::env::var("BB_RESAVE_DEBUG").is_ok() {
+		let skills = player::eval_string(&engine, "(function() { local s = \"\"; foreach (b in ::World.getPlayerRoster().getAll()) { s += b.getName() + \":\"; foreach (k in b.getSkills().m.Skills) s += \" \" + k.getID() + \"/\" + k.getOrder(); s += \"\\n\"; } return s; })()");
+		eprintln!("{}", skills.unwrap().unwrap());
+	}
 	let ours = std::fs::read(dir.join("bb_probe_resave.sav")).expect("our save");
 	let original = std::fs::read(dir.join("new_campaign_reloaded.sav")).unwrap();
 	let differences = squirrel_bb::compare_original_saves(&ours, &original).expect("both read");

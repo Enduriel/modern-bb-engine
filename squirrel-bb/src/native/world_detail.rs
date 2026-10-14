@@ -50,6 +50,8 @@ pub struct DetailData {
 	/// Its draw order key (the original's Z): `trunc(y)` + the brush's depth bias + the
 	/// z level − the spawn tile's axial-r parity.
 	pub z: i32,
+	/// The sprite flag bits its brush calls left (see [`Sprites::brush_bits`]).
+	pub brush_bits: u32,
 }
 
 impl Default for DetailData {
@@ -69,6 +71,7 @@ impl Default for DetailData {
 			id: 0,
 			pos: (0.0, 0.0),
 			z: 0,
+			brush_bits: 0,
 		}
 	}
 }
@@ -157,6 +160,7 @@ pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites, spinning: &Spinning)
 		.method("setBrush", move |d: &mut DetailHandle, brush: &str| {
 			d.set(|d| {
 				d.spin.rebrush(&sprites, &d.brush, brush);
+				d.brush_bits = sprites.brush_bits(brush, d.brush_bits);
 				d.brush = brush.to_string();
 			});
 			note_spin(&spin_brush, &d.0);

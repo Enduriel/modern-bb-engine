@@ -11,7 +11,7 @@ use crate::class_name_hash;
 use crate::native::save::original::game_entity::GameEntity;
 use crate::native::save::original::record::{Head, TacticalNative};
 use crate::native::save::original::sprite::{
-	ALWAYS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, IGNORE_CAMERA_FLIP, Sprite, SpriteEntry, VISIBLE,
+	ALWAYS, BRUSH_BITS, BrushLook, FLIPPED, IGNORE_AMBIENT_COLOR, IGNORE_CAMERA_FLIP, Sprite, SpriteEntry, VISIBLE,
 };
 use crate::native::save::original::world::{Roster, Rosters, SavedUnit};
 use crate::native::sprite_color::SpriteColor;
@@ -39,12 +39,13 @@ fn apply_sprite(s: &mut UnitSpriteData, entry: &SpriteEntry, sprites: &Sprites) 
 	s.rotation = saved.rotation.into();
 	s.saturation = saved.saturation.into();
 	s.offset = (entry.offset.0.into(), entry.offset.1.into());
+	s.brush_bits = saved.flags & BRUSH_BITS;
 }
 
 /// A unit's sprite as the original saves it.
 fn sprite_entry(name: &str, s: &UnitSpriteData, sprites: &Sprites) -> SpriteEntry {
 	let look = sprites.with(|r| BrushLook::of(r, &s.brush));
-	let mut flags = ALWAYS | look.flags;
+	let mut flags = ALWAYS | s.brush_bits;
 	for (on, bit) in [
 		(s.visible, VISIBLE),
 		(s.flipped, FLIPPED),

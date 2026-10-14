@@ -82,6 +82,7 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 	}
 	w.f32(s.rotation);
 	w.f32(s.spin.torque);
+	w.u32(s.brush_bits);
 }
 
 fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
@@ -98,6 +99,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 		in_portrait: r.bool()?,
 		rotation: r.f32()?,
 		spin: crate::native::spin::Spin::new(r.f32()?),
+		brush_bits: r.u32()?,
 	})
 }
 

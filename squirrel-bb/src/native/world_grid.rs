@@ -960,6 +960,7 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 	data.pos = (cx as f32 + offset.0, offset.1 + cy as f32);
 	let depth_bias = sprites.with(|r| r.get(&data.brush).map_or(0, |(_, s)| i32::from(s.depth_bias)));
 	data.z = (data.pos.1 as i32) + depth_bias + data.z_level as i32 - (r & 1) as i32;
+	data.brush_bits = sprites.brush_bits(&data.brush, 0);
 	let looks = sprites.with(|r| r.get(&data.brush).map(|(_, s)| (s.flags, s.rotation_speed)));
 	if let Some((flags, rotation_speed)) = looks {
 		data.flipped &= flags & 0x400 != 0;

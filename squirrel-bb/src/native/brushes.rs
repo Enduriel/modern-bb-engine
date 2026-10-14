@@ -83,6 +83,22 @@ impl Sprites {
 		}
 	}
 
+	/// The flag bits a sprite has after the original's `setBrush(name)` or `resetBrush()`
+	/// (`""`; `0x52bf50`), from `bits` before: 0x10 follows a real brush's flag bit 3 (and
+	/// stays as it was without one), and 0x4 ("not animating") is set unless the brush has
+	/// more than one frame. A sprite no brush was ever set on has neither.
+	pub(crate) fn brush_bits(&self, name: &str, bits: u32) -> u32 {
+		let brush = if name.is_empty() {
+			None
+		} else {
+			self.with(|r| r.get(name).map(|(_, s)| (s.flags & 8 != 0, s.frames.len() > 1)))
+		};
+		match brush {
+			Some((bit3, animated)) => (if bit3 { 0x10 } else { 0 }) | (if animated { 0 } else { 4 }),
+			None => (bits & 0x10) | 4,
+		}
+	}
+
 	/// The atlas a brush is cut from (`""` if unknown).
 	pub(crate) fn texture_of(&self, name: &str) -> String {
 		self.with(|r| r.get(name).map(|(sheet, _)| sheet.sheet.texture.clone()))

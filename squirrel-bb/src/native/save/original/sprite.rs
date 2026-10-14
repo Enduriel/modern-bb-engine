@@ -98,31 +98,26 @@ impl SpriteEntry {
 /// The sprite flags that are always set (bit1, bit12).
 pub(crate) const ALWAYS: u32 = 0x1002;
 
+/// The flag bits a sprite's brush calls set (`0x4` "not animating", `0x10` the brush's
+/// flag bit 3; see `Sprites::brush_bits`).
+pub(crate) const BRUSH_BITS: u32 = 0x14;
+
 /// What setting a brush gives a sprite, as the original saves it (`0x52bf50`): the
-/// brush's stored hash, the flags it sets (0x4 unless it's animated, 0x10 for its flag
-/// bit 3), and its `unknown_offset` pair (the saved `v4c`). No brush: zeros.
+/// brush's stored hash and its `unknown_offset` pair (the saved `v4c`). No brush:
+/// zeros.
 pub(crate) struct BrushLook {
 	pub hash: u64,
-	pub flags: u32,
 	pub v4c: (f32, f32),
 }
 
 impl BrushLook {
 	pub fn of(registry: &bb_assets::SpriteRegistry, name: &str) -> Self {
 		match registry.get(name) {
-			Some((_, b)) => {
-				let animated = b.flags & 2 != 0 && b.frames.len() > 1;
-				BrushLook {
-					hash: b.hash,
-					flags: if animated { 0 } else { 4 } | if b.flags & 8 != 0 { 0x10 } else { 0 },
-					v4c: (b.unknown_offset[0], b.unknown_offset[1]),
-				}
-			}
-			None => BrushLook {
-				hash: 0,
-				flags: 0,
-				v4c: (0.0, 0.0),
+			Some((_, b)) => BrushLook {
+				hash: b.hash,
+				v4c: (b.unknown_offset[0], b.unknown_offset[1]),
 			},
+			None => BrushLook { hash: 0, v4c: (0.0, 0.0) },
 		}
 	}
 }

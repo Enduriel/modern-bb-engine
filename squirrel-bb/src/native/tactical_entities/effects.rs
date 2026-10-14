@@ -139,6 +139,7 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 				if let (Some(class), Some(name)) = (&class, layers.get::<String>(i)) {
 					class.with_payload(vm, &handle, |s| {
 						s.brush = sprites.resolve(&name);
+						s.brush_bits = sprites.brush_bits(&s.brush, s.brush_bits);
 						s.rotation = f64::from(rotation);
 					});
 				}
