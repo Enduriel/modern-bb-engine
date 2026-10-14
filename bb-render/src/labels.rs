@@ -3,7 +3,10 @@
 //!
 //! Measured against screenshots of the original (Lydersted at zoom 1 and 2), not yet
 //! read from its code:
-//! - the font is `cinzel_bold_20`, in the label's colour, unaffected by ambient light;
+//! - the font is `cinzel_bold_20`, in the label's colour, lit by the scene's ambient
+//!   colour as any sprite is: a label is a text node (`addLabel` makes one, `0x4e738f`),
+//!   whose quads take vertex flag 0 (`0x561350`; the first screenshots were of the
+//!   paused start, where the ambient is white; frame parity found the tint);
 //! - the text pen starts at the entity's x (plus the label's offset), and the glyph
 //!   cells' tops are at the entity's y (the text matches at correlation 0.99);
 //! - the plate is black at alpha 100, from 2 px left of the pen to 4 px past the
@@ -69,7 +72,7 @@ pub(crate) fn label_quads<'a>(
 					overlay: [0; 4],
 					factor: 0.0,
 					saturation: 1.0,
-					flags: 1,
+					flags: 0,
 					level: 0,
 				},
 			));
@@ -91,7 +94,7 @@ fn solid(top_left: [f32; 2], bottom_right: [f32; 2], color: [u8; 4]) -> Quad {
 		overlay: [0; 4],
 		factor: 0.0,
 		saturation: 1.0,
-		flags: 1,
+		flags: 0,
 		level: 0,
 	}
 }
@@ -149,6 +152,7 @@ mod tests {
 		assert_eq!(quads[1].1.corners[0], [100.0, 50.0]);
 		assert_eq!(quads[2].1.corners[0], [110.0, 50.0]);
 		assert_eq!(quads[1].1.color, [255, 0, 0, 128], "ARGB becomes RGBA");
+		assert!(quads.iter().all(|(_, q)| q.flags == 0), "lit by the ambient, plate and text");
 	}
 
 	#[test]

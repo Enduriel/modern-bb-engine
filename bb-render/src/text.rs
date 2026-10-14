@@ -14,6 +14,8 @@
 //!   (the left part of its cell, where the glyph is) and one cell tall.
 //! - A rotated node turns counter-clockwise about its position plus the unscaled
 //!   alignment offset, rounded.
+//! - Its quads take vertex flag 0 (`0x561d2b`): lit by the scene's ambient colour like
+//!   any sprite, warm at dawn and blue at night.
 
 use crate::labels::LabelFont;
 use crate::sprite::Quad;
@@ -93,7 +95,7 @@ pub(crate) fn glyph_quads<'a>(run: &TextRun<'a>) -> Vec<(&'a str, Quad)> {
 					overlay: [0; 4],
 					factor: 0.0,
 					saturation: 1.0,
-					flags: 1,
+					flags: 0,
 					level: 0,
 				},
 			));
