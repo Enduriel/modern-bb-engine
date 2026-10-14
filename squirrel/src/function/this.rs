@@ -37,6 +37,11 @@ impl<'vm> This<'vm> {
 			.expect("receiver on the stack has a valid Squirrel object type")
 	}
 
+	/// The receiver, held (takes an addref): to return `this` from a native, or keep it.
+	pub fn to_strong(&self, vm: &SQVM) -> crate::SqStrongRef {
+		crate::SqStrongRef::from_stack(vm, 1)
+	}
+
 	/// Read the borrowed receiver at stack index 1. Borrowed (no `addref`); valid
 	/// only for the call frame, which `'vm` enforces.
 	pub(crate) fn extract(vm: &'vm SQVM) -> This<'vm> {

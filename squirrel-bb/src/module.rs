@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Retained, SQVM, SqStrongRef, SqTable};
+use squirrel::{Retained, SQVM, SqStrongRef, SqTable, StackArgs, This};
 
 use crate::class::{inherit, is_kind_of, new_instance, prototype};
 use crate::compile_context::compile_context;
@@ -141,6 +141,19 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 			});
 		}
 		{
+			// The original puts two natives on every instance's base level, bound to the
+			// instance. Calling them crashes the original (probed 2026-10-14: `base()`, and
+			// `typeof` of what `self()` returns); here `self()` is the instance and
+			// `base()` its first super level.
+			let self_native = vm.make_closure(|vm: &SQVM, this: This, _args: StackArgs| this.to_strong(vm));
+			let base_native = vm.make_closure(|vm: &SQVM, this: This, _args: StackArgs| -> Option<SqStrongRef> {
+				let me = this.to_strong(vm);
+				let table = me.as_table(vm)?;
+				table.delegate().map(|t| t.to_strong())
+			});
+			self.state.borrow_mut().class_natives = Some((self_native, base_native));
+		}
+		{
 			let state = self.state.clone();
 			// `isKindOf` must accept ANY value for the object (BB calls e.g.
 			// `isKindOf("trait.oath_of_honor", "skill")` with a plain string and
@@ -221,5 +234,6 @@ impl<S: ScriptSource> ModuleSystem<S> {
 		st.by_hash.clear();
 		st.included.clear();
 		st.scopes.clear();
+		st.class_natives = None;
 	}
 }

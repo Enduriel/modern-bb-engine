@@ -191,13 +191,42 @@ pub(crate) fn new_instance<S: ScriptSource>(
 		levels.push(table);
 	}
 
-	// Bind every level's methods to the leaf, so `this` is the full instance even in
-	// super-calls.
+	// Bind the ancestor levels' methods to the leaf, so `this` is the full instance even
+	// in super-calls. The leaf's own methods stay the class's closures, shared by every
+	// instance and unbound, as in the original (parity probe `menu/class_layout`).
 	let leaf_table = levels.last().expect("the chain is never empty").to_strong();
 	let leaf_table = leaf_table.as_table(vm).expect("leaf is a table");
-	for table in &mut levels {
+	let ancestors = levels.len() - 1;
+	for table in &mut levels[..ancestors] {
 		table.bind_closures_to(&leaf_table);
 	}
+
+	// What else the original puts on an instance (parity probe `menu/class_layout`):
+	// on the base level, `InstanceName` ("<class>@<n>", counting the class's instances)
+	// and the `self`/`base` natives bound to the instance; on the leaf, a userdata (its
+	// `_release_hook_DO_NOT_delete_it_`, an opaque token here).
+	let (count, natives) = {
+		let mut st = state.borrow_mut();
+		let count = st.instance_counts.entry(norm.clone()).or_insert(0);
+		*count += 1;
+		(*count, st.class_natives.clone())
+	};
+	{
+		// The base level has no delegate, so `contains` only sees its own slots.
+		let base_level = &mut levels[0];
+		base_level.set("InstanceName", format!("{}@{count}", basename(&norm)));
+		for (name, native) in natives.iter().flat_map(|(s, b)| [("self", s), ("base", b)]) {
+			if !base_level.contains(name) {
+				if let Some(bound) = native.bindenv(vm, &leaf_table) {
+					base_level.set(name, bound);
+				}
+			}
+		}
+	}
+	levels
+		.last_mut()
+		.expect("the chain is never empty")
+		.set("_release_hook_DO_NOT_delete_it_", SqStrongRef::userdata(vm));
 	let prev = levels.pop();
 
 	let mut instance = prev.expect("the chain is never empty");

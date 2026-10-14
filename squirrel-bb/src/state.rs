@@ -42,6 +42,12 @@ pub(crate) struct State<S: ScriptSource> {
 	/// script whose top-level code is running, which `inherit` uses as the child's
 	/// own path for `ClassNameHash` stamping.
 	pub(crate) load_stack: Vec<String>,
+	/// Instances made so far per class path: `new` numbers each class's instances
+	/// from 1 in `InstanceName` ("brave_trait@3"), as the original does.
+	pub(crate) instance_counts: HashMap<String, u64>,
+	/// The `self` and `base` natives every instance gets on its base level (bound to
+	/// it); set by `ModuleSystem::install`.
+	pub(crate) class_natives: Option<(SqStrongRef, SqStrongRef)>,
 }
 
 impl<S: ScriptSource> State<S> {
@@ -54,6 +60,8 @@ impl<S: ScriptSource> State<S> {
 			parents: HashMap::new(),
 			by_hash: HashMap::new(),
 			load_stack: Vec::new(),
+			instance_counts: HashMap::new(),
+			class_natives: None,
 		}
 	}
 }

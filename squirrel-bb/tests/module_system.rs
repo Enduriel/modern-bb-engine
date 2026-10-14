@@ -519,3 +519,30 @@ fn instance_levels_and_member_tables_match_the_original_layout() {
 	)
 	.expect("layout matches the original engine");
 }
+
+#[test]
+fn instances_carry_the_originals_extra_slots() {
+	// What the original puts on every instance besides its classes' slots (parity probe
+	// `menu/class_layout`): a release-hook userdata on the leaf; on the base level,
+	// `InstanceName` ("<class>@<n>", n counting the class's instances) and the
+	// `self`/`base` natives, bound to the instance.
+	let (vm, _ms) = vm_with(&[
+		("scripts/base_thing", "this.base_thing <- { m = {}, function create() {} };"),
+		("scripts/thing", "this.thing <- this.inherit(\"scripts/base_thing\", { m = {}, function create() { this.base_thing.create(); } });"),
+	]);
+	vm.run_script(
+		r#"
+		local a = ::new("scripts/thing"), b = ::new("scripts/thing");
+		assert(typeof a._release_hook_DO_NOT_delete_it_ == "userdata");
+		assert(a._release_hook_DO_NOT_delete_it_ != b._release_hook_DO_NOT_delete_it_);
+		assert(a.base_thing.rawin("InstanceName") && !a.rawin("InstanceName"));
+		assert(a.InstanceName == "thing@1" && b.InstanceName == "thing@2");
+		assert(a.base_thing.rawin("self") && a.base_thing.rawin("base") && !a.rawin("self"));
+		assert(a["self"]() == a);
+		assert(a["base"]() == a.base_thing);
+		assert(a["self"] != b["self"]);
+		"#,
+		"extra_slots",
+	)
+	.expect("the original's extra slots");
+}

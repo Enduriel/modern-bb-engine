@@ -12,13 +12,6 @@ menu/natives | native *.weakref | Sqrat class member
 campaign/natives | native *.constructor | Sqrat class member
 campaign/natives | native *.weakref | Sqrat class member
 
-# Natives named `self` and `base` on the original's script objects (Root, Cursor, the
-# screens, settlements, brothers), presumably from its class system. Not yet probed.
-menu/natives | native *.self | class-system native, semantics unknown
-menu/natives | native *.base | class-system native, semantics unknown
-campaign/natives | native *.self | class-system native, semantics unknown
-campaign/natives | native *.base | class-system native, semantics unknown
-
 # Native classes the original exposes as root globals; ours has only their instances
 # (cameras, weather, the highlighter and shaker, settings objects), whose own natives these
 # probes don't cover yet.

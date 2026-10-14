@@ -85,6 +85,15 @@ impl SqStrongRef {
 		held
 	}
 
+	/// A new, empty userdata object, held: an opaque per-object token scripts can see
+	/// but not use.
+	pub fn userdata(vm: &SQVM) -> Self {
+		unsafe { squirrel_sys::sq_newuserdata(vm.as_ptr(), 0) };
+		let held = Self::from_stack(vm, -1);
+		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
+		held
+	}
+
 	pub(crate) fn push(&self, vm: &SQVM) {
 		self.debug_check_vm(vm);
 		unsafe { squirrel_sys::sq_pushobject(vm.as_ptr(), self.obj) };
