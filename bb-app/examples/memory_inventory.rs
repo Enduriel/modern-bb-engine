@@ -8,10 +8,12 @@
 //! cargo run --release -p bb-app --example memory_inventory -- --engine-only [--mods]
 //! ```
 //!
-//! The session: a new campaign's world; `--battles` battles (default 12), each against
-//! another hostile party picked across the map (other factions, other land), fought to the
+//! The session: a new campaign's world; `--battles` battles (default 12), each against a
+//! party of another people or beast (made by vanilla's spawn lists, next to the company),
+//! fought to the
 //! end by the AI on both sides (the company made hardy enough to survive them); `--days`
-//! days of the world running (default 10); quitting to the main menu; and a second
+//! days of the world running (default 10; the parties leave the company be, and a battle
+//! that comes up anyway is fought out); quitting to the main menu; and a second
 //! campaign (`--until` ends it after the point whose name starts so, e.g. "after battle
 //! 1"). At each point it measures:
 //! - every process of the game's (with `--features ui`, CEF's too): PSS by the kind of
@@ -63,30 +65,53 @@ const BACK_IN_WORLD: &str = "(!(\"State\" in ::Tactical) || ::Tactical.State == 
 const AT_MENU: &str = "::RootState.get(\"WorldState\") == null && ::RootState.get(\"MainMenuState\").m.MainMenuScreen.isVisible() && !::RootState.get(\"MainMenuState\").m.MainMenuScreen.isAnimating()";
 const IN_WORLD: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
 
-/// The `n`th battle's opponent: the hostile parties across the map in a fixed order, a
-/// stride through them, so battles go to other factions and other land. The company is
-/// made hardy (hit points) so that it lives through them all, and moved beside it.
+/// The `n`th battle's opponent: a party vanilla's own spawn lists make, of the factions in
+/// turn (brigands, beasts, the undead, greenskins, barbarians, nomads), next to the company,
+/// so the battles draw other peoples and beasts; one that can't be made (a DLC's missing)
+/// falls back to the nearest hostile party. The company is made hardy (hit points) so that
+/// it lives through them all.
 const ENGAGE: &str = r#"
 local player = ::World.State.getPlayer();
-local all = [];
-foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 1000000.0))
+local kinds = [
+	["Bandits", "Brigand Raiders", "BanditRaiders"], ["Beasts", "Direwolves", "Direwolves"],
+	["Undead", "Undead", "UndeadArmy"], ["Orcs", "Orc Marauders", "OrcRaiders"],
+	["Goblins", "Goblin Raiders", "GoblinRaiders"], ["Zombies", "Wiedergaenger", "Zombies"],
+	["Barbarians", "Barbarians", "Barbarians"], ["Beasts", "Nachzehrers", "Ghouls"],
+	["Beasts", "Webknechts", "Spiders"], ["OrientalBandits", "Nomads", "NomadRaiders"],
+	["Beasts", "Unholds", "Unhold"], ["Beasts", "Schrats", "Schrats"]
+];
+local kind = kinds[({n} - 1) % kinds.len()];
+local target = null;
+try
 {
-	if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || e.getTroops().len() == 0) continue;
-	all.push(e);
+	local faction = ::World.FactionManager.getFactionOfType(::Const.FactionType[kind[0]]);
+	target = faction.spawnEntity(player.getTile(), kind[1], false, ::Const.World.Spawn[kind[2]], 120);
 }
-if (all.len() == 0) throw "no hostile party to fight";
-all.sort(@(a, b) a.getID() <=> b.getID());
-local target = all[({n} * 7) % all.len()];
-::__inventoryTarget <- target.getName() + " (" + target.getTroops().len() + ")";
+catch (e)
+{
+	::logInfo("memory_inventory: no " + kind[1] + " (" + e + "), the nearest hostile party instead");
+}
+if (target == null)
+{
+	local best = 0;
+	foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 1000000.0))
+	{
+		if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || e.getTroops().len() == 0) continue;
+		local d = e.getDistanceTo(player);
+		if (target == null || d < best) { target = e; best = d; }
+	}
+	if (target == null) throw "no hostile party to fight";
+	local tp = target.getPos();
+	player.setPos(::createVec(tp.X - 30, tp.Y));
+	::World.setPlayerPos(player.getPos());
+}
+::__inventoryTarget <- target.getName() + " (" + target.getTroops().len() + ", terrain " + target.getTile().Type + ")";
 foreach (bro in ::World.getPlayerRoster().getAll())
 {
 	bro.getBaseProperties().Hitpoints = 900;
 	bro.getSkills().update();
 	bro.setHitpoints(bro.getHitpointsMax());
 }
-local tp = target.getPos();
-player.setPos(::createVec(tp.X - 30, tp.Y));
-::World.setPlayerPos(player.getPos());
 ::World.getCamera().setPos(player.getPos());
 ::__autoplayEngage = true;
 ::__autoplayFight <- true;
@@ -105,19 +130,6 @@ const WEAKEN: &str = r#"
 foreach (faction in ::Tactical.Entities.getAllInstances())
 	foreach (e in faction)
 		if (e != null && e.isAlive() && !e.isAlliedWithPlayer()) e.setHitpoints(1);
-"#;
-
-/// After a battle: the brothers are the player's again (the scripted player handed them to
-/// the AI), so that it hands them to fresh AI agents in the next.
-const HAND_BACK: &str = r#"
-foreach (bro in ::World.getPlayerRoster().getAll())
-	if (!bro.m.IsControlledByPlayer)
-	{
-		bro.m.IsControlledByPlayer = true;
-		local agent = ::new("scripts/ai/tactical/player_agent");
-		agent.setActor(bro);
-		bro.setAIAgent(agent);
-	}
 "#;
 
 /// What a battle that won't end is waiting on.
@@ -454,8 +466,7 @@ impl Session<'_> {
 		self.fight_out(&format!("{n}. {target}"))
 	}
 
-	/// Fight the battle under way to its end (its enemies weakened after a while), and
-	/// hand the brothers back to the player.
+	/// Fight the battle under way to its end (its enemies weakened after a while).
 	fn fight_out(&mut self, label: &str) -> Result<(), String> {
 		self.frames(BATTLE_MS, 300, DRAW_EVERY)?;
 		self.engine().run_script(WEAKEN, "weaken the enemies")?;
@@ -465,7 +476,6 @@ impl Session<'_> {
 		}
 		let result = player::eval_i64(self.engine(), "::__lastCombatResult")?.unwrap_or(-1);
 		self.battles.push(format!("{label}: result {result}"));
-		self.engine().run_script(HAND_BACK, "hand the brothers back")?;
 		self.frames(SETTLE_MS, 120, 1)
 	}
 }
@@ -509,7 +519,22 @@ fn run(gpu: &Gpu, o: &Options) -> Result<(Vec<Sample>, Vec<String>, Option<Strin
 	Ok((s.samples, s.battles, stopped))
 }
 
+/// A script error's call stack, to the log (the page's game has no print handler).
+const ERROR_STACK: &str = r#"
+seterrorhandler(function( _e ) {
+	local s = "SCRIPT ERROR " + _e;
+	for (local i = 2; i < 30; i++)
+	{
+		local si = getstackinfos(i);
+		if (si == null) break;
+		s += "\n    at " + si.func + " (" + si.src + ":" + si.line + ")";
+	}
+	::logError(s);
+});
+"#;
+
 fn play(s: &mut Session, o: &Options) -> Result<(), String> {
+	s.engine().run_script(ERROR_STACK, "error stacks")?;
 	harness::install_autoplay(s.engine())?;
 	s.until(SETTLE_MS, 6000, "the campaign's world", IN_WORLD)?;
 	s.frames(SETTLE_MS, 600, 1)?;
@@ -521,8 +546,12 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 			s.sample(&format!("after battle {n}"))?;
 		}
 	}
-	// Days on the world map, the time running as fast as frames allow.
-	s.engine().run_script("::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.setSpeedMult(3.0);", "run")?;
+	// Days on the world map, the time running as fast as frames allow. The parties leave
+	// the company be (battles are measured above), so the days pass.
+	s.engine().run_script(
+		"::World.State.getPlayer().setAttackableByAI(false); ::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.setSpeedMult(3.0);",
+		"run",
+	)?;
 	let day = |s: &Session| player::eval_i64(s.engine(), "::World.getTime().Days").map(|d| d.unwrap_or(0));
 	let until_day = day(s)? + i64::from(o.days);
 	let mut waited = 0;
