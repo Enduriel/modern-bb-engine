@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Number, Retained, SQVM, SqStrongRef};
+use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::{EntityMachine, ignore_missing, vec_xy};
 use crate::native::world_query;
@@ -209,12 +209,23 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	out
 }
 
-/// `World.setPlayerPos`, `World.setPlayerVisionRadius` and `World.getPlayerVisionRadius`.
+/// `World.setPlayerPos`/`getPlayerPos`, `World.setPlayerVisionRadius` and
+/// `World.getPlayerVisionRadius`.
 pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrongRef)> {
 	let set_player_pos = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, pos: Retained| {
 			m.borrow_mut().player_view.pos = vec_xy(vm, &pos.0);
+		})
+	};
+	// getPlayerPos(): what setPlayerPos stored, an f32 vector (disassembled: World+0x120).
+	let get_player_pos = {
+		let m = m.clone();
+		vm.make_closure(move |vm: &SQVM| -> Option<SqStrongRef> {
+			let (x, y) = m.borrow().player_view.pos;
+			SqTable::root(vm)
+				.get::<SqStrongRef>("createVec")
+				.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (x as f32 as f64, y as f32 as f64)).ok().flatten())
 		})
 	};
 	let set_player_vision_radius = {
@@ -227,6 +238,7 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 	};
 	vec![
 		("setPlayerPos".to_string(), set_player_pos),
+		("getPlayerPos".to_string(), get_player_pos),
 		("setPlayerVisionRadius".to_string(), set_player_vision_radius),
 		("getPlayerVisionRadius".to_string(), get_player_vision_radius),
 	]

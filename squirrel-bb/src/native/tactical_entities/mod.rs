@@ -385,13 +385,14 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteDat
 		.build(vm)
 }
 
-/// Build the roster handle class (`getSize`/`getAll`/`create`/`add`/`remove`/`clear`).
+/// Build the roster handle class (`getSize`/`getAll`/`get`/`create`/`add`/`remove`/`clear`).
 fn build_roster_class(
 	vm: &mut SQVM,
 	machine: &Rc<RefCell<TacticalMachine>>,
 ) -> SqClass<RosterData> {
 	let m_size = machine.clone();
 	let m_all = machine.clone();
+	let m_get = machine.clone();
 	let m_create = machine.clone();
 	let m_add = machine.clone();
 	let m_remove = machine.clone();
@@ -412,6 +413,12 @@ fn build_roster_class(
 				}
 			}
 			arr.to_strong()
+		})
+		// get(i): the i-th member, or null past the end (disassembled, 0x4b17d0).
+		.method("get", move |r: &mut RosterData, index: i64| -> Option<SqStrongRef> {
+			let m = m_get.borrow();
+			let members = m.rosters.get(&r.id)?;
+			usize::try_from(index).ok().and_then(|i| members.get(i)).cloned()
 		})
 		.method(
 			"create",
@@ -848,6 +855,24 @@ impl TacticalEntities {
 		let get_retreat_roster = fixed_roster(vm, RETREAT_ROSTER_ID);
 		let get_temporary_roster = fixed_roster(vm, TEMPORARY_ROSTER_ID);
 		let get_world_temporary_roster = fixed_roster(vm, WORLD_TEMPORARY_ROSTER_ID);
+		// getAllRosters(): every created roster (factions', settlements'), by id. The
+		// fixed ones (player, guests, temporary) aren't among them (disassembled: the
+		// world keeps them apart from its roster map, 0x4f4340).
+		let get_all_rosters = {
+			let mint = mint_roster.clone();
+			let m = self.machine.clone();
+			vm.make_closure(move |vm: &SQVM| -> SqStrongRef {
+				let mut ids: Vec<i64> = m.borrow().rosters.keys().copied().filter(|&id| id >= 0).collect();
+				ids.sort_unstable();
+				let mut list = SqArray::new(vm);
+				for id in ids {
+					if let Some(r) = mint(vm, id) {
+						list.push(r);
+					}
+				}
+				list.to_strong()
+			})
+		};
 		let create_roster = {
 			let m = self.machine.clone();
 			vm.make_closure(move |id: i64| {
@@ -932,6 +957,7 @@ impl TacticalEntities {
 		world.set("deleteRoster", delete_roster);
 		world.set("getGuestRoster", get_guest_roster);
 		world.set("getTemporaryRoster", get_world_temporary_roster);
+		world.set("getAllRosters", get_all_rosters);
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
 			.expect("Tactical table must be installed before TacticalEntities");

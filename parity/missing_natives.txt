@@ -68,9 +68,6 @@ menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_1 | missing overload s
 menu/natives | native WorldTile.__sqrat_ol_ getDistanceTo_2 | missing overload slot
 
 # Plain natives we don't have.
-campaign/natives | native tile.getPosBetweenThisAnd | missing
-campaign/natives | native tile.getTileBetweenThisAnd | missing
-campaign/natives | native player_roster.get | missing
 menu/natives | native root.execute | missing
 menu/natives | native root.split | a table here: our include runs files with this = root, so scripts/skills/actives/split.nut replaces the stdlib split(); the original keeps it (a known Modern Hooks blocker)
 menu/natives | native Music.isPlaying | missing
@@ -78,12 +75,4 @@ menu/natives | native PersistenceManager.createStorage | missing
 menu/natives | native PersistenceManager.deleteStorages | missing
 menu/natives | native PersistenceManager.loadStorage | missing
 menu/natives | native Sound.setAmbienceVolume | missing
-menu/natives | native World.canLoad | missing
-menu/natives | native World.getAllRosters | missing
-menu/natives | native World.getAllTilesOfRegion | missing
 menu/natives | native World.getEntityAtPos | missing
-menu/natives | native World.getPlayerPos | missing
-menu/natives | native World.move | missing
-menu/natives | native World.presave | missing
-menu/natives | native WorldTile.getPosBetweenThisAnd | missing
-menu/natives | native WorldTile.getTileBetweenThisAnd | missing

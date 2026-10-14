@@ -74,3 +74,36 @@ mod tests {
 		}
 	}
 }
+
+/// The point halfway between world points `a` and `b`, in f32 the way the original gets
+/// there: the direction normalized, then scaled back by the distance and halved
+/// (`WorldTile.getPosBetweenThisAnd`/`getTileBetweenThisAnd`, disassembled 0x4faab0 and
+/// 0x4fabc0). For `a == b` the original divides by zero and gets NaN; callers handle
+/// that case themselves.
+pub(crate) fn midpoint(a: (f64, f64), b: (f64, f64)) -> (f32, f32) {
+	let (ax, ay) = (a.0 as f32, a.1 as f32);
+	let (dx, dy) = (b.0 as f32 - ax, b.1 as f32 - ay);
+	let len = ((dx * dx + dy * dy) as f64).sqrt() as f32;
+	let inv = 1.0f32 / len;
+	(inv * dx * len * 0.5 + ax, inv * dy * len * 0.5 + ay)
+}
+
+/// `World.move(from, to, max)`: where something moving from `from` toward `to` is after
+/// at most `max` pixels, in f32 (disassembled, 0x4f5100): `from` if the two are equal,
+/// `to` if it is within reach, else `max` along the normalized direction.
+pub(crate) fn step_toward(from: (f64, f64), to: (f64, f64), max: f64) -> (f32, f32) {
+	let (fx, fy) = (from.0 as f32, from.1 as f32);
+	let (tx, ty) = (to.0 as f32, to.1 as f32);
+	if fx == tx && fy == ty {
+		return (fx, fy);
+	}
+	let (dx, dy) = (tx - fx, ty - fy);
+	let max = max as f32;
+	let len = ((dx * dx + dy * dy) as f64).sqrt() as f32;
+	if max >= len {
+		return (tx, ty);
+	}
+	let inv = 1.0f32 / len;
+	(inv * dx * max + fx, inv * dy * max + fy)
+}
+

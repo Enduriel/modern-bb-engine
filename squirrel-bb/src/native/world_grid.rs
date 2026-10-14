@@ -350,6 +350,32 @@ impl WorldGrid {
 				},
 			)
 		};
+		// World.getAllTilesOfRegion(region): every tile of that region, column by column
+		// (disassembled, 0x4f3ce0).
+		let get_all_tiles_of_region = {
+			let g = self.grid.clone();
+			vm.make_closure(move |vm: &SQVM, region: i64| -> SqStrongRef {
+				let mut list = SqArray::new(vm);
+				let (w, h) = {
+					let g = g.borrow();
+					(g.width, g.height)
+				};
+				for col in 0..w {
+					for row in 0..h {
+						let matches = {
+							let g = g.borrow();
+							g.idx(col, row).is_some_and(|i| g.tiles[i].region == region)
+						};
+						if matches {
+							if let Some(tile) = tile_at(&g, vm, col, row) {
+								list.push(tile);
+							}
+						}
+					}
+				}
+				list.to_strong()
+			})
+		};
 		// World.getTile is a Sqrat overload: getTile(coords) [1] and getTile(q, r) [2].
 		// Worldgen calls getTile(path.getCurrent()) / getTile(worldToTile(..)) [1-arg],
 		// and entity getTile delegates with (q, r) [2-arg].
@@ -711,6 +737,7 @@ impl WorldGrid {
 		world.set("clearTiles", clear);
 		world.set("getMapSize", get_map_size);
 		world.set("getTileSquare", get_tile_square);
+		world.set("getAllTilesOfRegion", get_all_tiles_of_region);
 		world.set(&overload_key("getTile", 1), get_tile_1);
 		world.set(&overload_key("getTile", 2), get_tile_2);
 		world.set("getTile", get_tile_dispatch);
@@ -812,6 +839,16 @@ fn fog_extent(w: i64, h: i64) -> (f32, f32) {
 }
 
 /// Mint a `WorldTile` instance at square `(col,row)`, or `None` if off-grid.
+/// The world point halfway between two tiles' centres; a tile's own centre for itself.
+fn between(a: &TileHandle, b: &TileHandle) -> (f32, f32) {
+	let pa = a.with(|d| world_layout::tile_pos(d.col, d.row));
+	if a.id == b.id {
+		return (pa.0 as f32, pa.1 as f32);
+	}
+	let pb = b.with(|d| world_layout::tile_pos(d.col, d.row));
+	world_layout::midpoint(pa, pb)
+}
+
 fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Option<SqStrongRef> {
 	let id = grid.borrow().idx(col, row)?;
 	let class = grid.borrow().class.clone()?;
@@ -1081,6 +1118,33 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		.method(
 			"isSameTileAs",
 			|t: &mut TileHandle, other: Native<TileHandle>| -> bool { t.id == other.0.id },
+		)
+		// The point and the tile halfway between two tiles (see
+		// `world_layout::midpoint`); a tile and itself give that tile.
+		.method(
+			"getPosBetweenThisAnd",
+			|t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Option<SqStrongRef> {
+				let (x, y) = between(t, &other.0);
+				SqTable::root(vm)
+					.get::<SqStrongRef>("createVec")
+					.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (x as f64, y as f64)).ok().flatten())
+			},
+		)
+		.method(
+			"getTileBetweenThisAnd",
+			|t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Option<SqStrongRef> {
+				if t.id == other.0.id {
+					let (c, r) = t.with(|d| (d.col, d.row));
+					return tile_at(&t.grid, vm, c, r);
+				}
+				let (x, y) = between(t, &other.0);
+				let (w, h) = {
+					let g = t.grid.borrow();
+					(g.width, g.height)
+				};
+				let (q, r) = world_layout::world_to_tile(x as f64, y as f64, w, h);
+				tile_at(&t.grid, vm, q, r + q / 2)
+			},
 		)
 		.method(
 			"getSurroundingTilesOfType",
