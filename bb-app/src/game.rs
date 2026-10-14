@@ -95,6 +95,11 @@ impl Game {
 		self.renderer.usage()
 	}
 
+	/// The atlases' use since tracking started or the last take, starting over.
+	pub fn take_texture_usage(&mut self) -> Option<Vec<bb_render::AtlasUse>> {
+		self.renderer.take_usage()
+	}
+
 	/// What the renderer and the UI page hold on the GPU.
 	pub fn renderer_memory(&self) -> bb_render::RendererMemory {
 		let mut memory = self.renderer.memory();

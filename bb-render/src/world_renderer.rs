@@ -149,6 +149,12 @@ impl WorldRenderer {
 		self.usage.as_ref().map(crate::usage::TextureUsage::report)
 	}
 
+	/// The atlases' use since tracking started (or since the last take), and start over:
+	/// what one stretch of play draws.
+	pub fn take_usage(&mut self) -> Option<Vec<crate::AtlasUse>> {
+		self.usage.as_mut().map(|usage| std::mem::take(usage).report())
+	}
+
 	fn record_usage(&mut self, map: &crate::world::WorldQuads, zoom: f32, dof_below: Option<u32>) {
 		let Some(usage) = self.usage.as_mut() else { return };
 		let textures = &self.textures;
