@@ -30,6 +30,8 @@ mod frame_loader;
 #[cfg(feature = "images")]
 pub mod frames;
 #[cfg(feature = "images")]
+pub mod mips;
+#[cfg(feature = "images")]
 mod sheet_cache;
 mod reader;
 mod registry;

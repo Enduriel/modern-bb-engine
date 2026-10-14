@@ -10,19 +10,22 @@
 //!   `FileSource::identity`) and its frames. A mod that replaces the atlas, or changes its
 //!   brushes, makes another key.
 //! - **Format:** a header with the full key, the frames' index (each frame, its region,
-//!   where its pixels are), then each region's pixels as a PNG.
+//!   where each of its levels is), then each region's levels as PNGs.
 //! - **Validation:** a missing, foreign or truncated file is a miss; writes go to a
 //!   temporary file renamed into place. Failures are never fatal: it's an optimisation.
 
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::frames::TexelRect;
+use crate::frames::{Region, TexelRect};
 use crate::{Image, decode_png};
 
 /// Bump when the file format changes: each version has its own folder.
-const VERSION: u32 = 1;
+/// 2: regions reach past the atlas's edge (its texels repeated).
+/// 3: a region's first mip levels, cut from the atlas's.
+const VERSION: u32 = 3;
 const MAGIC: &[u8; 8] = b"BBSHEET\0";
 
 /// Our sheets' cache folder.
@@ -31,14 +34,13 @@ pub struct SheetCache {
 	dir: PathBuf,
 }
 
-/// One frame in a cached sheet: its rectangle in the atlas, its region, and where the
-/// region's pixels are in the file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One frame in a cached sheet: its rectangle in the atlas, its region, and where each
+/// of the region's levels is in the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SheetEntry {
 	pub frame: TexelRect,
-	pub region: TexelRect,
-	offset: u64,
-	len: u64,
+	pub region: Region,
+	levels: Vec<(u64, u64)>,
 }
 
 /// A cached sheet's index.
@@ -46,6 +48,8 @@ pub struct SheetEntry {
 pub struct Sheet {
 	file: PathBuf,
 	pub entries: Vec<SheetEntry>,
+	/// Each frame's entry.
+	by_frame: HashMap<TexelRect, usize>,
 }
 
 impl SheetCache {
@@ -72,8 +76,10 @@ impl SheetCache {
 	/// The sheet cached for `key`, or `None` (a miss).
 	pub fn read(&self, key: &str) -> Option<Sheet> {
 		let file = self.file_for(key);
-		let mut f = File::open(&file).ok()?;
+		let f = File::open(&file).ok()?;
 		let length = f.metadata().ok()?.len();
+		// The index is many small fields: read through a buffer.
+		let mut f = BufReader::new(f);
 		let mut header = [0u8; 12];
 		f.read_exact(&mut header).ok()?;
 		if &header[..8] != MAGIC || u32::from_le_bytes(header[8..12].try_into().ok()?) != VERSION {
@@ -86,52 +92,68 @@ impl SheetCache {
 		let count = read_u32(&mut f)? as usize;
 		let mut entries = Vec::with_capacity(count.min(1 << 16));
 		for _ in 0..count {
-			let mut rect = || -> Option<TexelRect> {
-				Some(TexelRect {
-					x: read_u32(&mut f)?,
-					y: read_u32(&mut f)?,
-					w: read_u32(&mut f)?,
-					h: read_u32(&mut f)?,
-				})
+			let mut values = [0u32; 8];
+			for v in &mut values {
+				*v = read_u32(&mut f)?;
+			}
+			let [x, y, w, h, rx, ry, rw, rh] = values;
+			let frame = TexelRect { x, y, w, h };
+			let region = Region {
+				x: rx as i32,
+				y: ry as i32,
+				w: rw,
+				h: rh,
 			};
-			let (frame, region) = (rect()?, rect()?);
-			let (offset, len) = (read_u64(&mut f)?, read_u64(&mut f)?);
-			if offset.checked_add(len)? > length {
+			let count = read_u32(&mut f)?;
+			if count > 16 {
 				return None;
 			}
-			entries.push(SheetEntry { frame, region, offset, len });
+			let mut levels = Vec::with_capacity(count as usize);
+			for _ in 0..count {
+				let (offset, len) = (read_u64(&mut f)?, read_u64(&mut f)?);
+				if offset.checked_add(len)? > length {
+					return None;
+				}
+				levels.push((offset, len));
+			}
+			entries.push(SheetEntry { frame, region, levels });
 		}
-		Some(Sheet { file, entries })
+		let by_frame = entries.iter().enumerate().map(|(i, e)| (e.frame, i)).collect();
+		Some(Sheet { file, entries, by_frame })
 	}
 
-	/// Keep the sheet of `frames` (each frame, its region, the region's pixels) for `key`.
-	pub fn write(&self, key: &str, frames: &[(TexelRect, TexelRect, &Image)]) -> io::Result<()> {
+	/// Keep the sheet of `frames` (each frame, its region, the region's levels) for `key`.
+	pub fn write(&self, key: &str, frames: &[(TexelRect, Region, &[Image])]) -> io::Result<()> {
 		std::fs::create_dir_all(&self.dir)?;
-		let blobs: Vec<Vec<u8>> = frames.iter().map(|(_, _, image)| encode(image)).collect::<io::Result<_>>()?;
+		let blobs: Vec<Vec<Vec<u8>>> = frames
+			.iter()
+			.map(|(_, _, levels)| levels.iter().map(encode).collect::<io::Result<_>>())
+			.collect::<io::Result<_>>()?;
 		let mut head = Vec::new();
 		head.extend_from_slice(MAGIC);
 		head.extend_from_slice(&VERSION.to_le_bytes());
 		head.extend_from_slice(&(key.len() as u32).to_le_bytes());
 		head.extend_from_slice(key.as_bytes());
 		head.extend_from_slice(&(frames.len() as u32).to_le_bytes());
-		let index_len = frames.len() as u64 * (8 * 4 + 16);
+		let index_len: u64 = blobs.iter().map(|levels| 8 * 4 + 4 + 16 * levels.len() as u64).sum();
 		let mut offset = head.len() as u64 + index_len;
-		for ((frame, region, _), blob) in frames.iter().zip(&blobs) {
-			for rect in [frame, region] {
-				for v in [rect.x, rect.y, rect.w, rect.h] {
-					head.extend_from_slice(&v.to_le_bytes());
-				}
+		for ((frame, region, _), levels) in frames.iter().zip(&blobs) {
+			for v in [frame.x, frame.y, frame.w, frame.h, region.x as u32, region.y as u32, region.w, region.h] {
+				head.extend_from_slice(&v.to_le_bytes());
 			}
-			head.extend_from_slice(&offset.to_le_bytes());
-			head.extend_from_slice(&(blob.len() as u64).to_le_bytes());
-			offset += blob.len() as u64;
+			head.extend_from_slice(&(levels.len() as u32).to_le_bytes());
+			for blob in levels {
+				head.extend_from_slice(&offset.to_le_bytes());
+				head.extend_from_slice(&(blob.len() as u64).to_le_bytes());
+				offset += blob.len() as u64;
+			}
 		}
 		let file = self.file_for(key);
 		let temp = file.with_extension(format!("tmp{}", std::process::id()));
 		{
 			let mut f = io::BufWriter::new(File::create(&temp)?);
 			f.write_all(&head)?;
-			for blob in &blobs {
+			for blob in blobs.iter().flatten() {
 				f.write_all(blob)?;
 			}
 			f.flush()?;
@@ -145,17 +167,42 @@ impl SheetCache {
 impl Sheet {
 	/// The entry for `frame`, if the sheet has it.
 	pub fn entry(&self, frame: &TexelRect) -> Option<&SheetEntry> {
-		self.entries.iter().find(|e| e.frame == *frame)
+		self.by_frame.get(frame).map(|&i| &self.entries[i])
 	}
 
-	/// `entry`'s region, read and decoded, or `None` if the file no longer has it.
-	pub fn read(&self, entry: &SheetEntry) -> Option<Image> {
+	/// `entry`'s region's levels, read and decoded, or `None` if the file no longer has
+	/// them.
+	pub fn read(&self, entry: &SheetEntry) -> Option<Vec<Image>> {
+		Self::read_from(&mut File::open(&self.file).ok()?, entry)
+	}
+
+	/// The levels of each of `frames`' regions, in order, the file opened once; `None`
+	/// if the sheet lacks one or the file no longer has it.
+	pub fn read_frames(&self, frames: &[TexelRect]) -> Option<Vec<(&SheetEntry, Vec<Image>)>> {
 		let mut f = File::open(&self.file).ok()?;
-		f.seek(SeekFrom::Start(entry.offset)).ok()?;
-		let mut bytes = vec![0; entry.len as usize];
-		f.read_exact(&mut bytes).ok()?;
-		let image = decode_png(&bytes).ok()?;
-		(image.width == entry.region.w && image.height == entry.region.h).then_some(image)
+		frames
+			.iter()
+			.map(|frame| {
+				let entry = self.entry(frame)?;
+				Some((entry, Self::read_from(&mut f, entry)?))
+			})
+			.collect()
+	}
+
+	fn read_from(f: &mut File, entry: &SheetEntry) -> Option<Vec<Image>> {
+		let mut levels = Vec::with_capacity(entry.levels.len());
+		for (level, &(offset, len)) in entry.levels.iter().enumerate() {
+			f.seek(SeekFrom::Start(offset)).ok()?;
+			let mut bytes = vec![0; len as usize];
+			f.read_exact(&mut bytes).ok()?;
+			let image = decode_png(&bytes).ok()?;
+			let size = |v: u32| (v >> level).max(1);
+			if (image.width, image.height) != (size(entry.region.w), size(entry.region.h)) {
+				return None;
+			}
+			levels.push(image);
+		}
+		Some(levels)
 	}
 }
 
@@ -172,20 +219,20 @@ fn encode(image: &Image) -> io::Result<Vec<u8>> {
 	Ok(out)
 }
 
-fn read_u32(f: &mut File) -> Option<u32> {
+fn read_u32(f: &mut impl Read) -> Option<u32> {
 	let mut b = [0u8; 4];
 	f.read_exact(&mut b).ok()?;
 	Some(u32::from_le_bytes(b))
 }
 
-fn read_u64(f: &mut File) -> Option<u64> {
+fn read_u64(f: &mut impl Read) -> Option<u64> {
 	let mut b = [0u8; 8];
 	f.read_exact(&mut b).ok()?;
 	Some(u64::from_le_bytes(b))
 }
 
 /// A length-prefixed byte string, no longer than the file.
-fn read_bytes(f: &mut File, limit: u64) -> Option<Vec<u8>> {
+fn read_bytes(f: &mut impl Read, limit: u64) -> Option<Vec<u8>> {
 	let len = u64::from(read_u32(f)?);
 	if len > limit {
 		return None;
@@ -224,17 +271,19 @@ mod tests {
 		let cache = SheetCache::at(&dir);
 		let (a, b) = (image(16, 8, 3), image(24, 16, 5));
 		let frame_a = TexelRect { x: 9, y: 9, w: 4, h: 2 };
-		let region_a = TexelRect { x: 0, y: 0, w: 16, h: 8 };
+		let region_a = Region { x: 0, y: -8, w: 16, h: 8 };
 		let frame_b = TexelRect { x: 40, y: 8, w: 8, h: 4 };
-		let region_b = TexelRect { x: 32, y: 0, w: 24, h: 16 };
+		let region_b = Region { x: 32, y: 0, w: 24, h: 16 };
 		assert!(cache.read("key").is_none(), "nothing yet");
-		cache.write("key", &[(frame_a, region_a, &a), (frame_b, region_b, &b)]).expect("write");
+		let (a1, b1) = (image(8, 4, 7), image(12, 8, 9));
+		let (levels_a, levels_b) = ([a.clone(), a1.clone()], [b.clone(), b1.clone()]);
+		cache.write("key", &[(frame_a, region_a, &levels_a[..]), (frame_b, region_b, &levels_b[..])]).expect("write");
 		let sheet = cache.read("key").expect("cached");
 		assert_eq!(sheet.entries.len(), 2);
 		let entry = sheet.entry(&frame_b).expect("frame b");
 		assert_eq!(entry.region, region_b);
-		assert_eq!(sheet.read(entry), Some(b));
-		assert_eq!(sheet.read(sheet.entry(&frame_a).unwrap()), Some(a));
+		assert_eq!(sheet.read(entry), Some(vec![b, b1]));
+		assert_eq!(sheet.read(sheet.entry(&frame_a).unwrap()), Some(vec![a, a1]));
 		assert!(cache.read("another key").is_none(), "another key misses");
 		let _ = std::fs::remove_dir_all(dir);
 	}
@@ -244,7 +293,7 @@ mod tests {
 		let dir = scratch("damaged");
 		let cache = SheetCache::at(&dir);
 		let frame = TexelRect { x: 9, y: 9, w: 4, h: 2 };
-		cache.write("key", &[(frame, TexelRect { x: 0, y: 0, w: 16, h: 8 }, &image(16, 8, 3))]).expect("write");
+		cache.write("key", &[(frame, Region { x: 0, y: 0, w: 16, h: 8 }, &[image(16, 8, 3)][..])]).expect("write");
 		let file = cache.file_for("key");
 		let bytes = std::fs::read(&file).expect("the file");
 		std::fs::write(&file, &bytes[..bytes.len() - 10]).expect("truncate");
