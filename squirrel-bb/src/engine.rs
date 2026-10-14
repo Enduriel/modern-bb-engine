@@ -127,6 +127,14 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let tactical_grid = TacticalGrid::new();
 		tactical_grid.set_file_reader(modules.file_reader());
 		tactical_grid.set_sprites(natives.sprites.clone());
+		// A tile's `clear(flags)` takes the pools and landed heads lying there too.
+		{
+			let effects = natives.tactical.effects.clone();
+			tactical_grid.set_clear_hook(Rc::new(move |vm, tile, flags| {
+				let now = crate::native::sprite_color::virtual_time(vm);
+				effects.borrow_mut().clear_tile(tile, flags, now);
+			}));
+		}
 		tactical_grid.set_engine_rng(natives.engine_rng.clone());
 		tactical_grid.set_battle_camera(config.battle_camera);
 		tactical_grid.install(&mut vm);

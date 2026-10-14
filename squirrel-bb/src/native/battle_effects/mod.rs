@@ -163,6 +163,16 @@ impl BattleEffects {
 		self.pools.push(pool);
 	}
 
+	/// `tile.clear(flags)`'s share of the effects at virtual time `now`: what lies on
+	/// `tile` carrying any of `flags` (everything there for `None`). The original's pools
+	/// carry the script's flags (`0x4d2657`) and a landed head
+	/// `DetailFlag.SeveredHead`; a head still in the air has none.
+	pub fn clear_tile(&mut self, tile: usize, flags: Option<i64>, now: f32) {
+		let cleared = |carried: i64| flags.is_none_or(|f| carried & f != 0);
+		self.pools.retain(|p| !(p.tile == tile && cleared(p.flags)));
+		self.heads.retain(|h| !(h.tile == tile && h.landed(now) && cleared(head::SEVERED_HEAD)));
+	}
+
 	/// The battle is over: nothing is left.
 	pub fn clear(&mut self) {
 		self.floating.clear();

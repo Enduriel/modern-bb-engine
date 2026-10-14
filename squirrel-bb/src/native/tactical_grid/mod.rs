@@ -12,6 +12,7 @@
 pub(crate) mod camera;
 pub(crate) mod detail;
 pub(crate) mod faction_set;
+pub(crate) mod heads;
 mod heat;
 mod picking;
 mod tile;
@@ -105,6 +106,10 @@ pub(crate) type OccupantLookup = Rc<dyn Fn() -> Vec<Option<visibility::Occupant>
 /// What `tile.spawnObject(path)` runs: create the object entity `path` on tile `id`.
 pub(crate) type ObjectSpawner = Rc<dyn Fn(&SQVM, &str, usize) -> Result<SqStrongRef, String>>;
 
+/// What else `tile.clear(flags)` clears on tile `id`: the battle effects lying there
+/// (`None`: every flag).
+pub(crate) type ClearHook = Rc<dyn Fn(&SQVM, usize, Option<i64>)>;
+
 pub(crate) struct TacticalGridState {
 	pub width: i64,
 	pub height: i64,
@@ -119,6 +124,7 @@ pub(crate) struct TacticalGridState {
 	properties_delegate: Option<SqStrongRef>,
 	object_spawner: Option<ObjectSpawner>,
 	occupant_lookup: Option<OccupantLookup>,
+	clear_hook: Option<ClearHook>,
 	/// `Tactical.getCamera()`'s fields.
 	camera: camera::CameraState,
 	camera_class: Option<SqClass<camera::CameraHandle>>,
@@ -143,6 +149,7 @@ impl TacticalGridState {
 			properties_delegate: None,
 			object_spawner: None,
 			occupant_lookup: None,
+			clear_hook: None,
 			camera: camera::CameraState::default(),
 			camera_class: None,
 			file_reader: None,
@@ -441,6 +448,11 @@ impl TacticalGrid {
 	/// Set how sight learns who stands where (the entity host's records).
 	pub(crate) fn set_occupant_lookup(&self, lookup: OccupantLookup) {
 		self.grid.borrow_mut().occupant_lookup = Some(lookup);
+	}
+
+	/// Set what else `tile.clear(flags)` clears (the battle effects on the tile).
+	pub(crate) fn set_clear_hook(&self, hook: ClearHook) {
+		self.grid.borrow_mut().clear_hook = Some(hook);
 	}
 
 	/// Let the map read game files (the picking masks).
@@ -777,6 +789,7 @@ impl TacticalGrid {
 		g.properties_delegate = None;
 		g.object_spawner = None;
 		g.occupant_lookup = None;
+		g.clear_hook = None;
 		g.camera_class = None;
 	}
 }

@@ -14,7 +14,7 @@ use squirrel::{Native, Number, Retained, SQVM, SqArray, SqStrongRef, Variadic};
 use super::{TacticalMachine, UnitSpriteData};
 use crate::native::battle_effects::{Head, Projectile, flight_time};
 use crate::native::sprite_color::virtual_time;
-use crate::native::tactical_grid::TileHandle;
+use crate::native::tactical_grid::{TileHandle, heads};
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
@@ -146,11 +146,17 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 				handles.push(handle.clone());
 				out.push(handle);
 			}
-			if let Some(effects) = m.borrow().effects.clone() {
+			let effects = m.borrow().effects.clone();
+			if let Some(effects) = effects {
 				let ((x, y), id) = tile_of(&tile.0);
 				let pool = a.get(2).and_then(|p| p.0.get_value::<String>(vm)).filter(|p| brush_speed(&m, p).is_some());
+				// Where it lands, and the mark it leaves there (see `heads`), before the
+				// effects are borrowed: having to land at home clears the tile's heads.
+				let crt = effects.borrow().crt();
+				let land = heads::landing_tile(&tile.0.grid, vm, id, || crt.rand_default());
+				heads::mark_head(&tile.0.grid, vm, land);
 				let rng = effects.borrow().rng();
-				let head = Head::new(&rng, id, (x, y), handles, pool, vec2(vm, &a, 0), rotation, virtual_time(vm));
+				let head = Head::new(&rng, id, (x, y), land, handles, pool, vec2(vm, &a, 0), rotation, virtual_time(vm));
 				effects.borrow_mut().spawn_head(head);
 			}
 			out.to_strong()

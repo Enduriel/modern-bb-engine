@@ -63,7 +63,7 @@ pub(super) fn properties_delegate(vm: &mut SQVM, grid: &Grid) -> SqStrongRef {
 }
 
 /// `tile.Properties`, made on first use.
-fn properties(t: &TileHandle, vm: &SQVM) -> SqStrongRef {
+pub(super) fn properties(t: &TileHandle, vm: &SQVM) -> SqStrongRef {
 	if let Some(p) = t.with(|d| d.properties.clone()) {
 		return p;
 	}
@@ -134,10 +134,20 @@ fn set_color(t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>) 
 /// `clear()`: every detail; `clear(flags)`: those carrying any of `flags`.
 fn clear(t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>) {
 	let flags = args.first().and_then(|a| a.0.get_value::<Number>(vm)).map(|n| n.0 as i64);
+	clear_tile(t, vm, flags);
+}
+
+/// Clear tile `t` of what carries any of `flags` (everything for `None`): its details,
+/// and through the clear hook the battle effects lying there (pools, landed heads).
+pub(super) fn clear_tile(t: &TileHandle, vm: &SQVM, flags: Option<i64>) {
 	t.with_mut(|d| match flags {
 		None => d.details.clear(),
 		Some(f) => d.details.retain(|detail| detail.borrow().flags & f == 0),
-	})
+	});
+	let hook = t.grid.borrow().clear_hook.clone();
+	if let Some(hook) = hook {
+		hook(vm, t.id, flags);
+	}
 }
 
 /// `spawnDetail(brush [, flags [, mirrored [, fadeIn [, offset]]]])`: see `detail`.
