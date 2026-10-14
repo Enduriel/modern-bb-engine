@@ -5,6 +5,10 @@
 //! differs only when a channel is off by more than the tolerance, and a region only
 //! counts where enough of a cell's pixels differ. Regions are the differing cells of a
 //! coarse grid, joined where they touch.
+//!
+//! What a frame draws at random (the world's detail looks, which the original rolls
+//! from the clock) differs between two runs of the same engine too: a [`noise_mask`]
+//! of two such runs leaves it out of the comparison.
 
 use bb_assets::Image;
 
@@ -16,7 +20,10 @@ pub struct FrameDiff {
 	/// The pixels that differ beyond the tolerance.
 	pub differing: usize,
 	pub total: usize,
-	/// Ours dimmed to grey, with each differing pixel red by how far off it is.
+	/// The pixels left out as noise.
+	pub masked: usize,
+	/// Ours dimmed to grey, with each differing pixel red by how far off it is, and
+	/// those left out as noise blue.
 	pub heat: Image,
 	/// Where the differences gather, most differing pixels first.
 	pub regions: Vec<Region>,
@@ -33,40 +40,80 @@ pub struct Region {
 	pub pixels: usize,
 }
 
-/// Compare `ours` with `original` (the same size). A pixel differs when a colour channel
-/// is off by more than `tolerance`; a grid cell when more than `cell_fraction` of its
-/// pixels do.
+/// The largest difference between `a` and `b` in a colour channel at pixel index `i`
+/// (into RGBA bytes).
+fn channel_off(a: &Image, b: &Image, i: usize) -> u8 {
+	a.rgba[i..i + 3]
+		.iter()
+		.zip(&b.rgba[i..i + 3])
+		.map(|(p, q)| p.abs_diff(*q))
+		.max()
+		.unwrap_or(0)
+}
+
+fn same_size(a: &Image, b: &Image) -> Result<(), String> {
+	if (a.width, a.height) != (b.width, b.height) {
+		return Err(format!(
+			"sizes differ: {}x{} and {}x{}",
+			a.width, a.height, b.width, b.height
+		));
+	}
+	Ok(())
+}
+
+/// The pixels where two runs of the same engine, `a` and `b`, differ by more than
+/// `tolerance`, grown by `grow` pixels each way: what that engine draws at random.
+pub fn noise_mask(a: &Image, b: &Image, tolerance: u8, grow: u32) -> Result<Vec<bool>, String> {
+	same_size(a, b)?;
+	let (width, height) = (a.width, a.height);
+	let mut mask = vec![false; (width * height) as usize];
+	for y in 0..height {
+		for x in 0..width {
+			let i = (y * width + x) as usize;
+			if channel_off(a, b, i * 4) <= tolerance {
+				continue;
+			}
+			for gy in y.saturating_sub(grow)..(y + grow + 1).min(height) {
+				for gx in x.saturating_sub(grow)..(x + grow + 1).min(width) {
+					mask[(gy * width + gx) as usize] = true;
+				}
+			}
+		}
+	}
+	Ok(mask)
+}
+
+/// Compare `ours` with `original` (the same size), leaving out the pixels `noise` marks
+/// (see [`noise_mask`]). A pixel differs when a colour channel is off by more than
+/// `tolerance`; a grid cell when more than `cell_fraction` of its pixels do.
 pub fn diff(
 	ours: &Image,
 	original: &Image,
+	noise: Option<&[bool]>,
 	tolerance: u8,
 	cell_fraction: f32,
 ) -> Result<FrameDiff, String> {
-	if (ours.width, ours.height) != (original.width, original.height) {
-		return Err(format!(
-			"sizes differ: ours {}x{}, the original's {}x{}",
-			ours.width, ours.height, original.width, original.height
-		));
+	same_size(ours, original)?;
+	if noise.is_some_and(|n| n.len() != (ours.width * ours.height) as usize) {
+		return Err("the noise mask isn't the frames' size".into());
 	}
 	let (width, height) = (ours.width, ours.height);
 	let (cols, rows) = (width.div_ceil(CELL), height.div_ceil(CELL));
 	let mut cell_counts = vec![0usize; (cols * rows) as usize];
 	let mut heat = vec![0u8; ours.rgba.len()];
-	let mut differing = 0;
+	let (mut differing, mut masked) = (0, 0);
 	for y in 0..height {
 		for x in 0..width {
 			let i = ((y * width + x) * 4) as usize;
-			let (a, b) = (&ours.rgba[i..i + 3], &original.rgba[i..i + 3]);
-			let off = a
-				.iter()
-				.zip(b)
-				.map(|(p, q)| p.abs_diff(*q))
-				.max()
-				.unwrap_or(0);
+			let a = &ours.rgba[i..i + 3];
+			let off = channel_off(ours, original, i);
 			let grey =
 				((u32::from(a[0]) * 3 + u32::from(a[1]) * 6 + u32::from(a[2])) / 10 / 3) as u8;
 			let out = &mut heat[i..i + 4];
-			if off > tolerance {
+			if noise.is_some_and(|n| n[i / 4]) {
+				masked += 1;
+				out.copy_from_slice(&[grey, grey, grey.saturating_add(64), 255]);
+			} else if off > tolerance {
 				differing += 1;
 				cell_counts[((y / CELL) * cols + x / CELL) as usize] += 1;
 				out.copy_from_slice(&[128u8.saturating_add(off / 2), grey, grey, 255]);
@@ -89,6 +136,7 @@ pub fn diff(
 	let regions = join_cells(&marked, &cell_counts, cols, rows, width, height);
 	Ok(FrameDiff {
 		differing,
+		masked,
 		total: (width * height) as usize,
 		heat: Image {
 			width,
@@ -185,7 +233,7 @@ mod tests {
 	fn small_differences_are_tolerated() {
 		let a = image(64, 64, [100, 100, 100]);
 		let b = image(64, 64, [104, 98, 100]);
-		let d = diff(&a, &b, 8, 0.05).unwrap();
+		let d = diff(&a, &b, None, 8, 0.05).unwrap();
 		assert_eq!((d.differing, d.regions.len()), (0, 0));
 	}
 
@@ -195,7 +243,7 @@ mod tests {
 		let mut b = a.clone();
 		paint(&mut b, 4, 4, 20, 20, [255, 0, 0]);
 		paint(&mut b, 90, 60, 10, 10, [0, 255, 0]);
-		let d = diff(&a, &b, 8, 0.05).unwrap();
+		let d = diff(&a, &b, None, 8, 0.05).unwrap();
 		assert_eq!(d.differing, 500);
 		assert_eq!(
 			d.regions,
@@ -219,7 +267,23 @@ mod tests {
 	}
 
 	#[test]
+	fn noise_is_left_out() {
+		let a = image(64, 64, [0, 0, 0]);
+		let mut b = a.clone();
+		paint(&mut b, 10, 10, 4, 4, [200, 0, 0]);
+		paint(&mut b, 40, 40, 4, 4, [0, 200, 0]);
+		// The original's second run differs at the first spot only.
+		let mut original_again = a.clone();
+		paint(&mut original_again, 10, 10, 4, 4, [0, 0, 200]);
+		let noise = noise_mask(&a, &original_again, 8, 1).unwrap();
+		let d = diff(&b, &a, Some(&noise), 8, 0.05).unwrap();
+		assert_eq!((d.differing, d.masked), (16, 36));
+		assert_eq!(d.regions.len(), 1);
+		assert_eq!((d.regions[0].x, d.regions[0].y), (32, 32));
+	}
+
+	#[test]
 	fn sizes_must_match() {
-		assert!(diff(&image(4, 4, [0; 3]), &image(4, 5, [0; 3]), 8, 0.05).is_err());
+		assert!(diff(&image(4, 4, [0; 3]), &image(4, 5, [0; 3]), None, 8, 0.05).is_err());
 	}
 }

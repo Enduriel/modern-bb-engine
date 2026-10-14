@@ -1,10 +1,14 @@
 //! Where a frame of ours differs from a screenshot of the original (frame parity).
 //!
 //! ```text
-//! cargo run --release -p bb-render --example frame_diff -- OURS.png ORIGINAL.png HEAT.png [TOLERANCE]
+//! cargo run --release -p bb-render --example frame_diff -- OURS.png ORIGINAL.png HEAT.png
+//!     [--tolerance N] [--noise ORIGINAL2.png] [--noise-ours OURS2.png]
 //! ```
 //!
-//! Prints how many pixels differ by more than TOLERANCE (default 24) in a colour channel,
+//! `--noise` is a second run of the original, `--noise-ours` one of ours with other
+//! random looks: what differs between an engine's own two runs is left out (blue in the
+//! heatmap), with 2 pixels around it.
+//! Prints how many pixels differ by more than N (default 24) in a colour channel,
 //! and the regions they gather in (16-pixel cells where more than 5% differ, joined),
 //! most first; writes HEAT.png, ours dimmed to grey with the differing pixels in red,
 //! and for the 12 largest regions HEAT-region-N.png: ours and the original side by side.
@@ -48,14 +52,40 @@ fn side_by_side(ours: &Image, original: &Image, region: &Region) -> Image {
 fn run() -> Result<(), String> {
 	let args: Vec<String> = std::env::args().skip(1).collect();
 	let [ours, original, heat, rest @ ..] = args.as_slice() else {
-		return Err("usage: frame_diff OURS.png ORIGINAL.png HEAT.png [TOLERANCE]".into());
+		return Err("usage: frame_diff OURS.png ORIGINAL.png HEAT.png [--tolerance N] [--noise ORIGINAL2.png] [--noise-ours OURS2.png]".into());
 	};
-	let tolerance = match rest.first() {
-		Some(t) => t.parse().map_err(|_| format!("not a tolerance: {t}"))?,
-		None => 24,
-	};
+	let (mut tolerance, mut noise_original, mut noise_ours) = (24u8, None, None);
+	let mut rest = rest.iter();
+	while let Some(flag) = rest.next() {
+		let value = rest.next().ok_or(format!("{flag} needs a value"))?;
+		match flag.as_str() {
+			"--tolerance" => {
+				tolerance = value
+					.parse()
+					.map_err(|_| format!("not a tolerance: {value}"))?
+			}
+			"--noise" => noise_original = Some(value),
+			"--noise-ours" => noise_ours = Some(value),
+			_ => return Err(format!("unknown option {flag}")),
+		}
+	}
 	let (ours_image, original_image) = (load(ours)?, load(original)?);
-	let d = frame_diff::diff(&ours_image, &original_image, tolerance, 0.05)?;
+	let mut noise: Option<Vec<bool>> = None;
+	for (again, same) in [(noise_original, &original_image), (noise_ours, &ours_image)] {
+		let Some(again) = again else { continue };
+		let mask = frame_diff::noise_mask(same, &load(again)?, tolerance, 2)?;
+		noise = Some(match noise {
+			Some(n) => n.iter().zip(&mask).map(|(a, b)| *a || *b).collect(),
+			None => mask,
+		});
+	}
+	let d = frame_diff::diff(
+		&ours_image,
+		&original_image,
+		noise.as_deref(),
+		tolerance,
+		0.05,
+	)?;
 	bb_render::save_png(heat, &d.heat)?;
 	let stem = heat.strip_suffix(".png").unwrap_or(heat);
 	for (n, region) in d.regions.iter().take(12).enumerate() {
@@ -65,10 +95,11 @@ fn run() -> Result<(), String> {
 		)?;
 	}
 	println!(
-		"{} of {} pixels differ ({:.2}%) beyond {tolerance}; {} regions of {CELL}px cells:",
+		"{} of {} pixels differ ({:.2}%) beyond {tolerance}, {} left out as noise; {} regions of {CELL}px cells:",
 		d.differing,
 		d.total,
 		100.0 * d.differing as f64 / d.total as f64,
+		d.masked,
 		d.regions.len()
 	);
 	for r in &d.regions {
