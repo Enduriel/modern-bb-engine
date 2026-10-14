@@ -16,6 +16,8 @@
 //!   (unprobed).
 //!
 //! JS → SQ:
+//! - strings arrive as UTF-8, cut off at a NUL (probed 2026-10-14). A lone UTF-16
+//!   surrogate ends the original ("string too long"); here it's U+FFFD (`json.rs`);
 //! - **every number becomes an integer, truncated toward zero** (`2.7` → `2`; the
 //!   original converts with a 32-bit `cvttsd2si`, so out-of-range values and NaN
 //!   become `-2147483648`). Mods that need fractions send strings (MSU does);
@@ -77,10 +79,15 @@ fn convert(value: &SqRef, depth: usize) -> Option<Json> {
 /// NUL, and empty if it isn't UTF-8. `None` if `value` isn't a string.
 fn text(value: &SqRef) -> Option<String> {
 	match value {
-		SqRef::String(s) => Some(s.split('\0').next().unwrap_or_default().to_string()),
+		SqRef::String(s) => Some(up_to_nul(s).to_string()),
 		SqRef::Bytes(_) => Some(String::new()),
 		_ => None,
 	}
+}
+
+/// `s` up to its first NUL: the original's strings end there both ways.
+fn up_to_nul(s: &str) -> &str {
+	s.split('\0').next().unwrap_or_default()
 }
 
 /// A JS number as the original hands it to a script: truncated toward zero to a
@@ -101,7 +108,7 @@ pub fn from_json<'vm>(vm: &'vm SQVM, json: &Json) -> SqRef<'vm> {
 		Json::Bool(b) => SqRef::Bool(*b),
 		Json::Int(n) => SqRef::Integer(js_number(*n as f64)),
 		Json::Float(f) => SqRef::Integer(js_number(*f)),
-		Json::Str(s) => SqRef::String(s.clone()),
+		Json::Str(s) => SqRef::String(up_to_nul(s).to_string()),
 		Json::Array(items) => {
 			let mut array = SqArray::new(vm);
 			for item in items {
@@ -112,7 +119,7 @@ pub fn from_json<'vm>(vm: &'vm SQVM, json: &Json) -> SqRef<'vm> {
 		Json::Object(entries) => {
 			let mut table = SqTable::new(vm);
 			for (key, value) in entries {
-				table.set(key, from_json(vm, value));
+				table.set(up_to_nul(key), from_json(vm, value));
 			}
 			SqRef::Table(table)
 		}
@@ -149,6 +156,15 @@ mod tests {
 		.unwrap();
 		let json = strong_to_json(&vm, &global(&vm, "v")).unwrap();
 		assert_eq!(json.to_text(), r#"["é","","a","x"]"#);
+	}
+
+	#[test]
+	fn page_strings_end_at_a_nul() {
+		let vm = SQVM::new(1024);
+		let json = Json::parse(r#"["a\u0000b", "\u00e9"]"#).unwrap();
+		let mut root = SqTable::root(&vm);
+		root.set("t", from_json(&vm, &json));
+		assert_eq!(strong_to_json(&vm, &global(&vm, "t")).unwrap().to_text(), r#"["a","é"]"#);
 	}
 
 	#[test]
