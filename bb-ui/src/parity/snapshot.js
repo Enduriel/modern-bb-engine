@@ -21,7 +21,10 @@ var BBSnapshot = (function ()
 		'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
 		'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
 		'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
-		'border-top-style', 'border-top-color', 'transform', 'box-sizing'
+		'border-top-style', 'border-top-color', 'transform', 'box-sizing',
+		// Not in the goldens (taken before it was added): it tells the comparison which
+		// of our boxes have a border image.
+		'border-image-source'
 	];
 
 	function walk(el)

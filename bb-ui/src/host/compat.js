@@ -14,12 +14,15 @@
 	// Coherent also never fakes a bold or an italic face: text asked to be bold or italic
 	// in a family that has only a regular face (the game's fonts each have one: the
 	// resource numbers are bold, dialog subtitles italic) draws in that face as it is,
-	// where Chromium would embolden or slant it.
+	// where Chromium would embolden or slant it. Nor does it kern: "AV" in Cinzel-Bold,
+	// which has a kerning table, is as wide as "A" and "V" apart there, even with
+	// `font-kerning: normal` or `text-rendering: optimizeLegibility` asked for (probed,
+	// `bb-ui/probes/text_rules.js`); Chromium kerns by default.
 	var BUILT_IN_CSS =
 		':where(input, select, textarea, button) { font: inherit; }\n' +
 		':where(input[type=checkbox], input[type=radio]) { margin: 0; font: 16px "Times New Roman"; }\n' +
 		':where(input[type=range]) { margin: 18px 0; color: #909090; }\n' +
-		':where(:root) { font-synthesis-weight: none; font-synthesis-style: none; }\n';
+		':where(:root) { font-synthesis-weight: none; font-synthesis-style: none; font-kerning: none; }\n';
 
 	// Images with nothing to show paint nothing, as in Coherent: no `src` (the
 	// character screen's talent stars), an empty one (every empty stash slot's
@@ -96,6 +99,29 @@
 		}
 	}
 
+	// Border images. Old WebKit keeps a box's border widths (`medium`, 3px, unless
+	// declared) while it has a border image, though its border style is `none`: they
+	// take room, and the image is drawn in them (probed, `bb-ui/probes/border_rules.js`).
+	// Vanilla draws all its separator lines so, `border-image: url(line_metal.png) 0% 0%
+	// 100% 0%` and no style; the spec computes such widths to 0, so Chromium draws
+	// nothing. A rule that sets a border image and no border style gets `solid` (drawn
+	// transparent where the image doesn't show), which keeps the widths as old WebKit
+	// does.
+	var BORDER_STYLES = ['border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style'];
+
+	function bordersUnderImages(style) {
+		var source = style.getPropertyValue('border-image-source');
+		if (source === '' || source === 'none' ||
+			BORDER_STYLES.some(function (p) { return style.getPropertyValue(p) !== ''; })) {
+			return;
+		}
+		var priority = style.getPropertyPriority('border-image-source');
+		style.setProperty('border-style', 'solid', priority);
+		if (style.getPropertyValue('border-top-color') === '') {
+			style.setProperty('border-color', 'transparent', priority);
+		}
+	}
+
 	function fixRules(rules) {
 		for (var i = 0; i < rules.length; i++) {
 			var rule = rules[i];
@@ -104,6 +130,7 @@
 			} else if (rule.type === CSSRule.STYLE_RULE) {
 				centreLikeCss21(rule.style);
 				wholePixelPercentages(rule.style);
+				bordersUnderImages(rule.style);
 			}
 		}
 	}

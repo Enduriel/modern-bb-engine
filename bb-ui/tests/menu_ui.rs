@@ -5,8 +5,8 @@
 //! calls between scripts and page run inline both ways, as in the original, and the
 //! page's own tasks run between the scripts, never inside one. Images with nothing to
 //! show paint nothing, bold or italic text in a face without either draws in it as it
-//! is, and right clicks open no menu, as in Coherent. Skips if there is no Steam
-//! install.
+//! is, text advances by whole pixels, and right clicks open no menu, as in Coherent.
+//! Skips if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -240,6 +240,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 
 	images_with_nothing_to_show_paint_nothing(&session)?;
 	faces_are_never_faked(&session)?;
+	text_lays_out_in_whole_pixels(&session)?;
 	right_clicks_reach_the_page(&session)?;
 	page_tasks_run_between_scripts(&session)?;
 
@@ -487,6 +488,37 @@ fn faces_are_never_faked(session: &UiSession) -> Result<(), String> {
 	ensure(
 		plain == asked,
 		"bold italic text in a regular-only face painted differently (faked)",
+	)
+}
+
+/// Text advances by whole pixels a glyph, as in Coherent (the original's frames: the
+/// intro event's lines are the sums of their glyphs' hinted widths), so lines are as
+/// wide as there and wrap where they do. Fractional advances made these lines 692.1,
+/// 695.6 and 273.6px wide at 16px.
+fn text_lays_out_in_whole_pixels(session: &UiSession) -> Result<(), String> {
+	let widths = session.eval(
+		"(function () {
+			var lines = ['maybe they are greedy for quick spoils of war. Most of them will die on the battlefield. But do',
+				'not be discouraged. Such is the mercenary life, and the next village will always have new men',
+				'eagerly looking for a new start in life.'];
+			var widths = [];
+			[13, 16, 18, 24].forEach(function (size) {
+				lines.forEach(function (line) {
+					var span = $('<span/>').text(line).css({ position: 'fixed', whiteSpace: 'nowrap',
+						fontFamily: 'FreeUniversal-Regular', fontSize: size + 'px' }).appendTo(document.body);
+					widths.push(span[0].getBoundingClientRect().width);
+					span.remove();
+				});
+			});
+			return widths.join(' ');
+		})()",
+	)?;
+	let widths = widths.as_str().unwrap_or_default().to_string();
+	ensure(
+		widths
+			.split(' ')
+			.all(|w| w.parse::<f64>().is_ok_and(|w| w > 0.0 && w.fract() == 0.0)),
+		format!("text advances by fractions of a pixel: line widths {widths}"),
 	)
 }
 

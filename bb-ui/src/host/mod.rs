@@ -32,6 +32,7 @@
 
 mod app;
 mod client;
+mod fonts;
 pub mod goldens;
 mod input;
 mod ipc;
@@ -77,13 +78,19 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 pub type Serve<'a> = dyn FnMut(&Json) -> Reply + 'a;
 
 /// Run this process as a CEF child process (renderer, GPU, utility…) if it is one,
-/// returning its exit code; `None` in the main (browser) process. Call it first
-/// thing in `main` and exit with the code it returns.
+/// returning its exit code; `None` in the main (browser) process, which it prepares
+/// for the page (its text laid out in whole pixels, [`fonts`]). Call it first thing
+/// in `main`, before any other thread exists, and exit with the code it returns.
 pub fn run_subprocess() -> Option<i32> {
 	let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 	let args = Args::new();
 	let command_line = args.as_cmd_line()?;
 	if command_line.has_switch(Some(&"type".into())) == 0 {
+		// SAFETY: first thing in `main` (this function's contract), so no other thread
+		// exists yet.
+		if let Err(e) = unsafe { fonts::hint_fully() } {
+			eprintln!("bb-ui: the page's text won't be laid out in whole pixels: {e}");
+		}
 		return None;
 	}
 	let mut app = app::host_app(None, None);

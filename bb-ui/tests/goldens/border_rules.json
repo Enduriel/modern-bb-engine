@@ -1,0 +1,11 @@
+{
+	"borders": {
+		"plain": "100x20 client 0,0 100x20 widths 0px 0px",
+		"image": "106x26 client 3,3 100x20 widths 3px 3px",
+		"imageBorderBox": "100x20 client 3,3 94x14 widths 3px 3px",
+		"imageWidth1": "102x22 client 1,1 100x20 widths 1px 1px",
+		"imageBottomWidth0": "106x23 client 3,3 100x20 widths 3px 0px",
+		"imageOutset": "106x26 client 3,3 100x20 widths 3px 3px",
+		"styleSolid": "106x26 client 3,3 100x20 widths 3px 3px"
+	}
+}

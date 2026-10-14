@@ -1,0 +1,23 @@
+{
+	"text": {
+		"free16i": 4,
+		"free16i10": 40,
+		"free16e": 9,
+		"free16e10": 90,
+		"free16line": 696,
+		"free13line": 568,
+		"free18line": 476,
+		"cinzelA": 20,
+		"cinzelV": 20,
+		"cinzelAV": 40,
+		"cinzelP": 18,
+		"cinzelPA": 38,
+		"cinzelT": 19,
+		"cinzelo": 22,
+		"cinzelTo": 41,
+		"cinzelAVlegible": 40,
+		"cinzelAVkerning": 40,
+		"cinzelPaused": 118,
+		"cinzelNew": 158
+	}
+}

@@ -342,15 +342,27 @@ fn close_numbers(a: &str, b: &str) -> bool {
 /// - `z-index: 0` for elements that form a stacking context without one (`auto`), and
 ///   `auto` for static elements, where z-index does nothing (Chromium reports the
 ///   declared value);
-/// - the declared border width on a side with no border style (the spec computes 0).
+/// - the declared border width on a side with no border style (the spec computes 0),
+///   where our box has no border image.
 ///
 /// It also allows what our compatibility layer changes without changing the box:
 /// `top`, `bottom` and the vertical margins of absolutely positioned boxes centred
 /// between their insets by `auto` margins (`host/compat.js` rewrites those insets).
 /// The golden can't tell those apart from other absolutely positioned boxes with equal
 /// vertical margins, so those properties are left out for all of them; their boxes are
-/// still compared, so a box out of place still shows.
-fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str, page_zoom: f64) -> bool {
+/// still compared, so a box out of place still shows. And where our box has a border
+/// image, its border style is `solid` for the golden's `none`, and its colour
+/// transparent: old WebKit keeps the border widths under a border image (the widths
+/// must match there), and `host/compat.js` gives such rules a style to keep them,
+/// drawn transparent where the image doesn't show (old WebKit draws nothing there).
+fn same_style(
+	golden: &Node,
+	ours: &Node,
+	property: &str,
+	theirs: &str,
+	mine: &str,
+	page_zoom: f64,
+) -> bool {
 	let golden_style = |key: &str| {
 		golden
 			.style
@@ -358,6 +370,10 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str, page_zoom
 			.find(|(k, _)| k == key)
 			.map(|(_, v)| v.as_str())
 	};
+	let border_image = ours
+		.style
+		.iter()
+		.any(|(k, v)| k == "border-image-source" && v != "none");
 	if theirs == mine {
 		return true;
 	}
@@ -375,8 +391,10 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str, page_zoom
 				|| (theirs == "auto" && golden_style("position") == Some("static"))
 		}
 		p if p.starts_with("border-") && p.ends_with("-width") => {
-			matches!(golden_style("border-top-style"), Some("none" | "hidden"))
+			!border_image && matches!(golden_style("border-top-style"), Some("none" | "hidden"))
 		}
+		"border-top-style" => border_image && theirs == "none" && mine == "solid",
+		"border-top-color" => border_image && mine == "rgba(0, 0, 0, 0)",
 		"top" | "bottom" | "margin-top" | "margin-bottom" => {
 			// Equal margins, or a half pixel apart before old WebKit snapped them (-17.5px
 			// twice reported as -17px and -18px).
@@ -498,7 +516,7 @@ fn compare_nodes(
 			.find(|(p, _)| p == property)
 			.map(|(_, v)| normalized(&ours.tag, property, v))
 			.unwrap_or_default();
-		if !same_style(golden, property, &theirs, &mine, tolerance.page_zoom) {
+		if !same_style(golden, ours, property, &theirs, &mine, tolerance.page_zoom) {
 			out.push(Difference::Style {
 				path: path.to_string(),
 				property: property.clone(),

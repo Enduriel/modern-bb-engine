@@ -1,4 +1,4 @@
-//! UI parity with the original. Four checks on one page, in order:
+//! UI parity with the original. Six checks on one page, in order:
 //!   * `matches_the_originals_screens`: our page, driven through the main menu, the
 //!     new-campaign page and the Options screen, matches the original's snapshots
 //!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
@@ -9,7 +9,10 @@
 //!     probe harness starts it: the intro event, the world screen, the character
 //!     screen, the nearest town and a seeded bandit ambush (`probes/world_golden.js`);
 //!   * `follows_the_originals_layout_rules`: `probes/layout_rules.js` gets the
-//!     original's answers (`tests/goldens/layout_rules.json`) in our page.
+//!     original's answers (`tests/goldens/layout_rules.json`) in our page;
+//!   * `follows_the_originals_text_rules` and `follows_the_originals_border_rules`:
+//!     likewise for `probes/text_rules.js` (whole-pixel glyph advances, no kerning) and
+//!     `probes/border_rules.js` (border widths under border images).
 //!
 //! Skips if there is no Steam install.
 //!
@@ -28,6 +31,8 @@ use bb_ui::json::Json;
 use bb_ui::parity::{Snapshot, compare};
 
 const LAYOUT_PROBE: &str = include_str!("../probes/layout_rules.js");
+const TEXT_PROBE: &str = include_str!("../probes/text_rules.js");
+const BORDER_PROBE: &str = include_str!("../probes/border_rules.js");
 
 /// The answers of `layout_rules.js` that we don't reproduce:
 /// - text extents and glyph-box heights, which depend on the font rasterizer (old
@@ -45,7 +50,17 @@ const LAYOUT_EXCEPTIONS: &[&str] = &[
 	"fonts.bodyPct50",
 	"fonts.bodyPct200",
 	"overflow.nowrapText",
+	// A box centred by `auto` margins with half a pixel left over: old WebKit gives the
+	// top margin the floor (4px of 9), Chromium half (4.5px).
+	"centring.even",
 ];
+
+/// The answers of `text_rules.js` that we don't reproduce:
+/// - two lines whose glyphs' hinted widths add up a pixel apart (FreeType's hinting
+///   against the original's rasterizer);
+/// - kerning asked for with `font-kerning: normal`: the original ignores it, and our
+///   built-in `none` gives way to it (no page asks).
+const TEXT_EXCEPTIONS: &[&str] = &["text.free18line", "text.cinzelNew", "text.cinzelAVkerning"];
 
 fn start(data_dir: &Path) -> Result<UiSession, String> {
 	let (width, height) = goldens::load(&goldens::default_dir(), goldens::SCREENS[0].0)?.viewport;
@@ -105,28 +120,26 @@ fn matches_the_originals_world(session: &UiSession) -> Result<(), String> {
 	compare_all(goldens::capture_world(session)?)
 }
 
-/// Runs after the screens: the probe leaves its font samples in the page.
-fn follows_the_originals_layout_rules(session: &UiSession) -> Result<(), String> {
-	let ours = session.eval(&format!(
-		"(function () {{
-			var BbProbe = {{ answers: {{}}, send: function (key, json) {{ this.answers[key] = JSON.parse(json); }}, done: function () {{}} }};
-			{LAYOUT_PROBE}
-			BbProbe.run();
-			return BbProbe.answers;
-		}})()"
-	))?;
-	let path = goldens::default_dir().join("layout_rules.json");
+/// Each answer `probe` sent under `groups` against the original's (`tests/goldens/
+/// {golden}.json`), but `exceptions`.
+fn compare_answers(
+	ours: &Json,
+	golden: &str,
+	groups: &[&str],
+	exceptions: &[&str],
+) -> Result<(), String> {
+	let path = goldens::default_dir().join(format!("{golden}.json"));
 	let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
 	let golden = Json::parse(&text)?;
 
 	let mut differences = Vec::new();
-	for group in ["fonts", "overflow"] {
+	for group in groups {
 		let Some(Json::Object(answers)) = golden.get(group) else {
-			return Err(format!("layout_rules.json has no {group}"));
+			return Err(format!("{} has no {group}", path.display()));
 		};
 		for (key, expected) in answers {
 			let name = format!("{group}.{key}");
-			if LAYOUT_EXCEPTIONS.contains(&name.as_str()) {
+			if exceptions.contains(&name.as_str()) {
 				continue;
 			}
 			let actual = ours.get(group).and_then(|answers| answers.get(key));
@@ -139,6 +152,56 @@ fn follows_the_originals_layout_rules(session: &UiSession) -> Result<(), String>
 	report(differences)
 }
 
+/// Runs after the screens: the probe leaves its font samples in the page.
+fn follows_the_originals_layout_rules(session: &UiSession) -> Result<(), String> {
+	let ours = session.eval(&format!(
+		"(function () {{
+			var BbProbe = {{ answers: {{}}, send: function (key, json) {{ this.answers[key] = JSON.parse(json); }}, done: function () {{}} }};
+			{LAYOUT_PROBE}
+			BbProbe.run();
+			return BbProbe.answers;
+		}})()"
+	))?;
+	compare_answers(
+		&ours,
+		"layout_rules",
+		&["fonts", "overflow", "centring"],
+		LAYOUT_EXCEPTIONS,
+	)
+}
+
+/// The answers of a probe that measures a moment after it starts (its fonts or style
+/// sheets arrive in between), as the page's timers run.
+fn later_answers(session: &UiSession, probe: &str) -> Result<Json, String> {
+	session.eval(&format!(
+		"(function () {{
+			window.BbProbe = {{ answers: {{}}, finished: false,
+				send: function (key, json) {{ this.answers[key] = JSON.parse(json); }},
+				done: function () {{ this.finished = true; }} }};
+			{probe}
+			BbProbe.run();
+			return true;
+		}})()"
+	))?;
+	for _ in 0..40 {
+		session.run_frames(0.25)?;
+		if session.eval("BbProbe.finished")? == Json::Bool(true) {
+			return session.eval("BbProbe.answers");
+		}
+	}
+	Err("the probe didn't finish within 10 s".into())
+}
+
+fn follows_the_originals_text_rules(session: &UiSession) -> Result<(), String> {
+	let ours = later_answers(session, TEXT_PROBE)?;
+	compare_answers(&ours, "text_rules", &["text"], TEXT_EXCEPTIONS)
+}
+
+fn follows_the_originals_border_rules(session: &UiSession) -> Result<(), String> {
+	let ours = later_answers(session, BORDER_PROBE)?;
+	compare_answers(&ours, "border_rules", &["borders"], &[])
+}
+
 /// One check on the shared page.
 type Check = fn(&UiSession) -> Result<(), String>;
 
@@ -146,7 +209,7 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, Check); 4] = [
+	let checks: [(&str, Check); 6] = [
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,
@@ -159,6 +222,14 @@ fn main() -> ExitCode {
 		(
 			"follows_the_originals_layout_rules",
 			follows_the_originals_layout_rules,
+		),
+		(
+			"follows_the_originals_text_rules",
+			follows_the_originals_text_rules,
+		),
+		(
+			"follows_the_originals_border_rules",
+			follows_the_originals_border_rules,
 		),
 	];
 	let data_dir = Path::new(STEAM_DATA_DIR);
