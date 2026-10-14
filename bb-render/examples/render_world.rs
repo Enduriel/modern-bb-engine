@@ -7,7 +7,8 @@
 //!
 //! `X,Y` centres the view there instead of on the player. `BB_NO_FOG=1` turns fog of
 //! war off first, and the nearest shore tiles to the view are listed (for finding
-//! water to compare).
+//! water to compare). `BB_RUN=SECONDS,SPEED` lets the game run first (e.g. into the
+//! night).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -55,6 +56,45 @@ fn main() {
 	// the zoom.
 	for _ in 0..40 {
 		engine.frame(16.0).expect("frame");
+	}
+	// BB_RUN=SECONDS,SPEED: let the game run that many real seconds at that speed, then
+	// pause (as a probe of the original does to reach night).
+	if let Some((seconds, speed)) = std::env::var("BB_RUN").ok().and_then(|v| {
+		let (a, b) = v.split_once(',')?;
+		Some((a.parse::<f64>().ok()?, b.parse::<f64>().ok()?))
+	}) {
+		engine
+			.run_script(
+				&format!(
+					"::World.State.m.MenuStack.popAll(true); ::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.setSpeedMult({speed:?});"
+				),
+				"run",
+			)
+			.expect("run");
+		for _ in 0..(seconds * 60.0) as usize {
+			engine.frame(1000.0 / 60.0).expect("frame");
+			// Close whatever opens and hold the speed (resuming restores the last one). Our
+			// scenario intro fires once the game runs (the original's fires while paused)
+			// and keeps coming back after a forced close, so the clock runs slower than
+			// asked.
+			engine
+				.run_script(
+					&format!(
+						"if (::World.State.m.MenuStack.hasBacksteps()) {{ ::World.State.m.MenuStack.popAll(true); ::World.State.setAutoPause(false); ::World.State.setPause(false); }} ::World.setSpeedMult({speed:?});"
+					),
+					"keep running",
+				)
+				.expect("keep running");
+		}
+		engine
+			.run_script(
+				"::World.State.setPause(true); local t = ::World.getTime(); ::print(\"time \" + t.Time + \" (TimeOfDay \" + t.TimeOfDay + \")\\n\");",
+				"pause",
+			)
+			.expect("pause");
+		for _ in 0..10 {
+			engine.frame(16.0).expect("frame");
+		}
 	}
 	engine
 		.run_script(
