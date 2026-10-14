@@ -1,6 +1,6 @@
 // The original's driver for world.nut (UI payload goldens): once the intro
-// event is up, 3 s, then each step with 3 s after it, as bb-ui's world goldens pace
-// theirs. ES5 only.
+// event is up, 3 s, then each step with 3 s after it (after the ambush, once the
+// player's first turn comes), as bb-ui's world goldens pace theirs. ES5 only.
 BbProbe.run = function ()
 {
 	var handle = function () { return Screens.WorldScreen.mSQHandle; };
@@ -12,9 +12,33 @@ BbProbe.run = function ()
 			{
 				setTimeout(step, 3000);
 			}
+			else if (result === 'waitPlayerTurn')
+			{
+				waitPlayerTurn(0);
+			}
 			else
 			{
 				BbProbe.done();
+			}
+		});
+	};
+	// Once one of the player's men is up, 3 s more, then the next step.
+	var waitPlayerTurn = function (waitedMs)
+	{
+		SQ.call(handle(), 'probePayloadPlayerTurn', null, function (isPlayers)
+		{
+			if (isPlayers === true)
+			{
+				setTimeout(step, 3000);
+			}
+			else if (waitedMs > 180000)
+			{
+				console.error('PROBE_FAIL (js) no player turn after 180 s');
+				BbProbe.done();
+			}
+			else
+			{
+				setTimeout(function () { waitPlayerTurn(waitedMs + 500); }, 500);
 			}
 		});
 	};

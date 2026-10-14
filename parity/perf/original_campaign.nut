@@ -1,7 +1,8 @@
 // Performance baselines in the original, campaign mode (seed rust-engine-test): perf.py prepends
 // benches_world.nut and original_common.nut. Runs after world_state.init(). Logs the new
-// campaign's time, the world benches, the frame rate on the running world map, then
-// save and load times (save "bb_probe_perf", which perf.py deletes afterwards).
+// campaign's time, the world benches, the frame rate on the running world map with VSync
+// off (the runner restores the player's config.cfg afterwards), then save and load times
+// (save "bb_probe_perf", which perf.py deletes afterwards).
 
 local function p( _k, _v )
 {
@@ -64,13 +65,18 @@ p("mark world", "t=" + ::Time.getExactTime());
 	}
 };
 
-// Wait for the intro event, dismiss it, run the world, settle 2 s, then sample.
+// Wait for the intro event, dismiss it, run the world with VSync off, settle 2 s, then
+// sample.
 ::__perfWaitIntro <- function ( _tries )
 {
 	if (::World.State.m.EventScreen.isVisible())
 	{
 		::World.State.m.EventScreen.onButtonPressed(0);
 		::World.State.setPause(false);
+		local mode = ::Settings.getVideoMode();
+		mode.VSync = false;
+		::Settings.setVideoMode(mode);
+		p("video VSync while sampling", ::Settings.getVideoMode().VSync);
 		p("mark world_running", "t=" + ::Time.getExactTime());
 		::Time.scheduleEvent(::TimeUnit.Real, 2000, function ( _d ) { ::__perfSampleFps(20); }, null);
 	}

@@ -1,5 +1,6 @@
 //! UI payload parity, the scripts' side: the payloads the scripts send to the UI while a new
-//! campaign's world is walked through bb-ui's world-golden steps, compared with the
+//! campaign's world is walked through bb-ui's world-golden steps (up to a bandit ambush's
+//! first player turn), compared with the
 //! original's (`parity/ui_payloads/world.nut` records them in both engines;
 //! `parity/capture_ui_payloads.py` captures the original's into
 //! `parity/goldens/ui_payloads/world.txt`).
@@ -99,8 +100,24 @@ fn run_ours() -> Vec<String> {
 		waited += 0.5;
 	}
 	frames(&engine, 3.0);
-	while eval_bool(&engine, "::World.State.m.WorldScreen.probePayloadStep() == \"next\"") {
-		frames(&engine, 3.0);
+	loop {
+		engine
+			.run_script("::__probeStep <- ::World.State.m.WorldScreen.probePayloadStep();", "ui_payloads")
+			.expect("a step");
+		let result = SqTable::root(engine.vm()).get::<String>("__probeStep").expect("a step result");
+		match result.as_str() {
+			"next" => frames(&engine, 3.0),
+			"waitPlayerTurn" => {
+				let mut waited = 0.0;
+				while !eval_bool(&engine, "::World.State.m.WorldScreen.probePayloadPlayerTurn()") {
+					assert!(waited < 180.0, "no player turn after 180 s");
+					frames(&engine, 0.5);
+					waited += 0.5;
+				}
+				frames(&engine, 3.0);
+			}
+			_ => break,
+		}
 	}
 	let all = lines.borrow().clone();
 	let start = all

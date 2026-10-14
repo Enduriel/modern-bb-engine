@@ -1,22 +1,23 @@
 # The original's performance baselines, from parity/perf/perf.py.
 # captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks, Proton,
-# headless gamescope) on AMD Ryzen 7 5800X3D 8-Core Processor. Times in ms unless the key says s;
-# memory is the Wine process's resident set.
-campaign bench world_entity_queries median_ms = 2.34985
-campaign bench world_entity_queries min_ms = 2.30217
-campaign bench world_paths median_ms = 39.8521
-campaign bench world_paths min_ms = 38.1546
-campaign bench world_tiles median_ms = 12.1593
-campaign bench world_tiles min_ms = 12.043
-campaign load_ms = 572.388
-campaign new_campaign_s = 8.70065
-campaign rss_mb at campaign_start = 507
-campaign rss_mb at end = 657
-campaign rss_mb at save = 630
-campaign rss_mb at world = 513
+# headless gamescope) on AMD Ryzen 7 5800X3D 8-Core Processor (16 threads). Times in ms
+# unless the key says s; memory is the Wine process's resident set.
+campaign bench world_entity_queries median_ms = 2.34604
+campaign bench world_entity_queries min_ms = 2.02179
+campaign bench world_paths median_ms = 38.166
+campaign bench world_paths min_ms = 38.0878
+campaign bench world_tiles median_ms = 12.2013
+campaign bench world_tiles min_ms = 11.3754
+campaign load_ms = 582.615
+campaign machine loadavg_1m max = 1.2
+campaign new_campaign_s = 8.55594
+campaign rss_mb at campaign_start = 513
+campaign rss_mb at end = 656
+campaign rss_mb at save = 624
+campaign rss_mb at world = 514
 campaign rss_mb at world_running = 518
-campaign rss_mb peak = 659
-campaign save_ms = 87.9173
+campaign rss_mb peak = 660
+campaign save_ms = 80.1487
 campaign video Borderless = true
 campaign video ColorBits = 32
 campaign video Fullscreen = false
@@ -24,8 +25,9 @@ campaign video Height = 1440
 campaign video SceneScale = 1
 campaign video UIScale = 1
 campaign video VSync = true
+campaign video VSync while sampling = false
 campaign video Width = 2560
-campaign world fps mean = 60
+campaign world fps mean = 60.1
 campaign world fps median = 60
 campaign world fps min = 60
 campaign world fps samples = 20

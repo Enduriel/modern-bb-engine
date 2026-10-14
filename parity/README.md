@@ -69,12 +69,14 @@ lack fails by name.
 The scripts' side of the UI goldens (bb-ui keeps the DOM goldens).
 `ui_payloads/world.nut` replaces every UI handle with a stand-in that records each
 `asyncCall`/`call` payload, then walks the steps of bb-ui's world goldens: the intro
-event, its button, the character screen, the nearest town, leaving it. In the original,
-`world.js` paces the steps 3 s apart from the UI; `tests/ui_payloads.rs` runs 3 s of
-frames between them. Each distinct payload is logged once per step, one line per leaf,
+event, its button, the character screen, the nearest town, leaving it, and a bandit
+ambush (pinned as bb-ui's battle golden pins it) up to the player's first turn. In the
+original, `world.js` paces the steps 3 s apart from the UI; `tests/ui_payloads.rs` runs
+3 s of frames between them. Each distinct payload is logged once per step, one line per leaf,
 with tables in sorted key order. Values that can't match between runs are normalized in
-the recorder, the same way in both engines: numeric ids become first-seen ordinals, and
-portraits' content ids (from the unseeded C runtime `rand()`) become `rand`.
+the recorder, the same way in both engines: numeric ids (and the bare ids functions in
+`__payloadIdArgs` take) become first-seen ordinals, and portraits' content ids (from the
+unseeded C runtime `rand()`) become `rand`.
 
 ## Performance baselines
 

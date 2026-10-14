@@ -3,7 +3,7 @@
 // scripts send to the UI through a handle (`asyncCall`, `call`) while the world is walked
 // through the steps of bb-ui's world goldens (bb-ui/probes/world_golden.nut): the
 // origin's intro event, its "Huzzah!", the character screen, the nearest town, leaving
-// it.
+// it, and a bandit ambush up to the player's first turn.
 //
 // Runs right after world_state.init(), before the world's first update: the probe
 // harness's campaign mode (`--seed bbuitest`) in the original, `tests/ui_payloads.rs`
@@ -11,14 +11,16 @@
 // frames. Both call the same two methods on the world screen:
 //   probePayloadReady()  whether the intro event is up;
 //   probePayloadStep()   log what was sent since the last step, take the next step;
-//                         "next", or "done" after the last.
+//                         "next", "waitPlayerTurn" (poll probePayloadPlayerTurn()
+//                         until it's true, then 3 s), or "done" after the last.
 //
 // Each step's payloads are logged as one line per leaf:
 //   PROBE <step> <handle>.<function>#<n> <path> = <type> <value>
 // Calls repeat every frame, so each distinct payload of a handle's function is logged
 // once per step (#1, #2, ... in first-sent order). Tables are walked in sorted key
 // order. Numeric ids (a key ending in "id", any case) become first-seen ordinals ("id#3"):
-// entity ids and item instance ids aren't comparable between runs. So does the entity id
+// entity ids and item instance ids aren't comparable between runs; so do the bare ids some
+// functions take (__payloadIdArgs). So does the entity id
 // in a portrait's image name ("tacticalentity(<content id>,<entity id>,...)"), whose
 // content id becomes "rand": it comes from Math.rand() without arguments, the C
 // runtime's unseeded generator, whose state depends on every earlier call in the process. '<' and '>' become
@@ -209,6 +211,12 @@
 	}
 };
 
+// UI functions whose arguments are bare ids (the turn sequence bar's removeEntity takes an
+// entity id).
+::__payloadIdArgs <- {
+	removeEntity = true
+};
+
 ::__payloadRecord <- function ( _handle, _function, _args )
 {
 	// The probe harness's own screen.
@@ -219,9 +227,11 @@
 
 	local lines = [];
 
+	local name = _function.slice(_function.find(":") + 1);
+
 	foreach( i, a in _args )
 	{
-		::__payloadSerialize(a, "arg" + i, false, lines);
+		::__payloadSerialize(a, "arg" + i, name in ::__payloadIdArgs, lines);
 	}
 
 	if (lines.len() == 0)
@@ -410,12 +420,27 @@
 	return ::World.State.m.EventScreen.isVisible();
 };
 
+::World.State.m.WorldScreen.probePayloadPlayerTurn <- function ( _unused = null )
+{
+	// Whether the battle waits for the player: one of theirs is up.
+	try
+	{
+		local active = ::Tactical.TurnSequenceBar.getActiveEntity();
+		return active != null && active.isPlayerControlled();
+	}
+	catch( e )
+	{
+		return false;
+	}
+};
+
 ::__payloadSteps <- [
 	"huzzah",
 	"character",
 	"closeCharacter",
 	"town",
-	"leaveTown"
+	"leaveTown",
+	"combat"
 ];
 ::World.State.m.WorldScreen.probePayloadStep <- function ( _unused = null )
 {
@@ -473,6 +498,30 @@
 	else if (step == "leaveTown")
 	{
 		state.town_screen_main_dialog_module_onLeaveButtonClicked();
+	}
+	else if (step == "combat")
+	{
+		// As bb-ui's world goldens start it: a bandit ambush as vanilla's events start
+		// one, with what would vary between runs pinned (idle sounds, which fire on frame
+		// timing; the wall-clock reseed at the end of the spawn; the combat seed, from the
+		// C runtime's rand(); and the generator).
+		::Const.Sound.IdleSoundBaseDelay = 1.0e9;
+		::Const.Sound.IdleSoundMinDelay = 1.0e9;
+		local seedRandom = ::Math.seedRandom;
+		::Math.seedRandom = function ( _s )
+		{
+			return seedRandom(_s == ::Time.getRealTime() ? 999 : _s);
+		};
+		state.m.CombatSeed = 777;
+		::Math.seedRandom(4242);
+		local properties = state.getLocalCombatProperties(state.getPlayer().getPos());
+		properties.CombatID = "Event";
+		properties.Music = ::Const.Music.BanditTracks;
+		properties.IsAutoAssigningBases = false;
+		properties.Entities = [];
+		::Const.World.Common.addUnitsToCombat(properties.Entities, ::Const.World.Spawn.BanditDefenders, 100, ::Const.Faction.Enemy);
+		state.startScriptedCombat(properties, false, false, true);
+		return "waitPlayerTurn";
 	}
 
 	return "next";
