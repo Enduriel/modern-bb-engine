@@ -16,6 +16,8 @@ mod audio;
 mod brushes;
 mod color;
 mod engine_rng;
+mod entity_ids;
+pub use entity_ids::EntityIds;
 pub(crate) mod fog_mask;
 mod display_modes;
 mod identity;

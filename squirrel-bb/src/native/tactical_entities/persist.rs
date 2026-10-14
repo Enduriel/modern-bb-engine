@@ -81,7 +81,7 @@ impl SavePart for RostersPart {
 			let mut rosters: Vec<(i64, Vec<SqStrongRef>)> =
 				m.rosters.iter().map(|(id, units)| (*id, units.clone())).collect();
 			rosters.sort_by_key(|(id, _)| *id);
-			(rosters, m.next_id)
+			(rosters, m.ids.peek())
 		};
 		cx.writer.borrow_mut().u32(rosters.len() as u32);
 		for (roster_id, units) in rosters {
@@ -140,7 +140,7 @@ impl SavePart for RostersPart {
 			}
 		}
 		let next_id = cx.reader.borrow_mut().i64()?;
-		self.0.borrow_mut().next_id = next_id;
+		self.0.borrow().ids.restore(next_id);
 		Ok(())
 	}
 }

@@ -113,7 +113,7 @@ impl SavePart for EntitiesPart {
 				.filter(|&i| m.entities[i].alive && m.entities[i].dies_at.is_none())
 				.collect();
 			order.sort_by_key(|&i| m.entities[i].id);
-			(order, m.next_id)
+			(order, m.ids.peek())
 		};
 		cx.writer.borrow_mut().u32(order.len() as u32);
 		for idx in order {
@@ -194,7 +194,7 @@ impl SavePart for EntitiesPart {
 			entity.call_method(vm, "onDeserialize", (cx.stream.clone(),))?;
 		}
 		let next_id = cx.reader.borrow_mut().i64()?;
-		self.0.borrow_mut().next_id = next_id;
+		self.0.borrow().ids.restore(next_id);
 		Ok(())
 	}
 }

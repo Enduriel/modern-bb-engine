@@ -32,7 +32,7 @@ use super::overload::{make_dispatcher, overload_key};
 use super::world_layout;
 use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
-use crate::native::Sprites;
+use crate::native::{EntityIds, Sprites};
 use crate::native::sprite_color::{SpriteColor, real_time};
 
 mod footprints;
@@ -145,7 +145,8 @@ struct EntityMachine {
 	instantiate: Instantiator,
 	sprite_class: Option<SqClass<SpriteData>>,
 	label_class: Option<SqClass<LabelData>>,
-	next_id: i64,
+	/// Entity ids, shared with the battle's units (see `entity_ids`).
+	ids: EntityIds,
 	entities: Vec<EntityRecord>,
 	/// Every class-level identity of every entity → its record index in `entities`.
 	by_identity: HashMap<i64, usize>,
@@ -271,11 +272,7 @@ fn spawn(
 	r: i64,
 	occupy: bool,
 ) -> Result<SqStrongRef, String> {
-	let id = {
-		let mut m = machine.borrow_mut();
-		m.next_id += 1;
-		m.next_id - 1
-	};
+	let id = machine.borrow().ids.next();
 	let (entity, _) = create_entity(machine, vm, path, id, q, r)?;
 	// Like the original, a spawned location occupies its tile (cleared again by the
 	// script's `onFinish` when it dies); a spawned party does not (probed 2026-10-13).
@@ -493,7 +490,7 @@ impl WorldEntities {
 				instantiate,
 				sprite_class: None,
 				label_class: None,
-				next_id: 1,
+				ids: EntityIds::default(),
 				entities: Vec::new(),
 				by_identity: HashMap::new(),
 				by_id: HashMap::new(),
@@ -507,6 +504,11 @@ impl WorldEntities {
 	}
 
 	/// Use `sprites` to resolve sprite brushes. Call before [`install`](Self::install).
+	/// The entity id counter, to share with the battle's units.
+	pub fn ids(&self) -> EntityIds {
+		self.machine.borrow().ids.clone()
+	}
+
 	pub fn set_sprites(&self, sprites: Sprites) {
 		self.machine.borrow_mut().sprites = sprites;
 	}

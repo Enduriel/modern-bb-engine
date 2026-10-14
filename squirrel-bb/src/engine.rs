@@ -91,6 +91,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// After the World table exists: the roster/tactical-unit host (provides
 		// World.getRoster/getPlayerRoster/createRoster, replacing the bare stubs).
 		let tactical_entities = TacticalEntities::new(modules.instantiator());
+		// One id space for the world's entities and the battle's units, as the original's.
+		tactical_entities.share_ids(world_entities.ids());
 		tactical_entities.set_sprites(natives.sprites.clone());
 		tactical_entities.install(&mut vm);
 		// The battle map, with units and objects placed on it by the entity host.

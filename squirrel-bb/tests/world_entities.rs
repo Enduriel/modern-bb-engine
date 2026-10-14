@@ -108,7 +108,7 @@ fn spawn_location_instantiates_registers_and_binds_tile() {
 			local entity = this.World.spawnLocation(
 				"scripts/entity/world/locations/test_location", tile.Coords);
 
-			assert(entity.getID() == 1);                                  // monotonic id
+			assert(entity.getID() == 10000);                              // the first id (entity_ids::FIRST)
 			assert(this.World.EntityManager.getLocations().len() == 1);   // registered
 			assert(this.World.getTileSquare(3, 3).IsOccupied == true);    // tile bound
 			assert(entity.getTile().isSameTileAs(this.World.getTileSquare(3, 3)));

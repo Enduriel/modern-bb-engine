@@ -105,11 +105,7 @@ pub(super) fn add_to_map(m: &Machine, vm: &SQVM, entity: &SqStrongRef, q: i64, r
 /// `null`. `parent` is the 4-argument form's entity id (the lindwurm tail's body), 0
 /// otherwise; it becomes the entity's `m.ParentID` before `onInit`.
 pub(super) fn spawn_at(m: &Machine, vm: &SQVM, path: &str, tile: usize, parent: i64) -> Result<Option<SqStrongRef>, String> {
-	let id = {
-		let mut machine = m.borrow_mut();
-		machine.next_id += 1;
-		machine.next_id - 1
-	};
+	let id = m.borrow().ids.next();
 	let (entity, idx) = match create_unit(m, vm, &script_path(path), id) {
 		Ok(created) => created,
 		Err(e) => {
