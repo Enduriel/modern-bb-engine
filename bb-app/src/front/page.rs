@@ -30,6 +30,8 @@ impl Front {
 			..HostConfig::default()
 		};
 		let session = UiSession::start(data_dir, config, false)?;
+		// Portraits are composed on the game thread (`Game::draw`).
+		session.queue_procedural(true);
 		session.boot_menu()?;
 		session.start_campaign(seed)?;
 		Ok(Front {
@@ -119,6 +121,15 @@ impl Front {
 			}
 		}
 		!self.session.text_field_focused()
+	}
+
+	/// Answer the procedural images (portraits) the page asked for with `compose`, given
+	/// the engine and the path after `procedural/`.
+	pub fn serve_procedural(&self, mut compose: impl FnMut(&GameEngine, &str) -> Option<Vec<u8>>) {
+		for request in self.session.take_procedural() {
+			let png = compose(self.session.engine(), &request.path);
+			request.answer(png);
+		}
 	}
 
 	/// Draw the page's latest paint over `target`.

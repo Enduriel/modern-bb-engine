@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{HostConfig, UiSession};
+use bb_ui::json::Json;
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition {
@@ -167,6 +168,41 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		),
 	)?;
 
+	// Procedural images (portraits) come from the game thread: the placeholder unless
+	// it answers.
+	ensure(
+		load_image_width(&session, "coui://procedural/test(1)")? == 1,
+		"an unanswered procedural image isn't the 1×1 placeholder",
+	)?;
+	session.queue_procedural(true);
+	let width = Json::Str("coui://procedural/test(2)".into()).to_text();
+	session.eval(&format!(
+		"(function () {{ var i = new Image(); window.__bbWidth = null; i.onload = function () {{ window.__bbWidth = i.naturalWidth; }}; i.src = {width}; return true; }})()"
+	))?;
+	let deadline = Instant::now() + Duration::from_secs(10);
+	let request = loop {
+		if let Some(request) = session.take_procedural().pop() {
+			break request;
+		}
+		ensure(
+			Instant::now() < deadline,
+			"the procedural image never reached the game",
+		)?;
+		session.run_frames(0.1)?;
+	};
+	ensure(
+		request.path == "test(2)",
+		format!("procedural path {:?}", request.path),
+	)?;
+	let mut png = Vec::new();
+	bb_ui::png::write_rgba(&mut png, 3, 2, &[255; 24]).map_err(|e| e.to_string())?;
+	request.answer(Some(png));
+	session.queue_procedural(false);
+	ensure(
+		image_width(&session)? == 3,
+		"the game's procedural image didn't reach the page",
+	)?;
+
 	let problems: Vec<String> = session
 		.log()
 		.into_iter()
@@ -177,6 +213,28 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		problems.is_empty(),
 		format!("page or bridge errors:\n{}", problems.join("\n")),
 	)
+}
+
+/// The natural width of the image the page last loaded (see [`load_image_width`]),
+/// once it has loaded.
+fn image_width(session: &UiSession) -> Result<i64, String> {
+	let deadline = Instant::now() + Duration::from_secs(10);
+	loop {
+		if let Json::Int(width) = session.eval("window.__bbWidth")? {
+			return Ok(width);
+		}
+		ensure(Instant::now() < deadline, "the image never loaded")?;
+		session.run_frames(0.1)?;
+	}
+}
+
+/// Load the image at `url` in the page; its natural width.
+fn load_image_width(session: &UiSession, url: &str) -> Result<i64, String> {
+	let url = Json::Str(url.into()).to_text();
+	session.eval(&format!(
+		"(function () {{ var i = new Image(); window.__bbWidth = null; i.onload = function () {{ window.__bbWidth = i.naturalWidth; }}; i.src = {url}; return true; }})()"
+	))?;
+	image_width(session)
 }
 
 fn main() -> ExitCode {

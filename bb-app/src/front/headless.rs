@@ -53,6 +53,9 @@ impl Front {
 		true
 	}
 
+	/// Answer the page's procedural images: there is no page.
+	pub fn serve_procedural(&self, _compose: impl FnMut(&GameEngine, &str) -> Option<Vec<u8>>) {}
+
 	/// Draw the UI over `target`: nothing to draw.
 	pub fn draw(&mut self, _gpu: &Gpu, _target: &RenderTarget) {}
 }

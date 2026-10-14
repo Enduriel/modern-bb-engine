@@ -38,6 +38,9 @@ pub enum Event {
 	LoadEnd { url: String, status: i32 },
 	/// The main frame failed to load `url`.
 	LoadError { url: String, error: String },
+	/// The page loads a procedural image (`coui://procedural/<path>`); `path` is still
+	/// percent-encoded. The game answers it through `responder`.
+	Procedural { path: String, responder: Responder },
 	/// The browser exists (it can receive messages).
 	Created,
 	/// The browser is gone (after a close).

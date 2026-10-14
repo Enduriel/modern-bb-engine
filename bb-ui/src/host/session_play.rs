@@ -1,8 +1,23 @@
 //! A [`UiSession`] played live, in a window: frames of real time, a new campaign
 //! started the way the menu starts it, and where the player's cursor is on the page.
 
-use super::UiSession;
+use super::{Responder, UiSession};
 use crate::json::Json;
+
+/// A procedural image the page is waiting for (`coui://procedural/<path>`, e.g.
+/// `tacticalentity(...)`).
+pub struct ProceduralRequest {
+	/// What follows `procedural/`, still percent-encoded.
+	pub path: String,
+	pub(super) responder: Responder,
+}
+
+impl ProceduralRequest {
+	/// Answer with `png`, or the transparent placeholder.
+	pub fn answer(self, png: Option<Vec<u8>>) {
+		self.responder.respond_image(png);
+	}
+}
 
 /// How the menu's "Start" (and the probe runner's campaign mode in the original)
 /// starts a campaign, with the seed left as `{seed}`.
@@ -53,6 +68,29 @@ impl UiSession {
 	pub fn is_over_ui(&self, x: i64, y: i64) -> bool {
 		let (px, py) = self.to_page(x, y);
 		self.host().alpha_at(px, py) > 0
+	}
+
+	/// Keep the page's procedural images for [`UiSession::take_procedural`] to answer
+	/// (`true`), or answer them with the transparent placeholder at once (`false`, the
+	/// default).
+	pub fn queue_procedural(&self, on: bool) {
+		let mut queue = self.procedural.borrow_mut();
+		if !on {
+			for request in queue.take().into_iter().flatten() {
+				request.answer(None);
+			}
+		} else if queue.is_none() {
+			*queue = Some(Vec::new());
+		}
+	}
+
+	/// The procedural images the page asked for since the last call.
+	pub fn take_procedural(&self) -> Vec<ProceduralRequest> {
+		self.procedural
+			.borrow_mut()
+			.as_mut()
+			.map(std::mem::take)
+			.unwrap_or_default()
 	}
 
 	/// Whether a text field in the page has the keyboard (keys typed there aren't the

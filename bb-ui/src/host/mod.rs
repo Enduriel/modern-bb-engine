@@ -51,6 +51,7 @@ use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton};
 pub use scheme::{RequestKind, Responder};
 pub use session::{LogLine, UiSession};
+pub use session_play::ProceduralRequest;
 
 use crate::bridge::{Reply, Transport};
 use crate::coui::{MAIN_PAGE, SCHEME, UiFiles};

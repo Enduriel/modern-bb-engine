@@ -34,6 +34,9 @@ pub struct UiSession {
 	files: Arc<UiFiles>,
 	log: Rc<RefCell<Vec<LogLine>>>,
 	echo: bool,
+	/// Procedural images the page asked for, kept for the owner to answer
+	/// ([`UiSession::queue_procedural`]); `None` answers them blank at once.
+	pub(super) procedural: RefCell<Option<Vec<super::ProceduralRequest>>>,
 }
 
 impl UiSession {
@@ -73,6 +76,7 @@ impl UiSession {
 			files,
 			log,
 			echo,
+			procedural: RefCell::new(None),
 		};
 		// The page registers its screens once loaded; scripts may only connect to them
 		// after that, as in the original.
@@ -149,6 +153,10 @@ impl UiSession {
 				self.record("error", format!("failed to load {url}: {error}"))
 			}
 			Event::RendererGone(why) => self.record("error", format!("the page crashed: {why}")),
+			Event::Procedural { path, responder } => match self.procedural.borrow_mut().as_mut() {
+				Some(queue) => queue.push(super::ProceduralRequest { path, responder }),
+				None => responder.respond_image(None),
+			},
 			_ => {}
 		}
 	}

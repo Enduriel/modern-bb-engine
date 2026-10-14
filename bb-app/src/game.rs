@@ -173,9 +173,19 @@ impl Game {
 				self.renderer.draw(gpu, target, &scene, registry, &view, Atlases::DrawReady)
 			});
 		}
-		// The UI over everything.
+		// The UI over everything, with the portraits it asked for.
+		let renderer = &mut self.renderer;
+		self.front
+			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
 		self.front.draw(gpu, target);
 	}
+}
+
+/// The PNG for the page's `coui://procedural/<path>` (an entity's portrait, e.g.
+/// `tacticalentity(...)`), or `None` for the transparent placeholder. The portrait
+/// compositor fills this in.
+fn procedural_png(_renderer: &mut WorldRenderer, _gpu: &Gpu, _engine: &GameEngine, _path: &str) -> Option<Vec<u8>> {
+	None
 }
 
 /// `Settings.getVideoMode()`.

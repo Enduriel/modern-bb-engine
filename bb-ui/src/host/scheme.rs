@@ -10,9 +10,10 @@
 //!   into the game (see `bootstrap.js`). Each becomes an [`Event::Request`] for the game
 //!   thread, and the page's XHR waits until the game answers through its [`Responder`].
 //! - Procedural images (`coui://procedural/tacticalentity(...)`, `worldentity(...)`):
-//!   the engine composes portraits from entity sprites. That needs the renderer;
-//!   until then they are a transparent placeholder. The original also
-//!   answers 200 with a fallback image when composing fails, never a load error.
+//!   the engine composes portraits from entity sprites. Each becomes an
+//!   [`Event::Procedural`] for the game thread, which answers with a PNG; when it
+//!   can't (or doesn't answer), a transparent placeholder. The original also answers
+//!   200 with a fallback image when composing fails, never a load error.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -66,36 +67,67 @@ struct Body {
 	offset: usize,
 }
 
-/// How the game thread answers a waiting bridge call. Answering (or dropping it
-/// unanswered, which answers "done") lets the page continue.
+/// How the game thread answers a waiting request: a bridge call, or a procedural
+/// image. Answering (or dropping it unanswered, which answers "done" or the blank
+/// image) lets the page continue.
 pub struct Responder {
 	slot: Arc<Mutex<Option<Body>>>,
 	callback: Option<Callback>,
+	/// What it answers if dropped unanswered.
+	fallback: fn() -> Body,
 }
 
 impl Responder {
 	/// Answer with `json`.
 	pub fn respond(mut self, json: String) {
-		self.finish(json);
-	}
-
-	fn finish(&mut self, json: String) {
-		let Some(callback) = self.callback.take() else {
-			return;
-		};
-		*self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(Body {
+		self.finish(Body {
 			mime: "application/json",
 			data: json.into_bytes(),
 			offset: 0,
 		});
+	}
+
+	/// Answer with an image: `png`, or the transparent placeholder.
+	pub fn respond_image(mut self, png: Option<Vec<u8>>) {
+		self.finish(Body {
+			mime: "image/png",
+			data: png.unwrap_or_else(|| blank_image().to_vec()),
+			offset: 0,
+		});
+	}
+
+	fn finish(&mut self, body: Body) {
+		let Some(callback) = self.callback.take() else {
+			return;
+		};
+		*self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(body);
 		callback.cont();
 	}
 }
 
 impl Drop for Responder {
 	fn drop(&mut self) {
-		// Never leave the page blocked.
-		self.finish(r#"{"done":true}"#.to_string());
+		// Never leave the page waiting.
+		let fallback = (self.fallback)();
+		self.finish(fallback);
+	}
+}
+
+/// What an unanswered bridge call answers.
+fn done() -> Body {
+	Body {
+		mime: "application/json",
+		data: br#"{"done":true}"#.to_vec(),
+		offset: 0,
+	}
+}
+
+/// What an unanswered procedural image answers.
+fn blank() -> Body {
+	Body {
+		mime: "image/png",
+		data: blank_image().to_vec(),
+		offset: 0,
 	}
 }
 
@@ -149,8 +181,26 @@ wrap_resource_handler! {
 					_ => return 0,
 				};
 				let Some(callback) = callback else { return 0 };
-				let responder = Responder { slot: self.body.clone(), callback: Some(callback.clone()) };
+				let responder = Responder {
+					slot: self.body.clone(),
+					callback: Some(callback.clone()),
+					fallback: done,
+				};
 				self.shared.send(Event::Request { kind, body: post_body(request), responder });
+				// Answered later, by the game thread.
+				if let Some(handle) = handle_request {
+					*handle = 0;
+				}
+				return 1;
+			}
+
+			if let (Some(rest), Some(callback)) = (path.strip_prefix(PROCEDURAL_PREFIX), callback) {
+				let responder = Responder {
+					slot: self.body.clone(),
+					callback: Some(callback.clone()),
+					fallback: blank,
+				};
+				self.shared.send(Event::Procedural { path: rest.to_string(), responder });
 				// Answered later, by the game thread.
 				if let Some(handle) = handle_request {
 					*handle = 0;
@@ -161,13 +211,10 @@ wrap_resource_handler! {
 			if let Some(handle) = handle_request {
 				*handle = 1;
 			}
-			let body = if path.starts_with(PROCEDURAL_PREFIX) {
-				Some(Body { mime: "image/png", data: blank_image().to_vec(), offset: 0 })
-			} else {
-				self.files
-					.read(&path)
-					.map(|data| Body { mime: mime_type(&path), data, offset: 0 })
-			};
+			let body = self
+				.files
+				.read(&path)
+				.map(|data| Body { mime: mime_type(&path), data, offset: 0 });
 			match body {
 				Some(body) => {
 					*self.body.lock().unwrap_or_else(|e| e.into_inner()) = Some(body);
