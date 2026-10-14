@@ -142,10 +142,12 @@ pub fn install_autoplay(engine: &GameEngine) -> Result<(), String> {
 /// units' turns at once (the turn bar's own guards hold the press while the bar is
 /// busy), leaving the fighting to the AI, and leaves the result screen when it's over
 /// (recording `::__lastCombatResult`). With `::__autoplayFight` set, the AI fights for
-/// the player's units too.
+/// the player's units too. With `::__autoplayPlayer` set to a function, that function
+/// plays the player's turns instead (it is called every frame of the battle).
 const AUTOPLAY: &str = r#"
 ::__autoplayEngage <- false;
 ::__autoplayFight <- false;
+::__autoplayPlayer <- null;
 ::__autoplay <- function()
 {
 	if (("State" in ::Tactical) && ::Tactical.State != null)
@@ -168,15 +170,24 @@ const AUTOPLAY: &str = r#"
 		}
 		if (!st.isBattleEnded())
 		{
-			local bar = ::Tactical.TurnSequenceBar;
-			local active = bar.getActiveEntity();
-			if (active != null && active.isPlayerControlled()) bar.onNextTurnButtonPressed();
+			if (::__autoplayPlayer != null)
+			{
+				::__autoplayPlayer();
+			}
+			else
+			{
+				local bar = ::Tactical.TurnSequenceBar;
+				local active = bar.getActiveEntity();
+				if (active != null && active.isPlayerControlled()) bar.onNextTurnButtonPressed();
+			}
 		}
 		else
 		{
+			// Leave once, as a player clicks once (the screen stays up a while after).
 			local results = st.m.TacticalCombatResultScreen;
-			if (results != null && results.isVisible() && !results.isAnimating())
+			if (!("__autoplayLeft" in st.m) && results != null && results.isVisible() && !results.isAnimating())
 			{
+				st.m.__autoplayLeft <- true;
 				::__lastCombatResult <- ::Tactical.Entities.getCombatResult();
 				results.onLeaveButtonPressed();
 			}

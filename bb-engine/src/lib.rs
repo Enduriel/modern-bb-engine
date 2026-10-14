@@ -23,6 +23,7 @@ pub mod datsource;
 pub mod files;
 pub mod harness;
 pub mod script_cache;
+pub mod tactical_player;
 pub mod transcode;
 pub mod vfs;
 
