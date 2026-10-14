@@ -20,7 +20,20 @@ use squirrel_bb::KeyInput;
 const KEY_ESCAPE: i64 = 41;
 
 fn frame(engine: &harness::GameEngine) {
-	harness::run_frame(engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("frame: {e}"));
+	if let Err(e) = harness::run_frame(engine, 1000.0 / 60.0) {
+		let diag = player::eval_string(engine, r#"(function() {
+			local s = "";
+			foreach (b in ::World.getPlayerRoster().getAll()) {
+				foreach (it in b.getItems().getAllItems()) {
+					local c = it.getContainer();
+					local dead = c == null ? "no container" : (c.m.Actor == null ? "null actor" : (c.m.Actor.isNull() ? "DEAD actor" : (c.m.Actor.get() == b ? "ok" : "OTHER actor " + c.m.Actor.getName())));
+					if (dead != "ok") s += b.getName() + ": " + it.getID() + " (" + it.ClassName + ") " + dead + (c != null && c == b.getItems() ? " [own container]" : " [other container]") + "; ";
+				}
+			}
+			return s;
+		})()"#).ok().flatten().unwrap_or_default();
+		panic!("frame: {e}\nitems whose actor is wrong: {diag}");
+	}
 }
 
 /// Run frames until `cond` (a Squirrel expression) holds; panics after `max`.
@@ -40,6 +53,9 @@ fn script(engine: &harness::GameEngine, what: &str, src: &str) {
 
 /// The main menu's screen, from the main menu state.
 const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
+
+/// Unpause the world (Space), unless a screen or a battle has it stopped.
+const UNPAUSE: &str = "if (::World.State.isPaused() && !::World.State.m.EventScreen.isVisible()) { ::World.State.setAutoPause(false); ::World.State.setPause(false); }";
 
 /// The world state's menu (Escape on the world map).
 const WORLD_MENU: &str = "::World.State.m.WorldMenuScreen";
@@ -69,7 +85,31 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 		eprintln!("skipping: {} not present", dir.display());
 		return;
 	}
-	let engine = harness::open_install(dir).expect("open install");
+	smoke(harness::open_install(dir).expect("open install"));
+}
+
+/// The same, with the install's mods mounted (32 of them, among them Modern
+/// Hooks, MSU, Reforged and Modular Vanilla, which change the battles). Skips without
+/// Modern Hooks.
+#[test]
+fn the_installed_mods_play_through_menu_campaign_battle_save_and_load() {
+	let dir = Path::new(harness::STEAM_DATA_DIR);
+	let Ok(mods) = harness::mod_archives(dir) else {
+		eprintln!("skipping: {} not present", dir.display());
+		return;
+	};
+	if !mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks"))) {
+		eprintln!("skipping: Modern Hooks isn't installed");
+		return;
+	}
+	let mut archives = harness::data_archives(dir).expect("list the data archives");
+	archives.extend(mods);
+	smoke(harness::open_mounted(dir, archives, |_| {}).expect("open the archives"));
+}
+
+fn smoke(mut engine: harness::GameEngine) {
+	// A script error prints its call stack (shown if the test fails).
+	engine.vm_mut().install_standard_error_handlers();
 	harness::boot_menu(&engine).expect("boot the menu");
 	harness::install_autoplay(&engine).expect("autoplay");
 
@@ -90,9 +130,20 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 			}});"
 		),
 	);
+	// MSU (if installed) asks for its new-campaign settings first: keep the defaults.
+	for _ in 0..600 {
+		let started = "(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
+		if player::eval_i64(&engine, &format!("({started}) ? 1 : 0")).unwrap() == Some(1) {
+			break;
+		}
+		if player::eval_i64(&engine, "((\"MSU\" in ::getroottable()) && ::MSU.SettingsScreen.isVisible()) ? 1 : 0").unwrap() == Some(1) {
+			script(&engine, "MSU settings", "::MSU.SettingsScreen.onSaveButtonPressed({});");
+		}
+		frame(&engine);
+	}
 	until(
 		&engine,
-		600,
+		1,
 		"the campaign starts",
 		"(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()",
 	);
@@ -101,9 +152,13 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 	// party the player can see. A click on it sets the world state's AutoAttack; the
 	// world camera isn't real yet (no position for screenToWorld), so the test sets
 	// that directly and lets the company march and engage.
-	script(&engine, "unpause", "::World.State.setAutoPause(false); ::World.State.setPause(false);");
-	for _ in 0..600 {
-		frame(&engine);
+	// A player unpauses whenever the game pauses itself (with Configurable Pause it does
+	// so after every event, the intro's included).
+	for _ in 0..10 {
+		script(&engine, "unpause", UNPAUSE);
+		for _ in 0..60 {
+			frame(&engine);
+		}
 	}
 	script(
 		&engine,
@@ -117,7 +172,16 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 			local d = e.getDistanceTo(player);
 			if (target == null || d < best) { target = e; best = d; }
 		}
-		if (target == null) throw "no hostile party";
+		if (target == null)
+		{
+			local parties = 0, hostile = 0;
+			foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
+				if (e.isParty() && e.getID() != player.getID()) { parties++; if (!e.isAlliedWithPlayer()) hostile++; }
+			throw "no hostile party (day " + ::World.getTime().Days + ", time " + ::World.getTime().Time + ", paused "
+				+ ::World.State.isPaused() + ", " + parties + " parties, " + hostile + " not allied, event "
+				+ ::World.State.m.EventScreen.isVisible() + (("MSU" in ::getroottable()) ? ", MSU popup " + ::MSU.Popup.isVisible() : "")
+				+ ", menu stack " + ::World.State.m.MenuStack.hasBacksteps() + ")";
+		}
 		::logInfo("smoke: attacking " + target.getName() + " at distance " + best + (target.isHiddenToPlayer() ? " (hidden)" : ""));
 		::__smokeTarget <- ::WeakTableRef(target);
 		::__autoplayEngage = true;
@@ -144,6 +208,7 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 			break;
 		}
 		assert!(second < 599, "no battle after ten minutes of marching");
+		script(&engine, "unpause", UNPAUSE);
 		script(&engine, "chase", "::__smokeChase();");
 		for _ in 0..60 {
 			frame(&engine);
