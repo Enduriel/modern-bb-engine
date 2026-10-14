@@ -173,7 +173,8 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 	// `update` fires the camera's moved-callbacks (none registered here); the world
 	// camera has no levels to climb.
 	for name in ["climbBy", "update"] {
-		b = b.method(name, |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| {});
+		let stub = super::stubs::name(format!("World.getCamera().{name}"));
+		b = b.method(name, move |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| super::stubs::note(stub));
 	}
 	b.build(vm)
 }

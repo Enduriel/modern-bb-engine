@@ -414,14 +414,15 @@ impl RootState {
 			})
 		};
 		// Draw order doesn't exist headless.
-		let render_noop = vm.make_closure(|| {});
+		let to_front = crate::native::stubs::closure(vm, "RootState.state.toFront");
+		let to_back = crate::native::stubs::closure(vm, "RootState.state.toBack");
 
 		self.machine.borrow_mut().methods = vec![
 			("isVisible", is_visible),
 			("updateScene", update_scene),
 			("renderScene", render_scene),
-			("toFront", render_noop.clone()),
-			("toBack", render_noop),
+			("toFront", to_front),
+			("toBack", to_back),
 			("getParent", get_parent),
 			("hasChildren", has_children),
 			("finishChildren", finish_children),

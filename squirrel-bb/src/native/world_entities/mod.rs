@@ -25,7 +25,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable};
 
 use super::inject::inject_natives;
 use super::overload::{make_dispatcher, overload_key, single_overload};
@@ -718,8 +718,6 @@ impl WorldEntities {
 				}
 			})
 		};
-		// Render/sim no-ops: accept any args, do nothing (shared across all the names).
-		let noop = vm.make_closure(|_a: Variadic<Retained>| {});
 
 		let mut methods: Vec<(&'static str, SqStrongRef)> = vec![
 			("getID", get_id),
@@ -789,7 +787,10 @@ impl WorldEntities {
 		methods.push(("removeLabel", remove_label));
 		methods.push(("removeAllLabels", remove_all_labels));
 		methods.push(("isInitialized", vm.make_closure(|| true)));
-		methods.push(("isStoringColor", vm.make_closure(|| false)));
+		methods.push(("isStoringColor", vm.make_closure(|| {
+			crate::native::stubs::note("World entity.isStoringColor");
+			false
+		})));
 		methods.push(("die", die));
 		methods.push(("fadeAndDie", fade_and_die));
 		methods.push(("fadeIn", fade_in));
@@ -805,14 +806,14 @@ impl WorldEntities {
 			"moveSpriteScale",
 			"setRenderCallbackEnabled",
 		] {
-			methods.push((name, noop.clone()));
+			methods.push((name, crate::native::stubs::closure(vm, crate::native::stubs::name(format!("World entity.{name}")))));
 		}
 		// One-arity Sqrat overloads in the original; render-only here.
 		for (name, key) in [
 			("storeSpriteColors", "__sqrat_ol_ storeSpriteColors_0"),
 			("restoreSpriteColors", "__sqrat_ol_ restoreSpriteColors_0"),
 		] {
-			let leaf = vm.make_closure(|| {});
+			let leaf = crate::native::stubs::closure(vm, crate::native::stubs::name(format!("World entity.{name}")));
 			methods.extend(single_overload(vm, name, key, leaf));
 		}
 		self.machine.borrow_mut().methods = methods;

@@ -132,7 +132,7 @@ pub(crate) fn install(vm: &mut SQVM, m: &Manager) {
 	sound.push(("setAmbience".to_string(), set_ambience));
 	sound.push(("stopAmbience".to_string(), stop_ambience));
 	sound.push(("setAmbienceVolume".to_string(), set_ambience_volume));
-	sound.push(("update".to_string(), vm.make_closure(|| {})));
+	sound.push(("update".to_string(), crate::native::stubs::closure(vm, "Sound.update")));
 
 	let mut music = Vec::new();
 	{

@@ -64,6 +64,7 @@ pub(crate) mod world_waves;
 pub(crate) mod world_birds;
 pub(crate) mod world_clear_scene;
 pub(crate) mod tactical_rain;
+pub mod stubs;
 mod world_layout;
 mod world_query;
 pub(crate) mod world_time;

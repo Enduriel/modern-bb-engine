@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable, Variadic};
+use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::world_clouds::{CloudCover, CloudSettings, Clouds, MapSpan};
 use super::world_layout::tile_pos;
@@ -73,10 +73,10 @@ pub(crate) fn install(
 
 	// Save/load hook registration (world_state.onInit registers these). Save-compat is
 	// not a goal, so they just accept-and-ignore the callback.
-	let set_on_load = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let set_on_before_load = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let set_on_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
-	let set_on_before_save = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+	let set_on_load = super::stubs::closure(vm, "World.setOnLoadCallback");
+	let set_on_before_load = super::stubs::closure(vm, "World.setOnBeforeLoadCallback");
+	let set_on_save = super::stubs::closure(vm, "World.setOnSaveCallback");
+	let set_on_before_save = super::stubs::closure(vm, "World.setOnBeforeSaveCallback");
 
 	// World.getCamera(): see `world_camera`. World.screenToTile(x, y): the tile under a
 	// pixel.
@@ -91,7 +91,7 @@ pub(crate) fn install(
 
 	// World.getWeather(): visual only (see `weather`), but its clouds are kept for the
 	// renderer (see `world_clouds`).
-	let weather = super::weather::weather(vm);
+	let weather = super::weather::weather(vm, "World");
 	let build_cloud_cover = {
 		let clouds = clouds.clone();
 		vm.make_closure(move |vm: &SQVM, settings: Retained| -> Result<(), String> {

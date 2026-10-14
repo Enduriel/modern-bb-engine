@@ -51,20 +51,26 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 			"hasDLC",
 			vm.make_closure(move |app_id: i64| owned_dlc.contains(&app_id)),
 		),
-		("hasAchievement", vm.make_closure(|_id: &str| false)),
+		("hasAchievement", vm.make_closure(|_id: &str| {
+			super::stubs::note("hasAchievement");
+			false
+		})),
 		(
 			"updateAchievement",
-			vm.make_closure(|_id: &str, _value: i64, _max: i64| {}),
+			vm.make_closure(|_id: &str, _value: i64, _max: i64| super::stubs::note("updateAchievement")),
 		),
-		("storeStatistics", vm.make_closure(|| {})),
+		("storeStatistics", super::stubs::closure(vm, "storeStatistics")),
 		("__ping", vm.make_closure(|| {})),
-		("isModified", vm.make_closure(|| false)),
+		("isModified", vm.make_closure(|| {
+			super::stubs::note("isModified");
+			false
+		})),
 		// A root global the original answers `false` for (probed 2026-10-13); scripts use
 		// it to gate RNG-consuming branches, so the value matters for seed parity.
 		("isSomethingToSee", vm.make_closure(|| false)),
 		// `crash` is a debug tool that takes any argument(s); a no-op here.
 		("crash", vm.make_closure(|_args: Variadic<SqRef>| {})),
-		("reloadTextures", vm.make_closure(|| {})),
+		("reloadTextures", super::stubs::closure(vm, "reloadTextures")),
 		("setPersistentStat", set_stat),
 		("getPersistentStat", get_stat),
 	];

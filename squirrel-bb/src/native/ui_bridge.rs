@@ -284,7 +284,10 @@ impl UiBridge {
 		// it. Without a host the UI covers everything.
 		let set_cursor = vm.make_closure(|_name: String| {});
 		let set_cursor_hardware = vm.make_closure(|value: bool| value);
-		let is_cursor_hardware = vm.make_closure(|| false);
+		let is_cursor_hardware = vm.make_closure(|| {
+			crate::native::stubs::note("Cursor.isHardware");
+			false
+		});
 		let set_cursor_position = {
 			let state = self.state.clone();
 			vm.make_closure(move |x: Number, y: Number| {

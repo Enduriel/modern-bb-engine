@@ -232,16 +232,11 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 	let get_sound_volume = vm.make_closure(|Variadic(_a): Variadic<Retained>| -> f64 { 1.0 });
 	let is_hardware_sound = vm.make_closure(|| true);
 	// Setters / persistence: no-ops (accept any args).
-	macro_rules! noop {
-		() => {
-			vm.make_closure(|Variadic(_a): Variadic<Retained>| {})
-		};
-	}
-	let set_sound_volume = noop!();
-	let set_hardware_sound = noop!();
-	let save = noop!();
-	let save_with_custom = noop!();
-	let load = noop!();
+	let set_sound_volume = super::stubs::closure(vm, "Settings.setSoundVolume");
+	let set_hardware_sound = super::stubs::closure(vm, "Settings.setHardwareSound");
+	let save = super::stubs::closure(vm, "Settings.save");
+	let save_with_custom = super::stubs::closure(vm, "Settings.saveWithCustomVideoMode");
+	let load = super::stubs::closure(vm, "Settings.load");
 
 	let mut settings = SqTable::new(vm);
 	settings.set("getVideoMode", get_video_mode);

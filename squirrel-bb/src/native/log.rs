@@ -51,9 +51,9 @@ pub fn install_logging(vm: &mut SQVM, handler: impl Fn(LogLevel, &str) + 'static
 
 	// The console-grouping + stack-dump helpers are UI features with no SQ-side
 	// effect; register them as no-ops so scripts can call them freely.
-	let print_stack = vm.make_closure(|| {});
+	let print_stack = super::stubs::closure(vm, "printStack");
 	let begin_group = vm.make_closure(|_label: &str| {});
-	let end_group = vm.make_closure(|| {});
+	let end_group = super::stubs::closure(vm, "logEndGroup");
 
 	let mut root = SqTable::root(vm);
 	root.set("logInfo", info);

@@ -408,7 +408,7 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, crt: Prng) -> SqClass<Un
 		})
 		.method(
 			"setRenderCallbackEnabled",
-			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| {},
+			|_s: &mut UnitSpriteData, _a: Variadic<Retained>| crate::native::stubs::note("Battle unit sprite.setRenderCallbackEnabled"),
 		)
 		.method("setHorizontalFlipping", |s: &mut UnitSpriteData, f: bool| s.flipped = f)
 		.method("isFlippedHorizontally", |s: &mut UnitSpriteData| s.flipped)
@@ -937,7 +937,6 @@ impl TacticalEntities {
 				}
 			})
 		};
-		let noop = vm.make_closure(|_a: Variadic<Retained>| {});
 		// Unit state the scripts read back (semantics probed in the original, 2026-10-13).
 		let flag = |vm: &mut SQVM, m: &Rc<RefCell<TacticalMachine>>, get: fn(&UnitRecord) -> bool, set: fn(&mut UnitRecord, bool)| {
 			let mg = m.clone();
@@ -1018,7 +1017,7 @@ impl TacticalEntities {
 			// Only stores an int the original doesn't read back (`entity+0x10`).
 			"setZ",
 		] {
-			methods.push((name, noop.clone()));
+			methods.push((name, crate::native::stubs::closure(vm, crate::native::stubs::name(format!("Battle unit.{name}")))));
 		}
 		// One-arity Sqrat overloads in the original (see `colors`).
 		let (store, restore) = colors::store_and_restore(vm, &self.machine);

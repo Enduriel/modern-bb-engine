@@ -754,13 +754,15 @@ impl WorldGrid {
 					},
 				)
 			};
-			let nav_noop = vm.make_closure(|_a: Variadic<Retained>| {});
+			let render = super::stubs::closure(vm, "World.getNavigator().render");
+			let update = super::stubs::closure(vm, "World.getNavigator().update");
+			let get_last_settings = super::stubs::closure(vm, "World.getNavigator().getLastSettings");
 			let mut nav = SqTable::new(vm);
 			nav.set("createSettings", create_settings);
 			nav.set("findPath", find_path);
-			nav.set("render", nav_noop.clone());
-			nav.set("update", nav_noop.clone());
-			nav.set("getLastSettings", nav_noop);
+			nav.set("render", render);
+			nav.set("update", update);
+			nav.set("getLastSettings", get_last_settings);
 			nav.to_strong()
 		};
 		let get_navigator = {
@@ -1383,7 +1385,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 
 	// `setColor` is a Sqrat overload (`setColor_1`, `setColor_3`); it and `onRoadPass`
 	// stay lenient no-ops (worldgen never reads their result).
-	let ignore = |_t: &mut TileHandle, _args: Variadic<Retained>| {};
+	let ignore = |_t: &mut TileHandle, _args: Variadic<Retained>| super::stubs::note("World tile.setColor");
 	b = b
 		.method(&overload_key("setColor", 1), ignore)
 		.method(&overload_key("setColor", 3), ignore)
@@ -1391,7 +1393,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			let overload = Overload::new("setColor");
 			move |vm: &SQVM, this: This, args: StackArgs| overload.dispatch(vm, this, args)
 		})
-		.method("onRoadPass", ignore);
+		.method("onRoadPass", |_t: &mut TileHandle, _args: Variadic<Retained>| super::stubs::note("World tile.onRoadPass"));
 
 	b.build(vm)
 }

@@ -90,6 +90,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// Build an engine over `source`, installing the stateless natives from `config`
 	/// and all four stateful services. Stack size is the BB-typical 64K.
 	pub fn with_config(source: S, config: &NativeConfig) -> Self {
+		crate::native::stubs::reset();
 		let mut vm = SQVM::new(1 << 16);
 		let natives = config.install(&mut vm);
 
@@ -256,6 +257,12 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 	pub fn time(&self) -> &TimeService {
 		&self.time
+	}
+	/// The stub natives the scripts called since this engine was made, with their call
+	/// counts, by name (see `native::stubs`): what the scripts ask for that this engine
+	/// doesn't do yet.
+	pub fn stub_calls(&self) -> Vec<(String, u64)> {
+		crate::native::stubs::calls()
 	}
 	/// The game's sound: give it an output with [`Audio::set_out`](crate::Audio::set_out)
 	/// (the default is silent).

@@ -385,7 +385,8 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 	});
 	// The level's easing and the overlays' screen positions: visual only.
 	for name in ["registerCallbacks", "unregisterCallbacks", "climbBy", "update", "render", "updateEntityOverlays"] {
-		b = b.method(name, |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| {});
+		let stub = crate::native::stubs::name(format!("Tactical.getCamera().{name}"));
+		b = b.method(name, move |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| crate::native::stubs::note(stub));
 	}
 	b.build(vm)
 }

@@ -26,7 +26,7 @@ pub(crate) mod zone;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{Number, Retained, SQVM, SqClass, SqStrongRef, SqTable};
 
 use crate::module::FileReader;
 use crate::native::{EngineRng, Sprites};
@@ -703,7 +703,6 @@ impl TacticalGrid {
 			vm.make_closure(move || g.borrow_mut().calculate_tactical_values())
 		};
 		// Rendering-only map natives.
-		let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
 		// Tactical.addResource(path): a script's hint that an atlas or sound will be
 		// needed in the coming battle. Loading starts on the host's side; the original's
 		// Tactical.loadResources() (which then loads them all) stays a no-op.
@@ -716,6 +715,11 @@ impl TacticalGrid {
 			})
 		};
 
+		// Still stubs (see `stubs`).
+		let stubs: Vec<(&str, SqStrongRef)> = ["loadResources", "setAmbientColor"]
+			.into_iter()
+			.map(|name| (name, crate::native::stubs::closure(vm, crate::native::stubs::name(format!("Tactical.{name}")))))
+			.collect();
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
 			.expect("Tactical table must be installed before TacticalGrid");
@@ -743,8 +747,8 @@ impl TacticalGrid {
 			tactical.set(name, f);
 		}
 		tactical.set("addResource", add_resource);
-		for name in ["loadResources", "setAmbientColor"] {
-			tactical.set(name, noop.clone());
+		for (name, stub) in stubs {
+			tactical.set(name, stub);
 		}
 	}
 

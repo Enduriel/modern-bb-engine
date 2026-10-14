@@ -7,7 +7,7 @@
 //! vanilla writes (an absent key can't be assigned); rain settings also carry their
 //! drop-brush methods. `IsRaining` stays false: it only gates particle effects.
 
-use squirrel::{Retained, SQVM, SqStrongRef, SqTable, Variadic};
+use squirrel::{SQVM, SqStrongRef, SqTable};
 
 const CLOUD: &[&str] = &[
 	"Color", "Direction", "MaxAlpha", "MaxClouds", "MaxScale", "MaxVelocity", "MinAlpha", "MinClouds", "MinScale",
@@ -55,9 +55,8 @@ pub(crate) fn install_consts(vm: &SQVM) {
 	}
 }
 
-/// A fresh weather object.
-pub(crate) fn weather(vm: &mut SQVM) -> SqStrongRef {
-	let noop = vm.make_closure(|Variadic(_a): Variadic<Retained>| {});
+/// A fresh weather object for `scope` (`World` or `Tactical`; its stubs' names).
+pub(crate) fn weather(vm: &mut SQVM, scope: &str) -> SqStrongRef {
 	let creators: Vec<(&str, SqStrongRef)> = [
 		("createCloudSettings", CLOUD, &[][..]),
 		("createBirdSettings", BIRD, &[][..]),
@@ -65,27 +64,33 @@ pub(crate) fn weather(vm: &mut SQVM) -> SqStrongRef {
 	]
 	.into_iter()
 	.map(|(name, fields, methods)| {
-		let noop = noop.clone();
+		let stubs: Vec<(&str, SqStrongRef)> = methods
+			.iter()
+			.map(|m| (*m, super::stubs::closure(vm, super::stubs::name(format!("{scope}.getWeather().{name}().{m}")))))
+			.collect();
 		let create = vm.make_closure(move |vm: &SQVM| {
 			let mut t = SqTable::new(vm);
 			for f in fields {
 				t.set(f, 0.0);
 			}
-			for m in methods {
-				t.set(m, noop.clone());
+			for (m, stub) in &stubs {
+				t.set(*m, stub.clone());
 			}
 			t.to_strong()
 		});
 		(name, create)
 	})
 	.collect();
+	// Each builder is a stub until a real one replaces it (`world`, `tactical`).
+	let builders: Vec<(&str, SqStrongRef)> =
+		BUILDERS.iter().map(|name| (*name, super::stubs::closure(vm, super::stubs::name(format!("{scope}.getWeather().{name}"))))).collect();
 	let mut w = SqTable::new(vm);
 	w.set("IsRaining", false);
 	for (name, create) in creators {
 		w.set(name, create);
 	}
-	for name in BUILDERS {
-		w.set(name, noop.clone());
+	for (name, stub) in builders {
+		w.set(name, stub);
 	}
 	w.to_strong()
 }

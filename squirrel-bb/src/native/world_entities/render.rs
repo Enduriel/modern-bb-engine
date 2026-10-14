@@ -185,7 +185,7 @@ fn draw_sprites(m: &Machine, vm: &SQVM, now: f32) {
 
 /// `World.prepareRender()` and `World.render()`.
 pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrongRef)> {
-	let prepare_render = vm.make_closure(|| {});
+	let prepare_render = crate::native::stubs::closure(vm, "World.prepareRender");
 	let render = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM| -> Result<(), String> {

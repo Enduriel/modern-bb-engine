@@ -197,7 +197,7 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng, crt: &super:
 	// Tactical.getHighlighter() with the map (see `tactical_highlighter`).
 	// Tactical.getWeather(): visual only (see `weather`).
 	super::weather::install_consts(vm);
-	let weather = super::weather::weather(vm);
+	let weather = super::weather::weather(vm, "Tactical");
 	let light: TacticalLight = Rc::new(std::cell::Cell::new((0xffff_ffff, 1.0)));
 	let set_color = {
 		let light = light.clone();
