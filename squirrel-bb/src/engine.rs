@@ -70,6 +70,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// After the `World` table exists (config.install), add the grid natives.
 		let world_grid = WorldGrid::new();
 		world_grid.set_sprites(natives.sprites.clone());
+		world_grid.set_engine_rng(natives.engine_rng.clone());
 		world_grid.install(&mut vm);
 		// After the grid natives (entity `getTile` delegates to `World.getTile`).
 		let world_entities = WorldEntities::new(modules.instantiator());

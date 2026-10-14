@@ -18,7 +18,7 @@ use squirrel::{
 
 use super::overload::{dispatch_overload, make_dispatcher, overload_key};
 use super::world_detail::{self, Clear, Detail, DetailData, DetailHandle};
-use crate::native::Sprites;
+use crate::native::{EngineRng, Sprites};
 use super::world_layout;
 use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
@@ -165,6 +165,8 @@ struct GridState {
 	nav_path_class: Option<SqClass<PathData>>,
 	/// Where brushes set on tiles and details hint their atlases.
 	sprites: Sprites,
+	/// The engine's random stream: new details' mirroring, scale and rotation.
+	engine_rng: EngineRng,
 }
 
 impl GridState {
@@ -239,8 +241,14 @@ impl WorldGrid {
 				detail_class: None,
 				nav_path_class: None,
 				sprites: Sprites::default(),
+				engine_rng: EngineRng::from_clock(),
 			})),
 		}
+	}
+
+	/// Draw new details' random looks from `rng`. Call before [`install`](Self::install).
+	pub fn set_engine_rng(&self, rng: EngineRng) {
+		self.grid.borrow_mut().engine_rng = rng;
 	}
 
 	/// Hint the atlases of brushes set on tiles and details to `sprites`. Call before
@@ -734,8 +742,32 @@ fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Opti
 /// `None` if the detail class is not installed (it always is after `install`).
 /// Fetches the class from the grid at call time so the tile methods capture only the
 /// `Rc`, not an `SqStrongRef`.
-fn make_detail(t: &TileHandle, vm: &SQVM, data: DetailData) -> Option<SqStrongRef> {
+///
+/// Like the original (`0x4fb4d0`, `0x4fb5d0`), the engine's own random stream varies
+/// the new detail. A form without a mirroring argument draws one at random. Either
+/// way only a brush with flag `0x400` mirrors (settlement houses and forests don't).
+/// A brush that rotates (or has flag `0x2000`) starts at a random rotation, and one
+/// with flag `0x1000` (ground scatter: grass, bones, coast details) gets a random
+/// scale in `[0.6, 1.0]`. Drawn in that order.
+fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: bool) -> Option<SqStrongRef> {
 	let class = t.grid.borrow().detail_class.clone()?;
+	let (sprites, rng) = {
+		let g = t.grid.borrow();
+		(g.sprites.clone(), g.engine_rng.clone())
+	};
+	if random_flip {
+		data.flipped = rng.range(0, 1) == 0;
+	}
+	let looks = sprites.with(|r| r.get(&data.brush).map(|(_, s)| (s.flags, s.rotation_speed)));
+	if let Some((flags, rotation_speed)) = looks {
+		data.flipped &= flags & 0x400 != 0;
+		if rotation_speed != 0.0 || flags & 0x2000 != 0 {
+			data.rotation = rng.range(0, 359) as f64;
+		}
+		if flags & 0x1000 != 0 {
+			data.scale = f64::from(rng.range(0, 40) as f32 / 100.0 + 0.6);
+		}
+	}
 	hint_brush(t, &data.brush);
 	let detail: Detail = Rc::new(RefCell::new(data));
 	t.with_mut(|d| d.details.push(detail.clone()));
@@ -997,6 +1029,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 						brush: brush.to_string(),
 						..DetailData::default()
 					},
+					true,
 				)
 			},
 		)
@@ -1012,6 +1045,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 						flags,
 						..DetailData::default()
 					},
+					true,
 				)
 			},
 		)
@@ -1024,7 +1058,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 flags: Retained,
 			 flipped: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped))
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false)
 			},
 		)
 		.method(
@@ -1037,7 +1071,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 flipped: Retained,
 			 _offset: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped))
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false)
 			},
 		)
 		.method(
@@ -1051,7 +1085,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 _extra: Retained,
 			 _offset: Retained|
 			 -> Option<SqStrongRef> {
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped))
+				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false)
 			},
 		)
 		.native_method(

@@ -130,6 +130,30 @@ fn stub_visual_methods_are_noops() {
 	grid.clear();
 }
 
+#[test]
+fn details_without_a_mirroring_argument_are_mirrored_at_random() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let grid = WorldGrid::new();
+	grid.set_engine_rng(squirrel_bb::EngineRng::seeded(42));
+	grid.install(&mut vm);
+	vm.run_script(
+		r#"
+		World.resizeScene(4, 4);
+		local t = World.getTileSquare(1, 1);
+		for (local i = 0; i < 40; i++) t.spawnDetail("stone", -10, 0);
+		for (local i = 0; i < 10; i++) t.spawnDetail("kept", -10, 0, false);
+		"#,
+		"flips",
+	)
+	.expect("spawn");
+	let d = details(&grid, 1, 1);
+	let flipped = d.iter().filter(|d| d.brush == "stone" && d.flipped).count();
+	assert!(flipped > 5 && flipped < 35, "{flipped} of 40 mirrored");
+	assert!(d.iter().filter(|d| d.brush == "kept").all(|d| !d.flipped));
+	grid.clear();
+}
+
 /// The details of a tile as the renderer sees them, by brush.
 fn details(grid: &WorldGrid, col: i64, row: i64) -> Vec<squirrel_bb::scene::SceneDetail> {
 	let tile = grid.scene_tiles().into_iter().find(|t| t.col == col && t.row == row).expect("tile");
@@ -142,7 +166,11 @@ fn brushes(details: &[squirrel_bb::scene::SceneDetail]) -> Vec<&str> {
 
 #[test]
 fn details_stay_on_their_tile_for_the_renderer() {
-	let (vm, grid) = vm_with_grid();
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let grid = WorldGrid::new();
+	grid.set_engine_rng(squirrel_bb::EngineRng::seeded(1));
+	grid.install(&mut vm);
 	vm.run_script(
 		r#"
 		World.resizeScene(4, 4);
@@ -160,7 +188,7 @@ fn details_stay_on_their_tile_for_the_renderer() {
 	let d = details(&grid, 1, 2);
 	assert_eq!(brushes(&d), ["tree_2", "hill", "house"]);
 	assert_eq!((d[0].z_level, d[0].flags, d[0].alpha, d[0].scale), (-10, 32, 120, 0.85));
-	assert!(d[1].flipped && !d[0].flipped);
+	assert!(d[1].flipped, "the 4-argument form mirrors as asked");
 	assert!(details(&grid, 0, 0).is_empty());
 
 	vm.run_script("World.getTileSquare(1, 2).clear(8);", "clear mask").expect("clear");

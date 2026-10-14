@@ -15,6 +15,7 @@
 mod audio;
 mod brushes;
 mod color;
+mod engine_rng;
 mod display_modes;
 mod identity;
 mod inject;
@@ -48,6 +49,7 @@ mod world_search;
 
 pub use brushes::Sprites;
 pub use color::Color;
+pub use engine_rng::EngineRng;
 pub use log::{LogLevel, install_logging};
 pub use tactical_entities::TacticalEntities;
 pub use tactical_grid::TacticalGrid;
@@ -85,6 +87,9 @@ pub struct NativeConfig {
 	pub version_name: String,
 	/// `GameInfo.getCompany()`.
 	pub company: String,
+	/// Seed of the engine's own random stream ([`EngineRng`]): `None` seeds it from
+	/// the clock, as the original does; a fixed seed makes runs reproducible.
+	pub engine_seed: Option<u64>,
 }
 
 /// Each paid DLC's init script and its Steam app ID (the argument the script passes
@@ -129,6 +134,7 @@ impl Default for NativeConfig {
 			version_number: "1.5.2.3".to_string(),
 			version_name: String::new(),
 			company: "(c) Overhype Studios GmbH".to_string(),
+			engine_seed: None,
 		}
 	}
 }
@@ -159,11 +165,12 @@ impl NativeConfig {
 		let world_clock = world::install(vm);
 		tactical::install(vm);
 		let sprites = brushes::install(vm);
+		let engine_rng = self.engine_seed.map_or_else(EngineRng::from_clock, EngineRng::seeded);
 		settings::install(vm);
 		audio::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, sprites }
+		InstalledNatives { world_clock, sprites, engine_rng }
 	}
 }
 
@@ -171,6 +178,7 @@ impl NativeConfig {
 pub struct InstalledNatives {
 	pub(crate) world_clock: world_time::Clock,
 	pub(crate) sprites: Sprites,
+	pub(crate) engine_rng: EngineRng,
 }
 
 /// Install all native globals with the [default](NativeConfig::default) config.

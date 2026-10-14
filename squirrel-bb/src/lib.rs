@@ -36,4 +36,4 @@ pub use native::{
 };
 pub use source::{LoadedScript, ScriptSource};
 pub use state_stack::RootState;
-pub use native::Sprites;
+pub use native::{EngineRng, Sprites};

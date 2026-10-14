@@ -32,6 +32,8 @@ pub struct DetailData {
 	pub flipped: bool,
 	pub alpha: i64,
 	pub torque: i64,
+	/// Rotation in degrees (the original's `Rotation`, field `+0x40`).
+	pub rotation: f64,
 	pub saturation: f64,
 	pub scale: f64,
 	pub brightness: f64,
@@ -47,6 +49,7 @@ impl Default for DetailData {
 			flipped: false,
 			alpha: 255,
 			torque: 0,
+			rotation: 0.0,
 			saturation: 1.0,
 			scale: 1.0,
 			brightness: 1.0,
