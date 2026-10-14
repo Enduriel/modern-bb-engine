@@ -9,9 +9,11 @@
 //!   reports `onModuleShown` / `onModuleHidden`).
 //!
 //! Headless there is no animation, so each callback follows on the next pump. Modules
-//! with more behaviour than that get their own emulation ([`turn_sequence_bar`]). A
-//! real browser host replaces this module.
+//! with more behaviour than that get their own emulation ([`turn_sequence_bar`]), and so
+//! does Modern Hooks' loader handshake ([`modern_hooks`]). A real browser host replaces
+//! this module.
 
+mod modern_hooks;
 mod turn_sequence_bar;
 
 use squirrel::{SQVM, SqStrongRef};
@@ -51,6 +53,9 @@ impl UiClient {
 			if module.is_none() {
 				if let Some(receiver) = bridge.receiver(&screen, None) {
 					notify(vm, &receiver, "onScreenConnected").map_err(|e| format!("{screen}.{e}"))?;
+					if screen == modern_hooks::SCREEN {
+						modern_hooks::on_connected(vm, &receiver)?;
+					}
 				}
 			}
 		}

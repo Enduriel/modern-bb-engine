@@ -78,7 +78,7 @@ pub fn open_install_with(dir: &Path, configure: impl FnOnce(&mut NativeConfig)) 
 
 /// An engine over `archives` (in mount order), configured as [`open_install`] says, then
 /// by `configure`.
-fn open_archives(archives: Vec<PathBuf>, configure: impl FnOnce(&mut NativeConfig)) -> io::Result<GameEngine> {
+pub fn open_archives(archives: Vec<PathBuf>, configure: impl FnOnce(&mut NativeConfig)) -> io::Result<GameEngine> {
 	let source = DatScriptSource::open(archives)?.with_cache(ScriptCache::from_env());
 	let sprites = source.with_archives(|archives| load_sprites(archives));
 	for failure in &sprites.failures {
@@ -110,10 +110,18 @@ pub fn load_config(engine: &GameEngine) -> Result<(), String> {
 
 /// Boot to the main menu: config, then `scripts/root_state`. Then park the cursor, as
 /// the first mouse event would, so frame code that reads it has a position (over the
-/// UI, see `UI.setCursorPosition`).
+/// UI, see `UI.setCursorPosition`). With Modern Hooks loaded, root_state's own onInit,
+/// which makes `::Cursor`, waits for MH's UI handshake, which the UI client answers on
+/// a pump.
 pub fn boot_menu(engine: &GameEngine) -> Result<(), String> {
 	load_config(engine)?;
 	engine.boot("scripts/root_state")?;
+	for _ in 0..4 {
+		if squirrel::SqTable::root(engine.vm()).get::<squirrel::SqTable>("Cursor").is_some() {
+			break;
+		}
+		engine.pump_ui()?;
+	}
 	engine.run_script("::Cursor.setPosition(0, 0);", "cursor")?;
 	// Let the UI answer the menu's screens (connected, shown) before anything else.
 	engine.pump_ui().map(|_| ())
