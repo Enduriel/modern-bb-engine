@@ -694,3 +694,27 @@ fn the_player_against_bandit_raiders_on_the_plains() {
 		setup: "",
 	});
 }
+
+/// Played by the scripted player with a fire bomb in every brother's bag: on its
+/// first turn each brother opens the inventory (the 'C' key), equips the bomb from the
+/// bag, then throws it (tile effects: the fire and its damage). The company falls.
+#[test]
+fn the_player_throws_fire_bombs_at_bandit_raiders() {
+	fight(&Scenario {
+		spawn: "BanditRaiders",
+		resources: 80,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8000, 753931), (8368, 290545)],
+		result: 4,
+		pin_render: false,
+		after: Some((8377, 561884, 3)),
+		player: true,
+		setup: r#"
+			foreach (bro in ::World.getPlayerRoster().getAll())
+				bro.getItems().addToBag(::new("scripts/items/tools/fire_bomb_item"));
+			::__botPrefer = ["actives.throw_fire_bomb"];
+			::__botUnpack = "weapon.fire_bomb";
+		"#,
+	});
+}
