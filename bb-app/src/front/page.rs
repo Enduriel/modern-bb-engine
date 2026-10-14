@@ -24,7 +24,7 @@ impl Front {
 	/// Start the page and the scripts for the install at `data_dir`, and from the main
 	/// menu start a new campaign on `seed`, as its Start button does. The campaign's
 	/// opening event shows once the world is up.
-	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str) -> Result<Front, String> {
+	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool) -> Result<Front, String> {
 		let config = HostConfig {
 			frame_rate: PAGE_FRAME_RATE,
 			// A live clock behind Time.getExactTime, as the original's: the AI's
@@ -37,6 +37,9 @@ impl Front {
 		let session = UiSession::start(data_dir, config, false)?;
 		// Portraits are composed on the game thread (`Game::draw`).
 		session.queue_procedural(true);
+		if sound {
+			super::play_on_device(session.engine(), data_dir);
+		}
 		session.boot_menu()?;
 		session.start_campaign(seed)?;
 		Ok(Front {

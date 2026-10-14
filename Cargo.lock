@@ -264,6 +264,7 @@ name = "bb-app"
 version = "0.1.0"
 dependencies = [
  "bb-assets",
+ "bb-audio",
  "bb-engine",
  "bb-render",
  "bb-ui",

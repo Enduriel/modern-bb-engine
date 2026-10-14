@@ -12,8 +12,9 @@ pub struct Front {
 }
 
 impl Front {
-	/// Boot the install at `data_dir` into a new campaign on `seed`.
-	pub fn boot(_gpu: &Gpu, data_dir: &Path, seed: &str) -> Result<Front, String> {
+	/// Boot the install at `data_dir` into a new campaign on `seed`, with `sound` on the
+	/// device or silent.
+	pub fn boot(_gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool) -> Result<Front, String> {
 		// A live clock behind Time.getExactTime, as the original's: the AI's background
 		// work then spreads over frames. The battle camera glides, as the original's.
 		let engine = harness::open_install_with(data_dir, |c| {
@@ -21,6 +22,9 @@ impl Front {
 			c.battle_camera = squirrel_bb::BattleCamera::Glides;
 		})
 		.map_err(|e| e.to_string())?;
+		if sound {
+			super::play_on_device(&engine, data_dir);
+		}
 		harness::boot_menu(&engine)?;
 		harness::prepare_new_campaign(&engine, seed)?;
 		harness::start_new_campaign(&engine)?;

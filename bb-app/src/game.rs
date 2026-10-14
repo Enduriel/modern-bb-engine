@@ -30,10 +30,11 @@ pub struct Game {
 }
 
 impl Game {
-	/// Boot the engine from the install at `data_dir` into a new campaign on `seed`.
-	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str) -> Result<Game, String> {
+	/// Boot the engine from the install at `data_dir` into a new campaign on `seed`,
+	/// playing its sound on the device if `sound` (silent otherwise, as for tests).
+	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool) -> Result<Game, String> {
 		let io = |e: std::io::Error| e.to_string();
-		let front = Front::boot(gpu, data_dir, seed)?;
+		let front = Front::boot(gpu, data_dir, seed, sound)?;
 		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
 		let renderer = WorldRenderer::new(gpu, Arc::new(files), threads);

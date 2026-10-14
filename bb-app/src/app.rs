@@ -23,6 +23,8 @@ pub struct Options {
 	pub seed: String,
 	/// Save the frame after this many frames as a PNG and quit (`--shot N PATH`).
 	pub shot: Option<(u64, PathBuf)>,
+	/// No sound (`--mute`); otherwise it plays on the default output device.
+	pub mute: bool,
 }
 
 /// Everything that exists once the window does.
@@ -65,7 +67,7 @@ impl App {
 			.map_err(|e| format!("no surface for the window: {e}"))?;
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
-		let game = Game::boot(&gpu, &self.options.data_dir, &self.options.seed)?;
+		let game = Game::boot(&gpu, &self.options.data_dir, &self.options.seed, !self.options.mute)?;
 		// The window opens at the game's screen size.
 		let (w, h) = game.screen();
 		let size = window.request_inner_size(PhysicalSize::new(w, h)).unwrap_or(window.inner_size());

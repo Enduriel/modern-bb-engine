@@ -1,13 +1,14 @@
 //! Battle Brothers on the modern engine, in a window.
 //!
 //! ```text
-//! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--shot FRAMES OUT.png]
+//! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--shot FRAMES OUT.png] [--mute]
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) into a new campaign
 //! and plays it: the world map or the battle, the mouse and keys going to the game.
 //! `--shot` saves the frame after that many frames and quits. Built with `--features
-//! ui`, the game's real UI is drawn over it and takes the input it's under.
+//! ui`, the game's real UI is drawn over it and takes the input it's under. The sound
+//! plays on the default output device, unless `--mute`.
 
 mod app;
 
@@ -22,6 +23,7 @@ fn options() -> Result<app::Options, String> {
 		data_dir: PathBuf::from(STEAM_DATA_DIR),
 		seed: "rust-engine-test".to_string(),
 		shot: None,
+		mute: false,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -29,6 +31,7 @@ fn options() -> Result<app::Options, String> {
 		match arg.as_str() {
 			"--data" => options.data_dir = PathBuf::from(value()?),
 			"--seed" => options.seed = value()?,
+			"--mute" => options.mute = true,
 			"--shot" => {
 				let frames = value()?.parse().map_err(|_| "--shot FRAMES OUT.png")?;
 				options.shot = Some((frames, PathBuf::from(value()?)));

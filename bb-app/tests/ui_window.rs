@@ -116,7 +116,8 @@ fn portrait_reaches_the_page(game: &mut Game, gpu: &Gpu, target: &RenderTarget) 
 }
 
 fn check(gpu: &Gpu) -> Result<(), String> {
-	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED)?;
+	// Silent: tests never play on the device.
+	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false)?;
 	let session = game.front().session();
 	// The opening event, over the world. The page is at UI scale 1: its pixels are
 	// the screen's.

@@ -15,6 +15,7 @@ path = "src/main.rs"
 ui = ["dep:bb-ui", "bb-ui/cef", "dep:cef-dll-sys"]
 
 [dependencies]
+bb-audio = { path = "../bb-audio" }
 bb-engine = { path = "../bb-engine" }
 bb-ui = { path = "../bb-ui", optional = true }
 # Direct dependency only for its build metadata (the CEF directory, for the rpath).

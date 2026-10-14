@@ -15,6 +15,12 @@
 //! - Keys reach the page (its dialogs listen on the document), and the states too,
 //!   unless the page has a text field focused.
 
+use std::path::Path;
+use std::sync::Arc;
+
+use bb_engine::files::GameFiles;
+use bb_engine::harness::{self, GameEngine};
+
 #[cfg(not(feature = "ui"))]
 mod headless;
 #[cfg(feature = "ui")]
@@ -37,4 +43,21 @@ pub struct Key {
 	pub down: bool,
 	/// A held key repeating.
 	pub repeat: bool,
+}
+
+/// Play the game's sound on the system's output device (kira), reading the sounds
+/// from the install at `data_dir`; without a device the game stays silent. Before the
+/// menu boots, so its music starts there.
+fn play_on_device(engine: &GameEngine, data_dir: &Path) {
+	let out = || -> Result<bb_audio::KiraOut<_>, String> {
+		let io = |e: std::io::Error| e.to_string();
+		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
+		// The original sets the rolloff once, from the screen's width at startup.
+		let (width, _, _) = engine.video().screen();
+		bb_audio::KiraOut::device(Arc::new(files), bb_audio::gains::rolloff_for_width(width as u32))
+	};
+	match out() {
+		Ok(out) => engine.audio().set_out(Box::new(out)),
+		Err(e) => eprintln!("no sound: {e}"),
+	}
 }
