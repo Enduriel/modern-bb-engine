@@ -129,6 +129,19 @@ fn best_level(g: &TacticalGridState, id: usize, current: i64) -> i64 {
 	current.min(level + 3)
 }
 
+impl TacticalGridState {
+	/// `entity.isOccludedByTerrain()` for a unit on `tile`: the tile in front of it (the
+	/// row below) is 2+ levels higher, so it would be drawn over the unit; never with the
+	/// camera flipped (disassembled, 0x4c3030).
+	pub(crate) fn occluded_by_terrain(&self, tile: usize) -> bool {
+		if self.camera.flipped {
+			return false;
+		}
+		let t = &self.tiles[tile];
+		self.idx_axial(t.q, t.r - 1).is_some_and(|front| self.tiles[front].level - t.level >= 2)
+	}
+}
+
 /// Whether the player lets the camera follow height (`AdjustCameraLevel`); without it
 /// `getBestLevelForTile` keeps the current level.
 fn adjusts_level(vm: &SQVM) -> bool {
@@ -249,5 +262,19 @@ mod tests {
 		assert_eq!(best_level(&g, a, 3), 3);
 		let low = g.idx(3, 4).unwrap();
 		assert_eq!(best_level(&g, low, 1), 1);
+	}
+
+	#[test]
+	fn a_unit_is_occluded_by_terrain_two_levels_higher_in_front() {
+		let mut g = TacticalGridState::for_test(8, 8);
+		let unit = g.idx(3, 4).unwrap();
+		let (q, r) = (g.tiles[unit].q, g.tiles[unit].r);
+		let front = g.idx_axial(q, r - 1).unwrap();
+		g.tiles[front].level = 1;
+		assert!(!g.occluded_by_terrain(unit));
+		g.tiles[front].level = 2;
+		assert!(g.occluded_by_terrain(unit));
+		g.camera.flipped = true;
+		assert!(!g.occluded_by_terrain(unit));
 	}
 }

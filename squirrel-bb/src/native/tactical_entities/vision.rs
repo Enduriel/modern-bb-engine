@@ -88,6 +88,14 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 			placed(&m, vm.this_identity()).is_some_and(|(g, t)| g.borrow().tiles[t].vis_mask & faction_bit(PLAYER) == 0)
 		})
 	};
+	// Whether the terrain in front would be drawn over the unit (see the grid's
+	// `occluded_by_terrain`). Off the map: no.
+	let is_occluded_by_terrain = {
+		let m = m.clone();
+		vm.make_closure(move |vm: &SQVM| -> bool {
+			placed(&m, vm.this_identity()).is_some_and(|(g, t)| g.borrow().occluded_by_terrain(t))
+		})
+	};
 	// Whether the latest vision update (by anyone) saw the unit's tile.
 	let is_visible_to_entity = {
 		let m = m.clone();
@@ -123,6 +131,7 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 		("updateVisibility", update_visibility),
 		("isHiddenToPlayer", is_hidden_to_player),
 		("isVisibleToEntity", is_visible_to_entity),
+		("isOccludedByTerrain", is_occluded_by_terrain),
 		("setDiscovered", set_discovered),
 	]
 }
