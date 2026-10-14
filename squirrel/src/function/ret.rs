@@ -44,6 +44,14 @@ impl IntoSqReturn for String {
 	}
 }
 
+/// A string as its bytes, UTF-8 or not.
+impl IntoSqReturn for crate::SqBytes {
+	fn push_return(self, vm: &SQVM) -> Result<i64, String> {
+		vm.push_bytes(&self.0);
+		Ok(1)
+	}
+}
+
 impl IntoSqReturn for &str {
 	fn push_return(self, vm: &SQVM) -> Result<i64, String> {
 		vm.push_string(self);
