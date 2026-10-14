@@ -170,8 +170,7 @@ impl UiHost {
 			events: Mutex::new(events_tx),
 			browser: Mutex::new(None),
 			frame: Mutex::new(None),
-			width: config.width as i32,
-			height: config.height as i32,
+			size: Mutex::new((config.width as i32, config.height as i32)),
 		});
 		let mut factory = scheme::CouiFactory::new(files, shared.clone());
 		if register_scheme_handler_factory(Some(&SCHEME.into()), None, Some(&mut factory)) != 1 {
@@ -358,6 +357,20 @@ impl UiHost {
 			.unwrap_or_else(|e| e.into_inner())
 			.clone();
 		browser.and_then(|b| b.host())
+	}
+
+	/// The view's size (CSS pixels): what the page lays out at.
+	pub fn size(&self) -> (i32, i32) {
+		self.shared.size()
+	}
+
+	/// Lay the page out at `width` × `height` from now on (a UI scale change resizes the
+	/// view, as in the original; the page sees a window resize).
+	pub fn resize(&self, width: i32, height: i32) {
+		*self.shared.size.lock().unwrap_or_else(|e| e.into_inner()) = (width, height);
+		if let Some(host) = self.browser_host() {
+			host.was_resized();
+		}
 	}
 
 	/// Where the mouse was last sent (view pixels), if anywhere.

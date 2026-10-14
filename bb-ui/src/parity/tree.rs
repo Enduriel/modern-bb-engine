@@ -132,6 +132,10 @@ pub struct Tolerance {
 	/// ([`Node::procedural`]: portraits), whose sizes follow what they show. Off by
 	/// default: we draw placeholders until the renderer draws them.
 	pub procedural_images: bool,
+	/// The page zoom the golden was taken at: the original's UI scale (`UIScale` 1.5
+	/// is a page zoom of 1.5 there). Old WebKit reports `text-shadow` lengths divided by
+	/// it.
+	pub page_zoom: f64,
 }
 
 impl Default for Tolerance {
@@ -142,6 +146,7 @@ impl Default for Tolerance {
 			ignore_paths: Vec::new(),
 			ignore_boxes: Vec::new(),
 			procedural_images: false,
+			page_zoom: 1.0,
 		}
 	}
 }
@@ -291,6 +296,30 @@ fn numbers(value: &str) -> (String, Vec<f64>) {
 	(skeleton, found)
 }
 
+/// `value` with each pixel length multiplied by `zoom`.
+fn zoomed_pixels(value: &str, zoom: f64) -> String {
+	if zoom == 1.0 {
+		return value.to_string();
+	}
+	let (skeleton, found) = numbers(value);
+	let mut out = String::new();
+	let mut found = found.into_iter();
+	let mut rest = skeleton.as_str();
+	while let Some(at) = rest.find('#') {
+		out.push_str(&rest[..at]);
+		rest = &rest[at + 1..];
+		let number = found.next().unwrap_or(0.0);
+		let number = if rest.starts_with("px") {
+			number * zoom
+		} else {
+			number
+		};
+		out.push_str(&format!("{number}"));
+	}
+	out.push_str(rest);
+	out
+}
+
 /// Whether `a` and `b` are the same apart from numbers within one 8-bit step (1/255)
 /// of each other: old WebKit keeps colour alpha in 8 bits and opacity as a 32-bit
 /// float, so it reports 0.3 as 0.298039 and 0.4 as 0.4000000059604645.
@@ -321,7 +350,7 @@ fn close_numbers(a: &str, b: &str) -> bool {
 /// The golden can't tell those apart from other absolutely positioned boxes with equal
 /// vertical margins, so those properties are left out for all of them; their boxes are
 /// still compared, so a box out of place still shows.
-fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
+fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str, page_zoom: f64) -> bool {
 	let golden_style = |key: &str| {
 		golden
 			.style
@@ -363,6 +392,9 @@ fn same_style(golden: &Node, property: &str, theirs: &str, mine: &str) -> bool {
 			mine == "0px"
 				&& matches!((margin("margin-left"), margin("margin-right")), (Some(l), Some(r)) if (l - r).abs() <= 1.0)
 		}
+		// Under a page zoom, old WebKit reports a shadow's lengths divided by it (a 1px
+		// shadow at UI scale 1.5 as 0.667px).
+		"text-shadow" => close_numbers(&zoomed_pixels(theirs, page_zoom), mine),
 		// A transform's translation is in pixels: it follows the box's size, which may be
 		// a pixel off (`translateY(-50%)` of an 18px or a 19px label).
 		"transform" => {
@@ -466,7 +498,7 @@ fn compare_nodes(
 			.find(|(p, _)| p == property)
 			.map(|(_, v)| normalized(&ours.tag, property, v))
 			.unwrap_or_default();
-		if !same_style(golden, property, &theirs, &mine) {
+		if !same_style(golden, property, &theirs, &mine, tolerance.page_zoom) {
 			out.push(Difference::Style {
 				path: path.to_string(),
 				property: property.clone(),
@@ -534,7 +566,9 @@ fn align(g: &[Node], o: &[Node]) -> Vec<Step> {
 
 #[cfg(test)]
 mod tests {
-	use super::{Difference, Snapshot, Tolerance, close_numbers, compare, normalize_style};
+	use super::{
+		Difference, Snapshot, Tolerance, close_numbers, compare, normalize_style, zoomed_pixels,
+	};
 	use crate::json::Json;
 
 	fn snapshot(text: &str) -> Snapshot {
@@ -566,6 +600,20 @@ mod tests {
 			normalize_style("rgb(0, 0, 0) 1px 1px 2px"),
 			"rgba(0, 0, 0, 1) 1px 1px 2px"
 		);
+	}
+
+	#[test]
+	fn shadows_scale_with_the_page_zoom() {
+		let golden =
+			"rgba(0, 0, 0, 1) 0.6666666865348816px 0.6666666865348816px 0.6666666865348816px";
+		assert!(close_numbers(
+			&zoomed_pixels(golden, 1.5),
+			"rgba(0, 0, 0, 1) 1px 1px 1px"
+		));
+		assert!(!close_numbers(
+			&zoomed_pixels(golden, 1.0),
+			"rgba(0, 0, 0, 1) 1px 1px 1px"
+		));
 	}
 
 	#[test]

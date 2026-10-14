@@ -43,8 +43,13 @@ impl UiSession {
 	pub fn start(data_dir: &Path, config: HostConfig, echo: bool) -> Result<UiSession, String> {
 		let files =
 			Arc::new(UiFiles::open_install(data_dir, false).map_err(|e| format!("archives: {e}"))?);
+		let (screen_width, screen_height) = (config.width, config.height);
 		let host = UiHost::start(files.clone(), config)?;
 		let mut engine = harness::open_install(data_dir).map_err(|e| format!("install: {e}"))?;
+		// The scripts see the window's size as the video mode's (the page fills it).
+		engine
+			.video()
+			.set_screen_size(i64::from(screen_width), i64::from(screen_height));
 		if echo {
 			// Script errors print their full call stack.
 			engine.vm_mut().set_print_handler(|s| eprint!("{s}"));
@@ -190,9 +195,21 @@ impl UiSession {
 		for _ in 0..frames {
 			let start = Instant::now();
 			self.engine.frame(1000.0 / 60.0)?;
+			self.follow_ui_scale();
 			self.pump_until_deadline(start + frame);
 		}
 		Ok(())
+	}
+
+	/// Lay the page out at the video mode's size divided by its UI scale, as the original
+	/// does when the scripts set a video mode (`Settings.setVideoMode`, e.g. the Options
+	/// screen's UI scale): the page sees a smaller window.
+	fn follow_ui_scale(&self) {
+		let (width, height) = self.engine.video().ui_size();
+		let size = (width as i32, height as i32);
+		if self.host().size() != size {
+			self.host().resize(size.0, size.1);
+		}
 	}
 
 	/// Evaluate `code` in the page; its calls into the scripts run inline.

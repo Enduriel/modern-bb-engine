@@ -1,8 +1,10 @@
-//! UI parity with the original. Three checks on one page, in order:
+//! UI parity with the original. Four checks on one page, in order:
 //!   * `matches_the_originals_screens`: our page, driven through the main menu, the
 //!     new-campaign page and the Options screen, matches the original's snapshots
 //!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
 //!     boxes and the compared styles, within `goldens::tolerance`;
+//!   * `matches_the_originals_ui_scale`: the main menu at UI scale 1.5
+//!     (`probes/ui_scale.{nut,js}`);
 //!   * `matches_the_originals_world`: likewise for a new campaign started as the
 //!     probe harness starts it: the intro event, the world screen, the character
 //!     screen, the nearest town and a seeded bandit ambush (`probes/world_golden.js`);
@@ -82,13 +84,24 @@ fn compare_all(snapshots: Vec<(&str, Snapshot)>) -> Result<(), String> {
 	report(differences)
 }
 
+/// Ends back on the main menu (it leaves Options).
 fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
-	compare_all(goldens::capture(session)?)
+	let compared = compare_all(goldens::capture(session)?);
+	session.click_when_ready("Cancel", Duration::from_secs(30))?;
+	compared
 }
 
-/// Runs after the menu screens: it leaves Options and starts a campaign.
+/// From the main menu: the menu at UI scale 1.5 (the page laid out at the screen size
+/// divided by the scale).
+fn matches_the_originals_ui_scale(session: &UiSession) -> Result<(), String> {
+	compare_all(vec![(
+		goldens::UI_SCALE_SCREEN,
+		goldens::capture_ui_scale(session)?,
+	)])
+}
+
+/// From the main menu: starts a campaign.
 fn matches_the_originals_world(session: &UiSession) -> Result<(), String> {
-	session.click_when_ready("Cancel", Duration::from_secs(30))?;
 	compare_all(goldens::capture_world(session)?)
 }
 
@@ -133,10 +146,14 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, Check); 3] = [
+	let checks: [(&str, Check); 4] = [
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,
+		),
+		(
+			"matches_the_originals_ui_scale",
+			matches_the_originals_ui_scale,
 		),
 		("matches_the_originals_world", matches_the_originals_world),
 		(

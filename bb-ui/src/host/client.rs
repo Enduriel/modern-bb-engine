@@ -61,11 +61,15 @@ pub(super) struct Shared {
 	pub events: Mutex<mpsc::Sender<Event>>,
 	pub browser: Mutex<Option<Browser>>,
 	pub frame: Mutex<Option<FrameBuffer>>,
-	pub width: i32,
-	pub height: i32,
+	/// The view's width and height (CSS pixels); see [`UiHost::resize`](super::UiHost::resize).
+	pub size: Mutex<(i32, i32)>,
 }
 
 impl Shared {
+	pub fn size(&self) -> (i32, i32) {
+		*self.size.lock().unwrap_or_else(|e| e.into_inner())
+	}
+
 	pub fn send(&self, event: Event) {
 		let _ = self
 			.events
@@ -83,7 +87,8 @@ wrap_render_handler! {
 	impl RenderHandler {
 		fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
 			if let Some(rect) = rect {
-				*rect = Rect { x: 0, y: 0, width: self.shared.width, height: self.shared.height };
+				let (width, height) = self.shared.size();
+				*rect = Rect { x: 0, y: 0, width, height };
 			}
 		}
 
@@ -94,7 +99,8 @@ wrap_render_handler! {
 		) -> ::std::os::raw::c_int {
 			let Some(info) = screen_info else { return 0 };
 			info.device_scale_factor = 1.0;
-			let rect = Rect { x: 0, y: 0, width: self.shared.width, height: self.shared.height };
+			let (width, height) = self.shared.size();
+			let rect = Rect { x: 0, y: 0, width, height };
 			info.rect = rect.clone();
 			info.available_rect = rect;
 			1

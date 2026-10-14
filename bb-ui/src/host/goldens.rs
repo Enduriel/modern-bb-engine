@@ -46,9 +46,41 @@ pub fn tolerance(name: &str) -> Tolerance {
 		"world_combat" => tolerance
 			.ignore_boxes
 			.push("div.l-event-logs-container".into()),
+		// The original's UI scale is a page zoom, and its 8px font minimum applies to
+		// zoomed sizes: `body` stays 6.25px (reported 6px) at 1.5, where ours is 8px.
+		// Only text that sets no size of its own sees it; vanilla's all does.
+		UI_SCALE_SCREEN => {
+			tolerance.page_zoom = 1.5;
+			tolerance.ignore_styles.push("font-size".into());
+		}
 		_ => {}
 	}
 	tolerance
+}
+
+/// The main menu at UI scale 1.5 (`probes/ui_scale.{nut,js}`): the original lays the page
+/// out at the screen size divided by the scale.
+pub const UI_SCALE_SCREEN: &str = "main_menu_ui150";
+
+/// Set the UI scale to `scale` the way the Options screen does.
+fn set_ui_scale(session: &UiSession, scale: f64) -> Result<(), String> {
+	session.engine().run_script(
+		&format!(
+			"local m = ::Settings.getVideoMode(); m.UIScale = {scale:.2}; ::Settings.setVideoMode(m);"
+		),
+		"ui_scale",
+	)
+}
+
+/// From the main menu: set the UI scale to 1.5 as the probe does, snapshot the menu once
+/// it has settled, and set it back.
+pub fn capture_ui_scale(session: &UiSession) -> Result<Snapshot, String> {
+	set_ui_scale(session, 1.5)?;
+	session.run_frames(3.0)?;
+	let snapshot = session.snapshot();
+	set_ui_scale(session, 1.0)?;
+	session.run_frames(1.0)?;
+	snapshot
 }
 
 /// The world's goldens, in capture order (`probes/world_golden.js`): right after a new
