@@ -182,6 +182,7 @@ pub fn world_quads<'a>(
 		let anchor = [tile.pos.0 as f32, tile.pos.1 as f32];
 		if !tile.brush.is_empty() {
 			let key = anchor[1] as i64;
+			let pushed = drawables.len();
 			push(
 				&mut drawables,
 				Layer::Terrain,
@@ -191,6 +192,13 @@ pub fn world_quads<'a>(
 				[0.0; 2],
 				Look::PLAIN,
 			);
+			// A flipped tile swaps its texture's left and right, in place (`0x573ab3`).
+			if tile.flipped {
+				if let Some(d) = drawables.get_mut(pushed) {
+					let uv = &mut d.quad.uv;
+					(uv[0][0], uv[1][0], uv[2][0], uv[3][0]) = (uv[1][0], uv[0][0], uv[3][0], uv[2][0]);
+				}
+			}
 		}
 		for detail in &tile.details {
 			let look = Look {

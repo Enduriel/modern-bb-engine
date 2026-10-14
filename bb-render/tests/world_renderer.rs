@@ -24,12 +24,17 @@ impl FileSource for Files {
 
 /// A 2×2 PNG of one colour.
 fn solid_png(rgba: [u8; 4]) -> Vec<u8> {
+	columns_png(rgba, rgba)
+}
+
+/// A 2×2 PNG, its left column `left` and its right `right`.
+fn columns_png(left: [u8; 4], right: [u8; 4]) -> Vec<u8> {
 	let mut out = Vec::new();
 	let mut encoder = png::Encoder::new(&mut out, 2, 2);
 	encoder.set_color(png::ColorType::Rgba);
 	encoder.set_depth(png::BitDepth::Eight);
 	let mut writer = encoder.write_header().unwrap();
-	writer.write_image_data(&rgba.repeat(4)).unwrap();
+	writer.write_image_data(&[left, right, left, right].concat()).unwrap();
 	writer.finish().unwrap();
 	out
 }
@@ -101,6 +106,7 @@ fn atlases_load_on_first_use() {
 			terrain: 2,
 			discovered: true,
 			brush: "dot".into(),
+			flipped: false,
 			details: Vec::new(),
 		}],
 		entities: Vec::new(),
@@ -134,6 +140,52 @@ fn atlases_load_on_first_use() {
 		&[255, 255, 255, 255],
 		"the sprite is drawn"
 	);
+}
+
+#[test]
+fn flipped_tiles_mirror_their_picture_in_place() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	const RED: [u8; 4] = [255, 0, 0, 255];
+	const BLUE: [u8; 4] = [0, 0, 255, 255];
+	let files = Files(HashMap::from([("gfx/test.png".to_string(), columns_png(RED, BLUE))]));
+	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	let registry = registry();
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 4,
+		height: 4,
+	};
+	let target = RenderTarget::new(&gpu, 4, 4);
+	let mut left_pixel = |flipped: bool| {
+		let scene = WorldScene {
+			tiles: vec![SceneTile {
+				col: 0,
+				row: 0,
+				pos: (0.0, 0.0),
+				terrain: 2,
+				discovered: true,
+				brush: "dot".into(),
+				flipped,
+				details: Vec::new(),
+			}],
+			fog_of_war: false,
+			..WorldScene::default()
+		};
+		renderer.draw(&gpu, &target, &scene, &registry, &view, Atlases::WaitForAll);
+		let image = target.read(&gpu).expect("read back");
+		// The 2×2 sprite covers pixels 1 and 2 of row 1.
+		let at = (4 + 1) * 4;
+		<[u8; 4]>::try_from(&image.rgba[at..at + 4]).unwrap()
+	};
+	assert_eq!(left_pixel(false), RED);
+	assert_eq!(left_pixel(true), BLUE, "the right column shows on the left");
 }
 
 #[test]

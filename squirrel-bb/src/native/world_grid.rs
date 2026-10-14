@@ -821,6 +821,7 @@ impl WorldGrid {
 				terrain: t.type_,
 				discovered: t.is_discovered,
 				brush: t.brush.clone(),
+				flipped: t.is_flipped,
 				details: t.details.iter().map(|d| d.borrow().clone()).collect(),
 			})
 			.collect()

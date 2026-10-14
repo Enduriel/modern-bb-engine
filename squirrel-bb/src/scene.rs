@@ -126,6 +126,8 @@ pub struct SceneTile {
 	pub discovered: bool,
 	/// The terrain brush (`""` if unset).
 	pub brush: String,
+	/// `IsFlipped`: the terrain's picture mirrored in place (badlands set it at random).
+	pub flipped: bool,
 	/// Its decorations, in spawn order.
 	pub details: Vec<SceneDetail>,
 }
