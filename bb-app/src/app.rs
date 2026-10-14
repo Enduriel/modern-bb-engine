@@ -41,6 +41,9 @@ pub struct Options {
 	pub settings: Option<PathBuf>,
 	/// Squirrel to run after so many frames (`--at FRAMES CODE`).
 	pub at: Vec<(u64, String)>,
+	/// Where saves go (`--saves DIR`); the system's place for them otherwise
+	/// (`squirrel_bb::platform::saves_dir`), or memory without one.
+	pub saves: Option<PathBuf>,
 }
 
 /// Everything that exists once the window does.
@@ -172,6 +175,13 @@ impl App {
 		}
 		if let Some(mib) = self.settings.texture_budget_mib() {
 			game.set_texture_budget(mib << 20);
+		}
+		match options.saves.clone().or_else(squirrel_bb::platform::saves_dir) {
+			Some(dir) => {
+				eprintln!("saves: {}", dir.display());
+				game.keep_saves_in(dir);
+			}
+			None => eprintln!("saves: in memory only (no folder for them)"),
 		}
 		let size = window.inner_size();
 		eprintln!(

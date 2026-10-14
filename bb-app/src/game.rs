@@ -63,6 +63,12 @@ impl Game {
 		Ok(game)
 	}
 
+	/// Keep the campaign's saves as files in `dir` (made when first saved to), rather than
+	/// in memory. Their Save and Load menus read it when they open.
+	pub fn keep_saves_in(&self, dir: std::path::PathBuf) {
+		self.engine().saves().set_directory(dir);
+	}
+
 	/// The scripts and their UI.
 	pub fn front(&self) -> &Front {
 		&self.front

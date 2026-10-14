@@ -3,7 +3,7 @@
 //! ```text
 //! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--world-size COLSxROWS]
 //!                                    [--shot FRAMES OUT.png] [--mute] [--devtools PORT]
-//!                                    [--settings PATH] [--at FRAMES CODE]...
+//!                                    [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) into a new campaign
@@ -12,7 +12,9 @@
 //! 140x170 (vanilla's worldgen needs more than 130x130). `--shot` saves the frame after
 //! that many frames and quits; `--at` runs the Squirrel `CODE` after that many frames
 //! (for scripted runs). `--settings` reads and keeps the settings in that file instead
-//! of the system's place for them. Built with `--features
+//! of the system's place for them, and `--saves` keeps the saves in that folder instead
+//! of the system's place for them (`battle-brothers-modern/savegames` in the user's data
+//! folder; never the original's). Built with `--features
 //! ui`, the game's real UI is drawn over it and takes the input it's under, and
 //! `--devtools` serves Chrome DevTools for its page on localhost at that port. The sound
 //! plays on the default output device, unless `--mute`. With `BB_STATS=1` the game's
@@ -37,6 +39,7 @@ fn options() -> Result<app::Options, String> {
 		devtools: None,
 		settings: None,
 		at: Vec::new(),
+		saves: None,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -58,6 +61,7 @@ fn options() -> Result<app::Options, String> {
 			}
 			"--devtools" => return Err("--devtools needs bb built with --features ui".to_string()),
 			"--settings" => options.settings = Some(PathBuf::from(value()?)),
+			"--saves" => options.saves = Some(PathBuf::from(value()?)),
 			"--at" => {
 				let frames = value()?.parse().map_err(|_| "--at FRAMES CODE")?;
 				options.at.push((frames, value()?));

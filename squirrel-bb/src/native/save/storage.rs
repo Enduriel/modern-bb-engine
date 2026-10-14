@@ -5,6 +5,11 @@
 //! what the scripts wrote, in save order. Files in the original's container (its saves,
 //! and the storages `PersistenceManager` writes) are read by [`decode`] too. Saves go to
 //! a directory as `<name>.sav`, or, with no directory (tests, tools), stay in memory.
+//!
+//! A save is written whole or not at all: into a temporary file next to it, flushed to
+//! the disk, then renamed over the old one (and the folder flushed), so a crash or a
+//! full disk mid-write leaves the old save as it was. (The original writes in place: a
+//! save interrupted while the game was in trouble came out corrupt.)
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -36,7 +41,8 @@ impl Storage {
 			}
 			Storage::Dir(dir) => {
 				std::fs::create_dir_all(dir).map_err(|e| format!("save directory: {e}"))?;
-				std::fs::write(Self::path(dir, name), bytes).map_err(|e| format!("writing save {name}: {e}"))
+				let temp = write_temp(dir, name, &bytes).map_err(|e| format!("writing save {name}: {e}"))?;
+				commit(dir, &temp, &Self::path(dir, name)).map_err(|e| format!("writing save {name}: {e}"))
 			}
 		}
 	}
@@ -84,6 +90,28 @@ impl Storage {
 			}
 		}
 	}
+}
+
+/// Save `name`'s bytes in a temporary file in `dir` (not a `.sav`, so not listed),
+/// flushed to the disk; its path.
+fn write_temp(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+	use std::io::Write;
+	let temp = dir.join(format!("{name}.sav.writing"));
+	let mut file = std::fs::File::create(&temp)?;
+	file.write_all(bytes)?;
+	file.sync_all()?;
+	Ok(temp)
+}
+
+/// Put the written `temp` in place of `path` at once, and flush the folder (where the
+/// system can) so the rename itself is on the disk.
+fn commit(dir: &std::path::Path, temp: &std::path::Path, path: &std::path::Path) -> std::io::Result<()> {
+	std::fs::rename(temp, path)?;
+	#[cfg(unix)]
+	std::fs::File::open(dir)?.sync_all()?;
+	#[cfg(not(unix))]
+	let _ = dir;
+	Ok(())
 }
 
 /// Which format a file is in.
@@ -170,6 +198,53 @@ mod tests {
 		assert_eq!((body.u8().unwrap(), body.u8().unwrap(), body.u8().unwrap()), (1, 2, 3));
 		storage.delete("slot1");
 		assert!(storage.names().is_empty());
+	}
+
+	/// A fresh, empty folder for one test, removed again by `Drop`.
+	struct Folder(PathBuf);
+
+	impl Folder {
+		fn new(test: &str) -> Folder {
+			let dir = std::env::temp_dir().join(format!("bb-saves-{test}-{}", std::process::id()));
+			let _ = std::fs::remove_dir_all(&dir);
+			Folder(dir)
+		}
+	}
+
+	impl Drop for Folder {
+		fn drop(&mut self) {
+			let _ = std::fs::remove_dir_all(&self.0);
+		}
+	}
+
+	#[test]
+	fn saves_in_a_folder_are_written_whole_and_replaced_whole() {
+		let folder = Folder::new("whole");
+		let storage = Storage::Dir(folder.0.clone());
+		storage.write("slot1", b"first".to_vec()).unwrap();
+		assert_eq!(storage.read("slot1").unwrap(), b"first");
+		storage.write("slot1", b"second".to_vec()).unwrap();
+		assert_eq!(storage.read("slot1").unwrap(), b"second");
+		assert_eq!(storage.names(), ["slot1"]);
+		// Nothing is left of the writing.
+		let files: Vec<_> = std::fs::read_dir(&folder.0).unwrap().flatten().map(|e| e.file_name()).collect();
+		assert_eq!(files, ["slot1.sav"]);
+		storage.delete("slot1");
+		assert!(storage.names().is_empty() && !storage.exists("slot1"));
+	}
+
+	#[test]
+	fn a_save_cut_short_leaves_the_old_one() {
+		let folder = Folder::new("cut");
+		let storage = Storage::Dir(folder.0.clone());
+		storage.write("slot1", b"the old save".to_vec()).unwrap();
+		// A crash after writing the new bytes, before they're put in place.
+		write_temp(&folder.0, "slot1", b"the new sa").unwrap();
+		assert_eq!(storage.read("slot1").unwrap(), b"the old save");
+		assert_eq!(storage.names(), ["slot1"], "the leftover isn't a save");
+		// The next save goes through over the leftover.
+		storage.write("slot1", b"the new save".to_vec()).unwrap();
+		assert_eq!(storage.read("slot1").unwrap(), b"the new save");
 	}
 
 	#[test]
