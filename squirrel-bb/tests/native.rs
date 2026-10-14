@@ -141,8 +141,9 @@ fn color_set_errors_are_recoverable_and_assignment_yields_the_value() {
 fn color_channels_mask_out_of_range_values() {
 	vm().run_script(
 		r#"
-			local c = createColorRGB(300, 0, 0);   // 300 & 0xff == 44
-			assert(c.R == 44);
+			// Channels are 0-1 floats scaled by 255 into a wrapping byte (probed).
+			local c = createColorRGB(300, 0, 0);   // 76500 & 0xff == 212
+			assert(c.R == 212);
 			c.A = -1;                               // (-1) & 0xff == 255
 			assert(c.A == 255);
 			"#,
@@ -158,8 +159,9 @@ fn color_rgb_and_white_factories() {
 			local w = createColorWhite();
 			assert(w.R == 255 && w.G == 255 && w.B == 255 && w.A == 255);
 
-			local e = createColorRGB(10, 20, 30);
-			assert(e.R == 10 && e.G == 20 && e.B == 30 && e.A == 255);
+			// Channels are 0-1 floats (values probed in the original).
+			local e = createColorRGB(0.5, 1.0, 0.25);
+			assert(e.R == 127 && e.G == 255 && e.B == 63 && e.A == 255);
 			"#,
 		"color_factories",
 	)
@@ -171,7 +173,7 @@ fn color_vary_rgb_is_identity_at_zero_and_seed_reproducible() {
 	vm().run_script(
 		r##"
 			// factor 0 => each channel * 1.0 => unchanged (deterministic).
-			local c = createColorRGB(100, 150, 200);
+			local c = createColor("6496c8ff");
 			c.varyRGB(0.0, 0.0, 0.0);
 			assert(c.R == 100 && c.G == 150 && c.B == 200 && c.A == 255);
 
@@ -238,14 +240,17 @@ fn tile_transition_and_tactical_and_brush_natives() {
 }
 
 #[test]
-fn color_tolerates_overlong_hex_typo() {
-	// vanilla has a few 9-char typos like "fffffff00"; the engine truncates.
+fn color_overlong_hex_typo_is_transparent_black() {
+	// vanilla has a few 9-char typos like "fffffff00": the original's hex read
+	// overflows and leaves 0, so they are transparent black (probed).
 	vm().run_script(
-		r#"
-			local c = createColor("fffffff00");  // truncated to "fffffff0"
-			assert(c.R == 255 && c.G == 255 && c.B == 255 && c.A == 0xf0);
-			"#,
+		r##"
+			local c = createColor("fffffff00");
+			assert(c.R == 0 && c.G == 0 && c.B == 0 && c.A == 0);
+			local h = createColor("#ff804020");   // with '#': low 24 bits, alpha 255
+			assert(h.R == 0x80 && h.G == 0x40 && h.B == 0x20 && h.A == 255);
+			"##,
 		"color_typo",
 	)
-	.expect("over-long hex is tolerated");
+	.expect("over-long hex reads as the original does");
 }

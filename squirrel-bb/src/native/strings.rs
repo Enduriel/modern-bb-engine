@@ -57,10 +57,14 @@ pub(crate) fn install(vm: &mut SQVM) {
 	let build = vm.make_closure(|template: &str, vars: SqArray| -> String {
 		build_text_from_template(template, &vars)
 	});
-	let is_first = vm.make_closure(|text: &str, chars: SqArray| -> bool {
+	let is_first = vm.make_closure(|text: &str, chars: SqRef| -> bool {
 		// true if `text` starts with any of the strings in `chars` (vanilla passes
-		// single characters, so this is a first-character membership test).
-		chars.iter::<String>().any(|c| text.starts_with(&c))
+		// single characters, so this is a first-character membership test). Anything
+		// but an array is false, as in the original (parity probe `menu/strings`).
+		match chars {
+			SqRef::Array(chars) => chars.iter::<String>().any(|c| text.starts_with(&c)),
+			_ => false,
+		}
 	});
 	let remove_begin = vm.make_closure(|prefix: &str, text: &str| -> String {
 		text.strip_prefix(prefix).unwrap_or(text).to_string()

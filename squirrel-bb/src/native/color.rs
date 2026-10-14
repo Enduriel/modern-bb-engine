@@ -48,23 +48,45 @@ impl Color {
 
 /// Parse a color string into packed ARGB.
 ///
-/// Accepts `#rrggbb` (alpha defaults to `0xff`) and `rrggbbaa` (alpha last). A
-/// leading `#` is optional; only the first 8 hex digits are used and any extra
-/// trailing characters are ignored (vanilla has a few 9-char typos the original
-/// engine tolerates). Anything shorter than 6 hex digits falls back to opaque black.
-fn parse_color(text: &str) -> u32 {
-	let body = text.strip_prefix('#').unwrap_or(text);
-	let hex: String = body.chars().take_while(char::is_ascii_hexdigit).collect();
-	let byte = |range: std::ops::Range<usize>| u32::from_str_radix(&hex[range], 16).unwrap_or(0);
-	if hex.len() >= 8 {
-		let (r, g, b, a) = (byte(0..2), byte(2..4), byte(4..6), byte(6..8));
-		(a << 24) | (r << 16) | (g << 8) | b
-	} else if hex.len() >= 6 {
-		let (r, g, b) = (byte(0..2), byte(2..4), byte(4..6));
-		0xff00_0000 | (r << 16) | (g << 8) | b
-	} else {
-		0xff00_0000
+/// `createColor(text)` as the original parses it (bound at `0x5056a0`, parser
+/// disassembled at `0x521e90`, edge cases probed):
+/// - with a leading `#`, the rest is read as a hex `u32` (a C++ stream, `std::hex`) and
+///   only its low 24 bits are used, as RGB, with alpha always 255: `#ff804020` is
+///   R `0x80`, G `0x40`, B `0x20`, A 255. A failed read (or an empty string) leaves
+///   the original's return slot uninitialized, so it returns stack garbage (a stale
+///   pointer when probed); `None` here, and the caller uses transparent black;
+/// - without `#`, the whole string is a hex `u32` read as RRGGBBAA (vanilla's usual
+///   form). That read's failure is not checked.
+fn parse_color(text: &str) -> Option<u32> {
+	if text.is_empty() {
+		return None;
 	}
+	match text.strip_prefix('#') {
+		Some(rest) => {
+			let v = read_hex_u32(rest).ok()?;
+			Some(0xff00_0000 | (v & 0x00ff_ffff))
+		}
+		None => {
+			let v = read_hex_u32(text).unwrap_or_else(|v| v);
+			let (r, g, b, a) = (v >> 24, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff);
+			Some((a << 24) | (r << 16) | (g << 8) | b)
+		}
+	}
+}
+
+/// A C++ `istream >> std::hex >> unsigned` read, as MSVC's runtime does it: leading
+/// whitespace and an optional `0x` are skipped and hex digits are read until the first
+/// other character. `Err` carries the value left in the variable on failure, which is
+/// 0 both when no digit was read and on overflow (probed: vanilla's 9-digit typos such
+/// as `fffffff00` come out as transparent black).
+fn read_hex_u32(text: &str) -> Result<u32, u32> {
+	let t = text.trim_start();
+	let t = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")).unwrap_or(t);
+	let digits: String = t.chars().take_while(char::is_ascii_hexdigit).collect();
+	if digits.is_empty() {
+		return Err(0);
+	}
+	u32::from_str_radix(&digits, 16).map_err(|_| 0)
 }
 
 /// Register the `color` class and its three factory functions, sharing `prng`
@@ -85,13 +107,14 @@ pub(crate) fn install(vm: &mut SQVM, prng: Prng) {
 		)
 		.build(vm);
 
-	// createColor("#rrggbb" | "rrggbbaa") -> color
+	// createColor("#rrggbb" | "rrggbbaa") -> color (see parse_color)
 	let from_hex = color.clone();
 	vm.register("createColor", move |vm: &SQVM, hex: &str| {
+		// The original returns uninitialized memory here (see parse_color).
 		from_hex.instantiate(
 			vm,
 			Color {
-				argb: parse_color(hex),
+				argb: parse_color(hex).unwrap_or(0),
 			},
 		)
 	});
@@ -101,7 +124,18 @@ pub(crate) fn install(vm: &mut SQVM, prng: Prng) {
 	vm.register(
 		"createColorRGB",
 		move |vm: &SQVM, r: Number, g: Number, b: Number| {
-			let pack = |v: f64| (v as i64 as u32) & 0xff;
+			// Channels are 0-1 floats, scaled in f32 and truncated into a byte, which
+			// wraps (`createColorRGB(10, 20, 30)` has G 236), as the original does
+			// (disassembled at `0x5056c0`).
+			let pack = |v: f64| {
+				let scaled = (v as f32) * 255.0;
+				let n = if scaled.is_nan() || !(-2_147_483_648.0..2_147_483_648.0).contains(&scaled) {
+					i32::MIN
+				} else {
+					scaled as i32
+				};
+				(n as u32) & 0xff
+			};
 			let argb = 0xff00_0000 | (pack(r.0) << 16) | (pack(g.0) << 8) | pack(b.0);
 			from_rgb.instantiate(vm, Color { argb })
 		},
