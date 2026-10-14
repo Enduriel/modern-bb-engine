@@ -37,6 +37,8 @@ struct Play {
 	session: UiSession,
 	shots: Option<PathBuf>,
 	step: std::cell::Cell<u32>,
+	/// The last event answer and how many times running it was given.
+	last_answer: std::cell::RefCell<(String, u32)>,
 }
 
 impl Play {
@@ -387,10 +389,21 @@ fn contract(p: &Play) -> Result<(), String> {
 			return -1;
 		};"#,
 	)?;
-	let town = enter_town_where(p, "::__calmContract(s) >= 0")?;
+	// The offer may be gone by the time the company gets there (contracts run out):
+	// then the next town offering one.
+	let mut tries = 0;
+	let (town, index) = loop {
+		let town = enter_town_where(p, "::__calmContract(s) >= 0")?;
+		let index = p.int("::__calmContract(::World.State.getCurrentTown())")?;
+		if index >= 0 {
+			break (town, index);
+		}
+		tries += 1;
+		ensure(tries < 5, "no delivery or escort to be had")?;
+		println!("the offer in {town} has gone: on to the next town");
+	};
 	let money = || p.int("::World.Assets.getMoney()");
 	let start = money()?;
-	let index = p.int("::__calmContract(::World.State.getCurrentTown())")?;
 	println!("a contract in {town}: {}", p.text(&format!("::World.State.getCurrentTown().getContracts()[{index}].getType()"))?);
 	during("opening a contract", p.session.click_when_ready(&format!("css:img.is-contract.contract{index}"), STEP))?;
 	let mut advance = 0;
@@ -417,11 +430,25 @@ fn contract(p: &Play) -> Result<(), String> {
 	Ok(())
 }
 
-/// Answer the event on screen with its first option, as a player in a hurry does.
+/// Answer the event on screen with its first option, as a player in a hurry does; but
+/// after the same answer three times running (another roll of the dice, another
+/// round…), its last option, as a player who has had enough does.
 fn answer_event(p: &Play) -> Result<(), String> {
 	let event = p.text("::World.Events.hasActiveEvent() ? ::World.Events.m.ActiveEvent.getID() : \"(none)\"")?;
-	let option = p.session.eval("(function () { var b = jQuery('[id^=\"button-\"] .ui-control:visible').first(); return b.length ? b.text().trim() : ''; })()")?.to_text();
-	during(&format!("answering {event} with {option}"), p.session.click_when_ready("css:[id^=\"button-\"] .ui-control", STEP))?;
+	let options = "[id^=\"button-\"] .ui-control";
+	during(&format!("waiting for {event}'s options"), settled(p, |p| nth(p, options, 0).is_ok()))?;
+	let texts = p.session.eval(&format!("(function () {{ return jQuery('{options}:visible').map(function () {{ return jQuery(this).text().trim(); }}).get(); }})()"))?;
+	let texts: Vec<String> = texts.as_array().map(|a| a.iter().map(|t| t.to_text()).collect()).unwrap_or_default();
+	let first = format!("{event} {}", texts.first().cloned().unwrap_or_default());
+	let repeats = {
+		let last = p.last_answer.borrow();
+		if last.0 == first { last.1 } else { 0 }
+	};
+	let n = if repeats >= 3 && texts.len() > 1 { texts.len() - 1 } else { 0 };
+	let option = texts.get(n).cloned().unwrap_or_default();
+	let (x, y) = nth(p, options, n)?;
+	during(&format!("answering {event} with {option}"), p.session.click_at(x, y))?;
+	*p.last_answer.borrow_mut() = if n == 0 { (first, repeats + 1) } else { (String::new(), 0) };
 	println!("event {event}: {option}");
 	Ok(())
 }
@@ -485,6 +512,7 @@ fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), S
 			p.session.step(1000.0 / 60.0)?;
 		}
 		"results" => {
+			p.script("::__fightResult <- ::Tactical.Entities.getCombatResult();")?;
 			// After a win, "Continue" goes on to the loot (take it all) and then leaves;
 			// after a retreat or a loss there's nothing to take, and it reads "Leave".
 			if p.session.shows_text("Continue")? {
@@ -554,19 +582,27 @@ fn adventure(p: &Play) -> Result<(), String> {
 }
 
 /// A battle: the company meets the nearest hostile party, engages through the combat
-/// dialog, fights it out (the AI playing the company), and takes the loot; back on the
-/// map, the stash holds what was looted.
+/// dialog, fights it out (the AI playing the company, the fallen dying as the player's),
+/// and takes the loot; back on the map, the loading screen is gone and the world shows.
 fn battle(p: &Play) -> Result<(), String> {
 	p.script(
+		r#"::__nearestFoe <- function() {
+			local player = ::World.State.getPlayer(), target = null, best = 0;
+			foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
+			{
+				if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || e.getTroops().len() == 0) continue;
+				local d = e.getDistanceTo(player);
+				if (target == null || d < best) { target = e; best = d; }
+			}
+			return target;
+		};"#,
+	)?;
+	// Hostile parties take to the roads as the days go by.
+	leave_town(p)?;
+	during("waiting for a hostile party", out_on_the_map_until(p, "::__nearestFoe() != null", STEP * 3))?;
+	p.script(
 		r#"
-		local player = ::World.State.getPlayer(), target = null, best = 0;
-		foreach (e in ::World.getAllEntitiesAtPos(player.getPos(), 100000.0))
-		{
-			if (!e.isParty() || e.getID() == player.getID() || e.isAlliedWithPlayer() || e.getTroops().len() == 0) continue;
-			local d = e.getDistanceTo(player);
-			if (target == null || d < best) { target = e; best = d; }
-		}
-		if (target == null) throw "no hostile party to fight";
+		local player = ::World.State.getPlayer(), target = ::__nearestFoe();
 		::__foe <- target.getName();
 		local tp = target.getPos();
 		player.setPos(::createVec(tp.X - 30, tp.Y));
@@ -591,8 +627,11 @@ fn battle(p: &Play) -> Result<(), String> {
 		answer(p, &facing, &last, &mut battles)?;
 		last = facing;
 	}
-	let result = p.int("::Tactical.Entities.getCombatResult()").unwrap_or(-1);
-	println!("fought {foe}: stash {before} -> {} (result {result})", stash()?);
+	let result = p.int("(\"__fightResult\" in getroottable()) ? ::__fightResult : -1")?;
+	let roster = p.int("::World.getPlayerRoster().getSize()")?;
+	during("back on the map", p.until("!::LoadingScreen.isVisible() && ::World.State.m.WorldScreen.isVisible()", STEP))?;
+	p.shot("after the battle");
+	println!("fought {foe}: stash {before} -> {} (result {result}), {roster} brothers left", stash()?);
 	Ok(())
 }
 
@@ -612,12 +651,24 @@ fn out_on_the_map_until(p: &Play, cond: &str, timeout: Duration) -> Result<(), S
 	Ok(())
 }
 
-/// Leave the town the company is in, if any, and wait until it's out.
+/// Leave the town the company is in, if any, and wait until it's out. The town screen
+/// may be away for a moment (a contract's or an event's screen over it): leave once
+/// it's back.
 fn leave_town(p: &Play) -> Result<(), String> {
-	if p.int("::World.State.m.WorldTownScreen.isVisible() ? 1 : 0")? == 1 {
-		during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+	let deadline = std::time::Instant::now() + STEP;
+	loop {
+		let state = p.text("(::World.State.m.WorldTownScreen.isVisible() ? \"shown\" : \"away\") + \" \" + (::World.State.m.LastEnteredTown == null ? \"out\" : \"in\")")?;
+		match state.as_str() {
+			"away out" => return Ok(()),
+			"shown in" | "shown out" if !p.session.animating()? => {
+				during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
+				p.session.pump_until(Duration::from_secs(2), |s| !s.animating().unwrap_or(true));
+			}
+			_ if p.text(FACING)? == "event" => answer_event(p)?,
+			_ => p.session.step(1000.0 / 60.0)?,
+		}
+		ensure(std::time::Instant::now() < deadline, format!("still in town ({state})"))?;
 	}
-	during("leaving the town", p.until("!::World.State.m.WorldTownScreen.isVisible() && ::World.State.m.LastEnteredTown == null", STEP))
 }
 
 /// The retinue: a seat opens at 'Recognized' renown (250), and the cook joins once
@@ -810,6 +861,12 @@ fn play(p: &Play) -> Result<(), String> {
 			new_campaign(p)?;
 			return town_leave(p);
 		}
+		Ok("battle") => {
+			new_campaign(p)?;
+			bb_engine::harness::install_autoplay(p.session.engine())?;
+			p.script("::__autoplayFight = true; ::__autoplayDieAsPlayers = true;")?;
+			return battle(p);
+		}
 		Ok("retinue") => {
 			new_campaign(p)?;
 			retinue(p)?;
@@ -837,6 +894,9 @@ fn play(p: &Play) -> Result<(), String> {
 	save_and_load(p, "play session")?;
 	contract(p)?;
 	adventure(p)?;
+	// Fair game again: a battle with the nearest hostile party.
+	p.script("local pl = ::World.State.getPlayer(); pl.m.IsAttackable = true; pl.m.IsAttackableByAI = true;")?;
+	battle(p)?;
 	let problems: Vec<String> = p
 		.session
 		.log()
@@ -880,7 +940,7 @@ fn run(data_dir: &Path) -> Result<(), String> {
 	if let Some(dir) = &shots {
 		let _ = std::fs::create_dir_all(dir);
 	}
-	let p = Play { session, shots, step: std::cell::Cell::new(0) };
+	let p = Play { session, shots, step: std::cell::Cell::new(0), last_answer: Default::default() };
 	let played = play(&p);
 	stub_report(&p);
 	played.map_err(|error| {
