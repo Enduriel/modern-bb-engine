@@ -364,6 +364,27 @@ pub fn world_quads<'a>(
 		);
 	}
 
+	// Particle effects: key 0 in the effects layer, after the waves.
+	for particle in scene.particles.iter().filter(|p| on_screen((p.pos.0.into(), p.pos.1.into()))) {
+		let [a, r, g, b] = particle.color.to_be_bytes();
+		let look = Look {
+			scale: particle.scale,
+			alpha: f32::from(a),
+			rotation: particle.rotation,
+			tint: [r, g, b],
+			..Look::PLAIN
+		};
+		push(
+			&mut drawables,
+			Layer::Effects,
+			0,
+			&particle.brush,
+			[particle.pos.0, particle.pos.1],
+			[0.0; 2],
+			look,
+		);
+	}
+
 	if let Some(font) = fonts.label {
 		for entity in scene
 			.entities

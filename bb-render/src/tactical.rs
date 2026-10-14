@@ -469,7 +469,19 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		let on_it = standing.get(&index).map_or(&[][..], |v| &v[..]);
 		draw_dressing(&mut b, tile, on_it, Fade::of(scene, tile, &unit_tiles));
 	}
-	// The units' bars, then the weather over everything.
+	// Particle effects, the units' bars, then the weather over everything.
+	for particle in &scene.particles {
+		let [a, r, g, b_] = particle.color.to_be_bytes();
+		let look = Look {
+			scale: particle.scale,
+			alpha: f32::from(a),
+			rotation: particle.rotation,
+			tint: [r, g, b_],
+			..Look::PLAIN
+		};
+		let level = scene.camera.level.clamp(0, 3) as u32;
+		b.placed(&particle.brush, [particle.pos.0, particle.pos.1], look, particle.saturation, level);
+	}
 	let level = scene.camera.level.clamp(0, 3) as u32;
 	for entity in &scene.entities {
 		if let Some(values) = entity.overlay {

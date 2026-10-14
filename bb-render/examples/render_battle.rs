@@ -7,7 +7,8 @@
 //! cargo run --release -p bb-render --example render_battle -- OUT.png [WIDTHxHEIGHT] [ZOOM]
 //! ```
 //!
-//! `BB_LIST_UNITS=1` lists the units with their screen positions and bars
+//! `BB_PARTICLES=NAME` spawns `Const.Tactical.<NAME>` (e.g. `FireParticles`) on the
+//! camera's tile half a second before the shot. `BB_LIST_UNITS=1` lists the units with their screen positions and bars
 //! (`BB_LIST_ALL=1`: every entity, with its brushes).
 
 use std::path::Path;
@@ -84,13 +85,31 @@ fn main() {
 		frame(&engine);
 	}
 
+	// BB_PARTICLES=NAME: a `Const.Tactical.<NAME>` effect (e.g. FireParticles) on the
+	// camera's tile, run for half a second first.
+	if let Ok(name) = std::env::var("BB_PARTICLES") {
+		engine
+			.run_script(
+				&format!(
+					"local size = ::Tactical.getMapSize(); local tile = ::Tactical.getTileSquare(size.X / 2, size.Y / 2);
+					 foreach (e in ::Const.Tactical.{name})
+						::Tactical.spawnParticleEffect(false, e.Brushes, tile, e.Delay, e.Quantity, e.LifeTimeQuantity, e.SpawnRate, e.Stages, ::createVec(0, 40));"
+				),
+				"particles",
+			)
+			.expect("particles");
+		for _ in 0..30 {
+			frame(&engine);
+		}
+	}
 	let scene = engine.tactical_scene();
 	eprintln!(
-		"map {}x{}, camera {:?}, {} details",
+		"map {}x{}, camera {:?}, {} details, {} particles",
 		scene.width,
 		scene.height,
 		scene.camera,
-		scene.tiles.iter().map(|t| t.details.len()).sum::<usize>()
+		scene.tiles.iter().map(|t| t.details.len()).sum::<usize>(),
+		scene.particles.len()
 	);
 	if std::env::var_os("BB_LIST_UNITS").is_some() {
 		for e in scene.entities.iter().filter(|e| e.is_actor || std::env::var_os("BB_LIST_ALL").is_some()) {
