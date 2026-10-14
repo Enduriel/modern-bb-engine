@@ -8,7 +8,8 @@
 //! ```
 //!
 //! `BB_PARTICLES=NAME` spawns `Const.Tactical.<NAME>` (e.g. `FireParticles`) on the
-//! camera's tile half a second before the shot. `BB_LIST_UNITS=1` lists the units with their screen positions and bars
+//! camera's tile half a second before the shot. `BB_SCRIPT=CODE` runs Squirrel a tenth
+//! of a second before it. `BB_LIST_UNITS=1` lists the units with their screen positions and bars
 //! (`BB_LIST_ALL=1`: every entity, with its brushes).
 
 use std::path::Path;
@@ -99,6 +100,12 @@ fn main() {
 			)
 			.expect("particles");
 		for _ in 0..30 {
+			frame(&engine);
+		}
+	}
+	if let Ok(code) = std::env::var("BB_SCRIPT") {
+		engine.run_script(&code, "BB_SCRIPT").expect("BB_SCRIPT");
+		for _ in 0..6 {
 			frame(&engine);
 		}
 	}

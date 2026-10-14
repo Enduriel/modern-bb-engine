@@ -23,7 +23,7 @@
 //! after all the tiles.
 
 use bb_assets::SpriteRegistry;
-use squirrel_bb::scene::tactical::{SceneTacticalEntity, SceneTacticalTile, TacticalScene};
+use squirrel_bb::scene::tactical::{SceneOverlay, SceneTacticalEntity, SceneTacticalTile, TacticalScene};
 
 use crate::sprite::Quad;
 use crate::world::{
@@ -356,18 +356,22 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, standing: &[&SceneTa
 	}
 }
 
-/// Where a unit's bars sit from it (fitted to the original's screenshot to the pixel,
-/// three units agreeing), and each
-/// bar's drop and colour: head armour, body armour, hitpoints (`0x4b3250`). Each bar has
-/// a lighter twin under it (`#d0d3e5`, `#ffadad`) that shows what was just lost and
-/// fades; at rest only the bars show.
+/// Where a unit's bars sit from it (the original's `0x65f654`, which the screenshot
+/// fit matched to the pixel on three units), and each bar's drop, colour and its
+/// lost-value twin's colour: head armour, body armour, hitpoints (`0x4b3250`).
 const OVERLAY_OFFSET: [f32; 2] = [-1.0, 55.0];
 const OVERLAY_BARS: [(f32, u32); 3] = [(0.0, 0xff70_8090), (-7.0, 0xff70_8090), (-14.0, 0xffb3_1f1f)];
 
-/// A unit's bars (`createOverlay`): the frame's bottom, a bar per value
-/// (`entityoverlay_bar_N`, N the value in 24ths, none at 0), the frame's top. They are
-/// lit by the battle's light and lie under its clouds, as in the original's screenshot.
-fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, values: [f32; 3], level: u32) {
+/// Where the first status icon sits from the bars, and the step to the next: four to
+/// a row, rows stacking upwards (`0x4b42f0`).
+const OVERLAY_ICONS: [f32; 2] = [-30.0, 57.0];
+const OVERLAY_ICON_STEP: f32 = 20.0;
+
+/// A unit's bars (`createOverlay`), in the original's sprite order: the frame's
+/// bottom; per value its lost-value twin, then its bar (`entityoverlay_bar_N`, N the
+/// value in 24ths, none at 0); the frame's top; the status icons. They are lit by the
+/// battle's light and lie under its clouds, as in the original's screenshot.
+fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, overlay: &SceneOverlay, level: u32) {
 	let anchor = [entity.pos.0 as f32 + OVERLAY_OFFSET[0], entity.pos.1 as f32 + OVERLAY_OFFSET[1]];
 	let sprite = |b: &mut Builder, brush: &str, at: [f32; 2], color: u32| {
 		let [a, r, g, b_] = color.to_be_bytes();
@@ -378,15 +382,28 @@ fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, values: [f32; 3],
 		};
 		b.placed(brush, at, look, 1.0, level);
 	};
-	sprite(b, "entityoverlay_bottom", anchor, 0xffff_ffff);
-	for (value, (drop, color)) in values.iter().zip(OVERLAY_BARS) {
-		let steps = (value * 24.0 + 0.5) as i32;
+	let bar = |b: &mut Builder, steps: i32, drop: f32, color: u32| {
 		if steps > 0 {
 			let brush = format!("entityoverlay_bar_{}", steps.min(24));
 			sprite(b, &brush, [anchor[0], anchor[1] + drop], color);
 		}
+	};
+	sprite(b, "entityoverlay_bottom", anchor, 0xffff_ffff);
+	for ((steps, lost), (drop, color)) in overlay.bars.iter().zip(&overlay.lost).zip(OVERLAY_BARS) {
+		if let Some((before, lost_color)) = lost {
+			bar(b, *before, drop, *lost_color);
+		}
+		bar(b, *steps, drop, color);
 	}
 	sprite(b, "entityoverlay_top", anchor, 0xffff_ffff);
+	for (i, icon) in overlay.icons.iter().enumerate() {
+		let (column, row) = ((i % 4) as f32, (i / 4) as f32);
+		let at = [
+			anchor[0] + OVERLAY_ICONS[0] + column * OVERLAY_ICON_STEP,
+			anchor[1] + OVERLAY_ICONS[1] + row * OVERLAY_ICON_STEP,
+		];
+		sprite(b, icon, at, 0xffff_ffff);
+	}
 }
 
 /// The battle's clouds or fog over everything, each with its shadow, as the world's
@@ -484,8 +501,8 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	}
 	let level = scene.camera.level.clamp(0, 3) as u32;
 	for entity in &scene.entities {
-		if let Some(values) = entity.overlay {
-			draw_overlay(&mut b, entity, values, level);
+		if let Some(overlay) = &entity.overlay {
+			draw_overlay(&mut b, entity, overlay, level);
 		}
 	}
 	draw_clouds(&mut b, scene, view);
