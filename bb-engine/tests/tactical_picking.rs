@@ -102,3 +102,62 @@ fn the_tile_between_two_tiles_is_picked_at_their_midpoint() {
 	let wrong = SqTable::root(engine.vm()).get::<String>("__wrong").expect("result");
 	assert_eq!(wrong, "", "wrong tiles between");
 }
+
+/// The probe's tile pairs: from each sampled tile to these square-coord offsets.
+const BETWEEN_DELTAS: [(i64, i64); 14] =
+	[(1, 0), (0, 1), (2, 1), (1, 2), (3, 0), (0, 3), (2, -2), (-2, 3), (4, 1), (-3, -1), (5, 2), (1, -4), (6, 0), (-1, 5)];
+
+/// `getTileBetweenThisAnd` against the original, on a battle map it generated
+/// (`testdata/tile_between.txt`, captured from the original game 2026-10-14): its
+/// levels (`L x levels…`), the camera (`C level flipped`), and the tile between a tile
+/// and each of [`BETWEEN_DELTAS`] (`B x y answers…`, `-` off the map). The capture also
+/// holds each unit's `isOccludedByTerrain` (`O x,y bool`): all false on this nearly
+/// flat map, as the rule gives.
+#[test]
+fn tile_between_matches_the_original() {
+	const DATA: &str = include_str!("testdata/tile_between.txt");
+	let dir = Path::new(harness::STEAM_DATA_DIR);
+	if !dir.exists() {
+		eprintln!("skipping: {} not present", dir.display());
+		return;
+	}
+	let engine = harness::open_install(dir).expect("open install");
+	let camera = DATA.lines().find_map(|l| l.strip_prefix("C ")).expect("camera line");
+	let (level, flipped) = camera.split_once(' ').expect("level flipped");
+	let mut script = format!("::Tactical.resizeScene(32, 32); ::Tactical.getCamera().Level = {level}; ::Tactical.getCamera().IsFlipped = {flipped};\n");
+	for line in DATA.lines().filter(|l| l.starts_with("L ")) {
+		let mut f = line.split(' ').skip(1);
+		let x = f.next().unwrap();
+		for (y, lv) in f.next().unwrap().split(',').filter(|v| !v.is_empty()).enumerate() {
+			script += &format!("::Tactical.getTileSquare({x}, {y}).Level = {lv};\n");
+		}
+	}
+	engine.run_script(&script, "levels").expect("levels");
+	let mut checked = 0;
+	let mut wrong = Vec::new();
+	for line in DATA.lines().filter(|l| l.starts_with("B ")) {
+		let f: Vec<&str> = line.split(' ').collect();
+		let (sx, sy): (i64, i64) = (f[1].parse().unwrap(), f[2].parse().unwrap());
+		for (&(dx, dy), want) in BETWEEN_DELTAS.iter().zip(&f[3..]) {
+			if *want == "-" {
+				continue;
+			}
+			let got = bb_engine::tactical_player::eval_string(
+				&engine,
+				&format!(
+					"(function() {{ local m = ::Tactical.getTileSquare({sx}, {sy}).getTileBetweenThisAnd(::Tactical.getTileSquare({}, {})); return m.SquareCoords.X + \",\" + m.SquareCoords.Y; }})()",
+					sx + dx,
+					sy + dy
+				),
+			)
+			.unwrap()
+			.unwrap();
+			checked += 1;
+			if got != *want {
+				wrong.push(format!("({sx},{sy})→({},{}): {got}, original {want}", sx + dx, sy + dy));
+			}
+		}
+	}
+	assert!(checked > 300, "only {checked} pairs");
+	assert!(wrong.is_empty(), "{} of {checked} differ: {wrong:?}", wrong.len());
+}
