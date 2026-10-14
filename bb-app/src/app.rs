@@ -83,7 +83,13 @@ impl App {
 			height: size.height.max(1),
 			present_mode: wgpu::PresentMode::Fifo,
 			desired_maximum_frame_latency: 2,
-			alpha_mode: capabilities.alpha_modes[0],
+			// An opaque window where the compositor allows it (the frame's alpha is
+			// written as 1 anyway).
+			alpha_mode: if capabilities.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+				wgpu::CompositeAlphaMode::Opaque
+			} else {
+				capabilities.alpha_modes[0]
+			},
 			view_formats: Vec::new(),
 			color_space: wgpu::SurfaceColorSpace::Auto,
 		};

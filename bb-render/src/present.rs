@@ -1,6 +1,7 @@
 //! [`Presenter`]: a finished frame onto a window. The frame is an offscreen
 //! [`RenderTarget`] the size of the window; one screen-covering triangle copies it onto
-//! the surface's texture, whatever the surface's format.
+//! the surface's texture, whatever the surface's format. The window is opaque: the
+//! frame's alpha (what blending left in it) is not shown through.
 
 use crate::gpu::Gpu;
 use crate::target::RenderTarget;
@@ -26,7 +27,7 @@ fn vs_main(@builtin(vertex_index) i: u32) -> Out {
 
 @fragment
 fn fs_main(f: Out) -> @location(0) vec4<f32> {
-	return textureSample(frame, smp, f.uv);
+	return vec4<f32>(textureSample(frame, smp, f.uv).rgb, 1.0);
 }
 ";
 
