@@ -86,6 +86,14 @@ impl SQVM {
 		}
 	}
 
+	/// Run the cycle collector: free the objects that only reference cycles keep alive
+	/// (reference counting frees everything else as soon as it's unreachable). Objects
+	/// held by a [`SqStrongRef`](crate::SqStrongRef), the root table, the registry or a
+	/// running call's stack stay. Returns how many objects it freed.
+	pub fn collect_garbage(&self) -> i64 {
+		unsafe { squirrel_sys::sq_collectgarbage(self.ptr) }
+	}
+
 	/// The raw VM handle. Crate-internal: the safe wrappers in the sibling
 	/// modules go through this rather than touching the private `ptr` field.
 	pub(crate) fn as_ptr(&self) -> squirrel_sys::HSQUIRRELVM {
