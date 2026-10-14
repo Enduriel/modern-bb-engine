@@ -14,6 +14,9 @@ use crate::coui::SCHEME;
 ///
 /// Offscreen and headless: no display connection, software compositing (frames
 /// arrive in `on_paint`), no audio output, and none of Chrome's background services.
+/// The on-device AI model's performance class is given as "GPU blocked" (8, what
+/// Chrome for Testing assumes): otherwise, three minutes in, Chrome probes the GPU for
+/// it from a utility process and logs "Unable to get gpu adapter".
 const SWITCHES: &[(&str, Option<&str>)] = &[
 	("ozone-platform", Some("headless")),
 	("disable-gpu", None),
@@ -27,6 +30,7 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("disable-default-apps", None),
 	("password-store", Some("basic")),
 	("force-device-scale-factor", Some("1")),
+	("optimization-guide-performance-class", Some("8")),
 ];
 
 /// Chrome preferences for every page, set on CEF's UI thread once its context exists
