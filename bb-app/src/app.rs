@@ -29,6 +29,9 @@ pub struct Options {
 	pub mute: bool,
 	/// The world map's columns and rows (`--world-size 280x280`); vanilla's otherwise.
 	pub world_size: Option<(i64, i64)>,
+	/// Serve Chrome DevTools for the page on localhost at this port (`--devtools PORT`,
+	/// with the `ui` feature).
+	pub devtools: Option<u16>,
 }
 
 /// Everything that exists once the window does.
@@ -102,7 +105,8 @@ impl App {
 			.map_err(|e| format!("no surface for the window: {e}"))?;
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
-		let game = Game::boot(&gpu, &self.options.data_dir, &self.options.seed, !self.options.mute, self.options.world_size)?;
+		let options = &self.options;
+		let game = Game::boot(&gpu, &options.data_dir, &options.seed, !options.mute, options.world_size, options.devtools)?;
 		// The window opens at the game's screen size.
 		let (w, h) = game.screen();
 		let size = window.request_inner_size(PhysicalSize::new(w, h)).unwrap_or(window.inner_size());

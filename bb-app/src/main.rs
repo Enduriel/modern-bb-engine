@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--world-size COLSxROWS]
-//!                                    [--shot FRAMES OUT.png] [--mute]
+//!                                    [--shot FRAMES OUT.png] [--mute] [--devtools PORT]
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) into a new campaign
@@ -10,7 +10,8 @@
 //! `--world-size` makes the map that many tiles across and down instead of vanilla's
 //! 140x170 (vanilla's worldgen needs more than 130x130). `--shot` saves the frame after
 //! that many frames and quits. Built with `--features
-//! ui`, the game's real UI is drawn over it and takes the input it's under. The sound
+//! ui`, the game's real UI is drawn over it and takes the input it's under, and
+//! `--devtools` serves Chrome DevTools for its page on localhost at that port. The sound
 //! plays on the default output device, unless `--mute`. With `BB_STATS=1` the game's
 //! total CPU and memory, its CEF processes included, is logged every 5 seconds.
 
@@ -29,6 +30,7 @@ fn options() -> Result<app::Options, String> {
 		shot: None,
 		mute: false,
 		world_size: None,
+		devtools: None,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -45,6 +47,10 @@ fn options() -> Result<app::Options, String> {
 					.ok_or(format!("--world-size COLSxROWS, not {v}"))?;
 				options.world_size = Some(size);
 			}
+			"--devtools" if cfg!(feature = "ui") => {
+				options.devtools = Some(value()?.parse().map_err(|e| format!("--devtools PORT: {e}"))?);
+			}
+			"--devtools" => return Err("--devtools needs bb built with --features ui".to_string()),
 			"--shot" => {
 				let frames = value()?.parse().map_err(|_| "--shot FRAMES OUT.png")?;
 				options.shot = Some((frames, PathBuf::from(value()?)));

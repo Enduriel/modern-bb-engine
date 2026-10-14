@@ -14,7 +14,15 @@ pub struct Front {
 impl Front {
 	/// Boot the install at `data_dir` into a new campaign on `seed` (on a world map of
 	/// `world_size` columns and rows, if given), with `sound` on the device or silent.
-	pub fn boot(_gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool, world_size: Option<(i64, i64)>) -> Result<Front, String> {
+	/// (No page, so no DevTools: `_devtools` is the page's front's.)
+	pub fn boot(
+		_gpu: &Gpu,
+		data_dir: &Path,
+		seed: &str,
+		sound: bool,
+		world_size: Option<(i64, i64)>,
+		_devtools: Option<u16>,
+	) -> Result<Front, String> {
 		// A live clock behind Time.getExactTime, as the original's: the AI's background
 		// work then spreads over frames. The battle camera glides and units hop over
 		// time, as the original's.

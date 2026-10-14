@@ -25,8 +25,16 @@ impl Front {
 	/// menu start a new campaign on `seed`, as its Start button does, on a world map of
 	/// `world_size` (columns, rows) if given. The campaign's opening event shows once the
 	/// world is up.
-	pub fn boot(gpu: &Gpu, data_dir: &Path, seed: &str, sound: bool, world_size: Option<(i64, i64)>) -> Result<Front, String> {
+	pub fn boot(
+		gpu: &Gpu,
+		data_dir: &Path,
+		seed: &str,
+		sound: bool,
+		world_size: Option<(i64, i64)>,
+		devtools: Option<u16>,
+	) -> Result<Front, String> {
 		let config = HostConfig {
+			devtools_port: devtools,
 			frame_rate: PAGE_FRAME_RATE,
 			// A live clock behind Time.getExactTime, as the original's: the AI's
 			// background work then spreads over frames.
@@ -38,6 +46,9 @@ impl Front {
 			..HostConfig::default()
 		};
 		let session = UiSession::start(data_dir, config, false)?;
+		if let Some(port) = devtools {
+			eprintln!("DevTools: http://127.0.0.1:{port}/ (open in a Chromium-based browser)");
+		}
 		// Portraits are composed on the game thread (`Game::draw`).
 		session.queue_procedural(true);
 		if sound {
