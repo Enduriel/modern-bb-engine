@@ -37,7 +37,6 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("disable-sync", None),
 	("disable-default-apps", None),
 	("password-store", Some("basic")),
-	("force-device-scale-factor", Some("1")),
 	("optimization-guide-performance-class", Some("8")),
 	("in-process-gpu", None),
 	("no-zygote", None),

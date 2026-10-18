@@ -1,6 +1,8 @@
 // The UI scale probe, the page half (see ui_scale.nut): the page's geometry before the
-// scripts set UIScale 1.5 (at 8 s) and after, plus a snapshot of the main menu after
-// (golden_main_menu_ui150). ES5 only; needs BBSnapshot (src/parity/snapshot.js) prepended.
+// scripts set the UI scale (at 8 s) and after, plus a snapshot of the main menu after
+// (golden_main_menu_<SCALE_NAME>). ES5 only; needs BBSnapshot (src/parity/snapshot.js)
+// prepended.
+var SCALE_NAME = 'ui150'; // ui_scale.nut's scale, times 100
 BbProbe.run = function ()
 {
 	var measure = function ()
@@ -23,7 +25,7 @@ BbProbe.run = function ()
 	setTimeout(function ()
 	{
 		BbProbe.send('uiscale_after', JSON.stringify(measure()));
-		BbProbe.send('golden_main_menu_ui150', BBSnapshot.take());
+		BbProbe.send('golden_main_menu_' + SCALE_NAME, BBSnapshot.take());
 		BbProbe.done();
 	}, 14000);
 };

@@ -130,8 +130,9 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	session.eval(
 		"window.__wheelDeltas = []; document.addEventListener('mousewheel', function (e) { window.__wheelDeltas.push(e.wheelDelta); }, true); 0",
 	)?;
-	for scale in [1.0, 1.5] {
+	for scale in [1.0, 1.25, 1.5] {
 		set_ui_scale(&session, scale)?;
+		drawn_at_the_screens_resolution(&session, scale, list)?;
 		let end = number(format!(
 			"(function (e) {{ return e.scrollHeight - e.clientHeight; }})(document.querySelector({list:?}))"
 		))?;
@@ -426,9 +427,11 @@ fn images_painting(session: &UiSession, selector: &str) -> Result<Vec<(String, b
 			.and_then(Json::as_str)
 			.unwrap_or("?")
 			.to_string();
+		// The page is painted at the screen's resolution: `scale` pixels a CSS pixel.
+		let scale = session.host().scale();
 		let edge = |i: usize, limit: u32| {
 			let value = fields.get(i).and_then(Json::as_i64).unwrap_or(0);
-			value.clamp(0, i64::from(limit)) as u32
+			((value as f64 * scale).round() as i64).clamp(0, i64::from(limit)) as u32
 		};
 		let (left, top) = (edge(1, shown.width), edge(2, shown.height));
 		let (right, bottom) = (edge(3, shown.width), edge(4, shown.height));
@@ -440,6 +443,67 @@ fn images_painting(session: &UiSession, selector: &str) -> Result<Vec<(String, b
 		painting.push((name, differs));
 	}
 	Ok(painting)
+}
+
+/// At UI scale `scale` the page lays out at the screen size divided by it and is painted
+/// at the screen's resolution, as the original zooms it; it still sees a
+/// `devicePixelRatio` of 1, as there. A screen point over the element `css` is over the
+/// UI, and maps back into the element.
+fn drawn_at_the_screens_resolution(
+	session: &UiSession,
+	scale: f64,
+	css: &str,
+) -> Result<(), String> {
+	let (screen_w, screen_h, _) = session.engine().video().screen();
+	let (ui_w, ui_h) = session.engine().video().ui_size();
+	let page = session.eval("[window.innerWidth, window.innerHeight, window.devicePixelRatio]")?;
+	ensure(
+		page.to_text() == format!("[{ui_w},{ui_h},1]"),
+		format!(
+			"at UI scale {scale} the page sees {}, not [{ui_w},{ui_h},1]",
+			page.to_text()
+		),
+	)?;
+	let frame = session.host().frame().ok_or("nothing painted")?;
+	let near = |painted: u32, screen: i64| (i64::from(painted) - screen).abs() <= 1;
+	ensure(
+		near(frame.width, screen_w) && near(frame.height, screen_h),
+		format!(
+			"at UI scale {scale} the page is painted at {}x{}, not the screen's {screen_w}x{screen_h}",
+			frame.width, frame.height
+		),
+	)?;
+	let selector = Json::Str(css.into()).to_text();
+	let rect = session.eval(&format!(
+		"(function (r) {{ return [r.left, r.top, r.right, r.bottom]; }})(document.querySelector({selector}).getBoundingClientRect())"
+	))?;
+	let edge = |i: usize| match &rect {
+		Json::Array(r) => match r.get(i) {
+			Some(Json::Int(n)) => *n as f64,
+			Some(Json::Float(f)) => *f,
+			_ => 0.0,
+		},
+		_ => 0.0,
+	};
+	let (x, y) = (
+		(edge(0) + edge(2)) / 2.0 * scale,
+		(edge(1) + edge(3)) / 2.0 * scale,
+	);
+	let (px, py) = session.to_page(x as i64, y as i64);
+	ensure(
+		f64::from(px) >= edge(0)
+			&& f64::from(px) <= edge(2)
+			&& f64::from(py) >= edge(1)
+			&& f64::from(py) <= edge(3),
+		format!(
+			"at UI scale {scale} the screen's ({x}, {y}) maps to the page's ({px}, {py}), outside {}",
+			rect.to_text()
+		),
+	)?;
+	ensure(
+		session.is_over_ui(x as i64, y as i64),
+		format!("at UI scale {scale} the screen's ({x}, {y}) isn't over the UI"),
+	)
 }
 
 /// Bold or italic text in a family with only a regular face (as all of the game's are)
@@ -460,12 +524,12 @@ fn faces_are_never_faked(session: &UiSession) -> Result<(), String> {
 			"(function () { var r = document.getElementById('bb-faces').getBoundingClientRect();
 			return [Math.floor(r.left), Math.floor(r.top), Math.ceil(r.right), Math.ceil(r.bottom)]; })()",
 		)?;
+		let scale = session.host().scale();
 		let edge = |i: usize, limit: u32| match &rect {
-			Json::Array(r) => r
-				.get(i)
-				.and_then(Json::as_i64)
-				.unwrap_or(0)
-				.clamp(0, i64::from(limit)) as u32,
+			Json::Array(r) => {
+				let value = r.get(i).and_then(Json::as_i64).unwrap_or(0) as f64 * scale;
+				(value.round() as i64).clamp(0, i64::from(limit)) as u32
+			}
 			_ => 0,
 		};
 		let (left, top) = (edge(0, frame.width), edge(1, frame.height));

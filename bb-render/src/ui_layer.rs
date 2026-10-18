@@ -2,19 +2,19 @@
 //!
 //! The page renders offscreen in the browser host (`bb-ui`), which hands over each
 //! painted frame as premultiplied BGRA. It's laid out at the screen size divided by
-//! the UI scale, so it's stretched over the whole frame, as the original stretched it,
-//! and blended over what the game drew, before the frame is presented.
+//! the UI scale and painted at the screen's resolution (the scale is its device scale
+//! factor), as the original zooms it. So it's drawn a texel a pixel, from
+//! the frame's top-left, and blended over what the game drew, before the frame is
+//! presented.
 
 use crate::gpu::Gpu;
 use crate::target::{RenderTarget, TARGET_FORMAT};
 
 const SHADER: &str = r"
 @group(0) @binding(0) var page: texture_2d<f32>;
-@group(0) @binding(1) var smp: sampler;
 
 struct Out {
 	@builtin(position) position: vec4<f32>,
-	@location(0) uv: vec2<f32>,
 }
 
 @vertex
@@ -23,13 +23,19 @@ fn vs_main(@builtin(vertex_index) i: u32) -> Out {
 	let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
 	var out: Out;
 	out.position = vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
-	out.uv = vec2<f32>(xy.x, 1.0 - xy.y);
 	return out;
 }
 
 @fragment
 fn fs_main(f: Out) -> @location(0) vec4<f32> {
-	return textureSample(page, smp, f.uv);
+	// A texel a pixel; nothing past the page (a pixel short of the frame, when the
+	// scale doesn't divide the screen).
+	let at = vec2<u32>(f.position.xy);
+	let size = textureDimensions(page);
+	if (at.x >= size.x || at.y >= size.y) {
+		return vec4<f32>(0.0);
+	}
+	return textureLoad(page, at, 0);
 }
 ";
 
@@ -37,7 +43,6 @@ fn fs_main(f: Out) -> @location(0) vec4<f32> {
 pub struct UiLayer {
 	pipeline: wgpu::RenderPipeline,
 	layout: wgpu::BindGroupLayout,
-	sampler: wgpu::Sampler,
 	/// The page's texture and its bind group, once a frame was uploaded.
 	page: Option<Page>,
 }
@@ -70,16 +75,10 @@ impl UiLayer {
 					binding: 0,
 					visibility: wgpu::ShaderStages::FRAGMENT,
 					ty: wgpu::BindingType::Texture {
-						sample_type: wgpu::TextureSampleType::Float { filterable: true },
+						sample_type: wgpu::TextureSampleType::Float { filterable: false },
 						view_dimension: wgpu::TextureViewDimension::D2,
 						multisampled: false,
 					},
-					count: None,
-				},
-				wgpu::BindGroupLayoutEntry {
-					binding: 1,
-					visibility: wgpu::ShaderStages::FRAGMENT,
-					ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
 					count: None,
 				},
 			],
@@ -123,17 +122,9 @@ impl UiLayer {
 			multiview_mask: None,
 			cache: None,
 		});
-		// A page smaller than the frame (UI scale above 1) is stretched smoothly.
-		let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-			label: Some("ui layer"),
-			mag_filter: wgpu::FilterMode::Linear,
-			min_filter: wgpu::FilterMode::Linear,
-			..Default::default()
-		});
 		UiLayer {
 			pipeline,
 			layout,
-			sampler,
 			page: None,
 		}
 	}
@@ -164,16 +155,10 @@ impl UiLayer {
 			let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
 				label: Some("ui layer"),
 				layout: &self.layout,
-				entries: &[
-					wgpu::BindGroupEntry {
-						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&view),
-					},
-					wgpu::BindGroupEntry {
-						binding: 1,
-						resource: wgpu::BindingResource::Sampler(&self.sampler),
-					},
-				],
+				entries: &[wgpu::BindGroupEntry {
+					binding: 0,
+					resource: wgpu::BindingResource::TextureView(&view),
+				}],
 			});
 			self.page = Some(Page {
 				texture,
@@ -195,8 +180,8 @@ impl UiLayer {
 		);
 	}
 
-	/// Blend the page over `target`, stretched to cover it. Nothing before the first
-	/// upload.
+	/// Blend the page over `target`, a texel a pixel from its top-left. Nothing before
+	/// the first upload.
 	pub fn draw(&self, gpu: &Gpu, target: &RenderTarget) {
 		let Some(page) = &self.page else { return };
 		let mut encoder = gpu

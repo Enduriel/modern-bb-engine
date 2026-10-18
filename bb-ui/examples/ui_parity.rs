@@ -94,10 +94,9 @@ fn run(options: Options) -> Result<(), String> {
 
 	let mut snapshots = goldens::capture(&session)?;
 	session.click_when_ready("Cancel", Duration::from_secs(30))?;
-	snapshots.push((
-		goldens::UI_SCALE_SCREEN,
-		goldens::capture_ui_scale(&session)?,
-	));
+	for (scale, name) in goldens::UI_SCALE_SCREENS {
+		snapshots.push((name, goldens::capture_ui_scale(&session, scale)?));
+	}
 	if options.world {
 		snapshots.extend(goldens::capture_world(&session)?);
 	}

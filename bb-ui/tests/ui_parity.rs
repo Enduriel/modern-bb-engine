@@ -119,13 +119,14 @@ fn matches_the_originals_screens(session: &UiSession) -> Result<(), String> {
 	compared
 }
 
-/// From the main menu: the menu at UI scale 1.5 (the page laid out at the screen size
-/// divided by the scale).
+/// From the main menu: the menu at UI scales 1.25 and 1.5 (the page laid out at the
+/// screen size divided by the scale, drawn at the screen's resolution).
 fn matches_the_originals_ui_scale(session: &UiSession) -> Result<(), String> {
-	compare_all(vec![(
-		goldens::UI_SCALE_SCREEN,
-		goldens::capture_ui_scale(session)?,
-	)])
+	let mut snapshots = Vec::new();
+	for (scale, name) in goldens::UI_SCALE_SCREENS {
+		snapshots.push((name, goldens::capture_ui_scale(session, scale)?));
+	}
+	compare_all(snapshots)
 }
 
 /// From the main menu: starts a campaign.

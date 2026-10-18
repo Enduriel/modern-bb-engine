@@ -24,6 +24,16 @@
 		':where(input[type=range]) { margin: 18px 0; color: #909090; }\n' +
 		':where(:root) { font-synthesis-weight: none; font-synthesis-style: none; font-kerning: none; }\n';
 
+	// The UI scale. Coherent zooms the page: it lays out at the screen size divided by the
+	// scale and is drawn at the screen's resolution, but `devicePixelRatio` stays 1
+	// (probed). Ours is drawn so through the browser's device scale factor,
+	// which Chromium reports there.
+	Object.defineProperty(window, 'devicePixelRatio', {
+		configurable: true,
+		enumerable: true,
+		get: function () { return 1; }
+	});
+
 	// Images with nothing to show paint nothing, as in Coherent: no `src` (the
 	// character screen's talent stars), an empty one (every empty stash slot's
 	// overlay), or one that failed to load. Where such an image has a size, Chromium

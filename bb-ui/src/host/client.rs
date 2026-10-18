@@ -67,6 +67,9 @@ pub(super) struct Shared {
 	pub frame: Mutex<Option<FrameBuffer>>,
 	/// The view's width and height (CSS pixels); see [`UiHost::resize`](super::UiHost::resize).
 	pub size: Mutex<(i32, i32)>,
+	/// Screen pixels per CSS pixel: the UI scale, which the page is drawn at (see
+	/// [`UiHost::resize`](super::UiHost::resize)).
+	pub scale: Mutex<f64>,
 	/// How many images `coui://` has served from the game's files.
 	pub images_served: AtomicU64,
 }
@@ -74,6 +77,10 @@ pub(super) struct Shared {
 impl Shared {
 	pub fn size(&self) -> (i32, i32) {
 		*self.size.lock().unwrap_or_else(|e| e.into_inner())
+	}
+
+	pub fn scale(&self) -> f64 {
+		*self.scale.lock().unwrap_or_else(|e| e.into_inner())
 	}
 
 	pub fn send(&self, event: Event) {
@@ -104,7 +111,7 @@ wrap_render_handler! {
 			screen_info: Option<&mut ScreenInfo>,
 		) -> ::std::os::raw::c_int {
 			let Some(info) = screen_info else { return 0 };
-			info.device_scale_factor = 1.0;
+			info.device_scale_factor = self.shared.scale() as f32;
 			let (width, height) = self.shared.size();
 			let rect = Rect { x: 0, y: 0, width, height };
 			info.rect = rect.clone();

@@ -219,6 +219,7 @@ impl UiHost {
 			browser: Mutex::new(None),
 			frame: Mutex::new(None),
 			size: Mutex::new((config.width as i32, config.height as i32)),
+			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
 		});
 		let mut factory = scheme::CouiFactory::new(files, shared.clone());
@@ -514,13 +515,30 @@ impl UiHost {
 		self.shared.size()
 	}
 
-	/// Lay the page out at `width` × `height` from now on (a UI scale change resizes the
-	/// view, as in the original; the page sees a window resize).
-	pub fn resize(&self, width: i32, height: i32) {
+	/// Lay the page out at `width` × `height` CSS pixels from now on, drawn at `scale`
+	/// screen pixels each. A UI scale is a page zoom in the original: the page lays out
+	/// at the screen size divided by the scale and sees a window resize, and is drawn at
+	/// the screen's resolution, laid out on its pixels (the scale is the browser's device
+	/// scale factor here).
+	pub fn resize(&self, width: i32, height: i32, scale: f64) {
 		*self.shared.size.lock().unwrap_or_else(|e| e.into_inner()) = (width, height);
+		let rescaled = {
+			let mut current = self.shared.scale.lock().unwrap_or_else(|e| e.into_inner());
+			let changed = *current != scale;
+			*current = scale;
+			changed
+		};
 		if let Some(host) = self.browser_host() {
+			if rescaled {
+				host.notify_screen_info_changed();
+			}
 			host.was_resized();
 		}
+	}
+
+	/// Screen pixels per CSS pixel (see [`UiHost::resize`]).
+	pub fn scale(&self) -> f64 {
+		self.shared.scale()
 	}
 
 	/// Where the mouse was last sent (view pixels), if anywhere.
@@ -628,8 +646,8 @@ impl UiHost {
 		frame.as_ref().map(f)
 	}
 
-	/// The painted page's alpha at `(x, y)` (view pixels): 0 outside it, or before the
-	/// first paint.
+	/// The painted page's alpha at `(x, y)` (painted pixels: the screen's, see
+	/// [`UiHost::resize`]): 0 outside it, or before the first paint.
 	pub fn alpha_at(&self, x: i32, y: i32) -> u8 {
 		self.with_frame(|f| {
 			let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {

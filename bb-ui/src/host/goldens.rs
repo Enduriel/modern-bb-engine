@@ -39,6 +39,7 @@ pub fn load(dir: &Path, name: &str) -> Result<Snapshot, String> {
 /// log. Its text is still compared.
 pub fn tolerance(name: &str) -> Tolerance {
 	let mut tolerance = Tolerance::default();
+	let ui_scale = UI_SCALE_SCREENS.iter().find(|(_, n)| *n == name).map(|(scale, _)| *scale);
 	match name {
 		"options" => tolerance
 			.ignore_paths
@@ -49,18 +50,25 @@ pub fn tolerance(name: &str) -> Tolerance {
 		// The original's UI scale is a page zoom, and its 8px font minimum applies to
 		// zoomed sizes: `body` stays 6.25px (reported 6px) at 1.5, where ours is 8px.
 		// Only text that sets no size of its own sees it; vanilla's all does.
-		UI_SCALE_SCREEN => {
-			tolerance.page_zoom = 1.5;
+		_ if ui_scale.is_some() => {
+			tolerance.page_zoom = ui_scale.unwrap_or(1.0);
 			tolerance.ignore_styles.push("font-size".into());
+			// At 1.25 the news text's 16px is 20px on the screen, one of the sizes whose
+			// normal line height rounds differently (26px there, 27 here): its five
+			// lines come out 4px taller. Its text is still compared.
+			if name == "main_menu_ui125" {
+				tolerance.ignore_boxes.push("div.motd-container".into());
+			}
 		}
 		_ => {}
 	}
 	tolerance
 }
 
-/// The main menu at UI scale 1.5 (`probes/ui_scale.{nut,js}`): the original lays the page
-/// out at the screen size divided by the scale.
-pub const UI_SCALE_SCREEN: &str = "main_menu_ui150";
+/// The main menu at UI scales 1.25 and 1.5 (`probes/ui_scale.{nut,js}`): the original
+/// lays the page out at the screen size divided by the scale and draws it at the
+/// screen's resolution.
+pub const UI_SCALE_SCREENS: [(f64, &str); 2] = [(1.25, "main_menu_ui125"), (1.5, "main_menu_ui150")];
 
 /// Set the UI scale to `scale` the way the Options screen does.
 fn set_ui_scale(session: &UiSession, scale: f64) -> Result<(), String> {
@@ -72,10 +80,10 @@ fn set_ui_scale(session: &UiSession, scale: f64) -> Result<(), String> {
 	)
 }
 
-/// From the main menu: set the UI scale to 1.5 as the probe does, snapshot the menu once
-/// it has settled, and set it back.
-pub fn capture_ui_scale(session: &UiSession) -> Result<Snapshot, String> {
-	set_ui_scale(session, 1.5)?;
+/// From the main menu: set the UI scale to `scale` as the probe does, snapshot the menu
+/// once it has settled, and set it back.
+pub fn capture_ui_scale(session: &UiSession, scale: f64) -> Result<Snapshot, String> {
+	set_ui_scale(session, scale)?;
 	session.run_frames(3.0)?;
 	let snapshot = session.snapshot();
 	set_ui_scale(session, 1.0)?;
