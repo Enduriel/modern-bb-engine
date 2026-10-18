@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against twenty-four kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against twenty-five kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -716,5 +716,27 @@ fn the_player_throws_fire_bombs_at_bandit_raiders() {
 			::__botPrefer = ["actives.throw_fire_bomb"];
 			::__botUnpack = "weapon.fire_bomb";
 		"#,
+	});
+}
+
+/// A kraken and its tentacles in a swamp (kraken_agent, kraken_tentacle_agent). The
+/// company falls. Rising and sinking (`riseFromGround`, `sinkIntoGround`) leave a unit
+/// unattackable until its `onRender` sees the animation done, and how much game time
+/// passes before the AI next decides depends on the pacing (the original waits on its
+/// gliding camera; here it's instant): the animations are done at once, in both
+/// engines.
+#[test]
+fn a_kraken_in_a_swamp() {
+	fight(&Scenario {
+		spawn: "Kraken",
+		resources: 200,
+		faction: "Beasts",
+		terrain: "tactical.swamp",
+		checkpoints: &[(2000, 221684), (4000, 414143), (6000, 490493), (8000, 964468), (10000, 845059), (11072, 835799)],
+		result: 4,
+		pin_render: false,
+		after: Some((11080, 462773, 3)),
+		player: false,
+		setup: "::Const.Combat.ResurrectAnimationTime = 0.0001;",
 	});
 }
