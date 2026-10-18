@@ -33,8 +33,9 @@ cd modern_bb_engine
 cargo run --release -p bb-app --features ui --example frame_scenes -- OUT/ours --screen 2560x1440
 
 # Every scene: per scene a heatmap and side-by-side crops of the largest regions, and
-# OUT/diff/summary.txt. Run each engine twice (OUT/original2, OUT/ours2) to leave out
-# what differs between its own runs.
+# OUT/diff/summary.txt. Run each engine more times (OUT/original2 OUT/original3 ...,
+# OUT/ours2 ...) to leave out what differs between its own runs; give the original
+# several (see below).
 cargo build --release -p bb-render --example frame_diff
 python3 ../parity/frames/diff.py OUT/ours OUT/original OUT/diff \
     --original2 OUT/original2 --ours2 OUT/ours2
@@ -48,9 +49,10 @@ and calls back once the PNG is written, so a scene holds still until then.
 
 - A pixel differs when a colour channel is off by more than the tolerance (24); a
   16-pixel cell when more than 5% of its pixels do. Text and edges never match exactly.
-- Red in a heatmap differs, blue is noise: it differs between one engine's own two runs
-  too (2 pixels around it included). Two runs only sample the noise: a tree that both
-  of the original's runs happened to leave out stays red.
+- Red in a heatmap differs, blue is noise: it differs between one engine's own runs too
+  (2 pixels around it included). The runs only sample the noise: a random detail that
+  every run of the original happens to draw the same way stays red (a brush flip agreed
+  across four runs about 1 time in 8). The more runs, the fewer of those.
 - The world's detail looks (which trees, their mirroring, ground scatter) come from an
   engine RNG the original seeds from the clock, so those regions differ between any two runs of the original too.
 - Ours leaves out its drawn cursor: the original's screenshots have none. No mouse

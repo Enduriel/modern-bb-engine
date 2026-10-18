@@ -5,9 +5,11 @@
 //!     [--tolerance N] [--noise ORIGINAL2.png] [--noise-ours OURS2.png]
 //! ```
 //!
-//! `--noise` is a second run of the original, `--noise-ours` one of ours with other
-//! random looks: what differs between an engine's own two runs is left out (blue in the
-//! heatmap), with 2 pixels around it.
+//! `--noise` is another run of the original, `--noise-ours` one of ours, each as often
+//! as there are runs: what differs between an engine's own runs is left out (blue in
+//! the heatmap), with 2 pixels around it. Use several runs of the original: its random
+//! detail looks (a brush flip, say) agree between two runs often enough by chance to
+//! show as differences.
 //! Prints how many pixels differ by more than N (default 24) in a colour channel,
 //! and the regions they gather in (16-pixel cells where more than 5% differ, joined),
 //! most first; writes HEAT.png, ours dimmed to grey with the differing pixels in red,
@@ -54,7 +56,7 @@ fn run() -> Result<(), String> {
 	let [ours, original, heat, rest @ ..] = args.as_slice() else {
 		return Err("usage: frame_diff OURS.png ORIGINAL.png HEAT.png [--tolerance N] [--noise ORIGINAL2.png] [--noise-ours OURS2.png]".into());
 	};
-	let (mut tolerance, mut noise_original, mut noise_ours) = (24u8, None, None);
+	let (mut tolerance, mut noise_original, mut noise_ours) = (24u8, Vec::new(), Vec::new());
 	let mut rest = rest.iter();
 	while let Some(flag) = rest.next() {
 		let value = rest.next().ok_or(format!("{flag} needs a value"))?;
@@ -64,15 +66,18 @@ fn run() -> Result<(), String> {
 					.parse()
 					.map_err(|_| format!("not a tolerance: {value}"))?
 			}
-			"--noise" => noise_original = Some(value),
-			"--noise-ours" => noise_ours = Some(value),
+			"--noise" => noise_original.push(value),
+			"--noise-ours" => noise_ours.push(value),
 			_ => return Err(format!("unknown option {flag}")),
 		}
 	}
 	let (ours_image, original_image) = (load(ours)?, load(original)?);
 	let mut noise: Option<Vec<bool>> = None;
-	for (again, same) in [(noise_original, &original_image), (noise_ours, &ours_image)] {
-		let Some(again) = again else { continue };
+	let runs = noise_original
+		.iter()
+		.map(|r| (r, &original_image))
+		.chain(noise_ours.iter().map(|r| (r, &ours_image)));
+	for (again, same) in runs {
 		let mask = frame_diff::noise_mask(same, &load(again)?, tolerance, 2)?;
 		noise = Some(match noise {
 			Some(n) => n.iter().zip(&mask).map(|(a, b)| *a || *b).collect(),

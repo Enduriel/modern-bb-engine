@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Diff every scene of ours against the original's (frame parity).
 
-    python3 parity/frames/diff.py OURS ORIGINAL OUT [--original2 DIR] [--ours2 DIR]
+    python3 parity/frames/diff.py OURS ORIGINAL OUT [--original2 DIR ...] [--ours2 DIR ...]
 
 OURS and ORIGINAL hold one PNG per scene (frame_scenes' output and the probe's
---shots). With a second run of the original (--original2) and of ours (--ours2), what
-differs between an engine's own two runs is left out as noise. Writes, per scene,
+--shots). With more runs of the original (--original2 DIR ...) and of ours (--ours2 DIR
+...), what differs between an engine's own runs is left out as noise. Give the original
+several: its random detail looks agree between two runs often enough by chance (a brush
+flip, about 1 in 8 across four runs) to show as differences. Writes, per scene,
 OUT/<scene>.png (the heatmap) and OUT/<scene>-region-NN.png (ours | original), and
 OUT/summary.txt; prints the summary.
 """
@@ -24,8 +26,8 @@ def main():
     ap.add_argument("ours", type=Path)
     ap.add_argument("original", type=Path)
     ap.add_argument("out", type=Path)
-    ap.add_argument("--original2", type=Path)
-    ap.add_argument("--ours2", type=Path)
+    ap.add_argument("--original2", type=Path, nargs="*", default=[])
+    ap.add_argument("--ours2", type=Path, nargs="*", default=[])
     args = ap.parse_args()
     if not DIFF.exists():
         sys.exit(f"build it first: cargo build --release -p bb-render --example frame_diff ({DIFF})")
@@ -38,9 +40,10 @@ def main():
             lines.append(f"{scene}: no frame of ours")
             continue
         cmd = [str(DIFF), str(ours), str(original), str(args.out / original.name)]
-        for flag, other in (("--noise", args.original2), ("--noise-ours", args.ours2)):
-            if other is not None and (other / original.name).exists():
-                cmd += [flag, str(other / original.name)]
+        for flag, others in (("--noise", args.original2), ("--noise-ours", args.ours2)):
+            for other in others:
+                if (other / original.name).exists():
+                    cmd += [flag, str(other / original.name)]
         run = subprocess.run(cmd, capture_output=True, text=True)
         if run.returncode != 0:
             lines.append(f"{scene}: {run.stderr.strip()}")
