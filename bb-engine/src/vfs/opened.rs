@@ -1,50 +1,49 @@
 //! The archives opened in this process, each parsed once: opening one again (the engine,
-//! the renderer, the sound and the page each open the install's archives) gives a clone
-//! that shares its index, the zip central directory, about 5 MB for vanilla's archives.
-//! A file changed on disk since (its size or modification time) is opened anew.
+//! the renderer, the sound and the page each open the install's archives) shares its
+//! [`Index`]. A file changed on disk since (its size or modification time) is
+//! opened anew.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
-use zip::ZipArchive;
-
+use super::central_dir;
+use super::index::Index;
 use super::shared_file::SharedFile;
 
 struct Opened {
 	len: u64,
 	modified: Option<SystemTime>,
-	archive: ZipArchive<SharedFile>,
+	index: Arc<Index>,
 	file: SharedFile,
 }
 
 static OPENED: OnceLock<Mutex<HashMap<PathBuf, Opened>>> = OnceLock::new();
 
-/// The archive at `path`, parsed once per process, and its file (for reading an entry in
-/// place).
-pub(crate) fn open(path: &Path) -> io::Result<(ZipArchive<SharedFile>, SharedFile)> {
+/// The archive at `path`: its index, parsed once per process, and its file.
+pub(super) fn open(path: &Path) -> io::Result<(Arc<Index>, SharedFile)> {
 	let meta = std::fs::metadata(path)?;
 	let (len, modified) = (meta.len(), meta.modified().ok());
 	let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 	let mut opened = OPENED.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
 	if let Some(o) = opened.get(&key).filter(|o| o.len == len && o.modified == modified) {
-		return Ok((o.archive.clone(), o.file.clone()));
+		return Ok((o.index.clone(), o.file.clone()));
 	}
 	let file = SharedFile::new(File::open(path)?)?;
-	let archive = ZipArchive::new(file.clone()).map_err(super::zip_to_io)?;
+	let index = Arc::new(central_dir::read(&mut file.clone())?);
 	opened.insert(
 		key,
 		Opened {
 			len,
 			modified,
-			archive: archive.clone(),
+			index: index.clone(),
 			file: file.clone(),
 		},
 	);
-	Ok((archive, file))
+	Ok((index, file))
 }
 
 #[cfg(test)]
