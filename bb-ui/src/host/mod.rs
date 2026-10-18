@@ -241,9 +241,17 @@ impl UiHost {
 		};
 
 		let window_info = WindowInfo::default().set_as_windowless(Default::default());
+		// The generic font families are the original's, Windows' defaults (probed,
+		// `probes/font_families.js`): `monospace` is Courier New there, where Linux's
+		// default is DejaVu Sans Mono (a pixel taller a line: Modern Hooks' popup, and
+		// MSU's `monospace` text). Fontconfig gives the metric-compatible fonts here.
 		let browser_settings = BrowserSettings {
 			windowless_frame_rate: config.frame_rate,
 			background_color: 0,
+			standard_font_family: "Times New Roman".into(),
+			serif_font_family: "Times New Roman".into(),
+			sans_serif_font_family: "Arial".into(),
+			fixed_font_family: "Courier New".into(),
 			..Default::default()
 		};
 		let mut client = client::page_client(shared);

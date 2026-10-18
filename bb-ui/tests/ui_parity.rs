@@ -1,4 +1,4 @@
-//! UI parity with the original. Seven checks on one page, in order:
+//! UI parity with the original. Eight checks on one page, in order:
 //!   * `matches_the_originals_screens`: our page, driven through the main menu, the
 //!     new-campaign page and the Options screen, matches the original's snapshots
 //!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
@@ -36,6 +36,12 @@ const LAYOUT_PROBE: &str = include_str!("../probes/layout_rules.js");
 const TEXT_PROBE: &str = include_str!("../probes/text_rules.js");
 const BORDER_PROBE: &str = include_str!("../probes/border_rules.js");
 const CENTRING_PROBE: &str = include_str!("../probes/centring_rules.js");
+const FAMILIES_PROBE: &str = include_str!("../probes/font_families.js");
+
+/// The answers of `font_families.js` that we don't reproduce: a font the original's
+/// Windows doesn't have but the test machine does (Arimo, which MSU names after
+/// `monospace`) is used here, where the original falls back to its default.
+const FAMILY_EXCEPTIONS: &[&str] = &["families.Arimo"];
 
 /// The answers of `layout_rules.js` that we don't reproduce:
 /// - text extents and glyph-box heights, which depend on the font rasterizer (old
@@ -198,6 +204,11 @@ fn follows_the_originals_text_rules(session: &UiSession) -> Result<(), String> {
 	compare_answers(&ours, "text_rules", &["text"], TEXT_EXCEPTIONS)
 }
 
+fn follows_the_originals_font_families(session: &UiSession) -> Result<(), String> {
+	let ours = later_answers(session, FAMILIES_PROBE)?;
+	compare_answers(&ours, "font_families", &["families"], FAMILY_EXCEPTIONS)
+}
+
 fn follows_the_originals_border_rules(session: &UiSession) -> Result<(), String> {
 	let ours = later_answers(session, BORDER_PROBE)?;
 	compare_answers(&ours, "border_rules", &["borders"], &[])
@@ -261,7 +272,7 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, Check); 7] = [
+	let checks: [(&str, Check); 8] = [
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,
@@ -282,6 +293,10 @@ fn main() -> ExitCode {
 		(
 			"follows_the_originals_border_rules",
 			follows_the_originals_border_rules,
+		),
+		(
+			"follows_the_originals_font_families",
+			follows_the_originals_font_families,
 		),
 		(
 			"follows_the_originals_centring_rules",

@@ -526,18 +526,25 @@ fn compare_nodes(
 		}
 	}
 	let (g, o) = (&golden.children, &ours.children);
+	let ignored = |path: &str| tolerance.ignore_paths.iter().any(|p| path.contains(p.as_str()));
 	for step in align(g, o) {
 		match step {
 			Step::Both(i, j) => {
 				let child = format!("{path} > {}[{i}]", label(&g[i]));
 				compare_nodes(&g[i], &o[j], &child, tolerance, out);
 			}
-			Step::Golden(i) => out.push(Difference::Missing {
-				path: format!("{path} > {}[{i}]", label(&g[i])),
-			}),
-			Step::Ours(j) => out.push(Difference::Extra {
-				path: format!("{path} > {}", label(&o[j])),
-			}),
+			Step::Golden(i) => {
+				let path = format!("{path} > {}[{i}]", label(&g[i]));
+				if !ignored(&path) {
+					out.push(Difference::Missing { path });
+				}
+			}
+			Step::Ours(j) => {
+				let path = format!("{path} > {}", label(&o[j]));
+				if !ignored(&path) {
+					out.push(Difference::Extra { path });
+				}
+			}
 		}
 	}
 }

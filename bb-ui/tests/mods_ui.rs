@@ -2,8 +2,10 @@
 //! `data/`, the installed corpus), the game's page runs in the Chromium host and the mod
 //! frameworks' own JS does what it does in the original: Modern Hooks' handshake loads
 //! every mod's JS and CSS and then resumes the scripts' boot (`resumeOnInit`), and MSU's
-//! late JS connects MSU's screens (`connectBackend`). The main menu comes up. Skips
-//! without a Steam install or without Modern Hooks.
+//! late JS connects MSU's screens (`connectBackend`). The main menu comes up, and it and
+//! MSU's mod settings screen match the original's with the same mods
+//! (`tests/goldens/modded_*.json`, `probes/modded_goldens.js`). Skips without a Steam
+//! install or without Modern Hooks.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test mods_ui`
 //!
@@ -16,8 +18,9 @@ use std::time::{Duration, Instant};
 
 use bb_engine::harness::{self, STEAM_DATA_DIR};
 use bb_engine::tactical_player as player;
-use bb_ui::host::{HostConfig, UiSession};
+use bb_ui::host::{HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
+use bb_ui::parity::compare;
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition { Ok(()) } else { Err(what.to_string()) }
@@ -29,8 +32,12 @@ fn holds(session: &UiSession, expr: &str) -> Result<bool, String> {
 }
 
 fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
-	let config = HostConfig { mods: true, ..HostConfig::default() };
+	// The goldens' screen.
+	let config = HostConfig { mods: true, width: 2560, height: 1440, ..HostConfig::default() };
 	let session = UiSession::start(data_dir, config, false)?;
+	// The mods' own storages as the original keeps them for this install (MSU's settings,
+	// say), so the mods start from the same data (copies: never written back).
+	session.engine().saves().set_directory(copy_mod_storages()?);
 	session.boot_menu()?;
 	ensure(holds(&session, "\"Cursor\" in ::getroottable()")?, "root_state's own onInit never ran (no ::Cursor)")?;
 
@@ -64,7 +71,82 @@ fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 		ensure(Instant::now() < deadline, format!("no main menu; visible buttons: {buttons:?}"))?;
 		session.run_frames(0.1)?;
 	}
-	Ok(())
+	matches_the_originals_modded_screens(&session)
+}
+
+/// The original's savegames folder (in Proton's prefix), where mods keep their storages.
+const ORIGINAL_SAVES: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/compatdata/365360/pfx/drive_c/users/steamuser/Documents/Battle Brothers/savegames");
+
+/// A fresh folder with copies of the mods' storages from the original's savegames (the
+/// `<mod>#<name>.sav` ones; not the saves), or an empty one where there are none.
+fn copy_mod_storages() -> Result<std::path::PathBuf, String> {
+	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("mods_ui_storages");
+	let _ = std::fs::remove_dir_all(&dir);
+	std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+	if let Ok(entries) = std::fs::read_dir(ORIGINAL_SAVES) {
+		for entry in entries.flatten() {
+			let name = entry.file_name().to_string_lossy().to_string();
+			if name.contains('#') && name.ends_with(".sav") {
+				std::fs::copy(entry.path(), dir.join(&name)).map_err(|e| format!("{name}: {e}"))?;
+			}
+		}
+	}
+	Ok(dir)
+}
+
+/// What `probes/modded_goldens.js` runs: the visible button `label`'s jQuery click.
+fn click_like_the_probe(session: &UiSession, label: &str) -> Result<(), String> {
+	let quoted = Json::Str(label.into()).to_text();
+	let clicked = session.eval(&format!(
+		"(function (label) {{
+			var all = document.querySelectorAll('.ui-control');
+			for (var i = 0; i < all.length; i++) {{
+				if (all[i].offsetParent !== null && all[i].textContent.trim() === label) {{
+					$(all[i]).click();
+					return true;
+				}}
+			}}
+			return false;
+		}})({quoted})"
+	))?;
+	ensure(clicked == Json::Bool(true), format!("no visible button {label}"))
+}
+
+/// The main menu with the mods, and MSU's mod settings screen opened from its "Mod
+/// Options" button and left by its Cancel, against the original's with the same mods,
+/// taken the same way (`probes/modded_goldens.js`).
+fn matches_the_originals_modded_screens(session: &UiSession) -> Result<(), String> {
+	let mut differences = Vec::new();
+	let mut check = |name: &str| -> Result<(), String> {
+		let golden = goldens::load(&goldens::default_dir(), name)?;
+		let ours = session.snapshot()?;
+		for difference in compare(&golden, &ours, &goldens::tolerance(name)) {
+			differences.push(format!("{name}: {difference}"));
+		}
+		Ok(())
+	};
+	session.run_frames(3.0)?;
+	check("modded_main_menu")?;
+	// As the probe does (a jQuery click): Modern Hooks' error popup lies over the menu's
+	// middle at opacity 0 in both engines, and both hit-test it (probed:
+	// `probes/hit_opacity.js`), so a mouse click there lands on the popup.
+	click_like_the_probe(session, "Mod Options")?;
+	session.run_frames(3.0)?;
+	check("modded_mod_options")?;
+	let buttons = session.visible_buttons()?;
+	ensure(
+		buttons.iter().any(|b| b == "Cancel"),
+		format!(
+			"MSU's mod settings didn't open; visible buttons: {buttons:?}; differences so far:\n{}",
+			differences.join("\n")
+		),
+	)?;
+	click_like_the_probe(session, "Cancel")?;
+	session.run_frames(1.0)?;
+	ensure(
+		differences.is_empty(),
+		format!("{} differences from the original:\n{}", differences.len(), differences.join("\n")),
+	)
 }
 
 fn main() -> ExitCode {

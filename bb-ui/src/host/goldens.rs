@@ -44,6 +44,20 @@ pub fn tolerance(name: &str) -> Tolerance {
 		"options" => tolerance
 			.ignore_paths
 			.push("div.control.l-list-container".into()),
+		// With the install's mods (`probes/modded_goldens.js`): Modern Hooks' "game is
+		// not loading" panel stays in the original's page, behind the menu, because there
+		// its `resumeOnInit` callback never gets the scripts' `true` (`Hooks.screenInit`
+		// stays false, probed: `probes/hooks_resume.js`); ours removes it. Why the
+		// original loses that answer is unknown: every call shape `callback_rules.js`
+		// tried gets it. No player sees the panel. And MSU's popup shows when its update
+		// check (a request to GitHub) has answered by then, in either engine.
+		"modded_main_menu" | "modded_mod_options" => {
+			let panel = if name == "modded_main_menu" { 4 } else { 5 };
+			tolerance
+				.ignore_paths
+				.push(format!("body > div.root-screen[0] > div[{panel}]"));
+			tolerance.ignore_paths.push("div.msu-popup".into());
+		}
 		"world_combat" => tolerance
 			.ignore_boxes
 			.push("div.l-event-logs-container".into()),

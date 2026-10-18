@@ -1,0 +1,14 @@
+{
+	"families": {
+		"monospace": 300,
+		"serif": 209,
+		"sans-serif": 220,
+		"Courier New": 300,
+		"Arial": 220,
+		"Times New Roman": 209,
+		"Arimo": 209,
+		"monospace, Arimo": 300,
+		"NoSuchFontAtAll": 209,
+		"monospace line": 18
+	}
+}
