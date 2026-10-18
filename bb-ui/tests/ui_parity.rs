@@ -14,7 +14,7 @@
 //!     `follows_the_originals_centring_rules`: likewise for `probes/text_rules.js`
 //!     (whole-pixel glyph advances, no kerning), `probes/border_rules.js` (border widths
 //!     under border images) and `probes/centring_rules.js` (the half pixel of centring
-//!     by `auto` margins).
+//!     by `auto` margins, at UI scales 1, 1.25 and 1.5).
 //!
 //! Skips if there is no Steam install.
 //!
@@ -61,19 +61,6 @@ const LAYOUT_EXCEPTIONS: &[&str] = &[
 /// - kerning asked for with `font-kerning: normal`: the original ignores it, and our
 ///   built-in `none` gives way to it (no page asks).
 const TEXT_EXCEPTIONS: &[&str] = &["text.free18line", "text.cinzelNew", "text.cinzelAVkerning"];
-
-/// The answers of `centring_rules.js` that we don't reproduce: with half a pixel of room
-/// left over, old WebKit (whole pixels) gives the start margin the half rounded toward
-/// zero, Chromium the half (drawn a pixel further on). A quarter pixel back would match
-/// at UI scale 1, but at other scales the page is laid out at the screen size divided by
-/// the scale and drawn scaled, where the original zooms, so its pixels aren't the
-/// original's (the UI scale's golden then moves out of tolerance).
-const CENTRING_EXCEPTIONS: &[&str] = &[
-	"centring.even",
-	"centring.insetHalf",
-	"centring.horizontalHalf",
-	"centring.horizontalInsetHalf",
-];
 
 fn start(data_dir: &Path) -> Result<UiSession, String> {
 	let (width, height) = goldens::load(&goldens::default_dir(), goldens::SCREENS[0].0)?.viewport;
@@ -216,9 +203,55 @@ fn follows_the_originals_border_rules(session: &UiSession) -> Result<(), String>
 	compare_answers(&ours, "border_rules", &["borders"], &[])
 }
 
+/// The answers of `centring_rules.js` that we don't reproduce: under a zoom, old WebKit
+/// first cuts every zoomed length down to whole screen pixels (a 3px inset is 4 at 1.5,
+/// a 91px box 113 at 1.25) and centres in what is left; Chromium keeps the fractions.
+/// That would take every length rounded so, which isn't emulated; the half pixel at
+/// UI scale 1, and everything else at all three, is.
+const CENTRING_EXCEPTIONS: &[&str] = &[
+	"centring125.negativeHalf",
+	"centring150.odd",
+	"centring150.insetHalf",
+	"centring150.horizontalWhole",
+	"centring150.horizontalInsetHalf",
+];
+
+/// At UI scales 1, 1.25 and 1.5, as the original was measured: each set as the Options
+/// screen does, then measured once the page has laid out again.
 fn follows_the_originals_centring_rules(session: &UiSession) -> Result<(), String> {
-	let ours = later_answers(session, CENTRING_PROBE)?;
-	compare_answers(&ours, "centring_rules", &["centring"], CENTRING_EXCEPTIONS)
+	session.eval(&format!(
+		"(function () {{
+			window.BbProbe = {{ answers: {{}}, finished: false,
+				send: function (key, json) {{ this.answers[key] = JSON.parse(json); }},
+				done: function () {{ this.finished = true; }} }};
+			{CENTRING_PROBE}
+			return true;
+		}})()"
+	))?;
+	let measured = (|| {
+		for (scale, key) in [(1.0, "centring"), (1.25, "centring125"), (1.5, "centring150")] {
+			goldens::set_ui_scale(session, scale)?;
+			session.run_frames(1.0)?;
+			session.eval(&format!(
+				"BbProbe.finished = false; BbProbe.measureCentring({scale}, '{key}', function () {{ BbProbe.finished = true; }}); true"
+			))?;
+			let mut finished = false;
+			for _ in 0..40 {
+				session.run_frames(0.25)?;
+				if session.eval("BbProbe.finished")? == Json::Bool(true) {
+					finished = true;
+					break;
+				}
+			}
+			if !finished {
+				return Err(format!("the probe didn't finish at UI scale {scale}"));
+			}
+		}
+		session.eval("BbProbe.answers")
+	})();
+	goldens::set_ui_scale(session, 1.0)?;
+	session.run_frames(1.0)?;
+	compare_answers(&measured?, "centring_rules", &["centring", "centring125", "centring150"], CENTRING_EXCEPTIONS)
 }
 
 /// One check on the shared page.

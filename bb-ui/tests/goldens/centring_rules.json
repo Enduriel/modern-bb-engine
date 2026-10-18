@@ -10,5 +10,29 @@
 		"horizontalWhole": "5",
 		"horizontalInsetHalf": "6",
 		"horizontalNegativeHalf": "0"
+	},
+	"centring125": {
+		"even": "6",
+		"odd": "6",
+		"negativeHalf": "-6",
+		"negativeWhole": "-6",
+		"insetHalf": "8",
+		"insetNegativeHalf": "33",
+		"horizontalHalf": "6",
+		"horizontalWhole": "6",
+		"horizontalInsetHalf": "8",
+		"horizontalNegativeHalf": "0"
+	},
+	"centring150": {
+		"even": "7",
+		"odd": "7",
+		"negativeHalf": "-8",
+		"negativeWhole": "-7",
+		"insetHalf": "9",
+		"insetNegativeHalf": "40",
+		"horizontalHalf": "7",
+		"horizontalWhole": "7",
+		"horizontalInsetHalf": "9",
+		"horizontalNegativeHalf": "0"
 	}
 }

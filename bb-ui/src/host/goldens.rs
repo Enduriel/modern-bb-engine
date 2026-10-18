@@ -71,7 +71,7 @@ pub fn tolerance(name: &str) -> Tolerance {
 pub const UI_SCALE_SCREENS: [(f64, &str); 2] = [(1.25, "main_menu_ui125"), (1.5, "main_menu_ui150")];
 
 /// Set the UI scale to `scale` the way the Options screen does.
-fn set_ui_scale(session: &UiSession, scale: f64) -> Result<(), String> {
+pub fn set_ui_scale(session: &UiSession, scale: f64) -> Result<(), String> {
 	session.engine().run_script(
 		&format!(
 			"local m = ::Settings.getVideoMode(); m.UIScale = {scale:.2}; ::Settings.setVideoMode(m);"

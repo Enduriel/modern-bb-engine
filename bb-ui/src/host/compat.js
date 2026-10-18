@@ -27,7 +27,20 @@
 	// The UI scale. Coherent zooms the page: it lays out at the screen size divided by the
 	// scale and is drawn at the screen's resolution, but `devicePixelRatio` stays 1
 	// (probed). Ours is drawn so through the browser's device scale factor,
-	// which Chromium reports there.
+	// which Chromium reports there. The real one (the scale) stays readable to the
+	// rewrites below, as `--bb-zoom` on the root, kept up to date as the scale changes
+	// (which resizes the page).
+	var dprSource = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio') ||
+		Object.getOwnPropertyDescriptor(Window.prototype, 'devicePixelRatio');
+	var screenPixels = function () {
+		return dprSource && dprSource.get ? dprSource.get.call(window) : 1;
+	};
+	var zoomStyle = document.createElement('style');
+	zoomStyle.setAttribute('data-bb-compat', 'zoom');
+	function trackZoom() {
+		zoomStyle.textContent = ':root { --bb-zoom: ' + screenPixels() + '; }';
+	}
+	window.addEventListener('resize', trackZoom);
 	Object.defineProperty(window, 'devicePixelRatio', {
 		configurable: true,
 		enumerable: true,
@@ -49,6 +62,8 @@
 		style.setAttribute('data-bb-compat', '');
 		style.textContent = BUILT_IN_CSS + NOTHING_TO_SHOW_CSS;
 		document.head.insertBefore(style, document.head.firstChild);
+		trackZoom();
+		document.head.insertBefore(zoomStyle, style.nextSibling);
 	});
 	// Image loads don't bubble, but the document sees them on their way down to an image
 	// in the page. The game's UI adds its images to the page before they load. An error
@@ -75,8 +90,28 @@
 	// lands the box exactly where CSS 2.1 does: (height of the containing block + top -
 	// bottom - height of the box) / 2. Only whole rules that declare all of it are
 	// rewritten, which is how the game's CSS writes them.
+	//
+	// The half pixel. Old WebKit lays out in whole screen pixels: of an odd room it gives
+	// the start margin the smaller part, rounding the half toward zero (4px of 9; -5 of
+	// -11), where Chromium places the box at the half and draws it at the next pixel on.
+	// Vanilla centres ~270 boxes so vertically and ~150 horizontally (button labels,
+	// icons), so each sat a pixel off whenever its room was odd (probed at UI scales 1,
+	// 1.25 and 1.5, `bb-ui/probes/centring_rules.js`). A quarter screen pixel back toward
+	// the start makes Chromium's rounding land where old WebKit's does when there is room
+	// to spare (with less, Chromium's rounding of the half already agrees, and across the
+	// start margin is 0 in both). Whether there is room is told from the rule's own size.
 	function zeroWithUnit(value) {
 		return value === '0' ? '0px' : value;
+	}
+
+	// A quarter pixel back when the room `100% - start - end - size` is positive, else 0;
+	// at UI scale 1 only. Under a zoom, old WebKit first cuts every zoomed length down to
+	// whole screen pixels (a 91px box is 113 of them at 1.25, so its room in a 125px
+	// parent is 12, not 11.25), which a quarter pixel can't follow: there the nudge put
+	// the menu and half of the probe's boxes a pixel further off.
+	function halfPixelBack(start, end, size) {
+		return 'calc(-0.25px * max(0, sign(100% - ' + start + ' - ' + end + ' - ' + size + ')) * ' +
+			'max(0, 1 - abs(var(--bb-zoom, 1) - 1) * 1000))';
 	}
 
 	function centreLikeCss21(style) {
@@ -87,8 +122,24 @@
 		}
 		var top = zeroWithUnit(style.top);
 		var bottom = zeroWithUnit(style.bottom);
-		style.top = 'calc((' + top + ' - ' + bottom + ') / 2)';
-		style.bottom = 'calc((' + bottom + ' - ' + top + ') / 2)';
+		var back = halfPixelBack(top, bottom, zeroWithUnit(style.height));
+		style.top = 'calc((' + top + ' - ' + bottom + ') / 2 + ' + back + ')';
+		style.bottom = 'calc((' + bottom + ' - ' + top + ') / 2 - ' + back + ')';
+	}
+
+	// The same box centred between its left and right insets: Chromium and old WebKit
+	// agree but for the half pixel.
+	function centreAcrossLikeOldWebKit(style) {
+		var lengths = [style.left, style.right, style.width];
+		if (style.position !== 'absolute' || style.marginLeft !== 'auto' || style.marginRight !== 'auto' ||
+			lengths.some(function (v) { return v === '' || v === 'auto'; })) {
+			return;
+		}
+		var left = zeroWithUnit(style.left);
+		var right = zeroWithUnit(style.right);
+		var back = halfPixelBack(left, right, zeroWithUnit(style.width));
+		style.left = 'calc(' + left + ' + ' + back + ')';
+		style.right = 'calc(' + right + ' - ' + back + ')';
 	}
 
 	// Percentages. Old WebKit laid out in whole pixels: a percentage resolved to a
@@ -139,6 +190,7 @@
 				fixRules(rule.cssRules);
 			} else if (rule.type === CSSRule.STYLE_RULE) {
 				centreLikeCss21(rule.style);
+				centreAcrossLikeOldWebKit(rule.style);
 				wholePixelPercentages(rule.style);
 				bordersUnderImages(rule.style);
 			}
