@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against twenty-seven kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against twenty-eight kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -776,3 +776,35 @@ fn a_caravan_escort_on_the_plains() {
 		setup: "",
 	});
 }
+
+/// The trickster god (trickster_god_agent; a one-off party, as no spawn list holds it,
+/// with a cost of 1 since `addUnitsToCombat` picks no party from lists that cost 0) in a
+/// forest. The company falls.
+#[test]
+fn the_trickster_god_in_a_forest() {
+	fight(&Scenario {
+		spawn: "ProbeTricksterGod",
+		resources: 1,
+		faction: "Beasts",
+		terrain: "tactical.forest",
+		checkpoints: &[(2000, 893634), (10000, 841645), (20000, 274510), (30000, 333177), (34000, 421339), (34074, 93771)],
+		result: 4,
+		pin_render: false,
+		after: Some((34084, 368489, 3)),
+		player: false,
+		setup: TRICKSTER_GOD,
+	});
+}
+
+const TRICKSTER_GOD: &str = r#"
+::Const.World.Spawn.ProbeTricksterGod <- [
+	{
+		Cost = 1,
+		MovementSpeedMult = 1.0,
+		VisibilityMult = 1.0,
+		VisionMult = 1.0,
+		Body = "figure_ghost_01",
+		Troops = [ { Type = ::Const.World.Spawn.Troops.TricksterGod, Num = 1 } ]
+	}
+];
+"#;
