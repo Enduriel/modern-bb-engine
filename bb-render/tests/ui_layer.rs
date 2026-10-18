@@ -1,5 +1,6 @@
-//! The UI page over a frame: premultiplied colours blend over what the game drew, and
-//! a page smaller than the frame is stretched over all of it. Skips without a GPU.
+//! The UI page over a frame: premultiplied colours blend over what the game drew, a
+//! texel a pixel from the frame's top-left (the page is painted at the screen's
+//! resolution at any UI scale), and the game shows past its edge. Skips without a GPU.
 
 use bb_assets::Image;
 use bb_render::{Gpu, RenderTarget, UiLayer};
@@ -66,7 +67,7 @@ fn the_page_blends_over_the_frame() {
 }
 
 #[test]
-fn a_smaller_page_covers_the_frame() {
+fn the_page_is_drawn_a_texel_a_pixel() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
@@ -74,14 +75,17 @@ fn a_smaller_page_covers_the_frame() {
 			return;
 		}
 	};
-	// A UI scale of 2: a 2 × 1 page over a 4 × 2 frame.
-	let target = blue_target(&gpu, 4, 2);
+	// A page a pixel short of the frame both ways (UI scale 1.5 on a 2560 screen paints
+	// 1706 × 1.5 = 2559): it isn't stretched, and the game shows past it.
+	let target = blue_target(&gpu, 3, 2);
 	let mut layer = UiLayer::new(&gpu);
 	layer.upload(&gpu, 2, 1, &[[0, 0, 255, 255], [0, 255, 0, 255]].concat());
 	layer.draw(&gpu, &target);
 	let image = target.read(&gpu).unwrap();
-	for y in 0..2 {
-		assert_eq!(pixel(&image, 0, y), [255, 0, 0, 255]);
-		assert_eq!(pixel(&image, 3, y), [0, 255, 0, 255]);
+	assert_eq!(pixel(&image, 0, 0), [255, 0, 0, 255]);
+	assert_eq!(pixel(&image, 1, 0), [0, 255, 0, 255]);
+	assert_eq!(pixel(&image, 2, 0), BLUE, "past the page's edge");
+	for x in 0..3 {
+		assert_eq!(pixel(&image, x, 1), BLUE, "below the page");
 	}
 }
