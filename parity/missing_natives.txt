@@ -37,14 +37,6 @@ campaign/natives_objects | get world_navigator_settings.* | a plain table here, 
 campaign/natives_objects | set world_navigator_settings.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | get world_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
 campaign/natives_objects | readonly world_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
-campaign/natives_objects | native world_camera.addEntityOverlay | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.queryEntityOverlays | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.registerCallbacks | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.removeEntityOverlay | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.removeEntityOverlays | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.render | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.unregisterCallbacks | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
-campaign/natives_objects | native world_camera.updateEntityOverlays | the camera class's entity overlays, movement callbacks and render: no vanilla script uses them on the world camera (worklist)
 campaign/natives_objects | get world_clouds.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | set world_clouds.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | get world_birds.* | a plain table here, with the original's fields; a class instance there

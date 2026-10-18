@@ -18,6 +18,8 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
 
+use super::camera_callbacks::{self, MovementCallbacks};
+use super::camera_overlays::EntityOverlays;
 use super::overload::class_overloads;
 
 use super::camera_motion::{Camera, GLIDE_SPEED};
@@ -59,9 +61,14 @@ const CENTRED_ON_POS: f32 = 3.0;
 /// Where the world camera starts (`0x4ee9c8`).
 const START: (f32, f32) = (2800.0, 2000.0);
 
-/// The camera, and its `Level` (the camera class's, shared with the battle's: the world
-/// map has no levels, so nothing reads it; 0 at first, probed 2026-10-14).
-struct CameraHandle(WorldCamera, i64);
+/// The camera, its `Level` (the camera class's, shared with the battle's: the world map
+/// has no levels, so nothing reads it; 0 at first, probed), and its entity
+/// overlays.
+struct CameraHandle(WorldCamera, i64, EntityOverlays);
+
+/// The world camera's movement callbacks (see `camera_callbacks`). They hold script
+/// functions: the engine clears them before the VM closes.
+pub(crate) type WorldCameraCallbacks = Rc<RefCell<MovementCallbacks>>;
 
 /// `createVec(x, y)`.
 fn vec(vm: &SQVM, (x, y): (f32, f32)) -> Result<SqStrongRef, String> {
@@ -105,7 +112,7 @@ fn round_half_away(v: f32) -> f32 {
 	(if v < 0.0 { v - 0.5 } else { v + 0.5 }) as i32 as f32
 }
 
-fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
+fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallbacks) -> SqClass<CameraHandle> {
 	let glide_to = |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
 		if let Some(p) = target_pos(vm, &target.0) {
 			c.0.borrow_mut().glide(p, GLIDE_SPEED, true, 0.0);
@@ -192,20 +199,41 @@ fn build_class(vm: &mut SQVM) -> SqClass<CameraHandle> {
 	});
 	// `update` fires the camera's moved-callbacks (none registered here); the world
 	// camera has no levels to climb.
-	for name in ["climbBy", "update"] {
+	// The camera class's entity overlays (see `camera_overlays`); vanilla uses them only
+	// in battles.
+	b = b
+		.method("addEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, overlay: Retained| c.2.add(vm, &overlay.0))
+		.method("removeEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, entity: Retained| c.2.remove(vm, &entity.0))
+		.method("removeEntityOverlays", |c: &mut CameraHandle| c.2.clear())
+		.method("queryEntityOverlays", |c: &mut CameraHandle, vm: &SQVM, Variadic(_a): Variadic<Retained>| c.2.states(vm));
+	// Its movement callbacks (see `camera_callbacks`). They run scripts, so they reach the
+	// lists through `callbacks` rather than the instance's payload.
+	let (register, unregister, update) = (callbacks.clone(), callbacks.clone(), callbacks.clone());
+	let moving = camera.clone();
+	b = b
+		.native_method("registerCallbacks", move |start: Retained, end: Retained| register.borrow_mut().register(start.0, end.0))
+		.native_method("unregisterCallbacks", move |start: Retained, end: Retained| unregister.borrow_mut().unregister(&start.0, &end.0))
+		.native_method("update", move |vm: &SQVM| {
+			let due = update.borrow_mut().due(moving.borrow().is_moving());
+			camera_callbacks::fire(vm, due);
+		});
+	// The world camera has no levels to climb; the overlays' screen positions are visual.
+	for name in ["climbBy", "render", "updateEntityOverlays"] {
 		let stub = super::stubs::name(format!("World.getCamera().{name}"));
 		b = b.method(name, move |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| super::stubs::note(stub));
 	}
 	b.build(vm)
 }
 
-/// The camera instance for `World.getCamera()`, and the camera it drives.
-pub(crate) fn instance(vm: &mut SQVM) -> (SqStrongRef, WorldCamera) {
-	let class = build_class(vm);
+/// The camera instance for `World.getCamera()`, the camera it drives, and its movement
+/// callbacks.
+pub(crate) fn instance(vm: &mut SQVM) -> (SqStrongRef, WorldCamera, WorldCameraCallbacks) {
+	let callbacks = WorldCameraCallbacks::default();
 	let mut start = Camera::new((1920, 1080), ZOOM_LIMIT);
 	start.shift(START);
 	let camera = Rc::new(RefCell::new(start));
-	(class.instantiate(vm, CameraHandle(camera.clone(), 0)), camera)
+	let class = build_class(vm, &camera, &callbacks);
+	(class.instantiate(vm, CameraHandle(camera.clone(), 0, EntityOverlays::default())), camera, callbacks)
 }
 
 /// `World.screenToTile(x, y)`: the tile under a pixel, as `World.worldToTile` of the

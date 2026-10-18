@@ -18,9 +18,11 @@
 //! from `getBestLevelForTile` as the action moves, and the battle starts with
 //! `setLevelToHighestOnMap`; both are the original's, disassembled.
 
-use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::{Grid, TacticalGridState, TileHandle};
+use crate::native::camera_callbacks::MovementCallbacks;
+use crate::native::camera_overlays::EntityOverlays;
 use crate::native::overload::class_overloads;
 use crate::native::camera_motion::{Camera, GLIDE_SPEED};
 use crate::native::screen::Screen;
@@ -58,12 +60,12 @@ pub(crate) struct CameraState {
 	pub pos: (f64, f64),
 	/// The entities with an orientation overlay (the arrow the UI shows for a unit off
 	/// screen), by id, in the order they were added.
-	pub overlays: Vec<i64>,
+	pub overlays: EntityOverlays,
 	/// The gliding camera, with [`BattleCamera::Glides`]: it holds the position and
 	/// zoom then.
 	pub glide: Option<Camera>,
 	/// `registerCallbacks`' functions (see `camera_callbacks`).
-	pub callbacks: super::camera_callbacks::MovementCallbacks,
+	pub callbacks: MovementCallbacks,
 }
 
 impl CameraState {
@@ -104,37 +106,13 @@ impl Default for CameraState {
 			zoom: 1.0,
 			flipped: false,
 			pos: (0.0, 0.0),
-			overlays: Vec::new(),
+			overlays: EntityOverlays::default(),
 			glide: None,
 			callbacks: Default::default(),
 		}
 	}
 }
 
-/// `entity.getID()`, if it has one.
-fn entity_id(vm: &SQVM, entity: &SqStrongRef) -> Option<i64> {
-	entity.call_method_ret::<i64, _>(vm, "getID", ()).ok().flatten()
-}
-
-/// `queryEntityOverlays()`: what the orientation overlays show, in the UI's fields
-/// (`TacticalScreenIdentifier.OrientationOverlay`). Headless, every unit is on screen,
-/// so no arrow is visible; the original places those at (0, 0), not offscreen and with
-/// no vertical offset (the UI golden of a battle, `bb-ui/tests/goldens/world_combat.json`,
-/// and the payload golden `parity/goldens/ui_payloads/world.txt`).
-fn overlay_states(vm: &SQVM, overlays: &[i64]) -> SqStrongRef {
-	let mut list = SqArray::new(vm);
-	for &id in overlays {
-		let mut overlay = SqTable::new(vm);
-		overlay.set("id", id);
-		overlay.set("x", 0i64);
-		overlay.set("y", 0i64);
-		overlay.set("visible", false);
-		overlay.set("isOffscreen", false);
-		overlay.set("yOffset", 0i64);
-		list.push(overlay.to_strong());
-	}
-	list.to_strong()
-}
 
 /// `screenToWorld(x, y)`: the world point under screen pixel `(x, y)`, the camera's
 /// position being the centre of the screen: the original's rule (see [`Screen`]),
@@ -292,28 +270,17 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 			let (px, py) = Screen::of(vm).to_screen((cx as f32, cy as f32), zoom, (x as f32, y as f32));
 			super::vec(vm, (f64::from(px), f64::from(py)))
 		})
-		// The orientation overlays (orientation_overlay.nut): `addEntityOverlay` gets
-		// `{ entity, image }`, `removeEntityOverlay` the entity.
+		// The orientation overlays (see `camera_overlays`).
 		.method("addEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, overlay: Retained| {
-			let entity = overlay.0.as_table(vm).and_then(|t| t.get::<SqStrongRef>("entity"));
-			if let Some(id) = entity.and_then(|e| entity_id(vm, &e)) {
-				let overlays = &mut c.0.borrow_mut().camera.overlays;
-				if !overlays.contains(&id) {
-					overlays.push(id);
-				}
-			}
+			c.0.borrow_mut().camera.overlays.add(vm, &overlay.0)
 		})
 		.method("removeEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, entity: Retained| {
-			if let Some(id) = entity_id(vm, &entity.0) {
-				c.0.borrow_mut().camera.overlays.retain(|&o| o != id);
-			}
+			c.0.borrow_mut().camera.overlays.remove(vm, &entity.0)
 		})
-		.method("removeEntityOverlays", |c: &mut CameraHandle| {
-			c.0.borrow_mut().camera.overlays.clear();
-		})
+		.method("removeEntityOverlays", |c: &mut CameraHandle| c.0.borrow_mut().camera.overlays.clear())
 		.method("queryEntityOverlays", |c: &mut CameraHandle, vm: &SQVM, Variadic(_a): Variadic<Retained>| {
 			let overlays = c.0.borrow().camera.overlays.clone();
-			overlay_states(vm, &overlays)
+			overlays.states(vm)
 		});
 	// Sqrat overloads, as the original's: the arities it binds. To a position, a tile or
 	// an entity: at once, or gliding (eased; a second argument is how close is close

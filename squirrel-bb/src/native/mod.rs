@@ -15,7 +15,9 @@
 pub(crate) mod audio;
 pub(crate) mod battle_effects;
 mod brushes;
+pub(crate) mod camera_callbacks;
 pub(crate) mod camera_motion;
+pub(crate) mod camera_overlays;
 mod color;
 mod engine_rng;
 mod entity_ids;
@@ -225,13 +227,13 @@ impl NativeConfig {
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm, crt.clone());
 		let bird_rng = self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ BIRD_SEED));
-		let (world_clock, clouds, birds, waves, world_camera, world_particles) = world::install(vm, &engine_rng, &bird_rng, &sprites);
+		let (world_clock, clouds, birds, waves, world_camera, world_camera_callbacks, world_particles) = world::install(vm, &engine_rng, &bird_rng, &sprites);
 		let tactical = tactical::install(vm, &engine_rng, &crt);
 		let video = settings::install(vm);
 		execute::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_particles, tactical, sprites, engine_rng, video }
+		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_camera_callbacks, world_particles, tactical, sprites, engine_rng, video }
 	}
 }
 
@@ -242,6 +244,9 @@ pub struct InstalledNatives {
 	pub(crate) birds: world_birds::Birds,
 	pub(crate) waves: world_waves::Waves,
 	pub(crate) world_camera: world_camera::WorldCamera,
+	/// The world camera's movement callbacks: they hold script functions, so the engine
+	/// clears them before the VM closes.
+	pub(crate) world_camera_callbacks: world_camera::WorldCameraCallbacks,
 	pub(crate) world_particles: particles::ParticlesHandle,
 	pub(crate) tactical: tactical::TacticalParts,
 	pub(crate) sprites: Sprites,

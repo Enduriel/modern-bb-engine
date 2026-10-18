@@ -61,7 +61,15 @@ pub(crate) fn install(
 	engine_rng: &super::EngineRng,
 	bird_rng: &super::EngineRng,
 	sprites: &super::Sprites,
-) -> (super::world_time::Clock, Clouds, super::world_birds::Birds, Waves, super::world_camera::WorldCamera, super::particles::ParticlesHandle) {
+) -> (
+	super::world_time::Clock,
+	Clouds,
+	super::world_birds::Birds,
+	Waves,
+	super::world_camera::WorldCamera,
+	super::world_camera::WorldCameraCallbacks,
+	super::particles::ParticlesHandle,
+) {
 	let world_clock: super::world_time::Clock = Default::default();
 	let clouds: Clouds = Rc::new(RefCell::new(CloudCover::new(engine_rng.clone())));
 	let birds: super::world_birds::Birds =
@@ -80,7 +88,7 @@ pub(crate) fn install(
 
 	// World.getCamera(): see `world_camera`. World.screenToTile(x, y): the tile under a
 	// pixel.
-	let (camera, world_camera) = super::world_camera::instance(vm);
+	let (camera, world_camera, camera_callbacks) = super::world_camera::instance(vm);
 	let get_camera = vm.make_closure(move || camera.clone());
 	let screen_to_tile = {
 		let camera = world_camera.clone();
@@ -192,5 +200,5 @@ pub(crate) fn install(
 	}
 	SqTable::root(vm).set("World", world);
 	super::particles::install_on(vm, "World", &particles);
-	(world_clock, clouds, birds, waves, world_camera, particles)
+	(world_clock, clouds, birds, waves, world_camera, camera_callbacks, particles)
 }

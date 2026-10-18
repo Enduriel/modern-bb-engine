@@ -65,6 +65,7 @@ pub struct Engine<S: ScriptSource> {
 	tactical_light: crate::native::tactical::TacticalLight,
 	tactical_clouds: crate::native::world_clouds::Clouds,
 	world_camera: crate::native::world_camera::WorldCamera,
+	world_camera_callbacks: crate::native::world_camera::WorldCameraCallbacks,
 	world_particles: crate::native::particles::ParticlesHandle,
 	tactical_particles: crate::native::particles::ParticlesHandle,
 	battle_effects: crate::native::battle_effects::BattleEffectsHandle,
@@ -233,6 +234,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tactical_light: natives.tactical.light.clone(),
 			tactical_clouds: natives.tactical.clouds.clone(),
 			world_camera: natives.world_camera.clone(),
+			world_camera_callbacks: natives.world_camera_callbacks.clone(),
 			world_particles: natives.world_particles.clone(),
 			tactical_particles: natives.tactical.particles.clone(),
 			battle_effects: natives.tactical.effects.clone(),
@@ -528,6 +530,7 @@ impl<S: ScriptSource> Drop for Engine<S> {
 		self.tactical_grid.clear();
 		self.world_entities.clear();
 		self.world_grid.clear();
+		self.world_camera_callbacks.borrow_mut().clear();
 		self.ui.clear();
 		self.time.clear();
 		self.modules.clear();
