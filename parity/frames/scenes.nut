@@ -24,7 +24,7 @@ local mode = ::Settings.getVideoMode();
 	{ scene = null, shot = "intro", until = null, click = "Huzzah!" },
 	{ scene = "world", shot = "world", until = null, click = null },
 	{ scene = "town", shot = "town", until = null, click = null },
-	{ scene = "leaveTown", shot = null, until = null, click = null },
+	{ scene = "leaveTown", shot = null, until = "leftTown", click = null },
 	{ scene = "night", shot = "night", until = "nightFell", click = null },
 	{ scene = "battle", shot = "battle_turn", until = "playerTurn", click = null },
 	{ scene = "pathShort", shot = "battle_path_short", until = null, click = null },
@@ -149,6 +149,24 @@ local function showPath( _tile )
 	else if (_scene == "leaveTown")
 	{
 		state.town_screen_main_dialog_module_onLeaveButtonClicked();
+	}
+	else if (_scene == "leftTown")
+	{
+		// Out once the town screen is gone. A Leave while its screen still animates in is
+		// ignored (the page's animation runs on the clock, so a busy machine can get
+		// there first): press it again once the screen has settled.
+		local screen = state.m.WorldTownScreen;
+		if (state.m.LastEnteredTown == null && !screen.isVisible())
+		{
+			return true;
+		}
+
+		if (screen.isVisible() && !screen.isAnimating())
+		{
+			state.town_screen_main_dialog_module_onLeaveButtonClicked();
+		}
+
+		return false;
 	}
 	else if (_scene == "night" || _scene == "nightFell" && ::World.getTime().IsDaytime)
 	{
