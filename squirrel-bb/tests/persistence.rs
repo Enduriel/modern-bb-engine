@@ -117,3 +117,35 @@ fn storages_are_the_originals_files() {
 	// The times are now; the rest is as the original writes it.
 	assert_eq!(mine[23..], expected[23..]);
 }
+
+/// A stream has both directions' members, as the original's one stream class: its own
+/// file name either way, and the other direction refusing (the original's read garbage
+/// from a stream being written, and its `beginRead` hangs).
+#[test]
+fn a_stream_knows_its_file_and_refuses_the_other_direction() {
+	let engine = Engine::new(NoScripts);
+	engine
+		.run_script(
+			r#"
+			local w = ::PersistenceManager.createStorage("two_ways");
+			assert(w.getFileName() == "two_ways");
+			w.beginWrite();
+			w.writeU8(7);
+			local refused = null;
+			try { w.readU8(); } catch (e) { refused = e; }
+			assert(refused == "readU8: the stream is being written");
+			w.endWrite();
+			local r = ::PersistenceManager.loadStorage("two_ways");
+			assert(r.getFileName() == "two_ways");
+			r.beginRead();
+			refused = null;
+			try { r.writeU8(1); } catch (e) { refused = e; }
+			assert(refused == "writeU8: the stream is being read");
+			assert(r.readU8() == 7);
+			r.endRead();
+			::PersistenceManager.deleteStorage("two_ways");
+			"#,
+			"two_ways",
+		)
+		.expect("both directions' members");
+}

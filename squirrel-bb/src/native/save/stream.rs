@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, SQVM, SqBytes, SqClass, SqStrongRef};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqBytes, SqClass, SqStrongRef, Variadic};
 
 pub(crate) use super::meta::Meta;
 use super::meta::local_date;
@@ -168,6 +168,28 @@ struct InStream {
 	meta_class: SqClass<SharedMeta>,
 }
 
+/// The original's stream is one class that reads and writes. A stream being written
+/// has the reading members too, and vice versa (`campaign/natives_objects`). Probed
+/// 2026-10-14 on one being written: its reads return whatever the buffer holds elsewhere
+/// (`readU8` after writing 7 read 21), and `beginRead` hangs the game. Here the other
+/// direction's members raise an error instead.
+const READING: &[&str] = &[
+	"readU8", "readI8", "readU16", "readI16", "readU32", "readI32", "readF32", "readBool", "readString", "beginRead",
+	"endRead",
+];
+const WRITING: &[&str] = &[
+	"writeU8", "writeI8", "writeU16", "writeI16", "writeU32", "writeI32", "writeF32", "writeBool", "writeString",
+	"beginWrite", "endWrite",
+];
+
+/// Add `names` to `b` as members that refuse, the stream being `what`.
+fn the_other_way<T: 'static>(b: ClassBuilder<T>, names: &[&str], what: &'static str) -> ClassBuilder<T> {
+	names.iter().fold(b, |b, &name| {
+		let message = format!("{name}: the stream is {what}");
+		b.method(name, move |_s: &mut T, Variadic(_a): Variadic<Retained>| -> Result<(), String> { Err(message.clone()) })
+	})
+}
+
 /// A script integer argument as the original casts it (floats truncate).
 fn int(n: Number) -> i64 {
 	n.0 as i64
@@ -204,6 +226,7 @@ impl StreamClasses {
 			.method("getMetaData", |s: &mut OutStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
 			})
+			.method("getFileName", |s: &mut OutStream| s.meta.borrow().file_name.clone())
 			// A storage is written between beginWrite() and endWrite().
 			.method("beginWrite", |s: &mut OutStream| s.writer.borrow_mut().buf.clear())
 			.method("endWrite", |s: &mut OutStream| -> Result<(), String> {
@@ -212,7 +235,8 @@ impl StreamClasses {
 					None => Ok(()),
 				}
 			})
-			.build(vm);
+;
+		let out = the_other_way(out, READING, "being written").build(vm);
 
 		let input = ClassBuilder::<InStream>::new("SaveInputStream")
 			.method("readU8", |s: &mut InStream| -> Result<i64, String> { Ok(s.reader.borrow_mut().u8()?.into()) })
@@ -238,10 +262,11 @@ impl StreamClasses {
 			.method("getMetaData", |s: &mut InStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
 			})
+			.method("getFileName", |s: &mut InStream| s.meta.borrow().file_name.clone())
 			// A loaded storage is read between beginRead() and endRead().
 			.method("beginRead", |_s: &mut InStream| {})
-			.method("endRead", |_s: &mut InStream| {})
-			.build(vm);
+			.method("endRead", |_s: &mut InStream| {});
+		let input = the_other_way(input, WRITING, "being read").build(vm);
 
 		StreamClasses { out, input, meta }
 	}

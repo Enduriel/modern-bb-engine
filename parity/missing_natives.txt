@@ -45,18 +45,6 @@ campaign/natives_objects | get gameplay_settings.* | a plain table here, with th
 campaign/natives_objects | set gameplay_settings.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | get temp_gameplay_settings.* | a plain table here, with the original's fields; a class instance there
 campaign/natives_objects | set temp_gameplay_settings.* | a plain table here, with the original's fields; a class instance there
-campaign/natives_objects | native save_stream.beginRead | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.endRead | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.getFileName | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readBool | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readF32 | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readI16 | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readI32 | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readI8 | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readString | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readU16 | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readU32 | the original's one stream class also reads (worklist)
-campaign/natives_objects | native save_stream.readU8 | the original's one stream class also reads (worklist)
 campaign/natives_objects | get actor_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
 campaign/natives_objects | readonly actor_brush.* | a plain table here ({ Name, TextureName }); reading ID crashes the original (probed)
 campaign/natives_objects | get tactical_weather.* | a plain table here, with the original's fields; a class instance there
