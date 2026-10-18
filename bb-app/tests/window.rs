@@ -171,3 +171,19 @@ fn the_video_mode_applies_live() {
 	assert!(kept.contains("video.width = 800\n") && kept.contains("video.height = 600\n"), "the mode kept:\n{kept}");
 	assert!(kept.contains("video.borderless = false\n"), "the borderless mode wasn't kept:\n{kept}");
 }
+
+/// A game that starts borderless over the monitor, with VSync off (a settings file
+/// asking for both; the first run after a restart once hung there, after the swapchain
+/// was made again for the borderless window), draws its frames and ends.
+#[test]
+fn bb_starts_borderless_and_draws() {
+	let dir = run_dir("borderless");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let start = "video.width = 1920\nvideo.height = 1080\nvideo.fullscreen = false\nvideo.borderless = true\nvideo.vsync = false\n";
+	std::fs::write(&settings, start).expect("the settings");
+	let args = ["--settings", settings.to_str().unwrap(), "--shot", "300", shot.to_str().unwrap()];
+	let Some(run) = run_bb(&dir, (1920, 1080), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	assert!(run.stderr.contains("video: 1920x1080 Borderless"), "{}", run.stderr);
+	assert_eq!(png_size(&shot), (1920, 1080), "borderless over the monitor");
+}
