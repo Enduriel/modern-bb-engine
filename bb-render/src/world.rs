@@ -10,9 +10,11 @@
 //! - brush and sprite offsets are y up; a mirror is about the anchor.
 //!
 //! Draw order: tile terrain, then the details layer, then the entities layer (the
-//! original keeps one quadtree per scene layer). Details sort back to front on the
-//! original's key, `int(y) + depth_bias + z level` (`spawnDetail`, `0x4fb707`); ties
-//! keep spawn order, and entities sort north to south, which is not yet checked.
+//! original keeps one quadtree per scene layer). Details sort back to front on the key
+//! their spawn gave them (`spawnDetail`, `0x4fb707`): `int(y) + depth_bias + z level`
+//! minus the spawn tile's axial-r parity, which decides between neighbouring tiles'
+//! pieces (the mountains' overlaps show it); ties keep spawn order, and entities sort
+//! north to south, which is not yet checked.
 //! Region names are text nodes in the details layer whose key stays 0 (`0x4f0350`),
 //! so they draw over the details.
 
@@ -226,22 +228,24 @@ pub fn world_quads<'a>(
 				rotation: detail.rotation as f32,
 				tint: [(detail.tint >> 16) as u8, (detail.tint >> 8) as u8, detail.tint as u8],
 			};
-			// The original's detail key: int(y) + depth bias + z level (`0x4fb707`).
-			let key = anchor[1] as i64 + detail.z_level;
 			let pushed = drawables.len();
+			// At its place (the tile's centre plus the spawn's offset).
 			push(
 				&mut drawables,
 				Layer::Details,
-				key,
+				0,
 				&detail.brush,
 				detail.frame,
-				anchor,
+				[detail.pos.0, detail.pos.1],
 				[0.0; 2],
 				look,
 			);
-			// Its `Saturation` (the steppe's brush is 0.8), and `IgnoreAmbientColor` (a
-			// house's lit windows at night, see [`unlit`]).
+			// The original's key, as the spawn made it (`0x4fb707`): int(y) + depth bias +
+			// z level − the spawn tile's axial-r parity. Its `Saturation` (the steppe's
+			// brush is 0.8), and `IgnoreAmbientColor` (a house's lit windows at night, see
+			// [`unlit`]).
 			if let Some(d) = drawables.get_mut(pushed) {
+				d.key = i64::from(detail.z);
 				d.quad.saturation = detail.saturation as f32;
 				d.quad.flags = unlit(detail.ignore_ambient);
 			}
@@ -622,6 +626,50 @@ mod tests {
 		let ((s_at, s_width), (b_at, b_width)) = (middle_and_width(shadow), middle_and_width(bird));
 		assert_eq!(s_width, b_width * BIRD_SHADOW_SCALE);
 		assert_eq!(s_at[1], b_at[1] - BIRD_SHADOW_DROP * BIRD_SHADOW_SCALE, "below it, the offset scaled");
+	}
+
+	#[test]
+	fn details_sort_on_their_spawns_key_at_their_own_place() {
+		use squirrel_bb::scene::{SceneDetail, SceneTile};
+		let detail = |brush: &str, z: i32, pos: (f32, f32)| {
+			let mut detail = SceneDetail::default();
+			detail.brush = brush.into();
+			detail.z = z;
+			detail.pos = pos;
+			detail
+		};
+		// The spawn's key (with the row parity) decides, not the tile's y: the second,
+		// spawned later and further forward by y alone, has the larger key and draws
+		// first.
+		let scene = WorldScene {
+			tiles: vec![SceneTile {
+				col: 0,
+				row: 0,
+				pos: (0.0, 0.0),
+				terrain: 2,
+				discovered: true,
+				brush: String::new(),
+				flipped: false,
+				details: vec![detail("rock", 29, (0.0, 0.0)), detail("mark", 30, (10.0, -5.0))],
+			}],
+			..WorldScene::default()
+		};
+		let view = WorldView {
+			center: [0.0, 0.0],
+			zoom: 1.0,
+			width: 800,
+			height: 600,
+		};
+		let quads = world_quads(&scene, &registry(), &view, WorldFonts::default()).quads;
+		let names: Vec<_> = quads.iter().map(crate::test_sprites::name_of).collect();
+		assert_eq!(names, ["mark", "rock"]);
+		// At its own place: the same detail at the tile's centre sits (10, -5) away.
+		let mut moved = scene.clone();
+		moved.tiles[0].details[1].pos = (0.0, 0.0);
+		let at_centre = world_quads(&moved, &registry(), &view, WorldFonts::default()).quads;
+		let mark = |qs: &[Quad]| qs.iter().find(|q| crate::test_sprites::name_of(q) == "mark").unwrap().corners[0];
+		let (a, b) = (mark(&quads), mark(&at_centre));
+		assert_eq!([a[0] - b[0], a[1] - b[1]], [10.0, -5.0], "at its own place");
 	}
 
 	#[test]
