@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against twenty-five kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against twenty-seven kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -738,5 +738,41 @@ fn a_kraken_in_a_swamp() {
 		after: Some((11080, 462773, 3)),
 		player: false,
 		setup: "::Const.Combat.ResurrectAnimationTime = 0.0001;",
+	});
+}
+
+/// Militia (militia, militia_veteran, militia_ranged, militia_captain) on the plains:
+/// the company retreats.
+#[test]
+fn militia_on_the_plains() {
+	fight(&Scenario {
+		spawn: "Militia",
+		resources: 100,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8000, 348224), (8193, 499813)],
+		result: 3,
+		pin_render: false,
+		after: Some((8197, 797013, 0)),
+		player: false,
+		setup: "",
+	});
+}
+
+/// A caravan escort (caravan hands and the donkeys) on the plains: the
+/// company retreats.
+#[test]
+fn a_caravan_escort_on_the_plains() {
+	fight(&Scenario {
+		spawn: "CaravanEscort",
+		resources: 100,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (7954, 585536)],
+		result: 3,
+		pin_render: false,
+		after: Some((7958, 194646, 0)),
+		player: false,
+		setup: "",
 	});
 }
