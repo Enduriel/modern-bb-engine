@@ -8,6 +8,8 @@ bb-assets = { path = "../bb-assets" }
 squirrel-bb = { path = "../squirrel-bb" }
 wgpu = "30.0.1"
 png = "0.18.1"
+cosmic-text = "0.19.0"
+unicode-script = "0.5.8"
 
 [dev-dependencies]
 bb-engine = { path = "../bb-engine" }
