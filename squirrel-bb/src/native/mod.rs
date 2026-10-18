@@ -211,6 +211,11 @@ impl NativeConfig {
 		let prng = prng::Prng::new();
 		// Pools draw from the C runtime's rand(), which 0-argument Math.rand also is.
 		let crt = prng.clone();
+		// The original's startup builds the world's scene, then the battle's, before any
+		// script runs (0x508d3e, 0x508d66), and each scene's constructor draws rand() once
+		// (0x55efed; the world's value is the `d4` its saves keep, 41 from seed 1).
+		crt.rand_default();
+		crt.rand_default();
 		vec::install(vm);
 		color::install(vm, prng.clone());
 		math::install(vm, prng);
