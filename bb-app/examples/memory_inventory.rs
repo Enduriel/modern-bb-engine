@@ -127,6 +127,26 @@ foreach (bro in ::World.getPlayerRoster().getAll())
 ::World.getCamera().setPos(player.getPos());
 ::__autoplayEngage = true;
 ::__autoplayFight <- true;
+// When every enemy flees, the battle asks whether it's over (and pauses until answered):
+// "It's over", as a player would.
+if (!("__inventoryAutoplay" in getroottable()))
+{
+	::__inventoryAutoplay <- ::__autoplay;
+	::__autoplay = function()
+	{
+		if (("State" in ::Tactical) && ::Tactical.State != null)
+		{
+			local st = ::Tactical.State;
+			local d = st.m.TacticalDialogScreen;
+			if (st.m.IsEnemyRetreatDialogShown && d.isVisible() && !d.isAnimating())
+			{
+				st.tactical_retreat_screen_onYesPressed();
+				return;
+			}
+		}
+		::__inventoryAutoplay();
+	};
+}
 // A brother who falls leaves the roster, as the player's do (the AI plays them).
 ::__autoplayDieAsPlayers <- true;
 if ("__lastCombatResult" in getroottable()) delete ::__lastCombatResult;
@@ -141,8 +161,44 @@ const BATTLE_FRAMES: u32 = 72_000;
 const WEAKEN: &str = r#"
 foreach (faction in ::Tactical.Entities.getAllInstances())
 	foreach (e in faction)
-		if (e != null && e.isAlive() && !e.isAlliedWithPlayer()) e.setHitpoints(1);
+		if (e != null && e.isAlive() && !e.isDying())
+		{
+			if (!e.isAlliedWithPlayer()) e.setHitpoints(1);
+			else
+			{
+				e.setHitpoints(e.getHitpointsMax());
+				// A brother who flees and has nowhere to go skips his turns: rallied, he
+				// fights (with the heals, a surrounded one fled forever once).
+				if (e.getMoraleState() < ::Const.MoraleState.Steady) e.setMoraleState(::Const.MoraleState.Steady);
+				// Bitten often enough, he's too fatigued for any skill or step.
+				e.setFatigue(0);
+			}
+		}
 "#;
+
+/// Every unit on the map, for a battle that won't end.
+const UNITS: &str = r#"(function() {
+local s = "units:";
+foreach (faction in ::Tactical.Entities.getAllInstances())
+	foreach (e in faction)
+		if (e != null && e.isAlive() && e.isPlacedOnMap())
+		{
+			local t = e.getTile();
+			local adj = 0;
+			for (local i = 0; i < 6; i++)
+				if (t.hasNextTile(i) && t.getNextTile(i).IsOccupiedByActor && !t.getNextTile(i).getEntity().isAlliedWith(e)) adj++;
+			local a = e.getAIAgent();
+			s += " [" + e.getName() + " hp " + e.getHitpoints() + " morale " + e.getMoraleState() + " fatigue " + e.getFatigue() + "/" + e.getFatigueMax() + " AP " + e.getActionPoints()
+				+ " pc " + e.isPlayerControlled() + " at " + t.X + "," + t.Y + " enemies adj " + adj
+				+ (a == null ? "" : " agent " + a.ClassName + " finished " + a.isFinished()) + "]";
+		}
+return s;
+})()"#;
+
+/// Battle frames between two [`WEAKEN`]s: the AI misses, and the beasts' bites add up
+/// over a long battle (direwolves wiped the company out once), and the company's morale
+/// breaks and its fatigue fills.
+const WEAKEN_EVERY: u32 = 600;
 
 /// What a battle that won't end is waiting on.
 const STALL: &str = r#"(function() {
@@ -161,7 +217,14 @@ const STALL: &str = r#"(function() {
 			+ ", placed " + a.isPlacedOnMap() + ", hp " + a.getHitpoints() + ", AP " + a.getActionPoints()
 			+ ", player controlled " + a.isPlayerControlled() + ", hidden " + a.isHiddenToPlayer();
 		local agent = a.getAIAgent();
-		if (agent != null) s += ", agent " + agent.ClassName + " finished " + agent.isFinished();
+		if (agent != null) s += ", agent " + agent.ClassName + " finished " + agent.isFinished()
+			+ " evaluating " + agent.isEvaluating() + " behavior " + (agent.m.ActiveBehavior == null ? "null" : agent.m.ActiveBehavior.getID());
+		s += "; game paused " + st.m.IsGamePaused + ", AI paused " + st.m.IsAIPaused + ", auto retreat " + st.m.IsAutoRetreat
+			+ ", input locked " + st.m.IsInputLocked + ", camera delayed " + ::Tactical.CameraDirector.isDelayed()
+			+ ", travelling " + ::Tactical.getNavigator().IsTravelling + ", action state " + st.m.CurrentActionState
+			+ ", dialog " + ::DialogScreen.isVisible() + ", tactical dialog " + st.m.TacticalDialogScreen.isVisible()
+			+ " (enemy retreat asked " + st.m.IsEnemyRetreatDialogShown + "), tactical menu " + st.m.TacticalMenuScreen.isVisible()
+			+ ", character screen " + st.m.CharacterScreen.isVisible() + ", virtual speed " + ::Time.getVirtualSpeed();
 	} catch (e) { s += " (" + e + ")"; }
 	return s;
 })()"#;
@@ -486,13 +549,24 @@ impl Session<'_> {
 		self.fight_out(&format!("{n}. {target}"))
 	}
 
-	/// Fight the battle under way to its end (its enemies weakened after a while).
+	/// Fight the battle under way to its end (its enemies weakened, and the company healed,
+	/// after a while and then every [`WEAKEN_EVERY`] frames).
 	fn fight_out(&mut self, label: &str) -> Result<(), String> {
 		self.frames(BATTLE_MS, 300, DRAW_EVERY)?;
-		self.engine().run_script(WEAKEN, "weaken the enemies")?;
-		if let Err(e) = self.until(BATTLE_MS, BATTLE_FRAMES, "the battle ending", BACK_IN_WORLD) {
+		let mut ended = Err(String::new());
+		for _ in 0..BATTLE_FRAMES / WEAKEN_EVERY {
+			if self.holds(IN_TACTICAL)? {
+				self.engine().run_script(WEAKEN, "weaken the enemies")?;
+			}
+			ended = self.until(BATTLE_MS, WEAKEN_EVERY, "the battle ending", BACK_IN_WORLD);
+			if ended.is_ok() {
+				break;
+			}
+		}
+		if let Err(e) = ended {
 			let stall = player::eval_string(self.engine(), STALL).ok().flatten().unwrap_or_default();
-			return Err(format!("{e}; {stall}"));
+			let units = player::eval_string(self.engine(), UNITS).ok().flatten().unwrap_or_default();
+			return Err(format!("{e} (in all, {BATTLE_FRAMES} frames); {stall}; {units}"));
 		}
 		let result = player::eval_i64(self.engine(), "::__lastCombatResult")?.unwrap_or(-1);
 		self.battles.push(format!("{label}: result {result}"));
@@ -603,6 +677,15 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 	s.sample("main menu, after quitting")?;
 	#[cfg(feature = "ui")]
 	{
+		// Start once the last loading screen has faded out, and a moment after, in real
+		// time (the page's animations run on its own clock; the frames here don't wait).
+		// A show within ~400 ms of a hide is lost, in the original too.
+		s.until(SETTLE_MS, 6000, "the menu's loading screen fading out", "!::LoadingScreen.isVisible() && !::LoadingScreen.isAnimating()")?;
+		let settle = std::time::Instant::now();
+		while settle.elapsed().as_secs_f64() < 0.3 {
+			s.frames(SETTLE_MS, 1, 1)?;
+			std::thread::sleep(std::time::Duration::from_millis(16));
+		}
 		s.game.front().session().start_campaign(&format!("{}-2", o.seed))?;
 	}
 	#[cfg(not(feature = "ui"))]
