@@ -139,6 +139,11 @@ local function showPath( _tile )
 		}
 
 		note = nearest.getName();
+		// Its shop and recruits come from seeds that hold the real time at the town's
+		// creation (settlement.create): pin them, as parity/probes/campaign/economy.nut
+		// does, so both engines show the same.
+		nearest.m.ShopSeed = 1000;
+		nearest.m.RosterSeed = 2000;
 		state.enterLocation(nearest);
 	}
 	else if (_scene == "leaveTown")
@@ -182,6 +187,10 @@ local function showPath( _tile )
 			return seedRandom(_s == ::Time.getRealTime() ? 999 : _s);
 		};
 		state.m.CombatSeed = 777;
+		// Paused first: until the loading screen shows, the world's background work runs
+		// on, and a roaming party's path search draws numbers each frame it does, which
+		// would move the battle map by however many frames that took.
+		state.setPause(true);
 		::Math.seedRandom(4242);
 		local properties = state.getLocalCombatProperties(player.getPos());
 		properties.CombatID = "Event";
