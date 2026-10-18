@@ -1,0 +1,15 @@
+# Frame regressions (bb-app/tests/frame_regression.rs): how much of each scene of ours may
+# differ from our goldens (% of its pixels beyond a channel tolerance of 24), and
+# rectangles left out (x,y,w,h on the 2560x1440 screen). `default` covers the scenes not
+# listed.
+#
+# Set from two runs of ours with the engine's randomness seeded (2026-10-18): the map
+# and UI scenes came out identical (0.000%), the battles within 0.031% (the units'
+# idle animation). About three times that is allowed, so a label or sprite gone still
+# fails.
+default 0.01
+battle_turn 0.1
+battle_path_short 0.1
+battle_path_long 0.1
+battle_skill 0.1
+battle_effects 0.1

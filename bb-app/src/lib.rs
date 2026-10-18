@@ -3,6 +3,8 @@
 //! binary puts it in a window.
 
 pub mod display;
+#[cfg(feature = "ui")]
+pub mod frame_scenes;
 pub mod front;
 pub mod game;
 pub mod keys;

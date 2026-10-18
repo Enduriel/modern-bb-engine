@@ -43,3 +43,8 @@ required-features = ["ui"]
 name = "ui_window"
 harness = false
 required-features = ["ui"]
+
+[[test]]
+name = "frame_regression"
+harness = false
+required-features = ["ui"]

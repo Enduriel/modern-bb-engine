@@ -56,3 +56,24 @@ and calls back once the PNG is written, so a scene holds still until then.
 - Ours leaves out its drawn cursor: the original's screenshots have none. No mouse
   moves in either: the scenes park the scripts' cursor over the top-left panel, where
   hovering shows nothing (the original's tactical tooltips fail on a cursor never set).
+
+## Regression check (ours against ours)
+
+`bb-app/tests/frame_regression.rs` draws the same scenes and compares each with our
+own frames from before, so a change to what the game draws fails the suite without any
+probe of the original:
+
+```bash
+cd modern_bb_engine
+cargo test --release -p bb-app --features ui --test frame_regression
+```
+
+- The goldens are PNGs outside the repository, in the folder `BB_FRAME_GOLDENS` names.
+  Without them the test skips and says so.
+- After a change that is meant to show, take them again with
+  `parity/frames/update_regression_goldens.sh`, and look at them first.
+- The engine's own randomness (clouds, map details) is seeded, so two runs draw the
+  same: the map and UI scenes identically, the battles within 0.031%.
+- `regression.txt` holds how much of each scene may differ, and rectangles left out.
+- A failing scene's heatmap and frame land in the test's build directory
+  (`target/tmp/frame_regression/`).
