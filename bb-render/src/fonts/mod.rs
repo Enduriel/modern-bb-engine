@@ -15,6 +15,7 @@
 //! fonts. Registering bumps [`FontDb::revision`], so text shaped before is shaped again.
 
 pub mod decode;
+pub mod shaper;
 
 use std::ops::Range;
 
@@ -75,6 +76,10 @@ pub struct FontDb {
 	system: FontSystem,
 	rules: Vec<Rule>,
 	revision: u64,
+	/// Whether the system's fonts are wanted, and whether they're loaded yet (on the
+	/// first text that needs them: vanilla's text never does).
+	system_fonts: bool,
+	system_loaded: bool,
 }
 
 impl FontDb {
@@ -85,13 +90,20 @@ impl FontDb {
 		for data in game_fonts {
 			db.load_font_data(data);
 		}
-		if system_fonts {
-			db.load_system_fonts();
-		}
 		FontDb {
 			system: FontSystem::new_with_locale_and_db("en-US".to_string(), db),
 			rules: Vec::new(),
 			revision: 0,
+			system_fonts,
+			system_loaded: false,
+		}
+	}
+
+	/// Load the system's fonts, the first time a text needs the outline fonts.
+	pub fn load_system_fonts(&mut self) {
+		if self.system_fonts && !self.system_loaded {
+			self.system_loaded = true;
+			self.system.db_mut().load_system_fonts();
 		}
 	}
 
