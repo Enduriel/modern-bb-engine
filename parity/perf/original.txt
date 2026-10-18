@@ -1,7 +1,14 @@
 # The original's performance baselines, from parity/perf/perf.py.
-# captured 2026-10-14 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks, Proton,
+# captured 2026-10-18 from Battle Brothers 1.5.2.3 (vanilla + Modern Hooks, Proton,
 # headless gamescope) on AMD Ryzen 7 5800X3D 8-Core Processor (16 threads). Times in ms
 # unless the key says s; memory is the Wine process's resident set.
+battle battle_start_s = 2.78245
+battle loading_screen_up_s = 1.88515
+battle machine loadavg_1m max = 0.9
+battle rss_mb at battle = 526
+battle rss_mb at campaign_start = 503
+battle rss_mb at end = 552
+battle rss_mb peak = 585
 campaign bench world_entity_queries median_ms = 2.34604
 campaign bench world_entity_queries min_ms = 2.02179
 campaign bench world_paths median_ms = 38.166

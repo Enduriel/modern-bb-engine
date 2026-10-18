@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """Performance baselines from the ORIGINAL game.
 
-Runs two launches through the probe runner (BB_PROBE_RUNNER) and writes parity/perf/original.txt:
+Runs three launches through the probe runner (BB_PROBE_RUNNER) and writes parity/perf/original.txt:
 - menu mode: the time to the main menu, the memory there, and the script benches
   (benches.nut), timed with the game's live clock;
 - campaign mode (seed rust-engine-test): the new campaign's time, the memory once the
   world is up, the world benches (benches_world.nut), the frame rate on the running
   world map, and save/load times. The save is "bb_probe_perf"; it is deleted after.
+- battle mode (a campaign, same seed): a battle's start, from the combat dialog offered
+  to the battle running behind no loading screen (original_battle.nut; autosaving off).
+  A launch of its own: the original crashes running more after a load made from a timed
+  event, as the campaign mode's is.
 
 While the game runs, its resident memory (VmRSS of BattleBrothers.exe, the Wine process,
 so Wine's own share is included) is sampled every 0.25 s and matched to the probe's
 marks by the log's wall-clock timestamps (1 s resolution).
 
-    python3 parity/perf/perf.py              # both launches
+    python3 parity/perf/perf.py              # every launch
     python3 parity/perf/perf.py menu         # one of them
 
 Our engine's side: `cargo run --release -p bb-engine --example perf_baseline`, which
-prints both columns.
+prints both columns (headless), and `bb-app`'s `load_times` example (the game with its
+renderer and page: boot, new campaign, load, a battle's start).
 """
 
 import datetime
@@ -107,8 +112,9 @@ def run(mode: str, source: str, setup: str | None = None) -> tuple[list[tuple[st
         f.close()
         files.append(f.name)
         return f.name
-    cmd = [sys.executable, "-u", str(RUNNER), temp(source), "--mode", mode, "--out", str(out_dir)]
-    if mode == "campaign":
+    runner_mode = "campaign" if mode in ("campaign", "battle") else mode
+    cmd = [sys.executable, "-u", str(RUNNER), temp(source), "--mode", runner_mode, "--out", str(out_dir)]
+    if runner_mode == "campaign":
         cmd += ["--seed", SEED, "--setup", temp(setup)]
     print(f"== {mode} -> {out_dir}", flush=True)
     sampler = Sampler()
@@ -183,7 +189,7 @@ def cpu_model() -> str:
 def main():
     if not RUNNER.exists():
         sys.exit(f"probe runner not found at {RUNNER} (BB_PROBE_RUNNER)")
-    modes = sys.argv[1:] or ["menu", "campaign"]
+    modes = sys.argv[1:] or ["menu", "campaign", "battle"]
     read = lambda name: (ROOT / name).read_text()
     old = {}
     if OUT.exists():
@@ -204,6 +210,11 @@ def main():
         finally:
             delete_probe_save()
         new.update({f"campaign {k}": v for k, v in results(rows, sampler).items()})
+        version = game_version(out_dir)
+    if "battle" in modes:
+        rows, sampler, out_dir = run("battle", read("original_common.nut") + read("original_battle.nut"),
+                                     read("original_campaign_setup.nut"))
+        new.update({f"battle {k}": v for k, v in results(rows, sampler).items()})
         version = game_version(out_dir)
     merged = {k: v for k, v in old.items() if k.split(" ", 1)[0] not in modes}
     merged.update(new)

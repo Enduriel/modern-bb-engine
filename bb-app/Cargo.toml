@@ -35,6 +35,10 @@ winit = "0.30.13"
 name = "frame_scenes"
 required-features = ["ui"]
 
+[[example]]
+name = "load_times"
+required-features = ["ui"]
+
 [[test]]
 name = "ui_window"
 harness = false
