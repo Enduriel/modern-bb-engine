@@ -69,6 +69,11 @@ impl SheetCache {
 		}
 	}
 
+	/// Whether the cache has a file for `key` (unread: it may still turn out stale).
+	pub fn has(&self, key: &str) -> bool {
+		self.file_for(key).exists()
+	}
+
 	fn file_for(&self, key: &str) -> PathBuf {
 		self.dir.join(format!("{:016x}.sheet", fnv1a(key.as_bytes())))
 	}

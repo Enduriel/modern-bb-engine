@@ -6,6 +6,9 @@
 //! ([`FramePages::locate`]); a frame not on the GPU yet is asked of the frame loader
 //! (our cached sheets, `bb_assets::SheetCache`) and its quads wait.
 //!
+//! - On a first run the cache lacks the sheets: every atlas's is built ahead on spare
+//!   workers, after the game's own loads (`bb_assets::FrameLoader::warm_up`; about a
+//!   second for vanilla's 26), and logged in one line.
 //! - A frame that asks waits for the answers up to [`WAIT_BUDGET`], so what comes into
 //!   view (a camera glide's edge, a jump's whole screen) is drawn in the frame it
 //!   appears, as from whole atlases, when the sheets are cached; past the budget (an
@@ -256,6 +259,20 @@ impl FramePages {
 				))
 			})
 			.collect();
+		// A first run's cache lacks the sheets: they're built ahead, on spare workers,
+		// so the frames come as small reads when first drawn (see `FrameLoader::warm_up`).
+		if self.cache.is_some() {
+			let requests = self
+				.atlases
+				.iter()
+				.map(|(atlas, index)| FrameRequest {
+					atlas: atlas.clone(),
+					frames: index.frames.clone(),
+					wanted: Vec::new(),
+				})
+				.collect();
+			self.loader.warm_up(requests);
+		}
 	}
 
 	pub(crate) fn begin_frame(&mut self, frame: u64) {

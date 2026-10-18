@@ -42,8 +42,64 @@ pub type LoadedFrames = (String, Result<Vec<LoadedFrame>, String>);
 
 #[derive(Default)]
 struct Queue {
-	jobs: Mutex<(VecDeque<FrameRequest>, bool)>,
+	jobs: Mutex<Jobs>,
 	ready: Condvar,
+}
+
+/// What a worker does next.
+enum Job {
+	/// A request the game is waiting for.
+	Now(FrameRequest),
+	/// A sheet built ahead, for a first run ([`FrameLoader::warm_up`]).
+	WarmUp(FrameRequest),
+}
+
+/// The requests waiting, the game's before the warm-up's.
+#[derive(Default)]
+struct Jobs {
+	now: VecDeque<FrameRequest>,
+	warm: VecDeque<FrameRequest>,
+	/// Warm-up builds running, at most `warm_limit` at once.
+	warm_running: usize,
+	warm_limit: usize,
+	warm_up: WarmUpLog,
+	closed: bool,
+}
+
+impl Jobs {
+	/// The next job: the game's requests first; a warm-up only while fewer than its
+	/// limit run, so workers stay free for what the game asks meanwhile.
+	fn next(&mut self) -> Option<Job> {
+		if let Some(request) = self.now.pop_front() {
+			return Some(Job::Now(request));
+		}
+		if self.warm_running < self.warm_limit {
+			let request = self.warm.pop_front()?;
+			self.warm_running += 1;
+			return Some(Job::WarmUp(request));
+		}
+		None
+	}
+}
+
+/// A warm-up's count, for its one line in the log.
+#[derive(Default)]
+struct WarmUpLog {
+	started: Option<std::time::Instant>,
+	left: usize,
+	total: usize,
+	built: usize,
+}
+
+impl WarmUpLog {
+	fn finished(&mut self, built: bool) {
+		self.left -= 1;
+		self.built += usize::from(built);
+		if self.left == 0 && self.built > 0 {
+			let seconds = self.started.map_or(0.0, |t| t.elapsed().as_secs_f64());
+			eprintln!("sheets: built {} of {} atlases' sheets ahead, in {seconds:.1} s", self.built, self.total);
+		}
+	}
 }
 
 /// The sheets opened so far, by key, and those a worker is building.
@@ -112,6 +168,7 @@ impl FrameLoader {
 	/// request decodes its atlas), with `threads` workers (at least one).
 	pub fn new(source: Arc<dyn FileSource>, cache: Option<SheetCache>, threads: usize) -> Self {
 		let queue = Arc::new(Queue::default());
+		queue.jobs.lock().unwrap().warm_limit = (threads / 2).max(1);
 		let sheets = Arc::new(Sheets::default());
 		let (sender, results) = channel();
 		let workers = (0..threads.max(1))
@@ -133,8 +190,27 @@ impl FrameLoader {
 	}
 
 	pub fn request(&self, request: FrameRequest) {
-		self.queue.jobs.lock().unwrap().0.push_back(request);
+		self.queue.jobs.lock().unwrap().now.push_back(request);
 		self.queue.ready.notify_one();
+	}
+
+	/// Build the sheets the cache lacks for `requests` (every frame of each atlas; a
+	/// first run's), on the workers, after the game's own requests and on at most half
+	/// of them: only disk sheets, nothing is answered or kept for a draw. One line in
+	/// the log says what it built and in how long.
+	pub fn warm_up(&self, requests: Vec<FrameRequest>) {
+		let mut jobs = self.queue.jobs.lock().unwrap();
+		if jobs.warm_up.left == 0 {
+			jobs.warm_up = WarmUpLog {
+				started: Some(std::time::Instant::now()),
+				..WarmUpLog::default()
+			};
+		}
+		jobs.warm_up.left += requests.len();
+		jobs.warm_up.total += requests.len();
+		jobs.warm.extend(requests);
+		drop(jobs);
+		self.queue.ready.notify_all();
 	}
 
 	/// A finished request, if any is waiting.
@@ -156,7 +232,7 @@ impl FrameLoader {
 
 impl Drop for FrameLoader {
 	fn drop(&mut self) {
-		self.queue.jobs.lock().unwrap().1 = true;
+		self.queue.jobs.lock().unwrap().closed = true;
 		self.queue.ready.notify_all();
 		for worker in self.workers.drain(..) {
 			let _ = worker.join();
@@ -166,23 +242,45 @@ impl Drop for FrameLoader {
 
 fn work(source: &dyn FileSource, cache: Option<&SheetCache>, queue: &Queue, sheets: &Sheets, results: &Sender<LoadedFrames>) {
 	loop {
-		let request = {
+		let job = {
 			let mut jobs = queue.jobs.lock().unwrap();
 			loop {
-				if jobs.1 {
+				if jobs.closed {
 					return;
 				}
-				if let Some(request) = jobs.0.pop_front() {
-					break request;
+				if let Some(job) = jobs.next() {
+					break job;
 				}
 				jobs = queue.ready.wait(jobs).unwrap();
 			}
 		};
-		let frames = load(source, cache, sheets, &request);
-		if results.send((request.atlas, frames)).is_err() {
-			return;
+		match job {
+			Job::Now(request) => {
+				let frames = load(source, cache, sheets, &request);
+				if results.send((request.atlas, frames)).is_err() {
+					return;
+				}
+			}
+			Job::WarmUp(request) => {
+				let built = cache.is_some_and(|cache| build_if_missing(source, cache, sheets, &request));
+				let mut jobs = queue.jobs.lock().unwrap();
+				jobs.warm_up.finished(built);
+				jobs.warm_running -= 1;
+				queue.ready.notify_one();
+			}
 		}
 	}
+}
+
+/// Build `request`'s sheet if the cache has none for it: whether it did.
+fn build_if_missing(source: &dyn FileSource, cache: &SheetCache, sheets: &Sheets, request: &FrameRequest) -> bool {
+	let Some(key) = key(source, request) else { return false };
+	if cache.has(&key) || sheets.get(cache, &key).is_some() {
+		return false;
+	}
+	let built = cut_from_atlas(source, Some((cache, &key)), request).is_ok();
+	sheets.done(cache, &key);
+	built
 }
 
 /// The sheet's key: the atlas's identity in the game's files and its frames.
@@ -359,6 +457,68 @@ mod tests {
 		}
 		assert_eq!(source.reads.load(Ordering::SeqCst), 1, "one worker built the sheet, the rest read it");
 		let _ = std::fs::remove_dir_all(dir);
+	}
+
+	#[test]
+	fn a_warm_up_builds_missing_sheets_once_and_answers_nothing() {
+		let dir = std::env::temp_dir().join(format!("bb-frame-loader-warm-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		let source = Arc::new(Files {
+			atlas: png_of(&atlas()),
+			reads: AtomicUsize::new(0),
+		});
+		let frames: Arc<[TexelRect]> = Arc::new([TexelRect { x: 9, y: 9, w: 4, h: 4 }]);
+		let request = || FrameRequest {
+			atlas: "gfx/a.png".into(),
+			frames: frames.clone(),
+			wanted: Vec::new(),
+		};
+		let cache = SheetCache::at(&dir);
+		let built = || key(&Files { atlas: Vec::new(), reads: AtomicUsize::new(0) }, &request()).is_some_and(|k| cache.has(&k));
+		{
+			let loader = FrameLoader::new(source.clone(), Some(SheetCache::at(&dir)), 2);
+			loader.warm_up(vec![request()]);
+			let deadline = Instant::now() + Duration::from_secs(10);
+			while !built() {
+				assert!(Instant::now() < deadline, "never built");
+				std::thread::sleep(Duration::from_millis(1));
+			}
+			std::thread::sleep(Duration::from_millis(50));
+			assert!(loader.try_take().is_none(), "a warm-up answers nothing");
+		}
+		assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+		// Next start: the sheet is there, so the warm-up reads nothing.
+		let loader = FrameLoader::new(source.clone(), Some(SheetCache::at(&dir)), 2);
+		loader.warm_up(vec![request()]);
+		std::thread::sleep(Duration::from_millis(100));
+		drop(loader);
+		assert_eq!(source.reads.load(Ordering::SeqCst), 1, "no atlas read again");
+		let _ = std::fs::remove_dir_all(dir);
+	}
+
+	#[test]
+	fn the_games_requests_come_before_the_warm_up_which_keeps_workers_free() {
+		let request = |atlas: &str| FrameRequest {
+			atlas: atlas.into(),
+			frames: Arc::new([]),
+			wanted: Vec::new(),
+		};
+		let mut jobs = Jobs {
+			warm_limit: 1,
+			..Jobs::default()
+		};
+		jobs.warm.extend([request("w1"), request("w2")]);
+		jobs.now.push_back(request("now"));
+		let name = |job: Option<Job>| match job {
+			Some(Job::Now(r)) => format!("now {}", r.atlas),
+			Some(Job::WarmUp(r)) => format!("warm {}", r.atlas),
+			None => "none".into(),
+		};
+		assert_eq!(name(jobs.next()), "now now");
+		assert_eq!(name(jobs.next()), "warm w1");
+		assert_eq!(name(jobs.next()), "none", "one warm-up at a time");
+		jobs.warm_running -= 1;
+		assert_eq!(name(jobs.next()), "warm w2");
 	}
 
 	#[test]

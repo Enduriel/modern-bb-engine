@@ -46,10 +46,15 @@ impl Game {
 		devtools: Option<u16>,
 	) -> Result<Game, String> {
 		let io = |e: std::io::Error| e.to_string();
-		let front = Front::boot(gpu, data_dir, seed, sound, world_size, mode, devtools)?;
-		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
+		let archives = harness::data_archives(data_dir).map_err(io)?;
+		let files = GameFiles::open(archives.clone()).map_err(io)?;
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-		let renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
+		let mut renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
+		// The game's brushes (a few milliseconds) before the boot, so a first run's sheets
+		// are built on spare workers while worldgen runs (see `bb_render`'s pages).
+		let mut dats: Vec<bb_engine::DatArchive> = archives.iter().filter_map(|p| bb_engine::DatArchive::open(p).ok()).collect();
+		renderer.prefetch(&bb_engine::assets::load_sprites(&mut dats).registry, []);
+		let front = Front::boot(gpu, data_dir, seed, sound, world_size, mode, devtools)?;
 		let mut game = Game {
 			front,
 			renderer,
