@@ -17,7 +17,9 @@
 //! - Residency as the atlases' (see [`crate::residency`]), per frame: what only battles
 //!   drew goes at a battle's end, all of it when the campaign is left; over the budget,
 //!   whole pages go, the least recently used first (a frame freed alone frees no memory
-//!   until its page is empty).
+//!   until its page is empty). After a battle's end or the campaign's, the frames left
+//!   are packed again into fewer pages if they fit ([`FramePages::compact`]): the
+//!   battle's holes don't keep the world's pages.
 //! - Atlases the pages don't take stay whole textures: the fonts, the water and the fog,
 //!   an atlas without brushes, a quad that isn't one of its atlas's frames, an atlas that
 //!   fails to load (its "texture missing" stand-in).
@@ -61,6 +63,8 @@ struct AtlasFrames {
 
 /// The pages.
 struct Pages {
+	/// A page's side ([`PAGE`]; smaller in tests).
+	size: u32,
 	alloc: PageAlloc,
 	textures: Vec<Option<GpuTexture>>,
 	/// The last frame each page was drawn from.
@@ -68,9 +72,10 @@ struct Pages {
 }
 
 impl Pages {
-	fn new() -> Pages {
+	fn new(size: u32) -> Pages {
 		Pages {
-			alloc: PageAlloc::new(PAGE),
+			size,
+			alloc: PageAlloc::new(size),
 			textures: Vec::new(),
 			used: Vec::new(),
 		}
@@ -161,6 +166,8 @@ pub(crate) struct FramePages {
 	whole: HashSet<String>,
 	/// Atlases warmed (their sheets made ready on a worker).
 	warmed: HashSet<String>,
+	/// Frames went at a discard: pack the rest again before the next draw.
+	compact_due: bool,
 	frame: u64,
 }
 
@@ -181,18 +188,23 @@ fn uv_rect(uv: &[[f32; 2]; 4], (width, height): (u32, u32)) -> TexelRect {
 
 impl FramePages {
 	pub(crate) fn new(source: Arc<dyn FileSource>, cache: Option<SheetCache>, threads: usize) -> FramePages {
+		Self::with_page_size(source, cache, threads, PAGE)
+	}
+
+	fn with_page_size(source: Arc<dyn FileSource>, cache: Option<SheetCache>, threads: usize, page: u32) -> FramePages {
 		FramePages {
 			loader: FrameLoader::new(source.clone(), cache.clone(), threads),
 			source,
 			cache,
 			atlases: HashMap::new(),
 			indexed: 0,
-			pages: Pages::new(),
+			pages: Pages::new(page),
 			resident: HashMap::new(),
 			pending: HashSet::new(),
 			asks: HashMap::new(),
 			whole: HashSet::new(),
 			warmed: HashSet::new(),
+			compact_due: false,
 			frame: 0,
 		}
 	}
@@ -347,10 +359,75 @@ impl FramePages {
 	}
 
 	/// Take in the frames the loader finished.
+	/// Take in the frames the loader finished, after packing the pages again if a
+	/// discard asked for it.
 	pub(crate) fn pump(&mut self, gpu: &Gpu, mips: &MipMaker) {
+		if std::mem::take(&mut self.compact_due) {
+			self.compact(gpu, mips);
+		}
 		while let Some((atlas, loaded)) = self.loader.try_take() {
 			self.take_in(gpu, mips, atlas, loaded);
 		}
+	}
+
+	/// Pack the frames into fewer pages if they fit in fewer: each frame's region moves
+	/// on the GPU, its first [`LEVELS`] levels copied and the rest made again from them,
+	/// as [`FramePages::put`] makes them. Regions go tallest first, which packs shelves
+	/// tighter than the order they came in.
+	fn compact(&mut self, gpu: &Gpu, mips: &MipMaker) {
+		let mut keys: Vec<(String, TexelRect)> = self.resident.keys().cloned().collect();
+		keys.sort_by(|a, b| {
+			let (ra, rb) = (self.resident[a].region, self.resident[b].region);
+			(rb.h, rb.w).cmp(&(ra.h, ra.w)).then_with(|| a.cmp(b))
+		});
+		let mut trial = PageAlloc::new(self.pages.size);
+		for key in &keys {
+			let region = self.resident[key].region;
+			trial.alloc(region.w, region.h);
+		}
+		if trial.pages().count() >= self.pages.alloc.pages().count() {
+			return;
+		}
+		let mut fresh = Pages::new(self.pages.size);
+		let moves: Vec<Place> = keys.iter().map(|key| fresh.place(gpu, self.resident[key].region)).collect();
+		let mut encoder = gpu
+			.device
+			.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("compact pages") });
+		for (key, to) in keys.iter().zip(&moves) {
+			let r = &self.resident[key];
+			let (from, into) = (&self.pages.texture(r.place.page).texture, &fresh.texture(to.page).texture);
+			let levels = (LEVELS as u32).min(from.mip_level_count()).min(into.mip_level_count());
+			for level in 0..levels {
+				let at = |x: u32, y: u32| wgpu::Origin3d { x: x >> level, y: y >> level, z: 0 };
+				encoder.copy_texture_to_texture(
+					wgpu::TexelCopyTextureInfo {
+						texture: from,
+						mip_level: level,
+						origin: at(r.place.x, r.place.y),
+						aspect: wgpu::TextureAspect::All,
+					},
+					wgpu::TexelCopyTextureInfo {
+						texture: into,
+						mip_level: level,
+						origin: at(to.x, to.y),
+						aspect: wgpu::TextureAspect::All,
+					},
+					wgpu::Extent3d {
+						width: (r.region.w >> level).max(1),
+						height: (r.region.h >> level).max(1),
+						depth_or_array_layers: 1,
+					},
+				);
+			}
+		}
+		gpu.queue.submit([encoder.finish()]);
+		for (key, to) in keys.iter().zip(moves) {
+			let r = self.resident.get_mut(key).expect("a resident frame");
+			mips.remake_region(gpu, &fresh.texture(to.page).texture, (to.x, to.y, r.region.w, r.region.h), LEVELS as u32);
+			fresh.used[to.page] = fresh.used[to.page].max(r.frame);
+			r.place = to;
+		}
+		self.pages = fresh;
 	}
 
 	fn take_in(&mut self, gpu: &Gpu, mips: &MipMaker, atlas: String, loaded: Result<Vec<LoadedFrame>, String>) {
@@ -432,6 +509,7 @@ impl FramePages {
 	pub(crate) fn battle_discarded(&mut self) {
 		let battle = bit(Drawer::Battle);
 		let gone: Vec<_> = self.resident.iter().filter(|(_, r)| r.drawers == battle).map(|(k, _)| k.clone()).collect();
+		self.compact_due |= !gone.is_empty();
 		for key in gone {
 			self.evict(&key);
 		}
@@ -441,6 +519,7 @@ impl FramePages {
 	pub(crate) fn campaign_discarded(&mut self) {
 		let frame = self.frame;
 		let gone: Vec<_> = self.resident.iter().filter(|(_, r)| r.frame < frame).map(|(k, _)| k.clone()).collect();
+		self.compact_due |= !gone.is_empty();
 		for key in gone {
 			self.evict(&key);
 		}
@@ -479,5 +558,171 @@ impl FramePages {
 	pub(crate) fn memory(&self) -> (usize, usize, u64) {
 		let pages = self.pages.alloc.pages().count();
 		(pages, self.resident.len(), self.bytes())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use bb_assets::frames::cut_levels;
+	use bb_assets::mips::mip_levels;
+	use bb_assets::{BrushFrame, BrushSheet, BrushSprite, Image, SheetHeader, name_hash};
+
+	const W: u32 = 64;
+	const H: u32 = 40;
+	const ATLAS: &str = "gfx/t.png";
+
+	fn atlas() -> Image {
+		Image {
+			width: W,
+			height: H,
+			rgba: (0..W * H * 4).map(|i| (i * 37 % 251) as u8).collect(),
+		}
+	}
+
+	struct Files(Vec<u8>);
+
+	impl FileSource for Files {
+		fn read(&self, path: &str) -> Option<Vec<u8>> {
+			(path == ATLAS).then(|| self.0.clone())
+		}
+	}
+
+	fn png(image: &Image) -> Vec<u8> {
+		let mut out = Vec::new();
+		let mut encoder = png::Encoder::new(&mut out, image.width, image.height);
+		encoder.set_color(png::ColorType::Rgba);
+		encoder.set_depth(png::BitDepth::Eight);
+		let mut writer = encoder.write_header().unwrap();
+		writer.write_image_data(&image.rgba).unwrap();
+		writer.finish().unwrap();
+		out
+	}
+
+	/// Eight 8×8 frames, four to a row, two rows: each one's region is 24×24.
+	fn frames() -> Vec<TexelRect> {
+		(0..2).flat_map(|j| (0..4).map(move |i| TexelRect { x: 8 + 16 * i, y: 8 + 16 * j, w: 8, h: 8 })).collect()
+	}
+
+	fn uv(f: &TexelRect) -> [f32; 4] {
+		[f.x as f32 / W as f32, (f.x + f.w) as f32 / W as f32, f.y as f32 / H as f32, (f.y + f.h) as f32 / H as f32]
+	}
+
+	fn registry() -> SpriteRegistry {
+		let sprites = frames()
+			.iter()
+			.enumerate()
+			.map(|(i, f)| {
+				let name = format!("f{i}");
+				BrushSprite {
+					hash: name_hash(name.as_bytes()),
+					name,
+					material: 0,
+					width: 8,
+					height: 8,
+					offset_x: 0,
+					offset_y: 0,
+					depth_bias: 0,
+					frame_time_ms: 100,
+					unknown_pause: [0, 0],
+					rotation_speed: 0.0,
+					flags: 0x403,
+					unknown_offset: [0.0, 0.0],
+					color: [255; 4],
+					unknown_scale: 1.0,
+					frames: vec![BrushFrame {
+						name: String::new(),
+						uv: uv(f),
+						rect: [-4.0, 4.0, -4.0, 4.0],
+					}],
+					trailer: [0; 3],
+				}
+			})
+			.collect::<Vec<_>>();
+		let mut registry = SpriteRegistry::new();
+		registry.add_sheet(
+			"brushes/t.brush",
+			BrushSheet {
+				texture: ATLAS.into(),
+				header: SheetHeader {
+					width: W as u16,
+					height: H as u16,
+					flags: [0; 12],
+					sprite_count: sprites.len() as u32,
+					reserved: [0; 2],
+					max_level: 1000,
+				},
+				sprites,
+			},
+		);
+		registry
+	}
+
+	fn quad(f: &TexelRect) -> Quad {
+		let [u0, u1, v0, v1] = uv(f);
+		Quad {
+			texture: 0,
+			corners: [[0.0; 2]; 4],
+			uv: [[u0, v1], [u1, v1], [u1, v0], [u0, v0]],
+			color: [255; 4],
+			corner_colors: None,
+			overlay: [0; 4],
+			factor: 0.0,
+			saturation: 1.0,
+			flags: 0,
+			level: 0,
+		}
+	}
+
+	/// After a battle's frames go, the world's frames left in half-empty pages are packed
+	/// into fewer, every level they keep the same as their atlas's.
+	#[test]
+	fn a_battles_holes_are_packed_away() {
+		let gpu = match Gpu::headless() {
+			Ok(gpu) => gpu,
+			Err(e) => {
+				eprintln!("skipping: {e}");
+				return;
+			}
+		};
+		let mips = MipMaker::new(&gpu);
+		let mut pages = FramePages::with_page_size(Arc::new(Files(png(&atlas()))), None, 1, 48);
+		pages.index(&registry());
+		let frames = frames();
+		for f in &frames {
+			assert!(matches!(pages.locate(ATLAS, &quad(f), Drawer::World, true), Located::Waiting));
+		}
+		pages.load_asks_now(&gpu, &mips);
+		// Every other frame only a battle draws: each page keeps two of the world's.
+		for (i, f) in frames.iter().enumerate() {
+			let drawer = if i % 2 == 0 { Drawer::World } else { Drawer::Battle };
+			pages.resident.get_mut(&(ATLAS.to_string(), *f)).unwrap().drawers = 0;
+			assert!(matches!(pages.locate(ATLAS, &quad(f), drawer, false), Located::Page { .. }));
+		}
+		assert_eq!(pages.memory().0, 2, "two pages, four frames each");
+
+		pages.battle_discarded();
+		assert_eq!(pages.memory().0, 2, "the battle's frames leave holes");
+		pages.pump(&gpu, &mips);
+		assert_eq!((pages.memory().0, pages.memory().1), (1, 4), "packed into one page");
+
+		let chain = mip_levels(&atlas(), LEVELS);
+		for level in 0..2u32 {
+			let page = crate::target::read_level(&gpu, &pages.texture(0).texture, level).expect("read back");
+			for (i, f) in frames.iter().enumerate().filter(|(i, _)| i % 2 == 0) {
+				let r = &pages.resident[&(ATLAS.to_string(), *f)];
+				let want = &cut_levels(&chain, r.region)[level as usize];
+				let (x0, y0) = (r.place.x >> level, r.place.y >> level);
+				for y in 0..want.height {
+					let at = (((y0 + y) * page.width + x0) * 4) as usize;
+					let row = (y * want.width * 4) as usize;
+					assert_eq!(
+						&page.rgba[at..at + (want.width * 4) as usize],
+						&want.rgba[row..row + (want.width * 4) as usize],
+						"frame {i}, level {level}, row {y}"
+					);
+				}
+			}
+		}
 	}
 }
