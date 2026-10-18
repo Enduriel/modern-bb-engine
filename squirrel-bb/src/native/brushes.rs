@@ -43,6 +43,8 @@ struct State {
 	hints: RefCell<Queue>,
 	/// Battle sprites' atlases since the last [`Sprites::take_battle_hints`].
 	battle_hints: RefCell<Queue>,
+	/// Brush names, each kept once (see [`Sprites::name`]).
+	names: RefCell<HashSet<Rc<str>>>,
 }
 
 /// Paths in the order they came, each once.
@@ -76,6 +78,19 @@ impl Sprites {
 	pub fn set(&self, registry: SpriteRegistry) {
 		*self.0.registry.borrow_mut() = registry;
 		self.0.loaded.set(true);
+	}
+
+	/// `brush` as a shared name: the world's tiles and details hold their brush's name,
+	/// and some 40,000 of them name a few hundred brushes (one string each instead of
+	/// one each). Kept for the session, bounded by the names the scripts use.
+	pub(crate) fn name(&self, brush: &str) -> Rc<str> {
+		let mut names = self.0.names.borrow_mut();
+		if let Some(name) = names.get(brush) {
+			return name.clone();
+		}
+		let name: Rc<str> = brush.into();
+		names.insert(name.clone());
+		name
 	}
 
 	/// The C runtime's `rand()`, which the sprite class's `vary…` draw from.

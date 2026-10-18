@@ -24,8 +24,9 @@ const HALF_ROW: f32 = ROW_H * 0.5;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pixel {
 	Tile,
-	/// Belongs to the neighbour at this axial offset.
-	Neighbour(i64, i64),
+	/// Belongs to the neighbour at this axial offset (each -1, 0 or 1: a byte each keeps
+	/// a pixel at 3 bytes, the four masks' 90,000 at 0.3 MB instead of 2.2).
+	Neighbour(i8, i8),
 	None,
 }
 
@@ -172,8 +173,8 @@ pub(crate) fn world_to_tile(g: &TacticalGridState, masks: &HexMasks, camera_leve
 				let (lx, ly) = local(q, r, x, y);
 				let level = shown_level(g, q, r, camera_level);
 				if let Pixel::Neighbour(dq, dr) = masks.pixel(level, lx.max(0), ly) {
-					q += dq;
-					r += dr;
+					q += i64::from(dq);
+					r += i64::from(dr);
 				}
 			}
 		}
@@ -181,4 +182,12 @@ pub(crate) fn world_to_tile(g: &TacticalGridState, masks: &HexMasks, camera_leve
 	let q = q.min(g.width - 1).max(0);
 	let r = r.min(g.height - 1 - q / 2).max(-(q / 2));
 	(q, r)
+}
+
+#[cfg(test)]
+mod tests {
+	#[test]
+	fn a_mask_pixel_is_three_bytes() {
+		assert_eq!(std::mem::size_of::<super::Pixel>(), 3, "the four masks' 90,000 pixels stay small");
+	}
 }

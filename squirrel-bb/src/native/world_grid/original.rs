@@ -48,7 +48,7 @@ fn tile(id: usize, col: i64, row: i64, saved: &WorldTile, drawn: Option<&Drawabl
 	t.is_discovered = saved.flags & TILE_DISCOVERED != 0;
 	t.is_occupied = saved.flags & TILE_OCCUPIED != 0;
 	if let Some(d) = drawn {
-		t.brush = brush_name(sprites, d.brush);
+		t.brush = sprites.name(&brush_name(sprites, d.brush));
 		t.is_flipped = d.flags & DRAWABLE_FLIPPED != 0;
 	}
 	t
@@ -235,7 +235,7 @@ fn add_decal(g: &mut GridState, e: &SceneEntity) {
 		.with(|reg| reg.get(&brush).map_or((0, 0.0), |(_, s)| (i64::from(s.depth_bias), s.rotation_speed)));
 	let (cx, cy) = world_layout::tile_pos(q, r + q / 2);
 	let mut data = DetailData {
-		brush,
+		brush: g.sprites.name(&brush),
 		// The z level it was spawned with, as far as its containing tile tells.
 		z_level: i64::from(e.head.z) - y as i64 - depth_bias + (r & 1),
 		flags: i64::from(e.head.u34),

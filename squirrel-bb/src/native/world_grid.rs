@@ -55,7 +55,7 @@ struct TileData {
 	/// The terrain brush name (`setBrush`/`getBrush`/`resetBrush`). Worldgen reads it
 	/// back (`tile.getBrush() != "world_highlands_03"`), so it is real state, not a
 	/// render no-op. `""` when unset, like the original (probed 2026-10-13).
-	brush: String,
+	brush: Rc<str>,
 	/// The decorations spawned on the tile, in spawn order.
 	details: Vec<Detail>,
 }
@@ -114,7 +114,7 @@ impl super::save::SavePart for GridPart {
 			t.is_flipped = r.bool()?;
 			t.is_discovered = r.bool()?;
 			t.has_river = r.bool()?;
-			t.brush = r.str()?;
+			t.brush = g.sprites.name(&r.str()?);
 			tiles.push(t);
 		}
 		g.tiles = tiles;
@@ -849,7 +849,7 @@ impl WorldGrid {
 				pos,
 				terrain: t.type_,
 				discovered: t.is_discovered,
-				brush: t.brush.clone(),
+				brush: t.brush.to_string(),
 				flipped: t.is_flipped,
 				details: t.details.iter().filter(|d| d.borrow().visible).map(|d| d.borrow().scene(g.drawn_at)).collect(),
 			})
@@ -977,6 +977,8 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 	if random_flip {
 		data.flipped = rng.range(0, 1) == 0;
 	}
+	// One string per brush name, however many details show it.
+	data.brush = sprites.name(&data.brush);
 	// An unknown brush spawns nothing (the original returns null; before brushes are
 	// loaded every name is kept).
 	if sprites.resolve(&data.brush).is_empty() {
@@ -1296,7 +1298,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 					t,
 					vm,
 					DetailData {
-						brush: brush.to_string(),
+						brush: brush.into(),
 						z_level: z,
 						flags,
 						..DetailData::default()
@@ -1358,11 +1360,15 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	// The terrain brush is state worldgen reads back.
 	b = b
 		.method("setBrush", |t: &mut TileHandle, brush: &str| {
-			t.with_mut(|d| d.brush = brush.to_string());
+			let name = t.grid.borrow().sprites.name(brush);
+			t.with_mut(|d| d.brush = name);
 			hint_brush(t, brush);
 		})
-		.method("resetBrush", |t: &mut TileHandle| t.with_mut(|d| d.brush.clear()))
-		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.clone()) });
+		.method("resetBrush", |t: &mut TileHandle| {
+			let empty = t.grid.borrow().sprites.name("");
+			t.with_mut(|d| d.brush = empty);
+		})
+		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.to_string()) });
 
 	// Removing details. `clear()` removes all, `clear(mask)` those with any of the
 	// type bits, `clearAllBut(mask)` those with none; `clearAndFade` removes like
@@ -1415,7 +1421,7 @@ fn hint_brush(t: &TileHandle, brush: &str) {
 fn detail_args(vm: &SQVM, brush: &str, z: &Retained, flags: &Retained, flipped: &Retained) -> DetailData {
 	let int = |arg: &Retained| arg.0.get_value::<i64>(vm);
 	let mut data = DetailData {
-		brush: brush.to_string(),
+		brush: brush.into(),
 		..DetailData::default()
 	};
 	data.z_level = int(z).unwrap_or(data.z_level);

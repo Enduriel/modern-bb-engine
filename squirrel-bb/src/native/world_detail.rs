@@ -30,7 +30,8 @@ use crate::scene::SceneDetail;
 /// One detail on a tile.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DetailData {
-	pub brush: String,
+	/// Its brush's name, shared ([`Sprites::name`](super::brushes::Sprites::name)).
+	pub brush: Rc<str>,
 	/// Draw layer, a `Const.World.ZLevel`: higher is further back.
 	pub z_level: i64,
 	/// `Const.World.DetailType` bits.
@@ -72,7 +73,7 @@ pub struct DetailData {
 impl Default for DetailData {
 	fn default() -> Self {
 		DetailData {
-			brush: String::new(),
+			brush: Rc::from(""),
 			z_level: 0,
 			flags: 0,
 			flipped: false,
@@ -102,7 +103,7 @@ impl DetailData {
 	pub(crate) fn scene(&self, now: f32) -> SceneDetail {
 		let shown = self.color.shown(now);
 		SceneDetail {
-			brush: self.brush.clone(),
+			brush: self.brush.to_string(),
 			z_level: self.z_level,
 			flags: self.flags,
 			flipped: self.flipped,
@@ -189,7 +190,7 @@ impl SpriteState for DetailData {
 	}
 	fn store_brush(&mut self, sprites: &Sprites, brush: String) {
 		self.brush_bits = sprites.brush_bits(&brush, self.brush_bits);
-		self.brush = brush;
+		self.brush = sprites.name(&brush);
 	}
 	// It moves with its offset; its draw order stays the spawn's.
 	fn set_offset(&mut self, x: f64, y: f64) {
