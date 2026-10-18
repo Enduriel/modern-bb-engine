@@ -198,10 +198,19 @@ fn game(start: Instant) -> Result<(), String> {
 			return Err("the main menu never came back".into());
 		}
 	}
-	// As a player would, a moment at the menu before pressing Start, in real time: the
-	// page's animations (the loading screen fading out) run on its own clock.
+	// Start once the last loading screen has faded out, and a moment after, in real time
+	// (the page's animations run on its own clock). A show within ~400 ms of a hide is
+	// lost, in the original too (probed).
+	let mut frames = 0;
+	while run.holds("::LoadingScreen.isVisible() || ::LoadingScreen.isAnimating()") {
+		run.frame()?;
+		frames += 1;
+		if frames > MAX_FRAMES {
+			return Err("the menu's loading screen never faded out".into());
+		}
+	}
 	let settle = Instant::now();
-	while settle.elapsed().as_secs_f64() < 1.5 {
+	while settle.elapsed().as_secs_f64() < 0.3 {
 		run.frame()?;
 		std::thread::sleep(std::time::Duration::from_millis(16));
 	}
