@@ -17,6 +17,7 @@
 //! - Its quads take vertex flag 0 (`0x561d2b`): lit by the scene's ambient colour like
 //!   any sprite, warm at dawn and blue at night.
 
+use crate::fonts::shaper::{GLYPH_PAGE, GLYPH_PAGES, ShapedText};
 use crate::labels::LabelFont;
 use crate::sprite::Quad;
 
@@ -103,6 +104,50 @@ pub(crate) fn glyph_quads<'a>(run: &TextRun<'a>) -> Vec<(&'a str, Quad)> {
 		pen += advance * s;
 	}
 	quads
+}
+
+/// The glyph quads of a text the bitmap font can't draw, shaped (see [`crate::fonts`]),
+/// placed as [`glyph_quads`] places a run's (its text and font aside): from the pen at
+/// the position plus the offset times the scale, rounded, turned about the pivot.
+pub(crate) fn shaped_quads(run: &TextRun<'_>, shaped: &ShapedText) -> Vec<(&'static str, Quad)> {
+	let s = run.scale;
+	let pen_x = round(run.pos[0] + run.offset[0] * s);
+	let top = round(run.pos[1] + run.offset[1] * s);
+	let pivot = [round(run.pos[0] + run.offset[0]), round(run.pos[1] + run.offset[1])];
+	let (sin, cos) = run.rotation.to_radians().sin_cos();
+	let turn = |[x, y]: [f32; 2]| {
+		if run.rotation == 0.0 {
+			return [x, y];
+		}
+		let (dx, dy) = (x - pivot[0], y - pivot[1]);
+		[pivot[0] + dx * cos - dy * sin, pivot[1] + dx * sin + dy * cos]
+	};
+	let page = GLYPH_PAGE as f32;
+	shaped
+		.glyphs
+		.iter()
+		.map(|glyph| {
+			let [tx, ty, tw, th] = glyph.texels;
+			let (x0, y0) = (pen_x + glyph.left * s, top - glyph.top * s);
+			let (x1, y1) = (x0 + tw as f32 * s, y0 - th as f32 * s);
+			let (u0, u1, v0, v1) = (tx as f32 / page, (tx + tw) as f32 / page, ty as f32 / page, (ty + th) as f32 / page);
+			(
+				GLYPH_PAGES[glyph.page],
+				Quad {
+					texture: 0,
+					corners: [turn([x0, y0]), turn([x1, y0]), turn([x1, y1]), turn([x0, y1])],
+					uv: [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
+					color: run.color,
+					corner_colors: None,
+					overlay: [0; 4],
+					factor: 0.0,
+					saturation: 1.0,
+					flags: 0,
+					level: 0,
+				},
+			)
+		})
+		.collect()
 }
 
 #[cfg(test)]

@@ -34,6 +34,9 @@ pub struct WorldFonts<'a> {
 	pub label: Option<LabelFont<'a>>,
 	/// Region names (`gfx/fonts/cinzel_bold_100`, `0x47dcbc`).
 	pub region: Option<LabelFont<'a>>,
+	/// The outline fonts, for text the bitmap fonts can't draw (`None`: such text isn't
+	/// drawn).
+	pub shaper: Option<&'a std::cell::RefCell<crate::fonts::shaper::TextShaper>>,
 }
 
 /// How far a cloud's centre may be off screen and still show (cloud pictures are
@@ -340,9 +343,23 @@ pub fn world_quads<'a>(
 	if let Some(font) = fonts.region {
 		let zoom = 1.0 / view.zoom;
 		for region in &scene.region_texts {
-			let text = region.text.as_slice();
-			let width = font.font.text_width(text) as f32;
-			let height = font.font.cell_height as f32;
+			// Text the bitmap font can't draw is shaped in the outline fonts.
+			let decoded = crate::fonts::decode::engine_text(&region.text);
+			let shaped = match &decoded {
+				crate::fonts::decode::EngineText::Bitmap(_) => None,
+				crate::fonts::decode::EngineText::Shaped(text) => match fonts.shaper {
+					Some(shaper) => Some(shaper.borrow_mut().shape(font.name(), text, None).clone()),
+					None => continue,
+				},
+			};
+			let text: &[u8] = match &decoded {
+				crate::fonts::decode::EngineText::Bitmap(bytes) => bytes,
+				crate::fonts::decode::EngineText::Shaped(_) => &[],
+			};
+			let (width, height) = match &shaped {
+				Some(shaped) => (shaped.width, shaped.height),
+				None => (font.font.text_width(text) as f32, font.font.cell_height as f32),
+			};
 			let run = TextRun {
 				text,
 				font,
@@ -353,7 +370,13 @@ pub fn world_quads<'a>(
 				rotation: region.rotation,
 				color: REGION_TEXT_COLOR,
 			};
-			for (texture, quad) in glyph_quads(&run) {
+			// A bitmap glyph samples the font's atlas (its texture key outlives the
+			// decoded text).
+			let quads: Vec<(&str, Quad)> = match &shaped {
+				Some(shaped) => crate::text::shaped_quads(&run, shaped),
+				None => glyph_quads(&run).into_iter().map(|(_, quad)| (font.texture, quad)).collect(),
+			};
+			for (texture, quad) in quads {
 				let order = drawables.len();
 				drawables.push(Drawable {
 					layer: Layer::Details,
@@ -473,7 +496,7 @@ pub fn world_quads<'a>(
 				.iter()
 				.filter(|l| l.visible && !l.text.is_empty())
 			{
-				for (texture, quad) in label_quads(label, anchor, 1.0 / view.zoom, font) {
+				for (texture, quad) in label_quads(label, anchor, 1.0 / view.zoom, font, fonts.shaper) {
 					let order = drawables.len();
 					drawables.push(Drawable {
 						layer: Layer::Labels,

@@ -17,6 +17,8 @@ use squirrel_bb::scene::tactical::TacticalScene;
 
 use crate::fog::FogPass;
 use crate::gpu::Gpu;
+use crate::fonts::shaper::{GLYPH_PAGE, TextShaper, glyph_page};
+use crate::fonts::{FontDb, Registration};
 use crate::labels::{LabelFont, WHITE};
 use crate::mips::{MipMaker, samples_mips};
 use crate::pages::{FramePages, Located};
@@ -81,7 +83,18 @@ pub struct WorldRenderer {
 	mips: MipMaker,
 	/// The drawn frames in our own pages (`None`: whole atlases, `BB_TEXTURE_PAGES=off`).
 	pages: Option<FramePages>,
+	/// Text the bitmap fonts can't draw, shaped in the outline fonts.
+	text: std::cell::RefCell<TextShaper>,
+	/// The glyph pages' textures (see `fonts::shaper`).
+	glyph_pages: Vec<GpuTexture>,
 }
+
+/// The game's own outline fonts, the bitmap fonts' sources.
+const GAME_FONT_FILES: [&str; 3] = [
+	"gfx/fonts/cinzel/Cinzel-Regular.ttf",
+	"gfx/fonts/cinzel/Cinzel-Bold.ttf",
+	"gfx/fonts/cinzel/Cinzel-Black.ttf",
+];
 
 /// Where a quad is drawn from this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -92,6 +105,8 @@ enum From {
 	Whole(usize),
 	/// One of our pages.
 	Page(usize),
+	/// One of the glyph pages.
+	Glyph(usize),
 }
 
 /// The game's clocks, in seconds.
@@ -156,6 +171,48 @@ impl WorldRenderer {
 			mips: MipMaker::new(gpu),
 			pages: (!std::env::var_os("BB_TEXTURE_PAGES").is_some_and(|v| v == "off" || v == "0"))
 				.then(|| FramePages::new(files.clone(), bb_assets::SheetCache::from_env(), threads)),
+			text: std::cell::RefCell::new(TextShaper::new(FontDb::new(
+				GAME_FONT_FILES.iter().filter_map(|path| files.read(path)).collect(),
+				true,
+			))),
+			glyph_pages: Vec::new(),
+		}
+	}
+
+	/// A mod's font (`ModernEngine.registerFont`): its family, or why it can't be used.
+	pub fn register_font(&mut self, font: Registration) -> Result<String, String> {
+		self.text.get_mut().db().register(font)
+	}
+
+	/// Put the glyphs shaped since the last frame in their pages, making pages as needed.
+	fn upload_glyphs(&mut self, gpu: &Gpu) {
+		let shaper = self.text.get_mut();
+		let uploads = shaper.take_uploads();
+		while self.glyph_pages.len() < shaper.pages() {
+			let empty = Image {
+				width: GLYPH_PAGE,
+				height: GLYPH_PAGE,
+				rgba: vec![0; (GLYPH_PAGE * GLYPH_PAGE * 4) as usize],
+			};
+			self.glyph_pages.push(GpuTexture::upload_flat(gpu, "glyphs", &empty));
+		}
+		for glyph in uploads {
+			let Some(page) = self.glyph_pages.get(glyph.page) else { continue };
+			gpu.queue.write_texture(
+				wgpu::TexelCopyTextureInfo {
+					texture: &page.texture,
+					mip_level: 0,
+					origin: wgpu::Origin3d { x: glyph.x, y: glyph.y, z: 0 },
+					aspect: wgpu::TextureAspect::All,
+				},
+				&glyph.rgba,
+				wgpu::TexelCopyBufferLayout {
+					offset: 0,
+					bytes_per_row: Some(glyph.width * 4),
+					rows_per_image: Some(glyph.height),
+				},
+				wgpu::Extent3d { width: glyph.width, height: glyph.height, depth_or_array_layers: 1 },
+			);
 		}
 	}
 
@@ -278,6 +335,9 @@ impl WorldRenderer {
 				if path == WHITE {
 					return Some((From::White, *quad));
 				}
+				if let Some(page) = glyph_page(path) {
+					return Some((From::Glyph(page), *quad));
+				}
 				if let Some(pages) = pages.as_mut().filter(|_| !path.starts_with(FONT_DIR)) {
 					match pages.locate(path, quad, drawer, wait) {
 						Located::Page { page, uv } => return Some((From::Page(page), Quad { uv, ..*quad })),
@@ -351,6 +411,7 @@ impl WorldRenderer {
 				let slot = *slots.entry(*from).or_insert_with(|| {
 					let texture = match from {
 						From::White => Some(&self.white),
+						From::Glyph(page) => self.glyph_pages.get(*page),
 						From::Page(page) => self.pages.as_ref().map(|p| p.texture(*page)),
 						From::Whole(i) => {
 							let path = &map.atlases.paths[*i];
@@ -479,8 +540,10 @@ impl WorldRenderer {
 		let fonts = WorldFonts {
 			label: label_font(&self.label_font),
 			region: label_font(&self.region_font),
+			shaper: Some(&self.text),
 		};
 		let world = world_quads(scene, registry, view, fonts);
+		self.upload_glyphs(gpu);
 		self.record_usage(&world, view.zoom, None);
 		self.index(registry);
 		for path in [WATER_TEXTURE, FOG_TEXTURE].into_iter().filter(|p| *p == WATER_TEXTURE || scene.fog_of_war) {

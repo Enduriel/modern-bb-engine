@@ -55,7 +55,7 @@ fn views_draw_the_same(size: Option<(i64, i64)>) {
 			};
 			let cut = engine.world_scene_where(|pos| view.shows(pos));
 			assert!(cut.tiles.len() < whole.tiles.len() / 4, "a view shows a part of the map ({} tiles)", cut.tiles.len());
-			let fonts = || WorldFonts { label: None, region: None };
+			let fonts = || WorldFonts { label: None, region: None, shaper: None };
 			let all = world_quads(&whole, registry, &view, fonts());
 			let some = world_quads(&cut, registry, &view, fonts());
 			// The start is on land; a corner may be open sea, and the clouds over it drift

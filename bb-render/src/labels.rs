@@ -13,9 +13,13 @@
 //!   text's advance, and the cell height plus 2 px tall, its top at the entity's y;
 //! - labels keep their screen size at any zoom, and draw above everything else.
 
+use std::cell::RefCell;
+
 use bb_assets::BitmapFont;
 use squirrel_bb::scene::SceneLabel;
 
+use crate::fonts::decode::{EngineText, engine_text};
+use crate::fonts::shaper::{GLYPH_PAGE, GLYPH_PAGES, ShapedText, TextShaper};
 use crate::sprite::Quad;
 
 /// The font labels are drawn in, and its atlas's path.
@@ -23,6 +27,14 @@ use crate::sprite::Quad;
 pub struct LabelFont<'a> {
 	pub font: &'a BitmapFont,
 	pub texture: &'a str,
+}
+
+impl LabelFont<'_> {
+	/// The bitmap font's name (`gfx/fonts/<name>.png`), for the outline fonts.
+	pub fn name(&self) -> &str {
+		let file = self.texture.rsplit('/').next().unwrap_or(self.texture);
+		file.strip_suffix(".png").unwrap_or(file)
+	}
 }
 
 /// The texture key of a solid fill: a 1×1 white texture tinted by the quad's colour.
@@ -33,17 +45,30 @@ const PLATE: [u8; 4] = [0, 0, 0, 100];
 
 /// The quads of `label` at `anchor` (world units, y up), with `pixel` world units per
 /// screen pixel, each with the texture key it samples.
+///
+/// A text the bitmap font can't draw is shaped by `shaper` (see [`crate::fonts`]) and
+/// drawn from its glyph pages instead, on the same plate (without a shaper, it isn't
+/// drawn).
 pub(crate) fn label_quads<'a>(
 	label: &SceneLabel,
 	anchor: [f32; 2],
 	pixel: f32,
 	font: LabelFont<'a>,
+	shaper: Option<&RefCell<TextShaper>>,
 ) -> Vec<(&'a str, Quad)> {
-	let text = label.text.as_slice();
 	let [x, y] = [
 		anchor[0] + label.offset.0 as f32 * pixel,
 		anchor[1] + label.offset.1 as f32 * pixel,
 	];
+	let text = match engine_text(&label.text) {
+		EngineText::Bitmap(bytes) => bytes,
+		EngineText::Shaped(text) => {
+			let Some(shaper) = shaper else { return Vec::new() };
+			let shaped = shaper.borrow_mut().shape(font.name(), &text, None).clone();
+			return shaped_label_quads(label, [x, y], pixel, font, &shaped);
+		}
+	};
+	let text = text.as_ref();
 	let advance = font.font.text_width(text) as f32;
 	let (cell_w, cell_h) = (font.font.cell_width as f32, font.font.cell_height as f32);
 	let mut quads = vec![(
@@ -78,6 +103,41 @@ pub(crate) fn label_quads<'a>(
 			));
 		}
 		pen += f32::from(font.font.advances[usize::from(code)]) * pixel;
+	}
+	quads
+}
+
+/// A shaped label's plate and glyphs: the plate as a bitmap label's, as wide as the
+/// shaped text and at least the bitmap font's cell tall; the glyphs from the text's
+/// top-left at the anchor.
+fn shaped_label_quads<'a>(label: &SceneLabel, [x, y]: [f32; 2], pixel: f32, font: LabelFont<'a>, shaped: &ShapedText) -> Vec<(&'a str, Quad)> {
+	let height = shaped.height.max(font.font.cell_height as f32);
+	let mut quads = vec![(
+		WHITE,
+		solid([x - 2.0 * pixel, y], [x + (shaped.width + 4.0) * pixel, y - (height + 2.0) * pixel], PLATE),
+	)];
+	let [a, r, g, b] = label.color.to_be_bytes();
+	for glyph in &shaped.glyphs {
+		let [tx, ty, tw, th] = glyph.texels;
+		let (left, top) = (x + glyph.left * pixel, y - glyph.top * pixel);
+		let (right, bottom) = (left + tw as f32 * pixel, top - th as f32 * pixel);
+		let page = GLYPH_PAGE as f32;
+		let (u0, u1, v0, v1) = (tx as f32 / page, (tx + tw) as f32 / page, ty as f32 / page, (ty + th) as f32 / page);
+		quads.push((
+			GLYPH_PAGES[glyph.page],
+			Quad {
+				texture: 0,
+				corners: [[left, top], [right, top], [right, bottom], [left, bottom]],
+				uv: [[u0, v0], [u1, v0], [u1, v1], [u0, v1]],
+				color: [r, g, b, a],
+				corner_colors: None,
+				overlay: [0; 4],
+				factor: 0.0,
+				saturation: 1.0,
+				flags: 0,
+				level: 0,
+			},
+		));
 	}
 	quads
 }
@@ -138,6 +198,7 @@ mod tests {
 				font: &font,
 				texture: "gfx/f.png",
 			},
+			None,
 		);
 		let (key, plate) = &quads[0];
 		assert_eq!(*key, WHITE);
@@ -166,6 +227,7 @@ mod tests {
 				font: &font,
 				texture: "gfx/f.png",
 			},
+			None,
 		);
 		assert_eq!(quads[0].1.corners[2], [(10.0 + 4.0) * 2.0, -22.0 * 2.0]);
 	}
