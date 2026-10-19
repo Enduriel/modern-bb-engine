@@ -4,10 +4,15 @@
 //! for full hinting, and desktops ask for slight hinting: lines came out up to 0.9%
 //! narrower than the original's and wrapped differently (the intro event's text).
 //!
+//! Glyphs are antialiased in grey, as Coherent's are: a desktop that asks
+//! for subpixel (LCD) antialiasing gave every glyph coloured fringes, about twice the
+//! original's faint edge pixels, and text up to 17% wider in ink. Chromium's
+//! `--text-contrast`/`--text-gamma` don't change grey glyphs on Linux.
+//!
 //! The browser process points fontconfig at a file that reads the usual configuration
-//! and then asks for full hinting for every font. Chromium's child processes inherit
-//! that. Nothing else in the process uses fontconfig: the engine draws its own text
-//! from bitmap fonts.
+//! and then asks for full hinting and grey antialiasing for every font. Chromium's child
+//! processes inherit that. Nothing else in the process uses fontconfig: the engine draws
+//! its own text from bitmap fonts.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
@@ -19,7 +24,7 @@ const VARIABLE: &str = "FONTCONFIG_FILE";
 const PREFIX: &str = "bb-ui-fonts-";
 
 /// The configuration: the usual one (`usual`, else the system's `fonts.conf`), then full
-/// hinting for every font.
+/// hinting and grey antialiasing for every font.
 fn config(usual: Option<&str>) -> String {
 	let usual = usual.unwrap_or("fonts.conf");
 	let usual = usual
@@ -34,6 +39,9 @@ fn config(usual: Option<&str>) -> String {
   <match target="font">
     <edit name="hinting" mode="assign"><bool>true</bool></edit>
     <edit name="hintstyle" mode="assign"><const>hintfull</const></edit>
+    <edit name="antialias" mode="assign"><bool>true</bool></edit>
+    <edit name="rgba" mode="assign"><const>none</const></edit>
+    <edit name="lcdfilter" mode="assign"><const>lcdnone</const></edit>
   </match>
 </fontconfig>
 "#
@@ -75,6 +83,7 @@ mod tests {
 		let system = config(None);
 		assert!(system.contains(r#"<include ignore_missing="yes">fonts.conf</include>"#));
 		assert!(system.find("<include").unwrap() < system.find("hintfull").unwrap());
+		assert!(system.find("<include").unwrap() < system.find("<const>none</const>").unwrap());
 		let own = config(Some("/home/a&b/<fonts>.conf"));
 		assert!(own.contains(
 			"<include ignore_missing=\"yes\">/home/a&amp;b/&lt;fonts&gt;.conf</include>"
