@@ -67,12 +67,13 @@ fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 			"Nested Tooltips' hooks lost what they wrapped (its second setup.js ran after them)",
 		)?;
 	}
-	// MSU's late JS connected its screens from the page.
-	let deadline = Instant::now() + Duration::from_secs(10);
-	while !holds(&session, "\"MSU\" in ::getroottable() && ::MSU.Popup.m.JSHandle != null")? {
-		ensure(Instant::now() < deadline, "MSU's popup never connected (connectBackend)")?;
-		session.run_frames(0.1)?;
-	}
+	// MSU's late JS connected its screens from the page, before the boot to the menu
+	// returned: it waits for the page's inserted scripts to run, so a campaign started
+	// at once finds MSU's settings page connected.
+	ensure(
+		holds(&session, "\"MSU\" in ::getroottable() && ::MSU.Popup.m.JSHandle != null && ::MSU.SettingsScreen.m.JSHandle != null")?,
+		"MSU's screens weren't connected when the boot to the menu returned (connectBackend, its late JS)",
+	)?;
 	// The main menu is up.
 	let deadline = Instant::now() + Duration::from_secs(10);
 	loop {

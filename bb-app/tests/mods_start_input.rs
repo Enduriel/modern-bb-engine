@@ -47,18 +47,16 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		world_size: None,
 		mode: VideoMode::DEFAULT,
 		devtools: None,
+		saves: None,
 	};
 	// The saves (and MSU's storages) stay in memory: the player's are never touched.
 	let mut game = Game::start(gpu, &boot)?;
 	let (width, height) = game.screen();
 	let (x, y) = (i64::from(width / 2), i64::from(height / 2));
 	let mut frame = 0i64;
-	// The main menu, until MSU's late JS has connected its screens.
-	let deadline = Instant::now() + Duration::from_secs(60);
-	while !holds(&game, "\"MSU\" in ::getroottable() && ::MSU.SettingsScreen.m.JSHandle != null")? {
-		if Instant::now() >= deadline {
-			return Err("MSU's settings screen never connected".into());
-		}
+	// The main menu, a few frames, the pointer moving (MSU's late JS has connected its
+	// screens by the time the boot returns).
+	for _ in 0..30 {
 		game.mouse_moved(x + frame % 7, y).map_err(|e| format!("frame {frame}: a pointer move erred: {e}"))?;
 		game.step(1000.0 / 60.0)?;
 		frame += 1;

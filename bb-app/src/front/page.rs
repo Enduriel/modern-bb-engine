@@ -45,6 +45,10 @@ impl Front {
 		// system's browser, as the original's do.
 		session.protocol().set_url_opener(crate::platform::open_url);
 		session.engine().video().set_mode(mode);
+		// Before the boot: mods read their storages there as they boot (MSU's settings).
+		if let Some(dir) = &boot.saves {
+			session.engine().saves().set_directory(dir.clone());
+		}
 		if let Some(port) = devtools {
 			super::devtools::announce(port);
 		}

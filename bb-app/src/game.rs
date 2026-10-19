@@ -59,6 +59,9 @@ pub struct Boot<'a> {
 	pub mode: VideoMode,
 	/// Serve Chrome DevTools for the page at this port (the page's front only).
 	pub devtools: Option<u16>,
+	/// Where the saves (and mods' storages, which they read as they boot) are kept as
+	/// files; in memory without one.
+	pub saves: Option<std::path::PathBuf>,
 }
 
 /// The archives the game reads from the install at `data_dir`: its `data_*.dat`, then,
@@ -93,6 +96,7 @@ impl Game {
 			world_size,
 			mode,
 			devtools,
+			saves: None,
 		};
 		Game::start(gpu, &boot)
 	}

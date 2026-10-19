@@ -21,6 +21,11 @@
 // waiting copy, as the copy, which then fires its own load event. Insertions through
 // `appendChild`, `insertBefore` and `replaceChild` are seen, as the old WebKit's mods
 // use; the newer `append`/`before`/... (which Coherent lacked) are left alone.
+//
+// It also counts the inserted scripts still to run (`__bbScriptsPending`): the host
+// waits for none to be left before it starts anything a player would only start
+// later, as mods' late JS (Modern Hooks' `registerLateJS`, e.g. MSU's) connects
+// screens the scripts then use.
 (function () {
 	'use strict';
 	var createElement = Document.prototype.createElement;
@@ -36,6 +41,26 @@
 	var loading = new Map();
 	// Scripts already inserted once: a script runs at most once, wherever it moves.
 	var inserted = new WeakSet();
+	// Inserted external scripts that haven't run (or failed to load) yet.
+	var pending = 0;
+	Object.defineProperty(window, '__bbScriptsPending', {
+		get: function () { return pending; },
+		enumerable: false
+	});
+
+	// `script` counts as pending until it fires its load or error event.
+	function track(script) {
+		pending++;
+		var settled = false;
+		function settle() {
+			if (!settled) {
+				settled = true;
+				pending--;
+			}
+		}
+		script.addEventListener('load', settle);
+		script.addEventListener('error', settle);
+	}
 
 	function isClassicScript(script) {
 		var type = script.getAttribute('type');
@@ -107,6 +132,7 @@
 			return insert();
 		}
 		inserted.add(node);
+		track(node);
 		var url = node.src;
 		var waiting = loading.get(url);
 		if (waiting) {

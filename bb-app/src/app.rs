@@ -163,6 +163,11 @@ impl App {
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
 		let options = &self.options;
+		let saves = options.saves.clone().or_else(squirrel_bb::platform::saves_dir);
+		match &saves {
+			Some(dir) => eprintln!("saves: {}", dir.display()),
+			None => eprintln!("saves: in memory only (no folder for them)"),
+		}
 		let boot = Boot {
 			data_dir: &options.data_dir,
 			start: options.start.clone(),
@@ -171,6 +176,7 @@ impl App {
 			world_size: options.world_size,
 			mode,
 			devtools: options.devtools,
+			saves,
 		};
 		let mut game = Game::start(&gpu, &boot)?;
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
@@ -179,13 +185,6 @@ impl App {
 		}
 		if let Some(mib) = self.settings.texture_budget_mib() {
 			game.set_texture_budget(mib << 20);
-		}
-		match options.saves.clone().or_else(squirrel_bb::platform::saves_dir) {
-			Some(dir) => {
-				eprintln!("saves: {}", dir.display());
-				game.keep_saves_in(dir);
-			}
-			None => eprintln!("saves: in memory only (no folder for them)"),
 		}
 		let size = window.inner_size();
 		eprintln!(

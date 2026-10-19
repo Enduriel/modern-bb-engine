@@ -97,7 +97,12 @@ impl UiSession {
 
 	/// Boot the scripts to the main menu (config, then `scripts/root_state`). With
 	/// Modern Hooks, the page first loads every mod's JS and then resumes the boot (its
-	/// handshake), so this runs the page for up to 10 s until it has.
+	/// handshake), so this runs the page for up to 10 s until it has. Then the page runs
+	/// until the scripts it inserted have all run (up to 30 s): mods' late JS (Modern
+	/// Hooks' `registerLateJS`) loads after the handshake, and connects screens the
+	/// scripts use from then on (MSU's settings page, which a new campaign shows). A
+	/// player can't click anything before that; a host that starts a campaign at once
+	/// mustn't either.
 	pub fn boot_menu(&self) -> Result<(), String> {
 		self.park();
 		harness::boot_menu_with(&self.engine, 600, || {
@@ -105,7 +110,15 @@ impl UiSession {
 			Ok(())
 		})?;
 		self.pump();
+		if !self.pump_until(Duration::from_secs(30), |s| s.scripts_settled()) {
+			self.record("bridge", "the page's inserted scripts were still loading after 30 s".into());
+		}
 		Ok(())
+	}
+
+	/// Whether every script the page inserted has run (or failed to load).
+	fn scripts_settled(&self) -> bool {
+		matches!(self.eval("window.__bbScriptsPending === 0"), Ok(Json::Bool(true)))
 	}
 
 	pub fn engine(&self) -> &GameEngine {

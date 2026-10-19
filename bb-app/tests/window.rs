@@ -202,3 +202,75 @@ fn bb_starts_borderless_and_draws() {
 	assert!(run.stderr.contains("video: 1920x1080 Borderless"), "{}", run.stderr);
 	assert_eq!(png_size(&shot), (1920, 1080), "borderless over the monitor");
 }
+
+/// `bb --mods --new-campaign` starts the campaign once the mods are ready for it, and
+/// reaches the world: with the page, as late as a player's click on Start could come,
+/// after the mods' late JS has connected their screens (MSU's settings page, which a
+/// new campaign shows first, used to throw "The screen 'null' does not have a
+/// JSHandle" at boot). Its Save, pressed as a player would, goes on with the start.
+/// Then back to the main menu and Quit. The saves (and the mods' storages) and the
+/// settings go to the run's own folder. Skips without the mods it needs.
+#[test]
+fn bb_starts_a_modded_campaign_at_once() {
+	let data = Path::new(STEAM_DATA_DIR);
+	let mods = bb_engine::harness::mod_archives(data).unwrap_or_default();
+	let has = |prefix: &str| mods.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix)));
+	if !has("mod_modern_hooks") || !has("mod_msu") {
+		eprintln!("skipping: Modern Hooks or MSU not installed");
+		return;
+	}
+	let dir = run_dir("modded_campaign");
+	let (settings, saves) = (dir.join("settings.cfg"), dir.join("saves"));
+	std::fs::create_dir_all(&saves).expect("the saves folder");
+	// Every 250 ms of real time: press MSU's Save on its new-campaign settings page once
+	// it shows, note the world once it's up and go back to the main menu (the world's
+	// scheduled events end with it), where `quit` (tried every 300 frames) Quits.
+	let player = r#"
+::__player <- { saved = false, world = false, exited = false };
+::__playerTick <- function( _d ) {
+	local p = ::__player;
+	local up = ("State" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::World.State.isInLoadingScreen();
+	if (!p.saved && ("MSU" in ::getroottable()) && ::MSU.SettingsScreen.isVisible())
+	{
+		p.saved = true;
+		::logWarning("player: MSU's new-campaign settings showed; Save");
+		::MSU.SettingsScreen.onSaveButtonPressed({});
+	}
+	else if (!p.world && up)
+	{
+		p.world = true;
+		::logWarning("player: reached the world");
+		::World.State.m.MenuStack.popAll(true);
+		::World.State.exitGame();
+		p.exited = true;
+	}
+	if (!p.exited)
+		::Time.scheduleEvent(::TimeUnit.Real, 250, ::__playerTick, null);
+};
+::Time.scheduleEvent(::TimeUnit.Real, 250, ::__playerTick, null);
+"#;
+	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__player" in getroottable()) && ::__player.exited && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
+	let frames: Vec<String> = (1..=40).map(|i| (i * 300).to_string()).collect();
+	let mut args = vec![
+		"--mods",
+		"--new-campaign",
+		"--settings",
+		settings.to_str().unwrap(),
+		"--saves",
+		saves.to_str().unwrap(),
+		"--at",
+		"1",
+		player,
+	];
+	for frame in &frames {
+		args.extend(["--at", frame.as_str(), quit]);
+	}
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "bb's exit status\n{}", run.stderr);
+	assert!(!run.stderr.contains("does not have a JSHandle"), "{}", run.stderr);
+	assert!(run.stderr.contains("player: reached the world"), "{}", run.stderr);
+	// With the page, the start shows MSU's page as the menu's Start does.
+	if cfg!(feature = "ui") {
+		assert!(run.stderr.contains("player: MSU's new-campaign settings showed"), "{}", run.stderr);
+	}
+}

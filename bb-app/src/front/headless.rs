@@ -27,6 +27,9 @@ impl Front {
 		// An uncaught script error prints its call stack to stderr, as the original logs it.
 		engine.vm_mut().install_standard_error_handlers();
 		engine.video().set_mode(boot.mode);
+		if let Some(dir) = &boot.saves {
+			engine.saves().set_directory(dir.clone());
+		}
 		if boot.sound {
 			super::play_on_device(&engine, boot.data_dir, boot.mods);
 		}
