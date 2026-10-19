@@ -615,25 +615,44 @@ fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), S
 				p.shot("battle");
 			}
 			p.script("::__autoplay();")?;
-			p.session.step(1000.0 / 60.0)?;
+			// The turn bar slides each turn's unit in on the clock and finishes on it
+			// (turnsequencebar_module.js): frames run as fast as they go would let a unit
+			// act and die (its slot removed) before its slide is done, whose end then
+			// fails on the removed slot. While the page animates, the frames are paced,
+			// as the original runs them.
+			if p.session.animating()? { wait_frame(p)? } else { p.session.step(1000.0 / 60.0)? }
 		}
 		"results" => {
 			p.script("::__fightResult <- ::Tactical.Entities.getCombatResult();")?;
-			// After a win, "Continue" goes on to the loot (take it all) and then leaves;
-			// after a retreat or a loss there's nothing to take, and it reads "Leave".
-			if p.session.shows_text("Continue")? {
-				during("to the loot", p.session.click_when_ready("Continue", STEP))?;
+			// The footer button goes on to the loot, where there is any (take it all),
+			// and then leaves. Its text says which ("Continue", "Leave"), but only once
+			// the result's data has come: press the button itself while the screen
+			// shows, once per settled screen (a press during its fade-out leaves twice).
+			let gone = "!((\"State\" in ::Tactical) && ::Tactical.State != null)";
+			let showing = "(\"State\" in ::Tactical) && ::Tactical.State != null && (function(r) { return r.isVisible() && !r.isAnimating(); })(::Tactical.State.m.TacticalCombatResultScreen) ? 1 : 0";
+			let button = "css:.tactical-combat-result-screen .l-leave-button .ui-control";
+			for press in 0..3 {
 				settled(p, |_| true)?;
-				if p.session.eval("jQuery('.loot-all-button:visible').length")?.as_i64() == Some(1) {
+				if p.int(showing)? == 0 {
+					break;
+				}
+				if press > 0 && p.session.eval("jQuery('.loot-all-button:visible').length")?.as_i64() == Some(1) {
 					during("looting all", p.session.click_when_ready("css:.loot-all-button", STEP))?;
 					p.session.pump_until(Duration::from_secs(1), |_| false);
 					p.shot("looted");
 				}
-				during("leaving the battle", p.session.click_when_ready("Continue", STEP))?;
-			} else {
-				during("leaving the battle", p.session.click_when_ready("Leave", STEP))?;
+				let text = || p.session.eval("jQuery('.tactical-combat-result-screen .l-leave-button .ui-control').text()").map(|t| t.to_text()).unwrap_or_default();
+				let before = text();
+				during("leaving the battle", p.session.click_when_ready(button, STEP))?;
+				// The scripts answer the press over the next frames: until the screen goes
+				// on to the loot (the button reads anew) or away.
+				let deadline = p.deadline(STEP)?;
+				while p.int(showing)? == 1 && text() == before {
+					ensure(!p.past(&deadline)?, "the result screen didn't answer the press")?;
+					wait_frame(p)?;
+				}
 			}
-			p.until("!((\"State\" in ::Tactical) && ::Tactical.State != null)", STEP)?;
+			p.until(gone, STEP)?;
 		}
 		"event" => answer_event(p)?,
 		"combat" => {
@@ -1045,7 +1064,8 @@ fn play(p: &Play) -> Result<(), String> {
 			format!("[{}] {}\n{}", line.level, line.text, before.join("\n"))
 		})
 		.collect();
-	ensure(problems.is_empty(), format!("page or bridge errors:\n{}", problems.join("\n")))
+	let stacks = p.session.eval("(window.__errorStacks || []).join('\\n---\\n')").map(|v| v.to_text()).unwrap_or_default();
+	ensure(problems.is_empty(), format!("page or bridge errors:\n{}\nstacks:\n{stacks}", problems.join("\n")))
 }
 
 /// The stubs the scripts called this session, and the natives the original binds that
@@ -1077,6 +1097,8 @@ fn stub_report(p: &Play) {
 fn run(data_dir: &Path) -> Result<(), String> {
 	let session = UiSession::start(data_dir, HostConfig::default(), Echo::Off)?;
 	during("booting the menu", session.boot_menu())?;
+	// The page's uncaught errors' stacks (its log has only their messages).
+	session.eval("window.__errorStacks = []; window.addEventListener('error', function (e) { window.__errorStacks.push(e.error && e.error.stack ? e.error.stack : String(e.message)); }); 0")?;
 	let shots = std::env::var_os("PLAY_SHOTS").map(PathBuf::from);
 	if let Some(dir) = &shots {
 		let _ = std::fs::create_dir_all(dir);
