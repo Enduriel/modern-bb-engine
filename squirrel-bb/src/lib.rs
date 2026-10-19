@@ -33,6 +33,7 @@ pub mod scene;
 mod source;
 mod state;
 mod state_stack;
+pub mod unicode_ranges;
 pub mod ui_client;
 
 pub use engine::Engine;

@@ -53,14 +53,27 @@ fn mods_detect_the_engine_and_register_fonts_in_load_order() {
 		.expect("registered");
 	assert_eq!(root_string(&engine, "found").as_deref(), Some("yes 1"));
 	assert_eq!(root_string(&engine, "family").as_deref(), Some("BB Test Han Serif"));
-	let fonts = engine.take_font_registrations();
+	let fonts = engine.font_registrations(0);
 	assert_eq!(fonts.len(), 2);
 	assert_eq!((fonts[0].stands_in_for.clone(), fonts[0].scripts.clone(), fonts[0].priority), (None, None, 0), "the defaults");
 	assert_eq!(fonts[1].stands_in_for.as_deref(), Some(&["cinzel_bold_20".to_string(), "cinzel_bold_100".to_string()][..]));
 	assert_eq!(fonts[1].scripts.as_deref(), Some(&["Han".to_string()][..]));
 	assert_eq!(fonts[1].priority, 2);
 	assert_eq!(fonts[1].data, FONT);
-	assert!(engine.take_font_registrations().is_empty(), "taken once");
+	assert_eq!(fonts[0].ui_families(), squirrel_bb::modern_engine::UI_FAMILIES, "the page's every family");
+	assert_eq!(fonts[1].ui_families(), ["Cinzel-Bold"], "the bitmap fonts' typeface on the page");
+	let has = |range: &str, c: char| {
+		range.split(", ").any(|r| {
+			let (start, end) = r.trim_start_matches("U+").split_once('-').unwrap_or((r.trim_start_matches("U+"), r.trim_start_matches("U+")));
+			(u32::from_str_radix(start, 16).unwrap()..=u32::from_str_radix(end, 16).unwrap()).contains(&u32::from(c))
+		})
+	};
+	let all = fonts[0].ui_unicode_range();
+	assert!(has(&all, '中') && has(&all, 'я') && !has(&all, 'A') && !has(&all, 'é'), "never vanilla's own characters");
+	let han = fonts[1].ui_unicode_range();
+	assert!(has(&han, '中') && !has(&han, 'あ') && !has(&han, 'A'), "Han, not Hiragana: {han}");
+	assert_eq!(engine.font_registrations(1).len(), 1, "from the second on");
+	assert!(engine.font_registrations(2).is_empty(), "none past the last");
 }
 
 #[test]
@@ -77,5 +90,9 @@ fn mistakes_throw_with_a_reason() {
 	assert!(error(r#"::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf", { For = "cinzel_30" })"#).contains("cinzel_30"));
 	assert!(error(r#"::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf", { Scripts = ["Han", "Klingon"] })"#).contains("Klingon"));
 	assert!(error(r#"::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf", { Priority = "high" })"#).contains("Priority"));
-	assert!(engine.take_font_registrations().is_empty(), "nothing kept");
+	assert!(engine.font_registrations(0).is_empty(), "nothing kept");
+	engine
+		.run_script(r#"::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf", { For = ["FreeUniversal-Regular", "cinzel_20"] });"#, "mod")
+		.expect("a UI family is a font it can stand in for");
+	assert_eq!(engine.font_registrations(0)[0].ui_families(), ["FreeUniversal-Regular", "Cinzel-Regular"]);
 }

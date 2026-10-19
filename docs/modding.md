@@ -21,7 +21,8 @@ Vanilla draws the map's text (settlement and party names, region names) with bit
 fonts that only have the 256 characters of Windows-1252. The modern engine draws text
 those fonts can't from outline fonts: the game's own TTF for that font (Cinzel), then
 the system's fonts. A mod can put its own font first, for example a serif Han font for
-a Chinese translation, so the names keep the game's style:
+a Chinese translation, so the names keep the game's style. The same font also covers
+the UI's text in those fonts' families (see "On the UI" below):
 
 ```squirrel
 // scripts/!mods_preload/mod_my_translation.nut
@@ -40,9 +41,14 @@ if ("ModernEngine" in ::getroottable())
   under `gfx/<your mod>/`). TrueType (`.ttf`), OpenType (`.otf`) and collections
   (`.ttc`, the first font) are read.
 - `options`, a table; every member is optional:
-  - `For`: the vanilla bitmap font, or an array of them, this font stands in for:
-    `"cinzel_bold_20"` (settlement, party and location names), `"cinzel_bold_100"`
-    (region names) or `"cinzel_20"`; or `"*"` (the default) for all of them.
+  - `For`: the vanilla font, or an array of them, this font stands in for; or `"*"`
+    (the default) for all of them. Either a bitmap font of the map: `"cinzel_bold_20"`
+    (settlement, party and location names), `"cinzel_bold_100"` (region names) or
+    `"cinzel_20"`; each also names its typeface's family on the UI (`"Cinzel-Bold"`
+    for both bold ones, `"Cinzel-Regular"`). Or a font family of the UI's
+    `ui/fonts.css`, for the UI only: `"Cinzel-Regular"`, `"Cinzel-Bold"`,
+    `"Arsenal-Regular"`, `"Arsenal-Italic"`, `"FreeUniversal-Regular"` (most of the
+    UI's text) or `"FreeUniversal-Italic"`.
   - `Scripts`: the Unicode script, or an array of them, it's for, by their Unicode
     name: `"Han"`, `"Hiragana"`, `"Katakana"`, `"Hangul"`, `"Cyrillic"`, `"Greek"`,
     `"Arabic"`, `"Hebrew"`, `"Thai"`, `"Devanagari"`, …. Every script by default.
@@ -50,10 +56,10 @@ if ("ModernEngine" in ::getroottable())
     same priority, the font registered later is, so mods override each other in load
     order, as hooks do.
 - It returns the font's family name. It throws (with the reason in the log) for a file
-  it can't find, a file that isn't a font, a `For` that isn't one of the bitmap fonts,
+  it can't find, a file that isn't a font, a `For` that isn't one of the fonts above,
   a `Scripts` name Unicode doesn't have, or a `Priority` that isn't an integer.
 
-How text is drawn:
+How the map's text is drawn:
 
 - Text the bitmap font can draw (any Windows-1252 text, so all of vanilla's) is drawn
   with it, exactly as in the original. A registered font never changes it.
@@ -69,5 +75,23 @@ How text is drawn:
   registered later works too: text drawn after the registration uses it, and names
   already on the map are drawn again with it on the next frame. Registrations don't
   last between game starts: register on every load, as hooks are added on every load.
-- The UI (Chromium) is separate: its CSS fonts are the page's, and Chromium falls back
-  to the system's fonts per character on its own.
+
+On the UI (the game's HTML pages, drawn by Chromium):
+
+- Each registered font is added to every UI font family it stands in for, as an
+  `@font-face` under that family's own name (`font-family: 'Cinzel-Bold'`), limited
+  with `unicode-range` to the characters vanilla's fonts weren't made for (everything
+  outside Windows-1252, and of those only its `Scripts`' if it names some, with the
+  punctuation and marks those scripts share). Vanilla's text keeps vanilla's fonts.
+  No CSS changes are needed: the UI's classes (`title-font-big`, `text-font-normal`, …)
+  pick the mod's font for the characters it's for.
+- For each character, the fonts are tried highest `Priority` first and, at the same
+  priority, the later registration first, as on the map; then the family's own vanilla
+  font; then the system's fonts, per character.
+- The font file is served from the game's files as the UI's own fonts are
+  (`coui://<path>`), and only loads when the page shows a character it's for. A font
+  registered after the page is up reaches it on the next frame.
+- The rules are in a `<style id="bb-modern-engine-fonts">` that the engine keeps last in
+  the page's `<head>`. A mod's own CSS for other font families (its own
+  `@font-face`) is unaffected; it can register its font too, by one of the families
+  above, to cover vanilla's.

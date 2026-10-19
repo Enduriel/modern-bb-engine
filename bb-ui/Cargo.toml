@@ -50,3 +50,8 @@ required-features = ["cef"]
 name = "ui_parity"
 harness = false
 required-features = ["cef"]
+
+[[test]]
+name = "mod_fonts_ui"
+harness = false
+required-features = ["cef"]

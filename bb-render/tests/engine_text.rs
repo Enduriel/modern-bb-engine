@@ -146,12 +146,12 @@ fn a_mod_registers_its_font_through_modern_engine() {
 	archives.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mod_han_font_test.zip"));
 	let engine = harness::open_mounted(dir, archives, |_| {}).expect("the install and the mod");
 	harness::boot_menu(&engine).expect("the menu, the mod's preload run");
-	let fonts = engine.take_font_registrations();
+	let fonts = engine.font_registrations(0);
 	assert_eq!(fonts.len(), 1, "the mod's one font");
 	assert_eq!(fonts[0].family, "BB Test Han Serif");
 	let mut db = FontDb::new(Vec::new(), false);
 	for font in fonts {
-		db.register(font.into()).expect("registered");
+		db.register(Registration::of(&font).expect("for labels")).expect("registered");
 	}
 	let families = |db: &mut FontDb, bitmap: &str| db.runs(bitmap, SETTLEMENT).into_iter().map(|r| r.family).collect::<Vec<_>>();
 	assert_eq!(families(&mut db, "cinzel_bold_20"), ["BB Test Han Serif"], "labels");

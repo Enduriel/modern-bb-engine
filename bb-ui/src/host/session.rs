@@ -30,6 +30,8 @@ pub struct UiSession {
 	/// Procedural images the page asked for, kept for the owner to answer
 	/// ([`UiSession::queue_procedural`]); `None` answers them blank at once.
 	pub(super) procedural: RefCell<Option<Vec<super::ProceduralRequest>>>,
+	/// The fonts mods registered that the page has (`ModernEngine.registerFont`).
+	fonts: RefCell<crate::mod_fonts::PageFonts>,
 }
 
 impl UiSession {
@@ -37,24 +39,22 @@ impl UiSession {
 	/// script engine, and wait until the page has registered its screens. Page and
 	/// bridge messages are kept in [`log`](Self::log) and echoed as `echo` says.
 	pub fn start(data_dir: &Path, config: HostConfig, echo: Echo) -> Result<UiSession, String> {
-		let files = Arc::new(UiFiles::open_install(data_dir, config.mods).map_err(|e| format!("archives: {e}"))?);
+		let mut archives = harness::data_archives(data_dir).map_err(|e| format!("install: {e}"))?;
+		if config.mods {
+			archives.extend(harness::mod_archives(data_dir).map_err(|e| format!("mods: {e}"))?);
+		}
+		archives.extend(config.extra_mods.iter().cloned());
+		let files = Arc::new(UiFiles::open(&archives, data_dir.parent().map(Path::to_path_buf)).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
 		let (exact_clock, battle_camera, battle_motion) = (config.exact_clock, config.battle_camera, config.battle_motion);
-		let mods = config.mods;
 		let host = UiHost::start(files.clone(), config)?;
 		let configure = |c: &mut squirrel_bb::NativeConfig| {
 			c.exact_clock = exact_clock;
 			c.battle_camera = battle_camera;
 			c.battle_motion = battle_motion;
 		};
-		let mut engine = if mods {
-			let mut archives = harness::data_archives(data_dir).map_err(|e| format!("install: {e}"))?;
-			archives.extend(harness::mod_archives(data_dir).map_err(|e| format!("mods: {e}"))?);
-			harness::open_mounted(data_dir, archives, configure)
-		} else {
-			harness::open_install_with(data_dir, configure)
-		}
-		.map_err(|e| format!("install: {e}"))?;
+		// The scripts see the same archives as the page.
+		let mut engine = harness::open_mounted(data_dir, archives, configure).map_err(|e| format!("install: {e}"))?;
 		// The scripts see the window's size as the video mode's (the page fills it).
 		engine
 			.video()
@@ -85,6 +85,7 @@ impl UiSession {
 			log,
 			echo,
 			procedural: RefCell::new(None),
+			fonts: RefCell::default(),
 		};
 		// The page registers its screens once loaded; scripts may only connect to them
 		// after that, as in the original.
@@ -255,6 +256,7 @@ impl UiSession {
 			let start = Instant::now();
 			self.engine.frame(1000.0 / 60.0)?;
 			self.follow_ui_scale();
+			self.follow_fonts();
 			self.pump_until_deadline(start + frame);
 		}
 		Ok(())
@@ -271,6 +273,25 @@ impl UiSession {
 		let size = (width as i32, height as i32);
 		if self.host().size() != size || self.host().scale() != scale {
 			self.host().resize(size.0, size.1, scale);
+		}
+	}
+
+	/// Give the page the fonts mods registered since it last looked (`registerFont`), as
+	/// `@font-face` rules for vanilla's families ([`crate::mod_fonts`]).
+	pub(super) fn follow_fonts(&self) {
+		let new = self.engine.font_registrations(self.fonts.borrow().len());
+		if new.is_empty() {
+			return;
+		}
+		let script = {
+			let mut fonts = self.fonts.borrow_mut();
+			for font in &new {
+				fonts.add(font);
+			}
+			fonts.page_script()
+		};
+		if let Err(e) = self.eval(&script) {
+			self.record("bridge", format!("mods' fonts not on the page: {e}"));
 		}
 	}
 

@@ -5,8 +5,9 @@
 //! - `ModernEngine.Version`: the API's version (1).
 //! - `ModernEngine.registerFont(path, options = null)`: a font file in the game's files
 //!   (a mod's zip included) for engine-drawn text the bitmap fonts can't draw:
-//!   - `For`: the vanilla bitmap font(s) it stands in for, a name or an array of them
-//!     ([`BITMAP_FONTS`]), or `"*"` (the default) for all;
+//!   - `For`: the vanilla fonts it stands in for, a name or an array of them: bitmap
+//!     fonts ([`BITMAP_FONTS`]; each also names its typeface on the UI's page) or the
+//!     page's font families ([`UI_FAMILIES`]); or `"*"` (the default) for all;
 //!   - `Scripts`: the Unicode scripts it's for, by name (`"Han"`, `"Cyrillic"`), a name
 //!     or an array; every script by default;
 //!   - `Priority`: higher first (0 by default); at equal priority, a later registration
@@ -14,8 +15,11 @@
 //!
 //!   It returns the font's family name and throws on a file it can't read, a file that
 //!   isn't a font, or an unknown `For` or `Scripts` value. Registrations are kept for the
-//!   host (`Engine::take_font_registrations`), which hands them to the renderer: text
-//!   drawn after a registration uses it.
+//!   hosts (`Engine::font_registrations`): the renderer's text drawn after one uses it,
+//!   and the UI page gets an `@font-face` per family it stands in for, for the code
+//!   points vanilla's fonts weren't made for ([`FontRegistration::ui_unicode_range`]).
+
+use std::rc::Rc;
 
 use squirrel::{Retained, SQVM, SqRef, SqTable, Variadic};
 use unicode_script::Script;
@@ -30,6 +34,25 @@ pub const VERSION: i64 = 1;
 /// The bitmap fonts vanilla draws engine text with (`gfx/fonts/<name>.fnt`).
 pub const BITMAP_FONTS: [&str; 3] = ["cinzel_20", "cinzel_bold_20", "cinzel_bold_100"];
 
+/// The font families vanilla's UI page defines (`ui/fonts.css`), each one typeface.
+pub const UI_FAMILIES: [&str; 6] = [
+	"Arsenal-Regular",
+	"Arsenal-Italic",
+	"FreeUniversal-Regular",
+	"FreeUniversal-Italic",
+	"Cinzel-Regular",
+	"Cinzel-Bold",
+];
+
+/// The page's family for a bitmap font's typeface (both are Cinzel).
+fn ui_family_of(bitmap_font: &str) -> Option<&'static str> {
+	match bitmap_font {
+		"cinzel_20" => Some("Cinzel-Regular"),
+		"cinzel_bold_20" | "cinzel_bold_100" => Some("Cinzel-Bold"),
+		_ => None,
+	}
+}
+
 /// A font a mod registered.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontRegistration {
@@ -37,11 +60,35 @@ pub struct FontRegistration {
 	pub path: String,
 	pub data: Vec<u8>,
 	pub family: String,
-	/// The bitmap fonts it stands in for (`None`: all).
+	/// The fonts it stands in for, bitmap fonts and the page's families (`None`: all).
 	pub stands_in_for: Option<Vec<String>>,
 	/// The Unicode scripts it's for, by name (`None`: all).
 	pub scripts: Option<Vec<String>>,
 	pub priority: i64,
+}
+
+impl FontRegistration {
+	/// The UI page's font families it stands in for: those `For` names, and those of the
+	/// bitmap fonts it names (all of them without a `For`).
+	pub fn ui_families(&self) -> Vec<&'static str> {
+		let Some(names) = &self.stands_in_for else {
+			return UI_FAMILIES.to_vec();
+		};
+		UI_FAMILIES
+			.into_iter()
+			.filter(|family| names.iter().any(|n| n == family || ui_family_of(n) == Some(family)))
+			.collect()
+	}
+
+	/// The code points it's for on the UI page, as a CSS `unicode-range`: those outside
+	/// Windows-1252 (vanilla's fonts keep their text), of its scripts if it names some.
+	pub fn ui_unicode_range(&self) -> String {
+		let scripts: Option<Vec<Script>> = self
+			.scripts
+			.as_ref()
+			.map(|names| names.iter().filter_map(|n| Script::from_full_name(n)).collect());
+		crate::unicode_ranges::css_unicode_range(&crate::unicode_ranges::code_point_ranges(scripts.as_deref()))
+	}
 }
 
 /// A name, or each name of an array (`None` for null).
@@ -65,8 +112,11 @@ fn register<S: ScriptSource>(vm: &SQVM, state: &SharedState<S>, path: &str, opti
 	let options = options.and_then(|o| o.0.as_table(vm));
 	let member = |key: &str| options.as_ref().and_then(|t| t.get_ref(key));
 	let stands_in_for = names(member("For"), "For")?.filter(|f| !f.iter().any(|f| f == "*"));
-	if let Some(unknown) = stands_in_for.iter().flatten().find(|f| !BITMAP_FONTS.contains(&f.as_str())) {
-		return Err(format!("registerFont({path:?}): no bitmap font {unknown:?} (one of {BITMAP_FONTS:?}, or \"*\")"));
+	let known = |f: &str| BITMAP_FONTS.contains(&f) || UI_FAMILIES.contains(&f);
+	if let Some(unknown) = stands_in_for.iter().flatten().find(|f| !known(f)) {
+		return Err(format!(
+			"registerFont({path:?}): no font {unknown:?} (a bitmap font, one of {BITMAP_FONTS:?}; a UI font family, one of {UI_FAMILIES:?}; or \"*\")"
+		));
 	}
 	let scripts = names(member("Scripts"), "Scripts")?;
 	if let Some(unknown) = scripts.iter().flatten().find(|s| Script::from_full_name(s).is_none()) {
@@ -86,14 +136,14 @@ fn register<S: ScriptSource>(vm: &SQVM, state: &SharedState<S>, path: &str, opti
 		return Err(format!("registerFont({path:?}): not a TrueType, OpenType or collection font"));
 	}
 	let family = family_name(&data).ok_or_else(|| format!("registerFont({path:?}): the font has no family name"))?;
-	state.borrow_mut().fonts.push(FontRegistration {
+	state.borrow_mut().fonts.push(Rc::new(FontRegistration {
 		path: path.to_string(),
 		data,
 		family: family.clone(),
 		stands_in_for,
 		scripts,
 		priority,
-	});
+	}));
 	Ok(family)
 }
 

@@ -171,9 +171,9 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		crate::modern_engine::install(vm, &self.state);
 	}
 
-	/// The fonts mods registered since the last call, in registration order.
-	pub fn take_font_registrations(&self) -> Vec<crate::modern_engine::FontRegistration> {
-		std::mem::take(&mut self.state.borrow_mut().fonts)
+	/// The fonts mods registered, from the `from`th on (0-based), in registration order.
+	pub fn font_registrations(&self, from: usize) -> Vec<std::rc::Rc<crate::modern_engine::FontRegistration>> {
+		self.state.borrow().fonts.get(from..).unwrap_or_default().to_vec()
 	}
 
 	/// Load, compile and run the script at `path` (once). Host entry point for the

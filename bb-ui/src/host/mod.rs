@@ -139,6 +139,9 @@ pub struct HostConfig {
 	/// Mount the install's mods (every `.zip` in `data/`), as the original loads them,
 	/// for the page and the scripts alike. Off by default (vanilla).
 	pub mods: bool,
+	/// Mod archives (`.zip`) mounted after those, for the page and the scripts alike,
+	/// e.g. a test's own mod.
+	pub extra_mods: Vec<PathBuf>,
 }
 
 impl Default for HostConfig {
@@ -154,6 +157,7 @@ impl Default for HostConfig {
 			battle_camera: squirrel_bb::BattleCamera::Instant,
 			battle_motion: squirrel_bb::BattleMotion::Stepped,
 			mods: false,
+			extra_mods: Vec::new(),
 		}
 	}
 }

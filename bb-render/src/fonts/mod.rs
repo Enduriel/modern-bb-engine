@@ -51,15 +51,25 @@ pub struct Registration {
 	pub priority: i64,
 }
 
-impl From<squirrel_bb::modern_engine::FontRegistration> for Registration {
-	fn from(font: squirrel_bb::modern_engine::FontRegistration) -> Self {
-		Registration {
-			path: font.path,
-			data: font.data,
-			stands_in_for: font.stands_in_for,
-			scripts: font.scripts,
-			priority: font.priority,
+impl Registration {
+	/// A mod's registration as the renderer takes it: of the fonts it stands in for, the
+	/// bitmap fonts (the rest are the UI page's). `None` when it names only the page's.
+	pub fn of(font: &squirrel_bb::modern_engine::FontRegistration) -> Option<Self> {
+		let bitmap = |f: &String| squirrel_bb::modern_engine::BITMAP_FONTS.contains(&f.as_str());
+		let stands_in_for = match &font.stands_in_for {
+			None => None,
+			Some(fonts) => Some(fonts.iter().filter(|f| bitmap(f)).cloned().collect::<Vec<_>>()).filter(|f| !f.is_empty()),
+		};
+		if font.stands_in_for.is_some() && stands_in_for.is_none() {
+			return None;
 		}
+		Some(Registration {
+			path: font.path.clone(),
+			data: font.data.clone(),
+			stands_in_for,
+			scripts: font.scripts.clone(),
+			priority: font.priority,
+		})
 	}
 }
 

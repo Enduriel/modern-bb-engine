@@ -328,14 +328,15 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			.or_else(|| self.world_entities.portrait(&self.vm, id))
 	}
 
-	/// The scenes the game discarded since the last call (a battle's end, the campaign
-	/// left, a save loaded), in order, for the host to drop what they drew.
-	/// The fonts mods registered (`ModernEngine.registerFont`) since the last call, in
-	/// registration order, for the renderer.
-	pub fn take_font_registrations(&self) -> Vec<crate::modern_engine::FontRegistration> {
-		self.modules.take_font_registrations()
+	/// The fonts mods registered (`ModernEngine.registerFont`), from the `from`th on
+	/// (0-based), in registration order: each consumer (the renderer, the UI page)
+	/// counts what it has taken.
+	pub fn font_registrations(&self, from: usize) -> Vec<std::rc::Rc<crate::modern_engine::FontRegistration>> {
+		self.modules.font_registrations(from)
 	}
 
+	/// The scenes the game discarded since the last call (a battle's end, the campaign
+	/// left, a save loaded), in order, for the host to drop what they drew.
 	pub fn take_discards(&self) -> Vec<crate::Discard> {
 		self.collector.take_discards()
 	}

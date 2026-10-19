@@ -45,10 +45,11 @@ pub(crate) struct State<S: ScriptSource> {
 	/// Instances made so far per class path: `new` numbers each class's instances
 	/// from 1 in `InstanceName` ("brave_trait@3"), as the original does.
 	pub(crate) instance_counts: HashMap<String, u64>,
+	/// Fonts mods registered (`ModernEngine.registerFont`), in registration order. Kept
+	/// for the game's run: the renderer and the UI page each take what they haven't yet.
+	pub(crate) fonts: Vec<std::rc::Rc<crate::modern_engine::FontRegistration>>,
 	/// The `self` and `base` natives every instance gets on its base level (bound to
 	/// it); set by `ModuleSystem::install`.
-	/// Fonts mods registered (`ModernEngine.registerFont`), not yet taken by the host.
-	pub(crate) fonts: Vec<crate::modern_engine::FontRegistration>,
 	pub(crate) class_natives: Option<(SqStrongRef, SqStrongRef)>,
 }
 

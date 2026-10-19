@@ -42,6 +42,7 @@ impl UiSession {
 		self.park();
 		self.engine().frame(ms)?;
 		self.follow_ui_scale();
+		self.follow_fonts();
 		self.pump();
 		Ok(())
 	}

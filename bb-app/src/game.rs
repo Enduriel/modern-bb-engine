@@ -27,6 +27,8 @@ pub struct Game {
 	/// units on the world map), warmed whenever one is; and whether one was last frame.
 	battle_atlases: HashSet<String>,
 	battle_map: bool,
+	/// How many of the fonts mods registered the renderer has.
+	fonts: usize,
 	cursor: (i64, i64),
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
@@ -111,6 +113,7 @@ impl Game {
 			front,
 			renderer,
 			battle_atlases: HashSet::new(),
+			fonts: 0,
 			battle_map: false,
 			cursor: (0, 0),
 			modifier: 0,
@@ -339,10 +342,13 @@ impl Game {
 		}
 		let engine = self.front.engine();
 		// Fonts mods registered (`ModernEngine.registerFont`), for text drawn from now on.
-		for font in engine.take_font_registrations() {
-			let path = font.path.clone();
-			if let Err(e) = self.renderer.register_font(font.into()) {
-				eprintln!("font {path}: {e}");
+		for font in engine.font_registrations(self.fonts) {
+			self.fonts += 1;
+			// Those only for the UI page's fonts are the page's (bb-ui's session).
+			if let Some(registration) = bb_render::fonts::Registration::of(&font)
+				&& let Err(e) = self.renderer.register_font(registration)
+			{
+				eprintln!("font {}: {e}", font.path);
 			}
 		}
 		for discard in discards {
