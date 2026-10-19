@@ -16,7 +16,7 @@ as they are. OUT_DIR defaults to `parity/combat/out` (git-ignored).
 BB_PROBE_RUNNER is a probe runner that launches the original game (not part of this
 repository).
 """
-import re, sys, pathlib
+import os, re, sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "modern_bb_engine"
 def rust_const(path, name):
     s = (ROOT / path).read_text()
@@ -25,8 +25,10 @@ def rust_const(path, name):
 name, spawn, resources, faction, terrain = sys.argv[1:6]
 setup = pathlib.Path(sys.argv[6]).read_text() if len(sys.argv) > 6 and sys.argv[6] else ""
 out_dir = pathlib.Path(sys.argv[7]) if len(sys.argv) > 7 else pathlib.Path(__file__).parent / "out"
+# PIN_RENDER=1: draws from onRender answer without drawing (the scenario's pin_render).
+pin = "true" if os.environ.get("PIN_RENDER") == "1" else "false"
 trace = (rust_const("bb-engine/tests/combat_scenarios.rs", "TRACE")
-    .replace("@end@", "-1").replace("@pin@", "false").replace("@player@", "false")
+    .replace("@end@", "-1").replace("@pin@", pin).replace("@player@", "false")
     .replace("@setup@", setup).replace("@spawn@", spawn).replace("@resources@", resources)
     .replace("@faction@", faction).replace("@terrain@", terrain))
 autoplay = rust_const("bb-engine/src/harness.rs", "AUTOPLAY")
@@ -114,7 +116,6 @@ local clearEvents = ::Time.clearEvents;
 };
 '''
 # LOG_DRAWS=FROM:TO also logs each draw in that window (to find where two runs part).
-import os
 window = os.environ.get("LOG_DRAWS")
 if window:
     lo, hi = window.split(":")

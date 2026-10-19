@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against twenty-nine kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against thirty kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -840,6 +840,43 @@ const GRAND_DIVINER: &str = r#"
 			{ Type = ::Const.World.Spawn.Troops.FaultFinder, Num = 2 },
 			{ Type = ::Const.World.Spawn.Troops.GreaterFleshGolem, Num = 1 },
 			{ Type = ::Const.World.Spawn.Troops.LesserFleshGolem, Num = 2 }
+		]
+	}
+];
+"#;
+
+/// The lich (skeleton_lich_agent, with its mirror images) and the ghost knight beside
+/// skeletons: a one-off party with troop entries of its own, as no spawn list holds
+/// either. The company retreats. The ghost knight (Rachegeist) redraws its flicker in
+/// `onRender`, on frame timing, so the scenario pins those draws, as with the ghosts.
+#[test]
+fn the_lich_and_the_ghost_knight_on_the_plains() {
+	fight(&Scenario {
+		spawn: "ProbeLich",
+		resources: 200,
+		faction: "Undead",
+		terrain: "tactical.plains",
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (8000, 726617), (9323, 179649)],
+		result: 3,
+		pin_render: true,
+		after: Some((9328, 950828, 1)),
+		player: false,
+		setup: LICH,
+	});
+}
+
+const LICH: &str = r#"
+::Const.World.Spawn.ProbeLich <- [
+	{
+		Cost = 200,
+		MovementSpeedMult = 1.0,
+		VisibilityMult = 1.0,
+		VisionMult = 1.0,
+		Body = "figure_skeleton_01",
+		Troops = [
+			{ Type = { ID = ::Const.EntityType.SkeletonLich, Variant = 0, Strength = 100, Cost = 100, Row = 2, Script = "scripts/entity/tactical/enemies/skeleton_lich" }, Num = 1 },
+			{ Type = { ID = ::Const.EntityType.ZombieBoss, Variant = 0, Strength = 80, Cost = 80, Row = 1, Script = "scripts/entity/tactical/enemies/ghost_knight" }, Num = 1 },
+			{ Type = ::Const.World.Spawn.Troops.SkeletonMedium, Num = 3 }
 		]
 	}
 ];
