@@ -133,3 +133,27 @@ fn a_registered_font_draws_a_chinese_label_on_screen() {
 	assert!(chinese > 100, "the glyphs' white ink: {chinese} pixels");
 	assert_eq!(plate_only, 0, "a blank label draws only its dark plate");
 }
+
+/// A mod registers its font from its preload script (`ModernEngine.registerFont`, the
+/// test mod zip in `fixtures/`), and the label text it's for resolves to that font.
+#[test]
+fn a_mod_registers_its_font_through_modern_engine() {
+	let dir = Path::new(STEAM_DATA_DIR);
+	let Some(mut archives) = harness::data_archives(dir).ok().filter(|a| !a.is_empty()) else {
+		eprintln!("skipping: no install");
+		return;
+	};
+	archives.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mod_han_font_test.zip"));
+	let engine = harness::open_mounted(dir, archives, |_| {}).expect("the install and the mod");
+	harness::boot_menu(&engine).expect("the menu, the mod's preload run");
+	let fonts = engine.take_font_registrations();
+	assert_eq!(fonts.len(), 1, "the mod's one font");
+	assert_eq!(fonts[0].family, "BB Test Han Serif");
+	let mut db = FontDb::new(Vec::new(), false);
+	for font in fonts {
+		db.register(font.into()).expect("registered");
+	}
+	let families = |db: &mut FontDb, bitmap: &str| db.runs(bitmap, SETTLEMENT).into_iter().map(|r| r.family).collect::<Vec<_>>();
+	assert_eq!(families(&mut db, "cinzel_bold_20"), ["BB Test Han Serif"], "labels");
+	assert_eq!(families(&mut db, "cinzel_20"), ["Cinzel"], "not a font it stands in for");
+}

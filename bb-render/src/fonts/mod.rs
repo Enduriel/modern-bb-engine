@@ -51,6 +51,18 @@ pub struct Registration {
 	pub priority: i64,
 }
 
+impl From<squirrel_bb::modern_engine::FontRegistration> for Registration {
+	fn from(font: squirrel_bb::modern_engine::FontRegistration) -> Self {
+		Registration {
+			path: font.path,
+			data: font.data,
+			stands_in_for: font.stands_in_for,
+			scripts: font.scripts,
+			priority: font.priority,
+		}
+	}
+}
+
 /// A registered font, checked.
 struct Rule {
 	family: String,
@@ -259,6 +271,11 @@ mod tests {
 		not_a_font.data = b"not a font".to_vec();
 		assert!(db.register(not_a_font).unwrap_err().contains("not a font"));
 		assert_eq!(db.revision(), 0, "nothing registered");
+	}
+
+	#[test]
+	fn the_engine_knows_the_same_bitmap_fonts() {
+		assert_eq!(GAME_FONTS.map(|g| g.bitmap), squirrel_bb::modern_engine::BITMAP_FONTS);
 	}
 
 	#[test]

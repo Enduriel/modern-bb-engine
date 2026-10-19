@@ -168,6 +168,12 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 			});
 		}
 		crate::io_table::install(vm, &self.state);
+		crate::modern_engine::install(vm, &self.state);
+	}
+
+	/// The fonts mods registered since the last call, in registration order.
+	pub fn take_font_registrations(&self) -> Vec<crate::modern_engine::FontRegistration> {
+		std::mem::take(&mut self.state.borrow_mut().fonts)
 	}
 
 	/// Load, compile and run the script at `path` (once). Host entry point for the

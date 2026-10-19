@@ -47,6 +47,8 @@ pub(crate) struct State<S: ScriptSource> {
 	pub(crate) instance_counts: HashMap<String, u64>,
 	/// The `self` and `base` natives every instance gets on its base level (bound to
 	/// it); set by `ModuleSystem::install`.
+	/// Fonts mods registered (`ModernEngine.registerFont`), not yet taken by the host.
+	pub(crate) fonts: Vec<crate::modern_engine::FontRegistration>,
 	pub(crate) class_natives: Option<(SqStrongRef, SqStrongRef)>,
 }
 
@@ -61,6 +63,7 @@ impl<S: ScriptSource> State<S> {
 			by_hash: HashMap::new(),
 			load_stack: Vec::new(),
 			instance_counts: HashMap::new(),
+			fonts: Vec::new(),
 			class_natives: None,
 		}
 	}

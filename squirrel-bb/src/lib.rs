@@ -18,6 +18,8 @@ mod collect;
 pub use collect::Discard;
 mod compile_context;
 mod engine;
+mod font_file;
+pub mod modern_engine;
 mod error;
 mod hash;
 mod input_events;

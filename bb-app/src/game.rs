@@ -286,6 +286,13 @@ impl Game {
 			self.front.discarded();
 		}
 		let engine = self.front.engine();
+		// Fonts mods registered (`ModernEngine.registerFont`), for text drawn from now on.
+		for font in engine.take_font_registrations() {
+			let path = font.path.clone();
+			if let Err(e) = self.renderer.register_font(font.into()) {
+				eprintln!("font {path}: {e}");
+			}
+		}
 		for discard in discards {
 			match discard {
 				squirrel_bb::Discard::Battle => self.renderer.discard(Discard::Battle),

@@ -3121,6 +3121,7 @@ dependencies = [
  "criterion",
  "jiff",
  "squirrel",
+ "unicode-script",
 ]
 
 [[package]]
