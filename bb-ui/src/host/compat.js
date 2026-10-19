@@ -183,6 +183,60 @@
 		}
 	}
 
+	// Blurred text shadows. INTENTIONAL DIVERGENCE (docs/differences.md, "Blurred text
+	// shadows in the UI"): this changes what scripts read, to draw what Coherent draws.
+	// Coherent draws a blurred shadow lighter and wider than Chromium: vanilla's
+	// `1px 1px 1px #000` never reaches black there (darkest 11-15 luminance below a dark
+	// panel against Chromium's 24-29), and a wider blur alone still peaks darker. Fitted
+	// on a test card screenshotted in the original (`bb-ui/probes/text_card.js`, the game's
+	// fonts and shadows): twice the blur at 0.65 of the alpha draws closest (Coherent
+	// seemingly takes the blur radius as the Gaussian's sigma, where Chromium takes half
+	// of it). Shadows without a blur (`1px 1px #A36426, -1px -1px #000`) already draw the
+	// same and are left as they are.
+	// What scripts see: a rule's `text-shadow` and the computed style read `rgba(0, 0, 0,
+	// 0.65) 1px 1px 2px` where the original reports `rgb(0, 0, 0) 1px 1px 1px`. Only
+	// style sheets are rewritten: no vanilla or mod script sets a shadow inline.
+	var SHADOW_BLUR = 2;
+	var SHADOW_ALPHA = 0.65;
+	var colourCanvas = null;
+
+	// `colour` as [r, g, b, a] (any CSS colour, through a canvas's own parser).
+	function rgba(colour) {
+		colourCanvas = colourCanvas || document.createElement('canvas').getContext('2d');
+		colourCanvas.fillStyle = '#000';
+		colourCanvas.fillStyle = colour;
+		var c = colourCanvas.fillStyle;
+		if (c.charAt(0) === '#') {
+			return [parseInt(c.substr(1, 2), 16), parseInt(c.substr(3, 2), 16), parseInt(c.substr(5, 2), 16), 1];
+		}
+		var parts = c.replace(/^rgba?\(|\)$/g, '').split(',');
+		return [+parts[0], +parts[1], +parts[2], parts.length > 3 ? +parts[3] : 1];
+	}
+
+	function lighterShadow(shadow) {
+		var lengths = shadow.match(/-?[\d.]+px|(^|\s)0(?=\s|$)/g) || [];
+		var blur = lengths.length > 2 ? parseFloat(lengths[2]) : 0;
+		if (!(blur > 0)) {
+			return shadow;
+		}
+		var colour = shadow.replace(/-?[\d.]+px|(^|\s)0(?=\s|$)/g, ' ').trim();
+		var c = rgba(colour === '' ? 'currentcolor' : colour);
+		return 'rgba(' + c[0] + ', ' + c[1] + ', ' + c[2] + ', ' + Math.round(c[3] * SHADOW_ALPHA * 1000) / 1000 + ') ' +
+			lengths[0].trim() + ' ' + lengths[1].trim() + ' ' + (blur * SHADOW_BLUR) + 'px';
+	}
+
+	function lighterBlurredShadows(style) {
+		var value = style.getPropertyValue('text-shadow');
+		if (value === '' || value === 'none' || value.indexOf('var(') !== -1) {
+			return;
+		}
+		var shadows = value.split(/,(?![^(]*\))/);
+		var lighter = shadows.map(function (s) { return lighterShadow(s.trim()); });
+		if (lighter.join() !== shadows.map(function (s) { return s.trim(); }).join()) {
+			style.setProperty('text-shadow', lighter.join(', '), style.getPropertyPriority('text-shadow'));
+		}
+	}
+
 	function fixRules(rules) {
 		for (var i = 0; i < rules.length; i++) {
 			var rule = rules[i];
@@ -193,6 +247,7 @@
 				centreAcrossLikeOldWebKit(rule.style);
 				wholePixelPercentages(rule.style);
 				bordersUnderImages(rule.style);
+				lighterBlurredShadows(rule.style);
 			}
 		}
 	}

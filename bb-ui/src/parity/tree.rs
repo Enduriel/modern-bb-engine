@@ -320,6 +320,52 @@ fn zoomed_pixels(value: &str, zoom: f64) -> String {
 	out
 }
 
+/// A computed `text-shadow` (`rgb(0, 0, 0) 1px 1px 1px, ...`) as `host/compat.js`'s
+/// `lighterBlurredShadows` rewrites it, an intentional divergence: each blurred shadow
+/// at twice the blur and 0.65 of its alpha.
+fn lighter_blurred_shadows(value: &str) -> String {
+	let mut shadows = Vec::new();
+	let (mut depth, mut start) = (0, 0);
+	for (i, c) in value.char_indices() {
+		match c {
+			'(' => depth += 1,
+			')' => depth -= 1,
+			',' if depth == 0 => {
+				shadows.push(&value[start..i]);
+				start = i + 1;
+			}
+			_ => {}
+		}
+	}
+	shadows.push(&value[start..]);
+	let lighter = |shadow: &str| -> Option<String> {
+		let shadow = shadow.trim();
+		let close = shadow.find(')')?;
+		let (colour, lengths) = (&shadow[..=close], shadow[close + 1..].split_whitespace().collect::<Vec<_>>());
+		let blur = lengths.get(2)?.strip_suffix("px")?.parse::<f64>().ok().filter(|b| *b > 0.0)?;
+		let channels: Vec<f64> = colour[colour.find('(')? + 1..close]
+			.split(',')
+			.map(|c| c.trim().parse().ok())
+			.collect::<Option<_>>()?;
+		let alpha = channels.get(3).copied().unwrap_or(1.0);
+		Some(format!(
+			"rgba({}, {}, {}, {}) {} {} {}px",
+			channels.first()?,
+			channels.get(1)?,
+			channels.get(2)?,
+			(alpha * 0.65 * 1000.0).round() / 1000.0,
+			lengths[0],
+			lengths[1],
+			blur * 2.0
+		))
+	};
+	shadows
+		.iter()
+		.map(|s| lighter(s).unwrap_or_else(|| s.trim().to_string()))
+		.collect::<Vec<_>>()
+		.join(", ")
+}
+
 /// Whether `a` and `b` are the same apart from numbers within one 8-bit step (1/255)
 /// of each other: old WebKit keeps colour alpha in 8 bits and opacity as a 32-bit
 /// float, so it reports 0.3 as 0.298039 and 0.4 as 0.4000000059604645.
@@ -412,7 +458,9 @@ fn same_style(
 		}
 		// Under a page zoom, old WebKit reports a shadow's lengths divided by it (a 1px
 		// shadow at UI scale 1.5 as 0.667px).
-		"text-shadow" => close_numbers(&zoomed_pixels(theirs, page_zoom), mine),
+		// Blurred ones are drawn lighter on purpose (`host/compat.js`): compared as the
+		// compatibility layer rewrites them.
+		"text-shadow" => close_numbers(&lighter_blurred_shadows(&zoomed_pixels(theirs, page_zoom)), mine),
 		// A transform's translation is in pixels: it follows the box's size, which may be
 		// a pixel off (`translateY(-50%)` of an 18px or a 19px label).
 		"transform" => {
@@ -592,7 +640,8 @@ fn align(g: &[Node], o: &[Node]) -> Vec<Step> {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Difference, Snapshot, Tolerance, close_numbers, compare, normalize_style, zoomed_pixels,
+		Difference, Snapshot, Tolerance, close_numbers, compare, lighter_blurred_shadows,
+		normalize_style, zoomed_pixels,
 	};
 	use crate::json::Json;
 
@@ -607,6 +656,16 @@ mod tests {
 			{"tag":"div","cls":"b","text":"Hi","rect":[0,10,10,10],"style":{},"children":[]},
 			{"tag":"div","cls":"c","rect":[0,20,10,10],"style":{},"children":[]}
 		]}}"#;
+
+	#[test]
+	fn blurred_shadows_compare_as_compat_draws_them() {
+		assert_eq!(lighter_blurred_shadows("rgb(0, 0, 0) 1px 1px 1px"), "rgba(0, 0, 0, 0.65) 1px 1px 2px");
+		assert_eq!(
+			lighter_blurred_shadows("rgb(163, 100, 38) 1px 1px 0px, rgba(0, 0, 0, 0.5) -1px -1px 2px"),
+			"rgb(163, 100, 38) 1px 1px 0px, rgba(0, 0, 0, 0.325) -1px -1px 4px"
+		);
+		assert_eq!(lighter_blurred_shadows("none"), "none");
+	}
 
 	#[test]
 	fn identical_snapshots_have_no_differences() {
