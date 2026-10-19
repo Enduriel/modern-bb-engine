@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,7 +17,8 @@ use winit::window::{CustomCursor, Window, WindowId};
 
 use bb_app::display::{self, Placement};
 use bb_app::front::Key;
-use bb_app::game::{Boot, Game, Start};
+use bb_app::game::{Boot, Game, Start, Store};
+use bb_app::steam::SteamStats;
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
 use bb_app::{keys, platform};
@@ -47,6 +49,11 @@ pub struct Options {
 	/// Where saves go (`--saves DIR`); the system's place for them otherwise
 	/// (`squirrel_bb::platform::saves_dir`), or memory without one.
 	pub saves: Option<PathBuf>,
+	/// Whether the install is Steam's (the scripts' `isSteamBuild()`).
+	pub steam_build: bool,
+	/// Steam's API, started on a Steam install (see `bb_app::steam`); achievements off
+	/// without it.
+	pub steam: Option<Rc<SteamStats>>,
 }
 
 /// Everything that exists once the window does.
@@ -84,6 +91,8 @@ struct Running {
 	cursors: HashMap<String, CustomCursor>,
 	/// The wheel's turn short of a whole notch (see `wheel`).
 	wheel: Notches,
+	/// Steam's API, whose callbacks run once a frame.
+	steam: Option<Rc<SteamStats>>,
 }
 
 /// The original's hardware cursors: each `<install>/cursors/<name>.cur` (the install
@@ -177,6 +186,10 @@ impl App {
 			mode,
 			devtools: options.devtools,
 			saves,
+			store: Store {
+				steam_build: options.steam_build,
+				user_stats: options.steam.clone().map(|s| s as Rc<dyn squirrel_bb::UserStats>),
+			},
 		};
 		let mut game = Game::start(&gpu, &boot)?;
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
@@ -241,6 +254,7 @@ impl App {
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
+			steam: self.options.steam.clone(),
 		};
 		running.resize(size);
 		Ok(running)
@@ -347,6 +361,9 @@ impl Running {
 		let now = Instant::now();
 		let ms = now.duration_since(self.last_frame).as_secs_f64() * 1000.0;
 		self.last_frame = now;
+		if let Some(steam) = &self.steam {
+			steam.run_callbacks();
+		}
 		self.game.step(ms)?;
 		// Beside `stats`' log, what the renderer holds (every 5 s, with `BB_STATS`).
 		if self.next_stats.is_some_and(|at| now >= at) {

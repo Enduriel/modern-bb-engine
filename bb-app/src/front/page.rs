@@ -38,9 +38,12 @@ impl Front {
 			// Units hop over time, as the original's; the scripts wait for them.
 			battle_motion: squirrel_bb::BattleMotion::Timed,
 			mods: boot.mods,
+			steam_build: boot.store.steam_build,
 			..HostConfig::default()
 		};
 		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;
+		// Before the scripts boot to the menu.
+		boot.store.attach(session.engine());
 		// The page's links (`openURL`: mods' pages, the version label) open in the
 		// system's browser, as the original's do.
 		session.protocol().set_url_opener(crate::platform::open_url);

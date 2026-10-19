@@ -62,6 +62,42 @@ pub struct Boot<'a> {
 	/// Where the saves (and mods' storages, which they read as they boot) are kept as
 	/// files; in memory without one.
 	pub saves: Option<std::path::PathBuf>,
+	/// The store the install is from, and the achievements' service.
+	pub store: Store,
+}
+
+/// The store the install is from (the scripts' `isSteamBuild()`), and the service the
+/// achievement and stat natives call (Steam's, see [`crate::steam`]).
+#[derive(Clone)]
+pub struct Store {
+	pub steam_build: bool,
+	/// `None`: the engine's own, which unlocks nothing ([`squirrel_bb::OfflineStats`]).
+	pub user_stats: Option<std::rc::Rc<dyn squirrel_bb::UserStats>>,
+}
+
+impl Default for Store {
+	/// Steam's build with no achievements, as the harness's engines are (for tests).
+	fn default() -> Self {
+		Store { steam_build: true, user_stats: None }
+	}
+}
+
+impl std::fmt::Debug for Store {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Store")
+			.field("steam_build", &self.steam_build)
+			.field("user_stats", &self.user_stats.as_ref().map(|_| "set"))
+			.finish()
+	}
+}
+
+impl Store {
+	/// Give the engine the service, before its scripts boot.
+	pub fn attach(&self, engine: &GameEngine) {
+		if let Some(stats) = &self.user_stats {
+			engine.user_stats().set(stats.clone());
+		}
+	}
 }
 
 /// The archives the game reads from the install at `data_dir`: its `data_*.dat`, then,
@@ -97,6 +133,7 @@ impl Game {
 			mode,
 			devtools,
 			saves: None,
+			store: Store::default(),
 		};
 		Game::start(gpu, &boot)
 	}

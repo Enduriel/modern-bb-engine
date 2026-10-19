@@ -47,11 +47,13 @@ impl UiSession {
 		let files = Arc::new(UiFiles::open(&archives, data_dir.parent().map(Path::to_path_buf)).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
 		let (exact_clock, battle_camera, battle_motion) = (config.exact_clock, config.battle_camera, config.battle_motion);
+		let steam_build = config.steam_build;
 		let host = UiHost::start(files.clone(), config)?;
 		let configure = |c: &mut squirrel_bb::NativeConfig| {
 			c.exact_clock = exact_clock;
 			c.battle_camera = battle_camera;
 			c.battle_motion = battle_motion;
+			c.is_steam_build = steam_build;
 		};
 		// The scripts see the same archives as the page.
 		let mut engine = harness::open_mounted(data_dir, archives, configure).map_err(|e| format!("install: {e}"))?;

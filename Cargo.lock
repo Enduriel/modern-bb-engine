@@ -267,6 +267,7 @@ dependencies = [
  "bb-audio",
  "bb-engine",
  "bb-render",
+ "bb-steam",
  "bb-ui",
  "cef-dll-sys",
  "squirrel",

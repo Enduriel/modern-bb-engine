@@ -142,6 +142,9 @@ pub struct HostConfig {
 	/// Mod archives (`.zip`) mounted after those, for the page and the scripts alike,
 	/// e.g. a test's own mod.
 	pub extra_mods: Vec<PathBuf>,
+	/// The scripts' `isSteamBuild()`: whether the install is Steam's (the windowed game
+	/// asks `bb-steam`'s rule). True by default, as the harness's engines are.
+	pub steam_build: bool,
 }
 
 impl Default for HostConfig {
@@ -158,6 +161,7 @@ impl Default for HostConfig {
 			battle_motion: squirrel_bb::BattleMotion::Stepped,
 			mods: false,
 			extra_mods: Vec::new(),
+			steam_build: true,
 		}
 	}
 }

@@ -48,6 +48,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		mode: VideoMode::DEFAULT,
 		devtools: None,
 		saves: None,
+		store: Default::default(),
 	};
 	// The saves (and MSU's storages) stay in memory: the player's are never touched.
 	let mut game = Game::start(gpu, &boot)?;

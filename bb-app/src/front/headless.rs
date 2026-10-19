@@ -22,8 +22,10 @@ impl Front {
 			c.exact_clock = squirrel_bb::ExactClock::Live;
 			c.battle_camera = squirrel_bb::BattleCamera::Glides;
 			c.battle_motion = squirrel_bb::BattleMotion::Timed;
+			c.is_steam_build = boot.store.steam_build;
 		})
 		.map_err(|e| e.to_string())?;
+		boot.store.attach(&engine);
 		// An uncaught script error prints its call stack to stderr, as the original logs it.
 		engine.vm_mut().install_standard_error_handlers();
 		engine.video().set_mode(boot.mode);

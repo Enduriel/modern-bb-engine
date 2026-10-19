@@ -11,4 +11,5 @@ pub mod keys;
 pub mod platform;
 pub mod settings;
 pub mod stats;
+pub mod steam;
 pub mod wheel;

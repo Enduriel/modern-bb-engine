@@ -59,6 +59,8 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		])
 		.arg(env!("CARGO_BIN_EXE_bb"))
 		.arg("--mute")
+		// Tests never start Steam, even with its library beside the test's bb.
+		.arg("--no-steam")
 		.args(args)
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
