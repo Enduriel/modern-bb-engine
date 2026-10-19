@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_engine::tactical_player as player;
-use bb_ui::host::{HostConfig, MouseButton, UiSession};
+use bb_ui::host::{Echo, HostConfig, MouseButton, UiSession};
 
 /// How long a step may take (a new campaign generates its world first).
 const STEP: Duration = Duration::from_secs(120);
@@ -1003,7 +1003,7 @@ fn stub_report(p: &Play) {
 }
 
 fn run(data_dir: &Path) -> Result<(), String> {
-	let session = UiSession::start(data_dir, HostConfig::default(), false)?;
+	let session = UiSession::start(data_dir, HostConfig::default(), Echo::Off)?;
 	during("booting the menu", session.boot_menu())?;
 	let shots = std::env::var_os("PLAY_SHOTS").map(PathBuf::from);
 	if let Some(dir) = &shots {

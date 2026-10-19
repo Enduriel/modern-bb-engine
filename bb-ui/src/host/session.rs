@@ -10,19 +10,12 @@ use std::time::{Duration, Instant};
 
 use bb_engine::harness::{self, GameEngine};
 
+use super::page_log::{Echo, LogLine, PageLog};
 use super::{Event, HostConfig, RequestKind, UiHost};
 use crate::bridge::UiProtocol;
 use crate::coui::UiFiles;
 use crate::hot_reload::FileWatcher;
 use crate::json::Json;
-
-/// One line of what the page or the bridge reported.
-#[derive(Clone, Debug)]
-pub struct LogLine {
-	/// `"error"`, `"warning"`, `"info"` (page console) or `"bridge"`.
-	pub level: String,
-	pub text: String,
-}
 
 /// The game and its UI page, running together on this thread.
 pub struct UiSession {
@@ -32,8 +25,8 @@ pub struct UiSession {
 	protocol: Rc<UiProtocol<UiHost>>,
 	/// What the page is served from (shared with the host's `coui://` handler).
 	files: Arc<UiFiles>,
-	log: Rc<RefCell<Vec<LogLine>>>,
-	echo: bool,
+	log: Rc<RefCell<PageLog>>,
+	echo: Echo,
 	/// Procedural images the page asked for, kept for the owner to answer
 	/// ([`UiSession::queue_procedural`]); `None` answers them blank at once.
 	pub(super) procedural: RefCell<Option<Vec<super::ProceduralRequest>>>,
@@ -41,9 +34,9 @@ pub struct UiSession {
 
 impl UiSession {
 	/// Start the page for the install at `data_dir` (its `data/` directory) and the
-	/// script engine, and wait until the page has registered its screens. With `echo`,
-	/// page and bridge messages are also printed as they arrive.
-	pub fn start(data_dir: &Path, config: HostConfig, echo: bool) -> Result<UiSession, String> {
+	/// script engine, and wait until the page has registered its screens. Page and
+	/// bridge messages are kept in [`log`](Self::log) and echoed as `echo` says.
+	pub fn start(data_dir: &Path, config: HostConfig, echo: Echo) -> Result<UiSession, String> {
 		let files = Arc::new(UiFiles::open_install(data_dir, config.mods).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
 		let (exact_clock, battle_camera, battle_motion) = (config.exact_clock, config.battle_camera, config.battle_motion);
@@ -66,21 +59,23 @@ impl UiSession {
 		engine
 			.video()
 			.set_screen_size(i64::from(screen_width), i64::from(screen_height));
-		if echo {
-			// Script errors print their full call stack.
+		if echo == Echo::All {
 			engine.vm_mut().set_print_handler(|s| eprint!("{s}"));
+		}
+		if echo != Echo::Off {
+			// Script errors print their full call stack (to stderr), as the original
+			// logs them, including those in the page's calls into the scripts.
 			engine.vm_mut().install_standard_error_handlers();
 		}
-		let log: Rc<RefCell<Vec<LogLine>>> = Rc::default();
+		let log: Rc<RefCell<PageLog>> = Rc::default();
 		let sink = log.clone();
 		let protocol = UiProtocol::new(host, move |text| {
-			if echo {
-				println!("  [bridge] {text}");
-			}
-			sink.borrow_mut().push(LogLine {
+			let line = LogLine {
 				level: "bridge".into(),
 				text: text.to_string(),
-			});
+			};
+			echo.line(&line);
+			sink.borrow_mut().push(line);
 		});
 		protocol.attach(engine.ui());
 		let session = UiSession {
@@ -124,19 +119,19 @@ impl UiSession {
 		&self.protocol
 	}
 
-	/// Everything the page and the bridge reported so far.
+	/// What the page and the bridge reported so far: the latest lines, a bounded
+	/// number of them, problems kept longest.
 	pub fn log(&self) -> Vec<LogLine> {
-		self.log.borrow().clone()
+		self.log.borrow().lines()
 	}
 
 	fn record(&self, level: &str, text: String) {
-		if self.echo {
-			println!("  [{level}] {text}");
-		}
-		self.log.borrow_mut().push(LogLine {
+		let line = LogLine {
 			level: level.to_string(),
 			text,
-		});
+		};
+		self.echo.line(&line);
+		self.log.borrow_mut().push(line);
 	}
 
 	/// React to one event from the page.

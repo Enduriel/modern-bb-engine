@@ -27,7 +27,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, Key, UiSession};
+use bb_ui::host::{Echo, HostConfig, Key, UiSession};
 
 /// The new-campaign map seed's text field (the company name's takes 32 characters).
 const SEED_FIELD: &str = ".new-campaign-menu-module input[maxlength=\"10\"]";
@@ -158,7 +158,7 @@ fn run(options: Options) -> Result<(), String> {
 	if let Some(port) = options.devtools {
 		println!("DevTools: http://127.0.0.1:{port} (or chrome://inspect)");
 	}
-	let session = UiSession::start(&options.data_dir, config, true)?;
+	let session = UiSession::start(&options.data_dir, config, Echo::All)?;
 	println!(
 		"page up, {} screens registered, after {:?}",
 		session.protocol().screens().len(),

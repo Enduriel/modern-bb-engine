@@ -42,6 +42,7 @@ mod input;
 mod ipc;
 mod live_input;
 mod memory;
+mod page_log;
 mod renderer;
 mod responder;
 mod scheme;
@@ -67,7 +68,8 @@ use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton};
 pub use bridge_server::RequestKind;
 pub use responder::Responder;
-pub use session::{LogLine, UiSession};
+pub use page_log::{Echo, LogLine};
+pub use session::UiSession;
 pub use session_play::ProceduralRequest;
 
 use crate::bridge::{Reply, Transport};

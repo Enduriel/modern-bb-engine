@@ -28,7 +28,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, UiSession, goldens};
+use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
 use bb_ui::parity::{Snapshot, compare};
 
@@ -75,7 +75,7 @@ fn start(data_dir: &Path) -> Result<UiSession, String> {
 		height: height as u32,
 		..HostConfig::default()
 	};
-	let session = UiSession::start(data_dir, config, false)?;
+	let session = UiSession::start(data_dir, config, Echo::Off)?;
 	session.boot_menu()?;
 	Ok(session)
 }

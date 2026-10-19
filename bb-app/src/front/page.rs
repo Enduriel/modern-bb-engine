@@ -2,7 +2,7 @@
 
 use bb_engine::harness::GameEngine;
 use bb_render::{Gpu, RenderTarget, UiLayer};
-use bb_ui::host::{HostConfig, Modifiers, MouseButton, UiSession};
+use bb_ui::host::{Echo, HostConfig, Modifiers, MouseButton, UiSession};
 
 use super::Key;
 use crate::game::{Boot, Start};
@@ -40,7 +40,7 @@ impl Front {
 			mods: boot.mods,
 			..HostConfig::default()
 		};
-		let session = UiSession::start(boot.data_dir, config, false)?;
+		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;
 		session.engine().video().set_mode(mode);
 		if let Some(port) = devtools {
 			super::devtools::announce(port);

@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, MouseButton, UiSession};
+use bb_ui::host::{Echo, HostConfig, MouseButton, UiSession};
 use bb_ui::json::Json;
 use squirrel::SqTable;
 
@@ -60,7 +60,7 @@ fn wait_for_button(session: &UiSession, label: &str, timeout: Duration) -> Resul
 }
 
 fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), String> {
-	let session = UiSession::start(data_dir, HostConfig::default(), false)?;
+	let session = UiSession::start(data_dir, HostConfig::default(), Echo::Off)?;
 	let screens = session.protocol().screens();
 	ensure(
 		screens.len() == 22,

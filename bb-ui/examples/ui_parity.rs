@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, UiSession, goldens};
+use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::parity::{Difference, compare};
 
 struct Options {
@@ -89,7 +89,7 @@ fn run(options: Options) -> Result<(), String> {
 		height: height as u32,
 		..HostConfig::default()
 	};
-	let session = UiSession::start(&options.data_dir, config, false)?;
+	let session = UiSession::start(&options.data_dir, config, Echo::Off)?;
 	session.boot_menu()?;
 
 	let mut snapshots = goldens::capture(&session)?;

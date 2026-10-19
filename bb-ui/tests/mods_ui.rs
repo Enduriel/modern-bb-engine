@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use bb_engine::harness::{self, STEAM_DATA_DIR};
 use bb_engine::tactical_player as player;
-use bb_ui::host::{HostConfig, UiSession, goldens};
+use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
 use bb_ui::parity::compare;
 
@@ -34,7 +34,7 @@ fn holds(session: &UiSession, expr: &str) -> Result<bool, String> {
 fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 	// The goldens' screen.
 	let config = HostConfig { mods: true, width: 2560, height: 1440, ..HostConfig::default() };
-	let session = UiSession::start(data_dir, config, false)?;
+	let session = UiSession::start(data_dir, config, Echo::Off)?;
 	// The mods' own storages as the original keeps them for this install (MSU's settings,
 	// say), so the mods start from the same data (copies: never written back).
 	session.engine().saves().set_directory(copy_mod_storages()?);

@@ -157,7 +157,7 @@ fn menu(start: Instant) -> Result<(), String> {
 		exact_clock: squirrel_bb::ExactClock::Live,
 		..bb_ui::host::HostConfig::default()
 	};
-	let session = bb_ui::host::UiSession::start(Path::new(STEAM_DATA_DIR), config, false)?;
+	let session = bb_ui::host::UiSession::start(Path::new(STEAM_DATA_DIR), config, bb_ui::host::Echo::Off)?;
 	session.boot_menu()?;
 	let at_menu = || player::eval_i64(session.engine(), &format!("({AT_MENU}) ? 1 : 0")).ok().flatten() == Some(1);
 	let mut frames = 0;

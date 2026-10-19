@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{HostConfig, UiSession};
+use bb_ui::host::{Echo, HostConfig, UiSession};
 
 /// How long a step may take: a new campaign generates its world first.
 const STEP: Duration = Duration::from_secs(120);
@@ -43,7 +43,7 @@ fn during<T>(what: &str, result: Result<T, String>) -> Result<T, String> {
 }
 
 fn starts_a_campaign_and_reaches_the_world_screen(data_dir: &Path) -> Result<(), String> {
-	let session = UiSession::start(data_dir, HostConfig::default(), false)?;
+	let session = UiSession::start(data_dir, HostConfig::default(), Echo::Off)?;
 	during("booting the menu", session.boot_menu())?;
 	play(&session).map_err(|error| {
 		// Enough to tell what happened: the scripts' states and the last frame.

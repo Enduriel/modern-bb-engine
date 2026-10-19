@@ -18,12 +18,14 @@ impl Front {
 		// work then spreads over frames. The battle camera glides and units hop over
 		// time, as the original's.
 		let archives = crate::game::archives(boot.data_dir, boot.mods).map_err(|e| e.to_string())?;
-		let engine = harness::open_mounted(boot.data_dir, archives, |c| {
+		let mut engine = harness::open_mounted(boot.data_dir, archives, |c| {
 			c.exact_clock = squirrel_bb::ExactClock::Live;
 			c.battle_camera = squirrel_bb::BattleCamera::Glides;
 			c.battle_motion = squirrel_bb::BattleMotion::Timed;
 		})
 		.map_err(|e| e.to_string())?;
+		// An uncaught script error prints its call stack to stderr, as the original logs it.
+		engine.vm_mut().install_standard_error_handlers();
 		engine.video().set_mode(boot.mode);
 		if boot.sound {
 			super::play_on_device(&engine, boot.data_dir, boot.mods);
