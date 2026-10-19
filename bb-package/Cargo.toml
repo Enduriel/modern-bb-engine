@@ -1,0 +1,14 @@
+[package]
+name = "bb-package"
+version = "0.1.0"
+edition = "2024"
+
+# Release packaging, one package per target: builds bb, fetches and checks the pinned
+# Steam library, and lays out bb with its CEF files and that library beside it. The
+# only part of the build that touches the network, and only when run.
+[[bin]]
+name = "bb-package"
+path = "src/main.rs"
+
+[dependencies]
+bb-steam = { path = "../bb-steam" }

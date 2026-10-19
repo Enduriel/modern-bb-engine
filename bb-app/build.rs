@@ -1,12 +1,19 @@
 //! With the `ui` feature: point `bb` at the CEF distribution the `cef-dll-sys` build
-//! downloaded (an rpath for `libcef.so`), so it runs straight from `target/`.
+//! downloaded (an rpath for `libcef.so`), so it runs straight from `target/`. A release
+//! package's build (`BB_PACKAGE_RPATH=origin`, set by `bb-package`) looks beside the
+//! executable instead (`$ORIGIN`), where the package carries `libcef.so`.
 
 fn main() {
 	println!("cargo::rerun-if-env-changed=DEP_CEF_DLL_WRAPPER_CEF_DIR");
+	println!("cargo::rerun-if-env-changed=BB_PACKAGE_RPATH");
 	let Ok(dir) = std::env::var("DEP_CEF_DLL_WRAPPER_CEF_DIR") else {
 		return;
 	};
 	if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-		println!("cargo::rustc-link-arg=-Wl,-rpath,{dir}");
+		if std::env::var("BB_PACKAGE_RPATH").as_deref() == Ok("origin") {
+			println!("cargo::rustc-link-arg=-Wl,-rpath,$ORIGIN");
+		} else {
+			println!("cargo::rustc-link-arg=-Wl,-rpath,{dir}");
+		}
 	}
 }

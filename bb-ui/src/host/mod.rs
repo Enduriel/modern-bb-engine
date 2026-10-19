@@ -53,7 +53,7 @@ mod targets;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -78,6 +78,14 @@ use crate::json::Json;
 
 /// Where the build found the CEF distribution (`libcef.so`, its resources, locales).
 const CEF_DIR: &str = env!("BB_CEF_DIR");
+
+/// Where CEF's resources and locales are: beside the executable in a release package
+/// (`bb-package` lays them out there, `icudtl.dat` among them), otherwise where the
+/// build found the distribution.
+fn cef_dir() -> PathBuf {
+	let exe_dir = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
+	exe_dir.filter(|dir| dir.join("icudtl.dat").is_file()).unwrap_or_else(|| PathBuf::from(CEF_DIR))
+}
 
 /// How long the game waits for the page to answer one call (time spent serving the
 /// page's own calls back into the game doesn't count).
@@ -203,7 +211,7 @@ impl UiHost {
 		let mut app = app::host_app(Some(ready_tx), config.devtools_port, Some(bridge.endpoint().to_switch()));
 
 		let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
-		let cef_dir = PathBuf::from(CEF_DIR);
+		let cef_dir = cef_dir();
 		let settings = Settings {
 			no_sandbox: 1,
 			windowless_rendering_enabled: 1,

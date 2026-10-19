@@ -307,6 +307,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bb-package"
+version = "0.1.0"
+dependencies = [
+ "bb-steam",
+]
+
+[[package]]
 name = "bb-render"
 version = "0.1.0"
 dependencies = [
