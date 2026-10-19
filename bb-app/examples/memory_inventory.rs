@@ -39,6 +39,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use bb_app::game::Game;
 use bb_app::stats::{self, MappingKind, ProcessMemory};
@@ -58,6 +59,9 @@ const DAYS_MS: f64 = 250.0;
 
 /// Draw one frame in this many while time runs fast (every frame while settling).
 const DRAW_EVERY: u32 = 8;
+
+/// The least time on the clock a wait for the page gets ([`Session::until_page`]).
+const PAGE_TIME: Duration = Duration::from_secs(30);
 
 const IN_TACTICAL: &str = "(\"State\" in ::Tactical) && ::Tactical.State != null && !::LoadingScreen.isVisible()";
 const BACK_IN_WORLD: &str = "(!(\"State\" in ::Tactical) || ::Tactical.State == null) && ::World.isVisible() && !::LoadingScreen.isVisible() && (\"__lastCombatResult\" in getroottable())";
@@ -470,13 +474,30 @@ impl Session<'_> {
 	}
 
 	fn until(&mut self, ms: f64, max: u32, what: &str, cond: &str) -> Result<(), String> {
-		for n in 0..max {
+		self.until_after(ms, max, Duration::ZERO, what, cond)
+	}
+
+	/// [`until`](Self::until) for what the page shows: also not given up before
+	/// [`PAGE_TIME`] has passed on the clock. The frames aren't paced, but the page's
+	/// animations run on the clock (the loading screen reports itself hidden when its
+	/// fade ends), and with the bridge's calls cheap, 3000 frames can pass in a second.
+	fn until_page(&mut self, ms: f64, max: u32, what: &str, cond: &str) -> Result<(), String> {
+		self.until_after(ms, max, PAGE_TIME, what, cond)
+	}
+
+	fn until_after(&mut self, ms: f64, max: u32, clock: Duration, what: &str, cond: &str) -> Result<(), String> {
+		let start = Instant::now();
+		let mut n = 0;
+		loop {
 			if self.holds(cond)? {
 				return Ok(());
 			}
+			if n >= max && start.elapsed() >= clock {
+				return Err(format!("{what}: not after {n} frames ({cond})"));
+			}
 			self.frame(ms, n, DRAW_EVERY)?;
+			n += 1;
 		}
-		Err(format!("{what}: not after {max} frames ({cond})"))
 	}
 
 	fn sample(&mut self, point: &str) -> Result<(), String> {
@@ -540,7 +561,7 @@ impl Session<'_> {
 			.run_script(&ENGAGE.replace("{n}", &n.to_string()), "engage")
 			.map_err(|e| format!("engaging battle {n}: {e}"))?;
 		let target = player::eval_string(self.engine(), "::__inventoryTarget")?.unwrap_or_default();
-		self.until(SETTLE_MS, 3000, "the battle starting", IN_TACTICAL)?;
+		self.until_page(SETTLE_MS, 3000, "the battle starting", IN_TACTICAL)?;
 		if sample_mid {
 			self.frames(BATTLE_MS, 300, DRAW_EVERY)?;
 			self.frames(SETTLE_MS, 30, 1)?;
@@ -630,7 +651,7 @@ seterrorhandler(function( _e ) {
 fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 	s.engine().run_script(ERROR_STACK, "error stacks")?;
 	harness::install_autoplay(s.engine())?;
-	s.until(SETTLE_MS, 6000, "the campaign's world", IN_WORLD)?;
+	s.until_page(SETTLE_MS, 6000, "the campaign's world", IN_WORLD)?;
 	s.frames(SETTLE_MS, 600, 1)?;
 	s.sample("world, fresh")?;
 	let mid = |n: u32| n == 1 || n == o.battles;
@@ -672,7 +693,7 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 	let today = day(s)?;
 	s.sample(&format!("world, day {today}"))?;
 	s.engine().run_script("::World.State.exitGame();", "quit to the menu")?;
-	s.until(SETTLE_MS, 6000, "the main menu", AT_MENU)?;
+	s.until_page(SETTLE_MS, 6000, "the main menu", AT_MENU)?;
 	s.frames(SETTLE_MS, 300, 1)?;
 	s.sample("main menu, after quitting")?;
 	#[cfg(feature = "ui")]
@@ -680,7 +701,7 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 		// Start once the last loading screen has faded out, and a moment after, in real
 		// time (the page's animations run on its own clock; the frames here don't wait).
 		// A show within ~400 ms of a hide is lost, in the original too.
-		s.until(SETTLE_MS, 6000, "the menu's loading screen fading out", "!::LoadingScreen.isVisible() && !::LoadingScreen.isAnimating()")?;
+		s.until_page(SETTLE_MS, 6000, "the menu's loading screen fading out", "!::LoadingScreen.isVisible() && !::LoadingScreen.isAnimating()")?;
 		let settle = std::time::Instant::now();
 		while settle.elapsed().as_secs_f64() < 0.3 {
 			s.frames(SETTLE_MS, 1, 1)?;
@@ -693,7 +714,7 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 		harness::prepare_new_campaign(s.engine(), &format!("{}-2", o.seed))?;
 		harness::start_new_campaign(s.engine())?;
 	}
-	s.until(SETTLE_MS, 6000, "the second campaign's world", IN_WORLD)?;
+	s.until_page(SETTLE_MS, 6000, "the second campaign's world", IN_WORLD)?;
 	s.frames(SETTLE_MS, 600, 1)?;
 	s.sample("second campaign, fresh")?;
 	Ok(())
