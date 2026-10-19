@@ -161,17 +161,22 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 		"#
 	))?;
 	let town = p.text("::__town.getName()")?;
+	p.script(WALK_TO)?;
+	// Once on its way, the company keeps its path (finding one is a search).
 	let go = r#"
-		local player = ::World.State.getPlayer();
 		::World.State.m.AutoEnterLocation = ::WeakTableRef(::__town);
-		player.setDestination(::__town.getPos());
+		if (!::World.State.getPlayer().hasPath()) ::__walkTo(::__town);
 		::World.State.setPause(false);
 	"#;
 	let deadline = p.deadline(STEP * 3)?;
+	let (set_out, clock) = (p.game_time()?, Instant::now());
 	let mut last = String::new();
 	let mut fought = 0;
 	loop {
-		ensure(!p.past(&deadline)?, format!("still travelling to {town} (facing {last})"))?;
+		if p.past(&deadline)? {
+			let at = p.text(TRAVEL).unwrap_or_else(|e| e);
+			return Err(format!("still travelling to {town} (facing {last}): {at}"));
+		}
 		if p.int("::World.State.m.LastEnteredTown != null && ::World.State.m.WorldTownScreen.isVisible() && ::World.State.getCurrentTown().getID() == ::__town.getID() ? 1 : 0")? == 1 {
 			break;
 		}
@@ -198,10 +203,47 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 		}
 		last = facing;
 	}
+	println!("reached {town} in {:.0} s of the game's time ({:.0} s on the clock)", p.game_time()? - set_out, clock.elapsed().as_secs_f64());
 	p.session.pump_until(Duration::from_secs(5), |s| !s.animating().unwrap_or(true));
 	p.shot("town");
 	Ok(town)
 }
+
+/// `::__walkTo(e)`: head the company for the world entity `e` as a player's click on it
+/// does (world_state's onMouseInput): straight there when it's near, else along the
+/// navigator's path. A destination far off alone walks a straight line, which stops
+/// for good at the first mountain or sea in the way (the entity's `move` won't enter
+/// impassable or ocean tiles, as in the original) and leaves the company standing
+/// while the days, and its food, run out.
+const WALK_TO: &str = r#"
+	::__walkTo <- function(e) {
+		local player = ::World.State.getPlayer(), dest = e.getPos();
+		if (::getVecDistance(dest, player.getPos()) > ::Const.World.MovementSettings.PlayerDirectMoveRadius)
+		{
+			local nav = ::World.getNavigator().createSettings();
+			nav.ActionPointCosts = ::Const.World.TerrainTypeNavCost;
+			nav.RoadMult = 1.0 / ::Const.World.MovementSettings.RoadMult;
+			local path = ::World.getNavigator().findPath(player.getTile(), e.getTile(), nav, 0);
+			if (!path.isEmpty())
+			{
+				player.setPath(path);
+				return;
+			}
+		}
+		player.setPath(null);
+		player.setDestination(dest);
+	};
+"#;
+
+/// Where the company is on its way to `::__town`: one line.
+const TRAVEL: &str = r#"(function() {
+	local w = ::World.State, pl = w.getPlayer(), t = ::__town, pp = pl.getPos(), tp = t.getPos();
+	return "at " + pp.X.tointeger() + "," + pp.Y.tointeger() + " (" + t.getName() + " at " + tp.X.tointeger() + "," + tp.Y.tointeger()
+		+ ", " + pl.getTile().getDistanceTo(t.getTile()) + " tiles), destination " + (pl.m.Destination == null ? "none" : pl.m.Destination.X.tointeger() + "," + pl.m.Destination.Y.tointeger())
+		+ ", path " + pl.hasPath() + ", paused " + w.isPaused() + ", auto-enter " + (w.m.AutoEnterLocation == null || w.m.AutoEnterLocation.isNull() ? "none" : w.m.AutoEnterLocation.getName())
+		+ ", entered " + (w.m.LastEnteredTown == null ? "none" : w.getCurrentTown().getName()) + ", backsteps " + w.m.MenuStack.hasBacksteps()
+		+ ", day " + ::World.getTime().Days + " hour " + ::World.getTime().Hours + ", food " + ::World.Assets.getFood() + ", brothers " + ::World.getPlayerRoster().getSize();
+})()"#;
 
 /// The centre of the `n`th element matching the CSS `css` that the player can see.
 fn nth(p: &Play, css: &str, n: usize) -> Result<(i32, i32), String> {
@@ -346,10 +388,10 @@ fn tavern(p: &Play) -> Result<(), String> {
 	Ok(())
 }
 
-/// Pick the first brother in a building's roster list, then the first option for him
-/// (a training, an injury's treatment), which costs `price` (a script expression over
-/// `b`, the brother).
-fn roster_option(p: &Play, building: &str, price: &str, what: &str) -> Result<(), String> {
+/// Pick the first brother in a building's roster list, then an option for him (a
+/// training, an injury's treatment): the row `row` (a page expression over `e`, the
+/// brother's entry), which costs `price` (a script expression over `b`, the brother).
+fn roster_option(p: &Play, building: &str, row: &str, price: &str, what: &str) -> Result<(), String> {
 	open_building(p, building)?;
 	during("waiting for the roster", settled(p, |p| nth(p, ".list-entry", 0).is_ok()))?;
 	during("picking a brother", p.session.click_when_ready("css:.list-entry", STEP))?;
@@ -357,8 +399,10 @@ fn roster_option(p: &Play, building: &str, price: &str, what: &str) -> Result<()
 	p.shot(building);
 	let id = p.session.eval("jQuery('.list-entry.is-selected').data('entry').ID")?.as_i64().ok_or("no brother selected")?;
 	let cost = p.int(&format!("(function() {{ local b = ::Tactical.getEntityByID({id}); return {price}; }})()"))?;
+	let row = p.session.eval(&format!("(function (e) {{ return {row}; }})(jQuery('.list-entry.is-selected').data('entry'))"))?.as_i64().unwrap_or(-1);
+	ensure(row >= 0, format!("{what}: no such option for the brother"))?;
 	let before = p.int("::World.Assets.getMoney()")?;
-	let (x, y) = nth(p, ".is-injury-row .is-button .ui-control", 0)?;
+	let (x, y) = nth(p, ".is-injury-row .is-button .ui-control", row as usize)?;
 	p.session.click_at(x, y)?;
 	paid(p, before, cost, what)?;
 	p.shot(&format!("{building}-done"));
@@ -370,15 +414,18 @@ fn roster_option(p: &Play, building: &str, price: &str, what: &str) -> Result<()
 /// which he's trained.
 fn training(p: &Play) -> Result<(), String> {
 	enter_town(p, Some("building.training_hall"))?;
-	roster_option(p, "building.training_hall", "::Math.round(80 + 50 * b.getLevel())", "a sparring fight")?;
+	roster_option(p, "building.training_hall", "0", "::Math.round(80 + 50 * b.getLevel())", "a sparring fight")?;
 	ensure(p.int("(function() { foreach (b in ::World.getPlayerRoster().getAll()) if (b.getSkills().hasSkill(\"effects.trained\")) return 1; return 0; })()")? == 1, "nobody is trained")
 }
 
-/// The temple: a brother with a cut arm has it treated for its price.
+/// The temple: a brother with a cut arm has it treated for its price. He may have come
+/// by other injuries on the road (events hurt brothers), listed with it, in the skills'
+/// order (by ID within one order: a bruised leg comes first): treat the cut arm's row.
 fn temple(p: &Play) -> Result<(), String> {
 	enter_town(p, Some("building.temple"))?;
 	p.script("::World.getPlayerRoster().getAll()[0].getSkills().add(::new(\"scripts/skills/injury/cut_arm_injury\"));")?;
-	roster_option(p, "building.temple", "b.getSkills().getSkillByID(\"injury.cut_arm\").getPrice()", "treating a cut arm")?;
+	let row = "e.Injuries.map(function (i) { return i.id; }).indexOf('injury.cut_arm')";
+	roster_option(p, "building.temple", row, "b.getSkills().getSkillByID(\"injury.cut_arm\").getPrice()", "treating a cut arm")?;
 	ensure(p.int("::World.getPlayerRoster().getAll()[0].getSkills().getSkillByID(\"injury.cut_arm\").isTreated() ? 1 : 0")? == 1, "the cut arm isn't treated")
 }
 
@@ -536,7 +583,7 @@ const FOLLOW_MARKER: &str = r#"
 	{
 		::__heading <- target.getID();
 		::World.State.m.AutoEnterLocation = ::WeakTableRef(target);
-		player.setDestination(target.getPos());
+		::__walkTo(target);
 	}
 	::World.State.setPause(false);
 "#;
@@ -606,6 +653,7 @@ fn adventure(p: &Play) -> Result<(), String> {
 	bb_engine::harness::install_autoplay(p.session.engine())?;
 	// The fallen die as the player's (off the roster), as when a player plays the battle.
 	p.script("::__autoplayFight = true; ::__autoplayDieAsPlayers = true;")?;
+	p.script(WALK_TO)?;
 	during("leaving the town", p.session.click_when_ready("Leave", STEP))?;
 	let money = || p.int("::World.Assets.getMoney()");
 	let active = || p.int("::World.Contracts.getActiveContract() != null ? 1 : 0");
