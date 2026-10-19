@@ -85,23 +85,31 @@ impl Play {
 		Ok(self.int("(::Time.getRealTimeF() * 1000).tointeger()")? as f64 / 1000.0)
 	}
 
-	/// A limit `after` from now in the game's time. The clock only stops a loop that
-	/// no longer advances the game, at ten times as long.
+	/// A limit `after` from now in the game's time, and as long on the clock: steps
+	/// aren't paced, but the page's animations run on the clock and the scripts wait
+	/// for some (a battle's turn bar, a loading screen's fade), so the game's time
+	/// alone can run out before the page has had its time (a battle "took too long",
+	/// more often with the bridge's calls cheap). The clock alone stops a loop that no
+	/// longer advances the game, at ten times as long.
 	fn deadline(&self, after: Duration) -> Result<Deadline, String> {
+		let now = Instant::now();
 		Ok(Deadline {
 			game: self.game_time()? + after.as_secs_f64(),
-			clock: Instant::now() + after * 10,
+			page: now + after,
+			clock: now + after * 10,
 		})
 	}
 
 	fn past(&self, deadline: &Deadline) -> Result<bool, String> {
-		Ok(self.game_time()? > deadline.game || Instant::now() > deadline.clock)
+		let now = Instant::now();
+		Ok(self.game_time()? > deadline.game && now > deadline.page || now > deadline.clock)
 	}
 }
 
 /// See [`Play::deadline`].
 struct Deadline {
 	game: f64,
+	page: Instant,
 	clock: Instant,
 }
 
@@ -161,6 +169,7 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 	"#;
 	let deadline = p.deadline(STEP * 3)?;
 	let mut last = String::new();
+	let mut fought = 0;
 	loop {
 		ensure(!p.past(&deadline)?, format!("still travelling to {town} (facing {last})"))?;
 		if p.int("::World.State.m.LastEnteredTown != null && ::World.State.m.WorldTownScreen.isVisible() && ::World.State.getCurrentTown().getID() == ::__town.getID() ? 1 : 0")? == 1 {
@@ -176,6 +185,8 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 				p.session.step(1000.0 / 60.0)?;
 			}
 			"event" => answer_event(p)?,
+			// A party on the road attacked the company: fight it out, then go on.
+			"combat" | "battle" | "results" => answer(p, &facing, &last, &mut fought)?,
 			"town" => {
 				// A town on the way (or the one just left, again): leave it.
 				let here = p.text("::World.State.getCurrentTown() == null ? \"(none)\" : ::World.State.getCurrentTown().getName()")?;
@@ -641,12 +652,22 @@ fn battle(p: &Play) -> Result<(), String> {
 	let before = stash()?;
 	let deadline = p.deadline(Duration::from_secs(600))?;
 	let (mut battles, mut last) = (0, String::new());
-	let mut waited = 0;
+	// Waiting after the battle (its loading screen fading out): 30 s, by the game's
+	// time and the clock's (see `Play::deadline`).
+	let mut waiting: Option<Deadline> = None;
 	loop {
 		ensure(!p.past(&deadline)?, format!("the battle took too long (facing {last})"))?;
 		let facing = p.text(FACING)?;
-		waited = if battles > 0 && facing == "wait" { waited + 1 } else { 0 };
-		ensure(waited < 1800, "after the battle, still waiting 30 s on")?;
+		if battles > 0 && facing == "wait" {
+			if waiting.is_none() {
+				waiting = Some(p.deadline(Duration::from_secs(30))?);
+			}
+			if let Some(waiting) = &waiting {
+				ensure(!p.past(waiting)?, "after the battle, still waiting 30 s on")?;
+			}
+		} else {
+			waiting = None;
+		}
 		if battles > 0 && (facing == "map" || facing == "done") {
 			break;
 		}
