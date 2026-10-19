@@ -1,54 +1,46 @@
 //! The scripts with their UI's screens headless (see [`super`]).
 
-use std::path::Path;
-
 use bb_engine::harness::{self, GameEngine};
 use bb_render::{Gpu, RenderTarget};
-use squirrel_bb::VideoMode;
 
 use super::Key;
+use crate::game::{Boot, Start};
 
 pub struct Front {
 	engine: GameEngine,
 }
 
 impl Front {
-	/// Boot the install at `data_dir` into a new campaign on `seed` (on a world map of
-	/// `world_size` columns and rows, if given), in video `mode`, with `sound` on the
-	/// device or silent. (No page, so no DevTools: `_devtools` is the page's front's.)
-	pub fn boot(
-		_gpu: &Gpu,
-		data_dir: &Path,
-		seed: &str,
-		sound: bool,
-		world_size: Option<(i64, i64)>,
-		mode: VideoMode,
-		_devtools: Option<u16>,
-	) -> Result<Front, String> {
+	/// Boot the game as `boot` says, to the main menu or on into a new campaign, its
+	/// opening event closed. (No page, so no DevTools.)
+	pub fn boot(_gpu: &Gpu, boot: &Boot) -> Result<Front, String> {
 		// A live clock behind Time.getExactTime, as the original's: the AI's background
 		// work then spreads over frames. The battle camera glides and units hop over
 		// time, as the original's.
-		let engine = harness::open_install_with(data_dir, |c| {
+		let archives = crate::game::archives(boot.data_dir, boot.mods).map_err(|e| e.to_string())?;
+		let engine = harness::open_mounted(boot.data_dir, archives, |c| {
 			c.exact_clock = squirrel_bb::ExactClock::Live;
 			c.battle_camera = squirrel_bb::BattleCamera::Glides;
 			c.battle_motion = squirrel_bb::BattleMotion::Timed;
 		})
 		.map_err(|e| e.to_string())?;
-		engine.video().set_mode(mode);
-		if sound {
-			super::play_on_device(&engine, data_dir);
+		engine.video().set_mode(boot.mode);
+		if boot.sound {
+			super::play_on_device(&engine, boot.data_dir, boot.mods);
 		}
 		harness::boot_menu(&engine)?;
-		if let Some((cols, rows)) = world_size {
+		if let Some((cols, rows)) = boot.world_size {
 			harness::set_world_size(&engine, cols, rows)?;
 		}
-		harness::prepare_new_campaign(&engine, seed)?;
-		harness::start_new_campaign(&engine)?;
-		// The menu's own Start hides the main menu as the world comes up
-		// (main_menu_state.loading_screen_onScreenShown): without that, quitting to it
-		// would find it still showing, never show it again, and the world would wait on it.
-		engine.run_script("::RootState.get(\"MainMenuState\").hide();", "hide the main menu")?;
-		engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;
+		if let Start::NewCampaign(seed) = &boot.start {
+			harness::prepare_new_campaign(&engine, seed)?;
+			harness::start_new_campaign(&engine)?;
+			// The menu's own Start hides the main menu as the world comes up
+			// (main_menu_state.loading_screen_onScreenShown): without that, quitting to it
+			// would find it still showing, never show it again, and the world would wait on it.
+			engine.run_script("::RootState.get(\"MainMenuState\").hide();", "hide the main menu")?;
+			engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;
+		}
 		Ok(Front { engine })
 	}
 

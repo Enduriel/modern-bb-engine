@@ -16,7 +16,7 @@ use winit::window::{CustomCursor, Window, WindowId};
 
 use bb_app::display::{self, Placement};
 use bb_app::front::Key;
-use bb_app::game::Game;
+use bb_app::game::{Boot, Game, Start};
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
 use bb_app::{keys, platform};
@@ -27,7 +27,10 @@ use crate::window_mode::{self, Monitor};
 /// What to start, from the command line.
 pub struct Options {
 	pub data_dir: PathBuf,
-	pub seed: String,
+	/// The main menu, or a new campaign started at once (`--new-campaign`, `--seed`).
+	pub start: Start,
+	/// The install's mods mounted (`--mods`).
+	pub mods: bool,
 	/// Save the frame after this many frames as a PNG and quit (`--shot N PATH`).
 	pub shot: Option<(u64, PathBuf)>,
 	/// No sound (`--mute`); otherwise it plays on the default output device.
@@ -160,15 +163,16 @@ impl App {
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
 		let options = &self.options;
-		let mut game = Game::boot(
-			&gpu,
-			&options.data_dir,
-			&options.seed,
-			!options.mute,
-			options.world_size,
+		let boot = Boot {
+			data_dir: &options.data_dir,
+			start: options.start.clone(),
+			mods: options.mods,
+			sound: !options.mute,
+			world_size: options.world_size,
 			mode,
-			options.devtools,
-		)?;
+			devtools: options.devtools,
+		};
+		let mut game = Game::start(&gpu, &boot)?;
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
 		if std::env::var_os("BB_TEXTURE_USAGE").is_some_and(|v| v != "0") {
 			game.track_texture_usage();

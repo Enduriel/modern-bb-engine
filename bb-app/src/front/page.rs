@@ -1,13 +1,11 @@
 //! The scripts with their real UI page, in the browser host (see [`super`]).
 
-use std::path::Path;
-
 use bb_engine::harness::GameEngine;
 use bb_render::{Gpu, RenderTarget, UiLayer};
 use bb_ui::host::{HostConfig, Modifiers, MouseButton, UiSession};
-use squirrel_bb::VideoMode;
 
 use super::Key;
+use crate::game::{Boot, Start};
 
 /// How often the page paints, per second.
 const PAGE_FRAME_RATE: i32 = 60;
@@ -22,19 +20,11 @@ pub struct Front {
 }
 
 impl Front {
-	/// Start the page and the scripts for the install at `data_dir`, and from the main
-	/// menu start a new campaign on `seed`, as its Start button does, on a world map of
-	/// `world_size` (columns, rows) if given, in video `mode`. The campaign's opening
-	/// event shows once the world is up.
-	pub fn boot(
-		gpu: &Gpu,
-		data_dir: &Path,
-		seed: &str,
-		sound: bool,
-		world_size: Option<(i64, i64)>,
-		mode: VideoMode,
-		devtools: Option<u16>,
-	) -> Result<Front, String> {
+	/// Start the page and the scripts as `boot` says: to the main menu, or on from it into
+	/// a new campaign as its Start button does. The campaign's opening event shows once
+	/// the world is up.
+	pub fn boot(gpu: &Gpu, boot: &Boot) -> Result<Front, String> {
+		let (mode, devtools) = (boot.mode, boot.devtools);
 		let config = HostConfig {
 			width: mode.width.max(1) as u32,
 			height: mode.height.max(1) as u32,
@@ -47,23 +37,26 @@ impl Front {
 			battle_camera: squirrel_bb::BattleCamera::Glides,
 			// Units hop over time, as the original's; the scripts wait for them.
 			battle_motion: squirrel_bb::BattleMotion::Timed,
+			mods: boot.mods,
 			..HostConfig::default()
 		};
-		let session = UiSession::start(data_dir, config, false)?;
+		let session = UiSession::start(boot.data_dir, config, false)?;
 		session.engine().video().set_mode(mode);
 		if let Some(port) = devtools {
 			super::devtools::announce(port);
 		}
 		// Portraits are composed on the game thread (`Game::draw`).
 		session.queue_procedural(true);
-		if sound {
-			super::play_on_device(session.engine(), data_dir);
+		if boot.sound {
+			super::play_on_device(session.engine(), boot.data_dir, boot.mods);
 		}
 		session.boot_menu()?;
-		if let Some((cols, rows)) = world_size {
+		if let Some((cols, rows)) = boot.world_size {
 			bb_engine::harness::set_world_size(session.engine(), cols, rows)?;
 		}
-		session.start_campaign(seed)?;
+		if let Start::NewCampaign(seed) = &boot.start {
+			session.start_campaign(seed)?;
+		}
 		Ok(Front {
 			session,
 			layer: UiLayer::new(gpu),

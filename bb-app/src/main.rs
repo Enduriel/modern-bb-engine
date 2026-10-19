@@ -1,24 +1,36 @@
 //! Battle Brothers on the modern engine, in a window.
 //!
 //! ```text
-//! cargo run --release -p bb-app -- [--data DIR] [--seed SEED] [--world-size COLSxROWS]
-//!                                    [--shot FRAMES OUT.png] [--mute] [--devtools PORT]
-//!                                    [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
+//! cargo run --release -p bb-app --features ui -- [--mods] [--new-campaign] [--seed SEED]
+//!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
+//!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
 //! ```
 //!
-//! Boots the install's game files (the Steam install by default) into a new campaign
-//! and plays it: the world map or the battle, the mouse and keys going to the game.
-//! `--world-size` makes the map that many tiles across and down instead of vanilla's
-//! 140x170 (vanilla's worldgen needs more than 130x130). `--shot` saves the frame after
-//! that many frames and quits; `--at` runs the Squirrel `CODE` after that many frames
-//! (for scripted runs). `--settings` reads and keeps the settings in that file instead
-//! of the system's place for them, and `--saves` keeps the saves in that folder instead
-//! of the system's place for them (`battle-brothers-modern/savegames` in the user's data
-//! folder; never the original's). Built with `--features
-//! ui`, the game's real UI is drawn over it and takes the input it's under, and
-//! `--devtools` serves Chrome DevTools for its page on localhost at that port. The sound
-//! plays on the default output device, unless `--mute`. With `BB_STATS=1` the game's
-//! total CPU and memory, its CEF processes included, is logged every 5 seconds.
+//! Boots the install's game files (the Steam install by default) and plays them: the
+//! main menu, the world map or the battle, the mouse and keys going to the game.
+//!
+//! - Built with `--features ui`, the game's real UI is drawn over it and takes the input
+//!   it's under, and the game stops at the main menu, where the player starts or loads
+//!   a campaign. `--devtools` serves Chrome DevTools for its page on localhost at that
+//!   port.
+//! - `--new-campaign` skips the menu: it starts a new campaign at once, as the menu's
+//!   Start does (the "early access" origin, on map seed `rust-engine-test` unless
+//!   `--seed` gives one; `--seed` alone implies it). Built without `ui` there is no menu
+//!   to click, so `bb` always does this.
+//! - `--mods` mounts the install's mods (every `.zip` in its data folder) over its
+//!   archives, as the original loads them: for the scripts, the UI page, the sprites
+//!   and the sounds.
+//! - `--world-size` makes the campaigns' maps that many tiles across and down instead of
+//!   vanilla's 140x170 (vanilla's worldgen needs more than 130x130).
+//! - `--shot` saves the frame after that many frames and quits; `--at` runs the Squirrel
+//!   `CODE` after that many frames (for scripted runs).
+//! - `--settings` reads and keeps the settings in that file instead of the system's
+//!   place for them, and `--saves` keeps the saves in that folder instead of the
+//!   system's place for them (`battle-brothers-modern/savegames` in the user's data
+//!   folder; never the original's).
+//! - The sound plays on the default output device, unless `--mute`.
+//! - With `BB_STATS=1` the game's total CPU and memory, its CEF processes included, is
+//!   logged every 5 seconds.
 
 mod app;
 mod window_mode;
@@ -26,13 +38,19 @@ mod window_mode;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use bb_app::game::Start;
 use bb_engine::harness::STEAM_DATA_DIR;
 use winit::event_loop::EventLoop;
+
+/// The map seed of a campaign started at once, unless `--seed` gives one.
+const DEFAULT_SEED: &str = "rust-engine-test";
 
 fn options() -> Result<app::Options, String> {
 	let mut options = app::Options {
 		data_dir: PathBuf::from(STEAM_DATA_DIR),
-		seed: "rust-engine-test".to_string(),
+		// Without the page there's no menu to click.
+		start: if cfg!(feature = "ui") { Start::Menu } else { Start::NewCampaign(DEFAULT_SEED.to_string()) },
+		mods: false,
 		shot: None,
 		mute: false,
 		world_size: None,
@@ -46,7 +64,13 @@ fn options() -> Result<app::Options, String> {
 		let mut value = || args.next().ok_or(format!("{arg} needs a value"));
 		match arg.as_str() {
 			"--data" => options.data_dir = PathBuf::from(value()?),
-			"--seed" => options.seed = value()?,
+			"--seed" => options.start = Start::NewCampaign(value()?),
+			"--new-campaign" => {
+				if let Start::Menu = options.start {
+					options.start = Start::NewCampaign(DEFAULT_SEED.to_string());
+				}
+			}
+			"--mods" => options.mods = true,
 			"--mute" => options.mute = true,
 			"--world-size" => {
 				let v = value()?;

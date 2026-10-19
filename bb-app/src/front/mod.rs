@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bb_engine::files::GameFiles;
-use bb_engine::harness::{self, GameEngine};
+use bb_engine::harness::GameEngine;
 
 #[cfg(feature = "ui")]
 mod devtools;
@@ -48,12 +48,12 @@ pub struct Key {
 }
 
 /// Play the game's sound on the system's output device (kira), reading the sounds
-/// from the install at `data_dir`; without a device the game stays silent. Before the
-/// menu boots, so its music starts there.
-fn play_on_device(engine: &GameEngine, data_dir: &Path) {
+/// from the install at `data_dir` (and its mods' with `mods`); without a device the game
+/// stays silent. Before the menu boots, so its music starts there.
+fn play_on_device(engine: &GameEngine, data_dir: &Path, mods: bool) {
 	let out = || -> Result<bb_audio::KiraOut<_>, String> {
 		let io = |e: std::io::Error| e.to_string();
-		let files = GameFiles::open(harness::data_archives(data_dir).map_err(io)?).map_err(io)?;
+		let files = GameFiles::open(crate::game::archives(data_dir, mods).map_err(io)?).map_err(io)?;
 		// The original sets the rolloff once, from the screen's width at startup.
 		let (width, _, _) = engine.video().screen();
 		bb_audio::KiraOut::device(Arc::new(files), bb_audio::gains::rolloff_for_width(width as u32))

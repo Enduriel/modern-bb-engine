@@ -1,6 +1,6 @@
-//! The game behind the window: the engine, booted into a new campaign, stepped by the
-//! frame's real time, fed the player's input, and drawn by the renderer into a frame
-//! the window presents. The scripts' UI is the [`Front`]'s: headless, or with the `ui`
+//! The game behind the window: the engine, booted to the main menu or into a new
+//! campaign, stepped by the frame's real time, fed the player's input, and drawn by the
+//! renderer into a frame the window presents. The scripts' UI is the [`Front`]'s: headless, or with the `ui`
 //! feature the real page drawn over the frame.
 
 use std::collections::HashSet;
@@ -32,10 +32,48 @@ pub struct Game {
 	modifier: i64,
 }
 
+/// Where the game starts.
+#[derive(Clone, Debug)]
+pub enum Start {
+	/// The main menu, where the player starts or loads a campaign.
+	Menu,
+	/// A new campaign on this map seed, started as the main menu's Start does.
+	NewCampaign(String),
+}
+
+/// How [`Game::start`] boots the game.
+#[derive(Clone, Debug)]
+pub struct Boot<'a> {
+	/// The install's data folder.
+	pub data_dir: &'a Path,
+	pub start: Start,
+	/// The install's mods mounted over its archives ([`archives`]), for the scripts,
+	/// the page, the renderer and the sound alike.
+	pub mods: bool,
+	/// The sound on the system's output device; silent otherwise (as for tests).
+	pub sound: bool,
+	/// The world map's columns and rows for the campaigns started; vanilla's otherwise.
+	pub world_size: Option<(i64, i64)>,
+	pub mode: VideoMode,
+	/// Serve Chrome DevTools for the page at this port (the page's front only).
+	pub devtools: Option<u16>,
+}
+
+/// The archives the game reads from the install at `data_dir`: its `data_*.dat`, then,
+/// with `mods`, its mods' zips over them, as the original mounts them.
+pub fn archives(data_dir: &Path, mods: bool) -> std::io::Result<Vec<std::path::PathBuf>> {
+	let mut archives = harness::data_archives(data_dir)?;
+	if mods {
+		archives.extend(harness::mod_archives(data_dir)?.iter().map(|p| harness::locate_mod(p)));
+	}
+	Ok(archives)
+}
+
 impl Game {
 	/// Boot the engine from the install at `data_dir` into a new campaign on `seed`, in
 	/// video `mode`, playing its sound on the device if `sound` (silent otherwise, as for
 	/// tests), with DevTools for the page at port `devtools` (the page's front only).
+	/// Without the install's mods; [`Game::start`] says more.
 	pub fn boot(
 		gpu: &Gpu,
 		data_dir: &Path,
@@ -45,8 +83,22 @@ impl Game {
 		mode: VideoMode,
 		devtools: Option<u16>,
 	) -> Result<Game, String> {
+		let boot = Boot {
+			data_dir,
+			start: Start::NewCampaign(seed.to_string()),
+			mods: false,
+			sound,
+			world_size,
+			mode,
+			devtools,
+		};
+		Game::start(gpu, &boot)
+	}
+
+	/// Boot the engine as `boot` says: to the main menu, or on into a new campaign.
+	pub fn start(gpu: &Gpu, boot: &Boot) -> Result<Game, String> {
 		let io = |e: std::io::Error| e.to_string();
-		let archives = harness::data_archives(data_dir).map_err(io)?;
+		let archives = archives(boot.data_dir, boot.mods).map_err(io)?;
 		let files = GameFiles::open(archives.clone()).map_err(io)?;
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
 		let mut renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
@@ -54,7 +106,7 @@ impl Game {
 		// are built on spare workers while worldgen runs (see `bb_render`'s pages).
 		let mut dats: Vec<bb_engine::DatArchive> = archives.iter().filter_map(|p| bb_engine::DatArchive::open(p).ok()).collect();
 		renderer.prefetch(&bb_engine::assets::load_sprites(&mut dats).registry, []);
-		let front = Front::boot(gpu, data_dir, seed, sound, world_size, mode, devtools)?;
+		let front = Front::boot(gpu, boot)?;
 		let mut game = Game {
 			front,
 			renderer,

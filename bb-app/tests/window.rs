@@ -1,5 +1,5 @@
 //! `bb`'s window, run in a headless gamescope (muted, so nothing shows or sounds): it
-//! exits cleanly, and the scripts' video mode is put on it as they set it. Skips
+//! starts at the main menu, exits cleanly, and the scripts' video mode is put on it as they set it. Skips
 //! cleanly without gamescope or the Steam install, or when gamescope can't start (no
 //! display, no runtime folder). Each run waits its turn behind the probes' games
 //! ([`bb_engine::game_queue`]).
@@ -95,13 +95,27 @@ fn png_size(path: &Path) -> (u32, u32) {
 	(word(16), word(20))
 }
 
+/// For a player, `bb` with the page stops at the main menu, where they start or load a
+/// campaign; without the page there's nothing to click there, so it starts one.
+#[test]
+fn bb_starts_at_the_main_menu_for_a_player() {
+	let dir = run_dir("menu");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let report = r#"::logWarning("started at the " + (::RootState.get("WorldState") == null && ::RootState.get("MainMenuState") != null ? "menu" : "world"));"#;
+	let args = ["--settings", settings.to_str().unwrap(), "--at", "30", report, "--shot", "40", shot.to_str().unwrap()];
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let expected = if cfg!(feature = "ui") { "started at the menu" } else { "started at the world" };
+	assert!(run.stderr.contains(expected), "{expected}:\n{}", run.stderr);
+}
+
 /// The window's teardown once crashed in libwayland under gamescope's Vulkan layer,
 /// after the surface drawn to it was destroyed (see `Running::close`).
 #[test]
 fn bb_exits_cleanly() {
 	let dir = run_dir("exit");
 	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
-	let args = ["--settings", settings.to_str().unwrap(), "--shot", "3", shot.to_str().unwrap()];
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--shot", "3", shot.to_str().unwrap()];
 	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
 	assert_eq!(run.status, "0", "bb's exit status (139: the crash at exit)\n{}", run.stderr);
 	assert!(shot.exists(), "the shot taken before the exit");
@@ -118,7 +132,7 @@ fn bb_ends_when_the_scripts_quit() {
 	// in-game menu's Quit does; then the main menu's Quit once the world is gone.
 	let exit = r#"if (!("__exited" in getroottable()) && ("State" in ::World) && ::World.State != null && ::World.State.m.WorldScreen != null) { ::__exited <- true; ::World.State.m.MenuStack.popAll(true); ::World.State.exitGame(); }"#;
 	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__exited" in getroottable()) && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
-	let mut args = vec!["--settings", settings.to_str().unwrap()];
+	let mut args = vec!["--new-campaign", "--settings", settings.to_str().unwrap()];
 	for frame in ["600", "1200", "1800", "2400"] {
 		args.extend(["--at", frame, exit]);
 	}
@@ -145,6 +159,7 @@ fn the_video_mode_applies_live() {
 	let borderless = "local m = ::Settings.getVideoMode(); m.Borderless = true; m.Width = 1600; m.Height = 900; \
 		::Settings.setVideoMode(m);";
 	let args = [
+		"--new-campaign",
 		"--settings",
 		settings.to_str().unwrap(),
 		"--at",
@@ -181,7 +196,7 @@ fn bb_starts_borderless_and_draws() {
 	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
 	let start = "video.width = 1920\nvideo.height = 1080\nvideo.fullscreen = false\nvideo.borderless = true\nvideo.vsync = false\n";
 	std::fs::write(&settings, start).expect("the settings");
-	let args = ["--settings", settings.to_str().unwrap(), "--shot", "300", shot.to_str().unwrap()];
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--shot", "300", shot.to_str().unwrap()];
 	let Some(run) = run_bb(&dir, (1920, 1080), &args) else { return };
 	assert_eq!(run.status, "0", "{}", run.stderr);
 	assert!(run.stderr.contains("video: 1920x1080 Borderless"), "{}", run.stderr);
