@@ -1,0 +1,13 @@
+[package]
+name = "bb-steam"
+version = "0.1.0"
+edition = "2024"
+
+# Steam achievements and stats for the windowed game: a small binding to the Steamworks
+# flat C API, loaded at run time from the library beside the executable (never linked,
+# so bb builds and runs without it), and the pinned copy of that library the release
+# packaging fetches (see `pinned`).
+
+# dlopen/dlsym on Unix (for this binding only).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.186"
