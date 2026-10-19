@@ -1,4 +1,4 @@
-//! End-to-end: scripted battles against twenty-eight kinds of enemies are **draw-exact**
+//! End-to-end: scripted battles against twenty-nine kinds of enemies are **draw-exact**
 //! against the original game, start to finish. From a new campaign (fixed seed), a battle against
 //! one of vanilla's spawn lists is set up through `getLocalCombatProperties` +
 //! `addUnitsToCombat` and offered with `startScriptedCombat`. The company fights it
@@ -805,6 +805,42 @@ const TRICKSTER_GOD: &str = r#"
 		VisionMult = 1.0,
 		Body = "figure_ghost_01",
 		Troops = [ { Type = ::Const.World.Spawn.Troops.TricksterGod, Num = 1 } ]
+	}
+];
+"#;
+
+/// The grand diviner with fault finders and flesh golems (a one-off party, as no spawn
+/// list holds them) on the plains: the company retreats.
+#[test]
+fn the_grand_diviner_on_the_plains() {
+	fight(&Scenario {
+		spawn: "ProbeGrandDiviner",
+		resources: 250,
+		faction: "Bandits",
+		terrain: "tactical.plains",
+		checkpoints: &[(2000, 385639), (4000, 271884), (6000, 98800), (7985, 843513)],
+		result: 3,
+		pin_render: false,
+		after: Some((7989, 508657, 0)),
+		player: false,
+		setup: GRAND_DIVINER,
+	});
+}
+
+const GRAND_DIVINER: &str = r#"
+::Const.World.Spawn.ProbeGrandDiviner <- [
+	{
+		Cost = 250,
+		MovementSpeedMult = 1.0,
+		VisibilityMult = 1.0,
+		VisionMult = 1.0,
+		Body = "figure_bandit_01",
+		Troops = [
+			{ Type = ::Const.World.Spawn.Troops.GrandDiviner, Num = 1 },
+			{ Type = ::Const.World.Spawn.Troops.FaultFinder, Num = 2 },
+			{ Type = ::Const.World.Spawn.Troops.GreaterFleshGolem, Num = 1 },
+			{ Type = ::Const.World.Spawn.Troops.LesserFleshGolem, Num = 2 }
+		]
 	}
 ];
 "#;
