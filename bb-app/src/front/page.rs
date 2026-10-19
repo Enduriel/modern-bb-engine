@@ -41,6 +41,9 @@ impl Front {
 			..HostConfig::default()
 		};
 		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;
+		// The page's links (`openURL`: mods' pages, the version label) open in the
+		// system's browser, as the original's do.
+		session.protocol().set_url_opener(crate::platform::open_url);
 		session.engine().video().set_mode(mode);
 		if let Some(port) = devtools {
 			super::devtools::announce(port);

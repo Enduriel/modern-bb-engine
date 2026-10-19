@@ -25,7 +25,9 @@
 //!   page's promise;
 //! - `asyncCallSQ(handle, method[, arg])`: the same, but the original never resolves the
 //!   promise, nor those of the other void calls;
-//! - `openURL(url)`: logged, never opened.
+//! - `openURL(url)`: opened in the system's browser, as the original does, by the
+//!   opener the game installs ([`set_url_opener`](UiProtocol::set_url_opener)); without
+//!   one (tests, examples) only logged. Only `http(s)` URLs are opened ([`web_url`]).
 //!
 //! **Timing.** With `BB_UI_SLOW_CALLS=<ms>` in the environment, every call either way
 //! that takes at least that long is logged to stderr with its time, for profiling the
@@ -40,6 +42,7 @@ use squirrel_bb::{UiBridge, UiFrontend};
 
 use crate::json::Json;
 use crate::sq_json::{from_json, strong_to_json, to_json};
+use crate::web_url;
 
 /// The date the original's root version label shows next to the version: the build
 /// date of the 1.5.2.3 executable (probed).
@@ -106,7 +109,13 @@ pub struct UiProtocol<T: Transport> {
 	/// Calls this slow are logged ([`SLOW_CALLS`]).
 	slow_calls: Option<Duration>,
 	log: Box<dyn Fn(&str)>,
+	/// What opens the page's `openURL` URLs (already checked), if anything does.
+	url_opener: RefCell<Option<Box<UrlOpener>>>,
 }
+
+/// Opens a URL in the system's browser (see [`UiProtocol::set_url_opener`]); an error
+/// says why it couldn't.
+pub type UrlOpener = dyn Fn(&str) -> Result<(), String>;
 
 /// The game's calls into the page so far: how many, and how long they took, counting
 /// the page's calls back into the game that they caused.
@@ -129,6 +138,7 @@ impl<T: Transport + 'static> UiProtocol<T> {
 				.and_then(|ms| ms.trim().parse::<f64>().ok())
 				.map(|ms| Duration::from_secs_f64(ms.max(0.0) / 1000.0)),
 			log: Box::new(log),
+			url_opener: RefCell::new(None),
 		})
 	}
 
@@ -157,6 +167,13 @@ impl<T: Transport> UiProtocol<T> {
 	/// The game's calls into the page so far.
 	pub fn stats(&self) -> CallStats {
 		self.stats.get()
+	}
+
+	/// Open the page's `openURL` URLs with `opener` (the game passes one that starts the
+	/// system's browser). It gets only those [`web_url::to_open`] passes, as that makes
+	/// them, and must not block. Without one, they are only logged.
+	pub fn set_url_opener(&self, opener: impl Fn(&str) -> Result<(), String> + 'static) {
+		*self.url_opener.borrow_mut() = Some(Box::new(opener));
 	}
 
 	/// Run `engine._trigger(event, args...)` in the page now, serving the page's calls
@@ -238,8 +255,7 @@ impl<T: Transport> UiProtocol<T> {
 				Reply::Void
 			}
 			"openURL" => {
-				let url = args.first().map_or(String::new(), Json::to_text);
-				(self.log)(&format!("ui: openURL {url} (not opened)"));
+				self.open_url(args.first());
 				Reply::Void
 			}
 			_ => {
@@ -247,6 +263,23 @@ impl<T: Transport> UiProtocol<T> {
 				Reply::Error(format!("no handler '{name}'"))
 			}
 		}
+	}
+
+	/// `openURL(url)`: open `url` with the opener, if it may be opened and there is one.
+	/// Whatever happens is logged (the URL as JSON, so nothing in it reaches the log raw).
+	fn open_url(&self, url: Option<&Json>) {
+		let shown = url.map_or(String::new(), Json::to_text);
+		let outcome = match url.and_then(Json::as_str).ok_or("not text").and_then(web_url::to_open) {
+			Err(why) => format!("refused: {why}"),
+			Ok(url) => match self.url_opener.borrow().as_ref() {
+				None => "not opened".to_string(),
+				Some(open) => match open(&url) {
+					Ok(()) => "opened".to_string(),
+					Err(error) => format!("not opened: {error}"),
+				},
+			},
+		};
+		(self.log)(&format!("ui: openURL {shown} ({outcome})"));
 	}
 
 	/// What the engine does once the page has registered its screens: connect
@@ -623,6 +656,56 @@ mod tests {
 		assert_eq!(
 			reply.to_json().to_text(),
 			r#"{"done":true,"errors":[{"first":2,"second":"no handler 'nope'"}]}"#
+		);
+		bridge.clear();
+	}
+
+	#[test]
+	fn open_url_goes_to_the_opener_when_it_may() {
+		let (vm, bridge, page, _) = setup();
+		let log = Rc::new(RefCell::new(Vec::new()));
+		let sink = log.clone();
+		let protocol = UiProtocol::new(page, move |m| sink.borrow_mut().push(m.to_string()));
+		let call = |url: &str| {
+			let reply = protocol.handle_message(
+				&vm,
+				&bridge,
+				&Json::Array(vec![Json::Str("openURL".into()), Json::Int(3), Json::Str(url.into())]),
+			);
+			assert_eq!(reply, Reply::Void, "the original never resolves openURL");
+		};
+		let nexus = "https://www.nexusmods.com/battlebrothers/mods/765";
+		// No opener (tests, examples): only logged, as before.
+		call(nexus);
+		let opened = Rc::new(RefCell::new(Vec::new()));
+		let sink = opened.clone();
+		protocol.set_url_opener(move |url| {
+			sink.borrow_mut().push(url.to_string());
+			if url.ends_with("/fail") { Err("no launcher".into()) } else { Ok(()) }
+		});
+		call(nexus);
+		call("file:///etc/passwd");
+		call("https://example.com/a b");
+		call("https://example.com/fail");
+		call("www.battlebrothersgame.com");
+		protocol.handle_message(&vm, &bridge, &message(r#"["openURL",4,42]"#));
+		protocol.handle_message(&vm, &bridge, &message(r#"["openURL",5]"#));
+		assert_eq!(
+			opened.borrow().as_slice(),
+			[nexus, "https://example.com/fail", "http://www.battlebrothersgame.com"]
+		);
+		assert_eq!(
+			log.borrow().as_slice(),
+			[
+				format!("ui: openURL \"{nexus}\" (not opened)"),
+				format!("ui: openURL \"{nexus}\" (opened)"),
+				r#"ui: openURL "file:///etc/passwd" (refused: not an http(s) URL)"#.to_string(),
+				r#"ui: openURL "https://example.com/a b" (refused: a character a URL can't hold)"#.to_string(),
+				r#"ui: openURL "https://example.com/fail" (not opened: no launcher)"#.to_string(),
+				r#"ui: openURL "www.battlebrothersgame.com" (opened)"#.to_string(),
+				"ui: openURL 42 (refused: not text)".to_string(),
+				"ui: openURL  (refused: not text)".to_string(),
+			]
 		);
 		bridge.clear();
 	}

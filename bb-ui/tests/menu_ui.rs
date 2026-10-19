@@ -6,7 +6,8 @@
 //! page's own tasks run between the scripts, never inside one. Images with nothing to
 //! show paint nothing, bold or italic text in a face without either draws in it as it
 //! is, text advances by whole pixels, and right clicks open no menu, as in Coherent;
-//! scripts inserted at runtime run in Coherent's order.
+//! scripts inserted at runtime run in Coherent's order. The page's links reach the URL
+//! opener the game installs.
 //! Where the game discards a scene, the page gives its memory back. Skips if there is
 //! no Steam install.
 //!
@@ -16,7 +17,9 @@
 //! processes, which must go straight to [`run_subprocess`](bb_ui::host::run_subprocess),
 //! and CEF can only start once per process.
 
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -258,7 +261,43 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	ensure(
 		problems.is_empty(),
 		format!("page or bridge errors:\n{}", problems.join("\n")),
-	)
+	)?;
+	links_reach_the_url_opener(&session)
+}
+
+/// The page's links go to the URL opener the game installs (the system's browser in
+/// `bb`; here a stand-in that only records them): the version module's website link
+/// (vanilla's `openURL`, with an address that has no scheme; the link is hidden on the
+/// main menu, so its handler runs from jQuery), and a mod's
+/// own `engine.call('openURL', ...)`, as MSU's Nexus Mods icon makes it. What isn't a
+/// web address never reaches it.
+fn links_reach_the_url_opener(session: &UiSession) -> Result<(), String> {
+	let opened = Rc::new(RefCell::new(Vec::new()));
+	let sink = opened.clone();
+	session.protocol().set_url_opener(move |url| {
+		sink.borrow_mut().push(url.to_string());
+		Ok(())
+	});
+	session.eval(
+		"$('.version-container .game-name').click(); \
+		 engine.call('openURL', 'https://www.nexusmods.com/battlebrothers/mods/765'); \
+		 engine.call('openURL', 'file:///etc/passwd'); 0",
+	)?;
+	session.run_frames(0.1)?;
+	let opened = opened.borrow();
+	ensure(
+		opened.as_slice()
+			== [
+				"http://www.battlebrothersgame.com",
+				"https://www.nexusmods.com/battlebrothers/mods/765",
+			],
+		format!("the opener got {opened:?}"),
+	)?;
+	let refused = session
+		.log()
+		.iter()
+		.any(|line| line.text == r#"ui: openURL "file:///etc/passwd" (refused: not an http(s) URL)"#);
+	ensure(refused, "the file URL wasn't logged as refused")
 }
 
 /// The page's own tasks (here a timer) run between the scripts, as the original's UI
