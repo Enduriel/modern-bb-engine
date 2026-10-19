@@ -165,17 +165,6 @@
 	};
 	window.engine = engine;
 
-	// Coherent ran scripts that mods insert at runtime in insertion order (probed);
-	// Chromium runs dynamically inserted scripts as they arrive unless `async` is off.
-	var createElement = Document.prototype.createElement;
-	Document.prototype.createElement = function (name) {
-		var element = createElement.apply(this, arguments);
-		if (typeof name === 'string' && name.toLowerCase() === 'script') {
-			element.async = false;
-		}
-		return element;
-	};
-
 	function define(name, value) {
 		Object.defineProperty(window, name, { value: value, enumerable: false });
 	}

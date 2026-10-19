@@ -55,6 +55,18 @@ fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 		matches!(session.eval("typeof MSU !== 'undefined'")?, Json::Bool(true)),
 		"MSU's JS isn't on the page",
 	)?;
+	// Nested Tooltips' hooks kept what they wrapped: the mod registers its `setup.js`
+	// twice, and the copy resets its namespace (Coherent's script order, see
+	// `host/script_order.js`).
+	if matches!(session.eval("typeof NestedTooltips !== 'undefined'")?, Json::Bool(true)) {
+		ensure(
+			matches!(
+				session.eval("typeof NestedTooltips.Hooks.WorldEventScreen_updateHeader === 'function' && typeof NestedTooltips.Hooks.WorldEventScreen_renderListItem === 'function'")?,
+				Json::Bool(true)
+			),
+			"Nested Tooltips' hooks lost what they wrapped (its second setup.js ran after them)",
+		)?;
+	}
 	// MSU's late JS connected its screens from the page.
 	let deadline = Instant::now() + Duration::from_secs(10);
 	while !holds(&session, "\"MSU\" in ::getroottable() && ::MSU.Popup.m.JSHandle != null")? {

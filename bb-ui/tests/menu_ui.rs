@@ -5,7 +5,8 @@
 //! calls between scripts and page run inline both ways, as in the original, and the
 //! page's own tasks run between the scripts, never inside one. Images with nothing to
 //! show paint nothing, bold or italic text in a face without either draws in it as it
-//! is, text advances by whole pixels, and right clicks open no menu, as in Coherent.
+//! is, text advances by whole pixels, and right clicks open no menu, as in Coherent;
+//! scripts inserted at runtime run in Coherent's order.
 //! Where the game discards a scene, the page gives its memory back. Skips if there is
 //! no Steam install.
 //!
@@ -246,6 +247,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	discards_give_memory_back(&session)?;
 	right_clicks_reach_the_page(&session)?;
 	page_tasks_run_between_scripts(&session)?;
+	inserted_scripts_run_in_coherents_order(&session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -306,6 +308,53 @@ fn page_tasks_run_between_scripts(session: &UiSession) -> Result<(), String> {
 		SqTable::root(session.engine().vm()).get::<bool>("__inside") == Some(false),
 		"the page's timer reached the scripts inside a script's call into the page",
 	)
+}
+
+/// Scripts inserted at runtime, as mods' JS loaders insert them: five in one go, the
+/// fourth a second copy of the first. Each records itself (with the `data-n` of the
+/// element it runs as) and its load event.
+const INSERTED_SCRIPTS: &str = r#"(function () {
+	window.__order = [];
+	function url(name) {
+		var code = '__order.push("' + name + '#" + document.currentScript.getAttribute("data-n"));';
+		return URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+	}
+	var urls = { a: url('a'), b: url('b'), c: url('c'), d: url('d') };
+	window.__insert = function (name, n) {
+		var script = document.createElement('script');
+		script.src = urls[name];
+		script.setAttribute('data-n', n);
+		script.onload = function () { __order.push('load:' + name + '#' + n); };
+		document.body.appendChild(script);
+		return script;
+	};
+	['a', 'b', 'c', 'a', 'd'].forEach(function (name, i) { __insert(name, i + 1); });
+	window.__copyType = document.querySelector('script[data-n="4"]').getAttribute('type');
+	return 0;
+})()"#;
+
+/// Scripts inserted at runtime run in Coherent's order (probed): in
+/// insertion order, except that a copy of a script that is still loading
+/// runs right after it, as itself (`document.currentScript`, its own load event); a
+/// copy inserted once its URL has loaded runs again.
+fn inserted_scripts_run_in_coherents_order(session: &UiSession) -> Result<(), String> {
+	let order = |session: &UiSession| -> Result<String, String> {
+		Ok(session.eval("__order.join(',')")?.as_str().unwrap_or_default().to_string())
+	};
+	session.eval(INSERTED_SCRIPTS)?;
+	ensure(
+		session.eval("__copyType")? == Json::Null,
+		"the waiting copy kept a type of its own",
+	)?;
+	session.pump_until(Duration::from_secs(5), |s| order(s).is_ok_and(|o| o.contains("load:d")));
+	let expected = "a#1,load:a#1,a#4,load:a#4,b#2,load:b#2,c#3,load:c#3,d#5,load:d#5";
+	let got = order(session)?;
+	ensure(got == expected, format!("inserted scripts ran as {got}, not {expected}"))?;
+
+	session.eval("__order = []; __insert('a', 6); 0")?;
+	session.pump_until(Duration::from_secs(5), |s| order(s).is_ok_and(|o| o.contains("load:")));
+	let got = order(session)?;
+	ensure(got == "a#6,load:a#6", format!("a script inserted again ran as {got:?}"))
 }
 
 /// Test images over the page, each named by `data-name`: an empty stash slot as the
