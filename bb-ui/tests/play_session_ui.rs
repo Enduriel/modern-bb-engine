@@ -424,12 +424,24 @@ fn contract(p: &Play) -> Result<(), String> {
 			foreach (i, c in s.getContracts())
 				if (["contract.deliver_item", "contract.escort_envoy"].find(c.getType()) != null) return i;
 			return -1;
+		};
+		::__calmTowns <- function() {
+			local n = 0;
+			foreach (s in ::World.EntityManager.getSettlements())
+				if (s.isEnterable() && ::__calmContract(s) >= 0) n++;
+			return n;
 		};"#,
 	)?;
 	// The offer may be gone by the time the company gets there (contracts run out):
-	// then the next town offering one.
+	// then the next town offering one. When no town offers one, the factions post new
+	// work as the days go by: wait for it out on the map.
 	let mut tries = 0;
 	let (town, index) = loop {
+		if p.int("::__calmTowns()")? == 0 {
+			println!("no town offers a delivery or escort: waiting for one");
+			leave_town(p)?;
+			during("waiting for a delivery or escort", out_on_the_map_until(p, "::__calmTowns() > 0", STEP * 6))?;
+		}
 		let town = enter_town_where(p, "::__calmContract(s) >= 0")?;
 		let index = p.int("::__calmContract(::World.State.getCurrentTown())")?;
 		if index >= 0 {
@@ -505,6 +517,9 @@ const FACING: &str = r#"(function() {
 	local w = ::World.State;
 	local ev = w.getEventScreen();
 	if (ev != null && ev.isVisible()) return ev.isAnimating() ? "wait" : "event";
+	// Fading out (on the clock, while the steps run fast): what's under it isn't back
+	// yet (a contract's screen over a town hides the town's dialogs until it's gone).
+	if (ev != null && ev.isAnimating()) return "wait";
 	local d = w.m.CombatDialog;
 	if (d != null && d.isVisible()) return d.isAnimating() ? "wait" : "combat";
 	if (w.m.WorldTownScreen.isVisible()) return w.m.WorldTownScreen.isAnimating() ? "wait" : "town";
@@ -602,6 +617,13 @@ fn adventure(p: &Play) -> Result<(), String> {
 		let facing = p.text(FACING)?;
 		if facing == "done" {
 			break;
+		}
+		// The contract may lie far off (the nearest offer gone, the next one across the
+		// map), and a company that runs out of food deserts: provisions, as a player
+		// buys them before a long march.
+		if facing == "map" && p.int("::World.Assets.getFood()")? < 30 {
+			p.script("for (local i = 0; i < 4; i++) ::World.Assets.getStash().add(::new(\"scripts/items/supplies/ground_grains_item\")); ::World.Assets.updateFood();")?;
+			println!("provisions for the road: food {}", p.int("::World.Assets.getFood()")?);
 		}
 		// The payment comes with the screen that ends the contract (wages go out on the
 		// road meanwhile, so it's measured across that answer).
