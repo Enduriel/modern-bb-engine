@@ -181,6 +181,22 @@ local function showPath( _tile )
 
 		if (_scene == "nightFell")
 		{
+			// Every 40th poll (20 s of game time where frame_scenes polls), how far the
+			// day has come and what could hold it: night has sometimes not fallen within
+			// the wait under load, cause not yet caught (runs that pass reach it in
+			// 80-100 s of 180).
+			if (!("probeNightPolls" in ::getroottable()))
+			{
+				::probeNightPolls <- 0;
+			}
+
+			if (++::probeNightPolls % 40 == 0)
+			{
+				::logInfo("night wait: day " + ::World.getTime().Days + " hour " + ::World.getTime().Hours + " speed " + ::World.getSpeedMult() +
+					" paused " + state.isPaused() + " menus " + state.m.MenuStack.hasBacksteps() + " event " + ::World.Events.hasActiveEvent() +
+					" at " + player.getPos().X + "," + player.getPos().Y);
+			}
+
 			return false;
 		}
 	}

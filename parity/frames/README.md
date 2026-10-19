@@ -70,6 +70,8 @@ cd modern_bb_engine
 cargo test --release -p bb-app --features ui --test frame_regression
 ```
 
+- Run it in release, as the script takes the goldens: a debug build draws the battles
+  0.1-0.4% differently (2026-10-19), beyond their allowance.
 - The goldens are PNGs outside the repository, in the folder `BB_FRAME_GOLDENS` names.
   Without them the test skips and says so.
 - After a change that is meant to show, take them again with
