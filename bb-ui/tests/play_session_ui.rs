@@ -168,7 +168,7 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 		if (!::World.State.getPlayer().hasPath()) ::__walkTo(::__town);
 		::World.State.setPause(false);
 	"#;
-	let deadline = p.deadline(STEP * 3)?;
+	let mut deadline = p.deadline(STEP * 3)?;
 	let (set_out, clock) = (p.game_time()?, Instant::now());
 	let mut last = String::new();
 	let mut fought = 0;
@@ -190,8 +190,15 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 				p.session.step(1000.0 / 60.0)?;
 			}
 			"event" => answer_event(p)?,
-			// A party on the road attacked the company: fight it out, then go on.
-			"combat" | "battle" | "results" => answer(p, &facing, &last, &mut fought)?,
+			// A party on the road attacked the company, or drew it into its fight: fight
+			// it out, then go on, the road's time anew (a battle's frames are the game's
+			// time too, often more than the walk's).
+			"combat" | "battle" | "results" => {
+				answer(p, &facing, &last, &mut fought)?;
+				if facing == "results" {
+					deadline = p.deadline(STEP * 3)?;
+				}
+			}
 			"town" => {
 				// A town on the way (or the one just left, again): leave it.
 				let here = p.text("::World.State.getCurrentTown() == null ? \"(none)\" : ::World.State.getCurrentTown().getName()")?;
@@ -199,7 +206,7 @@ fn enter_town_where(p: &Play, cond: &str) -> Result<String, String> {
 				during(&format!("leaving {here} on the way to {town}"), p.session.click_when_ready("Leave", Duration::from_secs(20)))?;
 				p.until("!::World.State.m.WorldTownScreen.isVisible()", STEP)?;
 			}
-			_ => p.session.step(1000.0 / 60.0)?,
+			_ => wait_frame(p)?,
 		}
 		last = facing;
 	}
@@ -642,9 +649,19 @@ fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), S
 			p.script(FOLLOW_MARKER)?;
 			p.session.step(1000.0 / 60.0)?;
 		}
-		_ => p.session.step(1000.0 / 60.0)?,
+		_ => wait_frame(p)?,
 	}
 	Ok(())
+}
+
+/// One frame while the page animates (a screen fading in or out): paced, a 60th of a
+/// second on the clock, as the original runs. The page's animations run on the clock,
+/// and the world runs on under a screen fading out (the event screen's menu-stack pop
+/// unpauses it as the fade begins): unpaced frames would walk the company much further
+/// meanwhile than a player's does (into a town before a contract's screen, held back by
+/// the fade, could show its arrival).
+fn wait_frame(p: &Play) -> Result<(), String> {
+	p.session.run_frames(1.0 / 60.0)
 }
 
 /// Carry the contract out: follow the map's marker to its target and back, answering
@@ -992,9 +1009,12 @@ fn play(p: &Play) -> Result<(), String> {
 		_ => {}
 	}
 	new_campaign(p)?;
-	// No battles until the page's result screen stops stalling (the Velocity stall):
-	// nobody attacks the company.
+	// Few battles before the contract: nobody attacks the company. A party fighting
+	// another next to it still draws it in (ai_world_attack), more often on the roads
+	// it walks: the AI fights such a battle for it, the fallen dying as the player's.
 	p.script("local pl = ::World.State.getPlayer(); pl.m.IsAttackable = false; pl.m.IsAttackableByAI = false;")?;
+	bb_engine::harness::install_autoplay(p.session.engine())?;
+	p.script("::__autoplayFight = true; ::__autoplayDieAsPlayers = true;")?;
 	// A richer company than a new one, so that every purchase and hire can happen.
 	p.script("::World.Assets.addMoney(10000);")?;
 	let town = enter_town(p, None)?;
@@ -1014,12 +1034,16 @@ fn play(p: &Play) -> Result<(), String> {
 	// Fair game again: a battle with the nearest hostile party.
 	p.script("local pl = ::World.State.getPlayer(); pl.m.IsAttackable = true; pl.m.IsAttackableByAI = true;")?;
 	battle(p)?;
-	let problems: Vec<String> = p
-		.session
-		.log()
-		.into_iter()
-		.filter(|line| line.level == "error" || line.level == "bridge")
-		.map(|line| format!("[{}] {}", line.level, line.text))
+	// Each with the page's lines before it: what it was doing.
+	let log = p.session.log();
+	let problems: Vec<String> = log
+		.iter()
+		.enumerate()
+		.filter(|(_, line)| line.level == "error" || line.level == "bridge")
+		.map(|(i, line)| {
+			let before: Vec<String> = log[i.saturating_sub(6)..i].iter().map(|l| format!("    after [{}] {}", l.level, l.text)).collect();
+			format!("[{}] {}\n{}", line.level, line.text, before.join("\n"))
+		})
 		.collect();
 	ensure(problems.is_empty(), format!("page or bridge errors:\n{}", problems.join("\n")))
 }
