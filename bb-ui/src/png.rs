@@ -7,6 +7,18 @@ use std::io::{self, Write};
 
 /// Write an RGBA image (`width * height * 4` bytes, rows top to bottom) as a PNG.
 pub fn write_rgba(out: &mut impl Write, width: u32, height: u32, rgba: &[u8]) -> io::Result<()> {
+	write_rgba_with(out, width, height, rgba, &[])
+}
+
+/// [`write_rgba`] with `chunks` (kind, data) between the header and the image data,
+/// e.g. a colour profile.
+pub fn write_rgba_with(
+	out: &mut impl Write,
+	width: u32,
+	height: u32,
+	rgba: &[u8],
+	chunks: &[([u8; 4], &[u8])],
+) -> io::Result<()> {
 	assert_eq!(
 		rgba.len(),
 		width as usize * height as usize * 4,
@@ -20,6 +32,9 @@ pub fn write_rgba(out: &mut impl Write, width: u32, height: u32, rgba: &[u8]) ->
 	// 8 bits per channel, color type 6 (RGBA), deflate, adaptive filtering, no interlace.
 	header.extend_from_slice(&[8, 6, 0, 0, 0]);
 	chunk(out, b"IHDR", &header)?;
+	for (kind, data) in chunks {
+		chunk(out, kind, data)?;
+	}
 
 	// Each row is prefixed with filter type 0 (none).
 	let row = width as usize * 4;

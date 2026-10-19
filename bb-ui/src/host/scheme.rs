@@ -13,6 +13,8 @@
 //!   [`Event::Procedural`] for the game thread, which answers with a PNG; when it
 //!   can't (or doesn't answer), a transparent placeholder. The original also answers
 //!   200 with a fallback image when composing fails, never a load error.
+//! - A PNG asked for with `?bb-upside-down` comes upside down ([`upside_down`]): the
+//!   picture of a background Coherent tiles (`tiles.js`).
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -22,6 +24,7 @@ use cef::*;
 use super::client::{Event, Shared};
 use super::responder::{Body, Responder, blank};
 use crate::coui::{UiFiles, mime_type, url_to_path};
+use crate::upside_down;
 
 /// Where procedural images live.
 const PROCEDURAL_PREFIX: &str = "procedural/";
@@ -74,10 +77,16 @@ wrap_resource_handler! {
 			if let Some(handle) = handle_request {
 				*handle = 1;
 			}
-			let body = self
-				.files
-				.read(&path)
-				.map(|data| Body::new(mime_type(&path), data));
+			let body = self.files.read(&path).map(|data| {
+				let mime = mime_type(&path);
+				// A tiled background's picture, which Coherent draws upside down.
+				let data = if mime == "image/png" && upside_down::asked_for(&url) {
+					upside_down::upside_down(&data).unwrap_or(data)
+				} else {
+					data
+				};
+				Body::new(mime, data)
+			});
 			match body {
 				Some(body) => {
 					if body.mime.starts_with("image/") {

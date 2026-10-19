@@ -12,12 +12,13 @@ use super::ipc::{self, Arg};
 
 /// The JS installed before any page script, in order: the bridge (see the file for the
 /// protocol), the order inserted scripts run in, the emulation of Coherent's layout and
-/// style differences, its image cache, then the unbinding of handlers the UI's plugins
-/// leave behind.
-const SCRIPTS: [(&str, &str); 5] = [
+/// style differences and of how it draws tiled backgrounds, its image cache, then the
+/// unbinding of handlers the UI's plugins leave behind.
+const SCRIPTS: [(&str, &str); 6] = [
 	("bb://bootstrap.js", include_str!("bootstrap.js")),
 	("bb://script_order.js", include_str!("script_order.js")),
 	("bb://compat.js", include_str!("compat.js")),
+	("bb://tiles.js", include_str!("tiles.js")),
 	("bb://image_cache.js", include_str!("image_cache.js")),
 	("bb://teardown.js", include_str!("teardown.js")),
 ];

@@ -8,6 +8,7 @@
 //!   * [`mod_fonts`] — the `@font-face` rules mods' registered fonts add to the page;
 //!   * [`parity`] — page snapshots compared with the original's (UI parity goldens);
 //!   * [`png`] — screenshots of the rendered UI;
+//!   * [`upside_down`] — pictures turned upside down, as Coherent tiles them;
 //!   * [`web_url`] — which URLs the page may have opened in the system's browser.
 //!
 //! With the `cef` feature, [`host`] runs the page in Chromium (CEF), offscreen.
@@ -20,6 +21,7 @@ pub mod mod_fonts;
 pub mod parity;
 pub mod png;
 pub mod sq_json;
+pub mod upside_down;
 pub mod web_url;
 
 #[cfg(feature = "cef")]

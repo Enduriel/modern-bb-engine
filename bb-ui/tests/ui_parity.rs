@@ -1,4 +1,7 @@
-//! UI parity with the original. Eight checks on one page, in order:
+//! UI parity with the original. Nine checks on one page, in order:
+//!   * `draws_tiled_backgrounds_as_the_original`: boxes whose background image tiles
+//!     draw it upside down where the original does (`probes/background_tiles.js`), the
+//!     main menu's buttons among them, checked in a 2560x1358 window;
 //!   * `matches_the_originals_screens`: our page, driven through the main menu, the
 //!     new-campaign page and the Options screen, matches the original's snapshots
 //!     (`tests/goldens/`, captured with `probes/ui_goldens.js`) in structure, text,
@@ -37,6 +40,11 @@ const TEXT_PROBE: &str = include_str!("../probes/text_rules.js");
 const BORDER_PROBE: &str = include_str!("../probes/border_rules.js");
 const CENTRING_PROBE: &str = include_str!("../probes/centring_rules.js");
 const FAMILIES_PROBE: &str = include_str!("../probes/font_families.js");
+const TILES_PROBE: &str = include_str!("../probes/background_tiles.js");
+
+/// A window the main menu's buttons were seen misdrawn in: an odd
+/// height, where the menu is centred on a half pixel.
+const ODD_HEIGHT_WINDOW: (u32, u32) = (2560, 1358);
 
 /// The answers of `font_families.js` that we don't reproduce: a font the original's
 /// Windows doesn't have but the test machine does (Arimo, which MSU names after
@@ -125,6 +133,117 @@ fn matches_the_originals_ui_scale(session: &UiSession) -> Result<(), String> {
 /// From the main menu: starts a campaign.
 fn matches_the_originals_world(session: &UiSession) -> Result<(), String> {
 	compare_all(goldens::capture_world(session)?)
+}
+
+/// Tiled backgrounds draw upside down, as in the original (`host/tiles.js`): of the
+/// boxes on `probes/background_tiles.js`'s card, those the original drew upside down
+/// (`tests/goldens/background_tiles.json`) are marked so and no others, and a marked
+/// box paints its picture's rows in reverse. Then the main menu in that window:
+/// each button paints the gold edges of its picture (43px tall in a 46px box) where
+/// the original does, 5 and 33px below its top (its rows 37 and 9 upside down; drawn
+/// as it is, they would be 9 and 37 below).
+fn draws_tiled_backgrounds_as_the_original(session: &UiSession) -> Result<(), String> {
+	let path = goldens::default_dir().join("background_tiles.json");
+	let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+	let golden = Json::parse(&text)?;
+	let names = |key: &str| -> Result<Vec<String>, String> {
+		golden
+			.get(key)
+			.and_then(Json::as_array)
+			.map(|names| names.iter().filter_map(Json::as_str).map(str::to_string).collect())
+			.ok_or_else(|| format!("{} has no {key}", path.display()))
+	};
+	let mut differences = Vec::new();
+
+	let card = TILES_PROBE.split("BbProbe.run").next().unwrap_or_default();
+	session.eval(&format!("(function () {{ {card}\n BBTileCard.show(); return true; }})()"))?;
+	session.run_frames(1.0)?;
+	let marked = session.eval(
+		"Array.prototype.map.call(document.querySelectorAll('#bb-tile-card [data-bb-tiled]'), function (e) { return e.className.replace('bb-tile-', ''); })",
+	)?;
+	let marked: Vec<&str> = marked.as_array().unwrap_or_default().iter().filter_map(Json::as_str).collect();
+	for name in names("upside_down")? {
+		if !marked.contains(&name.as_str()) {
+			differences.push(format!("card: {name}: drawn as it is, the original draws it upside down"));
+		}
+	}
+	for name in names("as_is")? {
+		if marked.contains(&name.as_str()) {
+			differences.push(format!("card: {name}: drawn upside down, the original draws it as it is"));
+		}
+	}
+	// The menu button's picture repeated in a 46px box (`menu`) against the picture once
+	// (`norepeat`): the same 43 rows, the other way round.
+	let frame = session.host().frame().ok_or("nothing painted")?;
+	let pixel = |x: usize, y: usize| {
+		let at = (y * frame.width as usize + x) * 4;
+		frame.bgra.get(at..at + 4).map(|p| [p[0], p[1], p[2]]).unwrap_or_default()
+	};
+	let reversed = (0..43).all(|row| {
+		(100..330).all(|x| {
+			let (a, b) = (pixel(x, 100 + row), pixel(x, 210 + 42 - row));
+			a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2)
+		})
+	});
+	if !reversed {
+		differences.push("card: menu: its picture's rows aren't drawn in reverse".into());
+	}
+	session.eval("document.getElementById('bb-tile-card').remove(); document.getElementById('bb-tile-card-style').remove(); true")?;
+
+	let rows = golden
+		.get("button_gold_rows")
+		.and_then(Json::as_array)
+		.map(|rows| rows.iter().filter_map(Json::as_i64).collect::<Vec<_>>())
+		.unwrap_or_default();
+	let mode = |(width, height): (u32, u32)| {
+		session.engine().run_script(
+			&format!("local m = ::Settings.getVideoMode(); m.Width = {width}; m.Height = {height}; ::Settings.setVideoMode(m);"),
+			"video_mode",
+		)
+	};
+	mode(ODD_HEIGHT_WINDOW)?;
+	let buttons = (|| {
+		session.run_frames(2.0)?;
+		let buttons = session.eval(
+			"Array.prototype.map.call(document.querySelectorAll('.main-menu-module .ui-control'), function (e) {
+				var r = e.getBoundingClientRect();
+				return [e.textContent, Math.round(r.left + r.width / 2), Math.round(r.top), Math.round(r.height), e.hasAttribute('data-bb-tiled')];
+			})",
+		)?;
+		Ok::<_, String>((buttons, session.host().frame().ok_or("nothing painted")?))
+	})();
+	mode((2560, 1440))?;
+	session.run_frames(1.0)?;
+	let (buttons, frame) = buttons?;
+	let Some(buttons) = buttons.as_array().filter(|b| !b.is_empty()) else {
+		return Err("no main menu buttons".into());
+	};
+	if (frame.width, frame.height) != ODD_HEIGHT_WINDOW {
+		return Err(format!("the page is {}x{}, not {ODD_HEIGHT_WINDOW:?}", frame.width, frame.height));
+	}
+	for button in buttons {
+		let field = |i: usize| button.as_array().and_then(|f| f.get(i));
+		let label = field(0).and_then(Json::as_str).unwrap_or("?");
+		let number = |i: usize| field(i).and_then(Json::as_i64).unwrap_or(0) as usize;
+		let (x, top, height) = (number(1), number(2), number(3));
+		if field(4) != Some(&Json::Bool(true)) {
+			differences.push(format!("menu: {label}: not drawn upside down"));
+		}
+		// Above and below the label's glyphs, which are gold too.
+		let gold: Vec<i64> = (0..height)
+			.filter(|row| !(9..=31).contains(row))
+			.filter(|row| {
+				let at = ((top + row) * frame.width as usize + x) * 4;
+				let p = frame.bgra.get(at..at + 3).unwrap_or_default();
+				p.len() == 3 && p[2].abs_diff(202) <= 6 && p[1].abs_diff(146) <= 6 && p[0].abs_diff(29) <= 6
+			})
+			.map(|row| row as i64)
+			.collect();
+		if gold != rows {
+			differences.push(format!("menu: {label}: gold edges {gold:?} below its top, the original's {rows:?}"));
+		}
+	}
+	report(differences)
 }
 
 /// Each answer `probe` sent under `groups` against the original's (`tests/goldens/
@@ -272,7 +391,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
-	let checks: [(&str, Check); 8] = [
+	let checks: [(&str, Check); 9] = [
+		(
+			"draws_tiled_backgrounds_as_the_original",
+			draws_tiled_backgrounds_as_the_original,
+		),
 		(
 			"matches_the_originals_screens",
 			matches_the_originals_screens,

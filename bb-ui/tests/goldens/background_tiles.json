@@ -1,0 +1,50 @@
+{
+ "viewport": [
+  2560,
+  1440
+ ],
+ "upside_down": [
+  "menu",
+  "tall",
+  "natural",
+  "double",
+  "pos",
+  "bottom",
+  "padded",
+  "bordered",
+  "p-taller",
+  "p-wider",
+  "p-across",
+  "p-down",
+  "p-both",
+  "p-repeat-x",
+  "p-repeat-y",
+  "p-offset",
+  "p-natural",
+  "p-centred",
+  "p-padded",
+  "p-auto-height",
+  "q-negative",
+  "q-border-clip",
+  "q-padding-clip",
+  "q-contain",
+  "q-percent"
+ ],
+ "as_is": [
+  "norepeat",
+  "exact",
+  "p-exact",
+  "p-smaller",
+  "p-stretched",
+  "p-norepeat",
+  "p-cover",
+  "q-narrow-repeat-y",
+  "q-short-repeat-x",
+  "q-norepeat-offset",
+  "q-overhang"
+ ],
+ "button_gold_rows": [
+  5,
+  33
+ ]
+}

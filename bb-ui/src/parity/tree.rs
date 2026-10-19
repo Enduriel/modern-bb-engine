@@ -320,6 +320,15 @@ fn zoomed_pixels(value: &str, zoom: f64) -> String {
 	out
 }
 
+/// `value` with the queries asking for pictures upside down taken out of its URLs.
+fn without_upside_down(value: &str) -> String {
+	let query = crate::upside_down::QUERY;
+	value
+		.replace(&format!("?{query}&"), "?")
+		.replace(&format!("?{query}"), "")
+		.replace(&format!("&{query}"), "")
+}
+
 /// A computed `text-shadow` (`rgb(0, 0, 0) 1px 1px 1px, ...`) as `host/compat.js`'s
 /// `lighterBlurredShadows` rewrites it, an intentional divergence: each blurred shadow
 /// at twice the blur and 0.65 of its alpha.
@@ -461,6 +470,9 @@ fn same_style(
 		// Blurred ones are drawn lighter on purpose (`host/compat.js`): compared as the
 		// compatibility layer rewrites them.
 		"text-shadow" => close_numbers(&lighter_blurred_shadows(&zoomed_pixels(theirs, page_zoom)), mine),
+		// A tiled background's picture, which Coherent draws upside down, is asked for so
+		// (`host/tiles.js`).
+		"background-image" => theirs == without_upside_down(mine),
 		// A transform's translation is in pixels: it follows the box's size, which may be
 		// a pixel off (`translateY(-50%)` of an 18px or a 19px label).
 		"transform" => {
@@ -641,7 +653,7 @@ fn align(g: &[Node], o: &[Node]) -> Vec<Step> {
 mod tests {
 	use super::{
 		Difference, Snapshot, Tolerance, close_numbers, compare, lighter_blurred_shadows,
-		normalize_style, zoomed_pixels,
+		normalize_style, without_upside_down, zoomed_pixels,
 	};
 	use crate::json::Json;
 
@@ -656,6 +668,13 @@ mod tests {
 			{"tag":"div","cls":"b","text":"Hi","rect":[0,10,10,10],"style":{},"children":[]},
 			{"tag":"div","cls":"c","rect":[0,20,10,10],"style":{},"children":[]}
 		]}}"#;
+
+	#[test]
+	fn tiled_backgrounds_compare_without_the_upside_down_query() {
+		assert_eq!(without_upside_down("url(coui://gfx/a.png?bb-upside-down)"), "url(coui://gfx/a.png)");
+		assert_eq!(without_upside_down("url(coui://gfx/a.png?x=1&bb-upside-down)"), "url(coui://gfx/a.png?x=1)");
+		assert_eq!(without_upside_down("url(coui://gfx/a.png?bb-upside-down&x=1)"), "url(coui://gfx/a.png?x=1)");
+	}
 
 	#[test]
 	fn blurred_shadows_compare_as_compat_draws_them() {
