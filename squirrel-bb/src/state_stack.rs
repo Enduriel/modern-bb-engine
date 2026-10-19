@@ -47,6 +47,12 @@ struct Root {
 /// A state's per-frame hooks. Like the original, `onUpdate` and `onRender` are captured
 /// when the state is registered (replacing them on the instance later has no effect),
 /// and only a state that isn't hidden runs them (both probed 2026-10-13).
+///
+/// A child starts hidden: it updates, renders and gets input only once it `show()`s
+/// itself (vanilla's do at the end of their `init()`). In the original, `isVisible()`
+/// answers false from `RootState.add` through the state's `onInit`, and none of a
+/// steady stream of pointer moves reaches it then (probed 2026-10-19). The root is
+/// shown from the start (the original shows it before its `onInit`).
 struct FrameHook {
 	on_update: Option<SqStrongRef>,
 	on_render: Option<SqStrongRef>,
@@ -54,8 +60,9 @@ struct FrameHook {
 }
 
 impl FrameHook {
-	/// Capture `state.onUpdate` and `state.onRender`, bound to the state.
-	fn capture(vm: &SQVM, state: &SqStrongRef) -> Self {
+	/// Capture `state.onUpdate` and `state.onRender`, bound to the state, which starts
+	/// `hidden` or not.
+	fn capture(vm: &SQVM, state: &SqStrongRef, hidden: bool) -> Self {
 		let bound = |name: &str| {
 			let table = state.as_table(vm)?;
 			state.get_member::<SqStrongRef>(vm, name)?.bindenv(vm, &table)
@@ -63,7 +70,7 @@ impl FrameHook {
 		FrameHook {
 			on_update: bound("onUpdate"),
 			on_render: bound("onRender"),
-			hidden: false,
+			hidden,
 		}
 	}
 }
@@ -198,7 +205,8 @@ fn add_child(
 	let child = instantiate(vm, path)?;
 	let id = child.identity();
 	inject(machine, vm, &child);
-	let frame = FrameHook::capture(vm, &child);
+	// Hidden until it shows itself (see `FrameHook`).
+	let frame = FrameHook::capture(vm, &child, true);
 	machine.borrow_mut().children.push(Child {
 		name: name.to_string(),
 		id,
@@ -447,7 +455,7 @@ impl RootState {
 		let root = instantiate(vm, root_path)?;
 		let id = root.identity();
 		inject(&self.machine, vm, &root);
-		let frame = FrameHook::capture(vm, &root);
+		let frame = FrameHook::capture(vm, &root, false);
 		self.machine.borrow_mut().root = Some(Root {
 			id,
 			state: root.clone(),
@@ -468,6 +476,18 @@ impl RootState {
 	/// them on its next update; a host driving the boot itself calls this instead).
 	pub fn init_pending(&self, vm: &SQVM) -> Result<(), String> {
 		init_pending(&self.machine, vm)
+	}
+
+	/// Mark the child state `name` shown without running its `onShow`: for a host that
+	/// drives a state's start itself in place of the script's own `init()`, which would
+	/// end with `show()`. False if there is no such state.
+	pub fn mark_shown(&self, name: &str) -> bool {
+		let mut machine = self.machine.borrow_mut();
+		let Some(child) = machine.children.iter_mut().find(|c| c.name == name) else {
+			return false;
+		};
+		child.frame.hidden = false;
+		true
 	}
 
 	/// Set what `State.updateScene()` runs each frame (the host's scene updates).
@@ -532,7 +552,9 @@ impl RootState {
 	/// Hand a mouse event to the visible states' `onMouseInput`, the most recently added
 	/// first and the root last, until one answers true (handled). Whether the original
 	/// routes it this way among several visible states is unverified; in a battle or on
-	/// the world map only one state with input handling is visible.
+	/// the world map only one state with input handling is visible. A state added but
+	/// not shown yet gets none (see `FrameHook`): mods that hook `onMouseInput` rely on
+	/// its `init()` having run (Configurable Pause reads the player's party).
 	pub fn mouse_input(&self, vm: &SQVM, input: MouseInput) -> Result<bool, String> {
 		let listener = self.machine.borrow().mouse_listener.clone();
 		if let Some(listener) = listener {

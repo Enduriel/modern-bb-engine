@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use squirrel::{SQVM, SqArray, SqTable};
-use squirrel_bb::{LoadedScript, ModuleSystem, RootState, ScriptSource, install_natives};
+use squirrel_bb::{KeyInput, LoadedScript, ModuleSystem, MouseInput, RootState, ScriptSource, install_natives};
 
 /// A trivial in-memory [`ScriptSource`] mapping path → source text.
 struct MemSource(HashMap<String, String>);
@@ -199,5 +199,82 @@ fn background_task_runs_suspended() {
 	vm.run_script("::outside <- ::Root.isBackgroundTaskSuspended();", "after").expect("poll after");
 	assert_eq!(SqTable::root(&vm).get::<bool>("outside"), Some(false), "as it was afterwards");
 
+	root_state.clear();
+}
+
+/// A state added by the scripts starts hidden, as the original's (probed 2026-10-19:
+/// `isVisible()` is false from `RootState.add` through its `onInit`, and pointer moves
+/// don't reach it): it gets no input and runs no frames until it shows itself, which
+/// vanilla's do at the end of their `init()`. Mods hooking `onMouseInput` rely on that
+/// (Configurable Pause reads the player's party there).
+#[test]
+fn an_added_state_waits_hidden_until_it_shows() {
+	let mut m = HashMap::new();
+	m.insert(
+		"scripts/states/state".into(),
+		r#"
+		this.state <- {
+			m = {},
+			function onInit() {}
+			function onShow() { ::log.push(this.getName() + ":onShow"); }
+			function onUpdate() { ::log.push(this.getName() + ":onUpdate"); }
+			function onMouseInput( _m ) { ::log.push(this.getName() + ":mouse"); return false; }
+			function onKeyInput( _k ) { ::log.push(this.getName() + ":key"); return false; }
+		};
+		"#
+		.into(),
+	);
+	m.insert(
+		"scripts/root_state".into(),
+		r#"this.root_state <- this.inherit("scripts/states/state", { function onInit() { ::Root <- this; } });"#.into(),
+	);
+	// Its onInit doesn't show it: a later call does (as world_state's init()).
+	m.insert(
+		"scripts/states/late".into(),
+		r#"this.late <- this.inherit("scripts/states/state", { function onInit() { ::log.push("Late:onInit"); } });"#.into(),
+	);
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let modules = ModuleSystem::new(MemSource(m));
+	modules.install(&mut vm);
+	let root_state = RootState::new(modules.instantiator());
+	root_state.install(&mut vm);
+	vm.run_script("::log <- [];", "setup").expect("setup globals");
+	root_state.boot(&vm, "scripts/root_state").expect("boot");
+
+	let take = |vm: &SQVM| -> Vec<String> {
+		let log = SqTable::root(vm).get::<SqArray>("log").expect("::log").to_vec::<String>();
+		vm.run_script("::log.clear();", "clear").expect("clear the log");
+		log
+	};
+	let input = |vm: &SQVM| {
+		root_state.mouse_input(vm, MouseInput::moved(10, 20)).expect("mouse");
+		root_state.key_input(vm, KeyInput::pressed(41)).expect("key");
+	};
+
+	vm.run_script(
+		r#"::late <- ::RootState.add("Late", "scripts/states/late"); ::shownAtAdd <- ::late.isVisible();"#,
+		"add",
+	)
+	.expect("add Late");
+	assert_eq!(SqTable::root(&vm).get::<bool>("shownAtAdd"), Some(false), "hidden once added");
+	// Added, not initialized: input reaches only the root.
+	input(&vm);
+	assert_eq!(take(&vm), ["RootState:mouse", "RootState:key"]);
+
+	// Its onInit runs on the next update; still hidden, it runs no frames.
+	root_state.update(&vm).expect("update");
+	assert_eq!(take(&vm), ["Late:onInit", "RootState:onUpdate"]);
+	input(&vm);
+	assert_eq!(take(&vm), ["RootState:mouse", "RootState:key"]);
+
+	// Shown: input goes to it first, and it updates.
+	vm.run_script("::late.show();", "show").expect("show Late");
+	input(&vm);
+	root_state.update(&vm).expect("update");
+	assert_eq!(
+		take(&vm),
+		["Late:onShow", "Late:mouse", "RootState:mouse", "Late:key", "RootState:key", "RootState:onUpdate", "Late:onUpdate"]
+	);
 	root_state.clear();
 }

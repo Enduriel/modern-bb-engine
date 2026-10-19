@@ -220,7 +220,14 @@ pub fn prepare_new_campaign(engine: &GameEngine, seed: &str) -> Result<(), Strin
 	engine.run_script(&script, "world_boot")?;
 	// The new state initializes after it has been handed its settings, as in the
 	// original (its next update).
-	engine.init_pending_states()
+	engine.init_pending_states()?;
+	// Shown, as the end of its disabled `init()` would show it (without the `onShow`,
+	// whose world screen the callers bring up themselves, if at all): an added state
+	// runs its frames and gets input only once shown.
+	if !engine.root_state().mark_shown("WorldState") {
+		return Err("no WorldState to show".into());
+	}
+	Ok(())
 }
 
 /// Make the next campaigns' world map `cols` × `rows` tiles instead of vanilla's 140 × 170
