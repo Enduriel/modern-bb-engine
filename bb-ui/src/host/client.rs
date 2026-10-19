@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use cef::*;
 
 use super::ipc;
-use super::scheme::{RequestKind, Responder};
+use super::bridge_server::RequestKind;
+use super::responder::Responder;
 
 /// What the CEF threads report to the game thread.
 #[derive(Debug)]

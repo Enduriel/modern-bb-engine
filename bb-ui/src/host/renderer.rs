@@ -2,8 +2,9 @@
 //! `window.engine` into the page and runs the game's calls in it.
 //!
 //! This code runs in Chromium's renderer process (a child process re-executing the
-//! game binary), on the renderer main thread. The page's calls into the game are
-//! plain synchronous XHRs made by `bootstrap.js`; nothing here blocks.
+//! game binary), on the renderer main thread. The page's calls into the game go
+//! through `__bbRequest` ([`bridge_client`](super::bridge_client)), which blocks the
+//! page's thread until the game answers, as the original's inline calls did.
 
 use cef::*;
 
@@ -55,6 +56,7 @@ wrap_render_process_handler! {
 				return;
 			}
 			let Some(context) = context else { return };
+			super::bridge_client::install(context);
 			for (url, script) in SCRIPTS {
 				let mut retval = None;
 				let mut exception = None;

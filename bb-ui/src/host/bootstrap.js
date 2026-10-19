@@ -9,18 +9,19 @@
 //                                          listeners, so this is a no-op
 //   engine.BindingsReady()                 coherent.js asks for `_OnReady`
 //
-// Calls run inline both ways, as in the original. An `engine.call` blocks (a
-// synchronous XHR to coui://ui/__bb__/call) until the game has run it. If the game
-// calls into the page meanwhile, the answer is {"nested": entry}: the page runs the
-// entry and reports back through __bb__/resume, then keeps waiting. The final answer
+// Calls run inline both ways, as in the original. An `engine.call` blocks (a `call`
+// request through the renderer's native __bbRequest, host/bridge_client.rs) until the
+// game has run it. If the game calls into the page meanwhile, the answer is
+// {"nested": entry}: the page runs the entry and reports back in a `resume` request,
+// then keeps waiting. The final answer
 // is {"done": true, ...}. A `callSQ` result reaches its promise in a later task
 // (`_Result`), as in the original; the other calls are never answered (their promises
 // stay pending, also as in the original). A call made by one of the page's own tasks
 // (an animation frame, a timer, input), rather than from inside one of the game's
-// calls, goes to __bb__/task instead, so the game can tell the two apart.
+// calls, is a `task` request instead, so the game can tell the two apart.
 //
 // While the game runs its scripts, the page is parked: it waits the same way in a
-// request (__bb__/park) that the game answers when it's done, and the game's calls
+// `park` request that the game answers when it's done, and the game's calls
 // arrive as that request's answers. The page's own tasks then run only between the
 // game's scripts, as in the original, whose UI runs on the game's thread.
 //
@@ -32,21 +33,18 @@
 // evaluate test code, as __bbEval does.
 (function () {
 	'use strict';
-	var BRIDGE = 'coui://ui/__bb__/';
+	// The renderer's native call into the game (`host/bridge_client.rs`), taken off
+	// `window` before any page script runs.
+	var bridgeRequest = window.__bbRequest;
+	delete window.__bbRequest;
 
 	function reportError(what, e) {
 		console.error(what + ': ' + (e && e.stack ? e.stack : e));
 	}
 
-	// One blocking call into the game.
+	// One blocking call into the game. Throws if the game can't be reached.
 	function request(kind, payload) {
-		var xhr = new XMLHttpRequest();
-		xhr.open('POST', BRIDGE + kind, false);
-		xhr.send(payload);
-		if (xhr.status !== 200) {
-			throw new Error('the game did not answer (' + xhr.status + ')');
-		}
-		return JSON.parse(xhr.responseText);
+		return JSON.parse(bridgeRequest(kind, payload === undefined ? '' : String(payload)));
 	}
 
 	// A JS value as the original hands it to a script (probed): `undefined` is null,

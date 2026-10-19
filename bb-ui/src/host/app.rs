@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use cef::*;
 
+use super::bridge_client;
 use super::renderer::PageHandler;
 use super::scheme::scheme_options;
 use crate::coui::SCHEME;
@@ -86,9 +87,19 @@ fn set_preferences() {
 wrap_browser_process_handler! {
 	struct BrowserReady {
 		ready: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+		// The bridge's endpoint (`bridge_wire`), for the renderer's command line only.
+		bridge: Option<String>,
 	}
 
 	impl BrowserProcessHandler {
+		fn on_before_child_process_launch(&self, command_line: Option<&mut CommandLine>) {
+			let (Some(command_line), Some(bridge)) = (command_line, &self.bridge) else { return };
+			let kind = CefString::from(&command_line.switch_value(Some(&"type".into()))).to_string();
+			if kind == "renderer" {
+				command_line.append_switch_with_value(Some(&bridge_client::SWITCH.into()), Some(&bridge.as_str().into()));
+			}
+		}
+
 		fn on_context_initialized(&self) {
 			set_preferences();
 			if let Some(ready) = self.ready.lock().unwrap_or_else(|e| e.into_inner()).take() {
@@ -103,6 +114,7 @@ wrap_app! {
 		ready: Arc<Mutex<Option<mpsc::Sender<()>>>>,
 		// The DevTools port, if served.
 		devtools_port: Option<u16>,
+		bridge: Option<String>,
 	}
 
 	impl App {
@@ -135,7 +147,7 @@ wrap_app! {
 		}
 
 		fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
-			Some(BrowserReady::new(self.ready.clone()))
+			Some(BrowserReady::new(self.ready.clone(), self.bridge.clone()))
 		}
 
 		fn render_process_handler(&self) -> Option<RenderProcessHandler> {
@@ -148,8 +160,9 @@ wrap_app! {
 /// context is initialized.
 /// The application object; `devtools_port` for the browser process when DevTools is
 /// served (its children don't take switches from it).
-pub(super) fn host_app(ready: Option<mpsc::Sender<()>>, devtools_port: Option<u16>) -> App {
-	HostApp::new(Arc::new(Mutex::new(ready)), devtools_port)
+/// `bridge` is the bridge's endpoint, which it hands the renderer.
+pub(super) fn host_app(ready: Option<mpsc::Sender<()>>, devtools_port: Option<u16>, bridge: Option<String>) -> App {
+	HostApp::new(Arc::new(Mutex::new(ready)), devtools_port, bridge)
 }
 
 #[cfg(test)]

@@ -12,18 +12,19 @@
 //! the meantime.
 //! - Game → page: a [`ipc::CALL`] process message; the game thread waits for the reply
 //!   ([`UiHost::run`]).
-//! - Page → game: a synchronous XHR to `coui://ui/__bb__/call`, which reaches the game
-//!   thread as an [`Event::Request`]. The game runs it ([`UiHost::serve`]); if that
-//!   calls into the page, the call travels as the XHR's answer (`{"nested": entry}`)
-//!   and its result comes back as the next XHR (`__bb__/resume`), because a renderer
-//!   blocked in an XHR can't receive process messages.
+//! - Page → game: a blocking `call` on the bridge's socket ([`bridge_wire`]: a native
+//!   function of the renderer's, not a network request), which reaches the game thread
+//!   as an [`Event::Request`]. The game runs it ([`UiHost::serve`]); if that calls into
+//!   the page, the call travels as the answer (`{"nested": entry}`) and its result
+//!   comes back as the next request (`resume`), because a renderer blocked in a call
+//!   can't receive process messages.
 //!
 //! The page runs in its own process, so its own tasks (animation frames, timers,
 //! input) could run while the game runs a script, and call into the game in the middle
 //! of one of the script's calls into the page. The original can't do that: its UI runs
 //! on the game's thread, between the game's scripts. So the page is **parked** while
 //! the game runs scripts ([`UiHost::park`]): it waits in a bridge request
-//! (`__bb__/park`) that the game answers when it lets it go on, and the game's calls
+//! (`park`) that the game answers when it lets it go on, and the game's calls
 //! reach it as that request's answers, as while it waits in a call.
 //!
 //! A page that doesn't answer in time makes the call fail (and the game carry on)
@@ -31,6 +32,9 @@
 //! first thing in `main`.
 
 mod app;
+mod bridge_client;
+mod bridge_server;
+mod bridge_wire;
 mod client;
 mod fonts;
 pub mod goldens;
@@ -39,6 +43,7 @@ mod ipc;
 mod live_input;
 mod memory;
 mod renderer;
+mod responder;
 mod scheme;
 mod session;
 mod session_input;
@@ -60,7 +65,8 @@ pub use client::{Event, FrameBuffer};
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
 use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton};
-pub use scheme::{RequestKind, Responder};
+pub use bridge_server::RequestKind;
+pub use responder::Responder;
 pub use session::{LogLine, UiSession};
 pub use session_play::ProceduralRequest;
 
@@ -94,7 +100,7 @@ pub fn run_subprocess() -> Option<i32> {
 		}
 		return None;
 	}
-	let mut app = app::host_app(None, None);
+	let mut app = app::host_app(None, None, None);
 	Some(execute_process(
 		Some(args.as_main_args()),
 		Some(&mut app),
@@ -182,7 +188,9 @@ impl UiHost {
 		std::fs::create_dir_all(&config.cache_dir).map_err(|e| format!("cache dir: {e}"))?;
 		let args = Args::new();
 		let (ready_tx, ready_rx) = mpsc::channel();
-		let mut app = app::host_app(Some(ready_tx), config.devtools_port);
+		// Bound before CEF starts: the renderer is told where it is as it launches.
+		let bridge = bridge_wire::Listener::bind().map_err(|e| format!("the bridge's socket: {e}"))?;
+		let mut app = app::host_app(Some(ready_tx), config.devtools_port, Some(bridge.endpoint().to_switch()));
 
 		let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
 		let cef_dir = PathBuf::from(CEF_DIR);
@@ -222,6 +230,7 @@ impl UiHost {
 			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
 		});
+		bridge_server::start(bridge, shared.clone());
 		let mut factory = scheme::CouiFactory::new(files, shared.clone());
 		if register_scheme_handler_factory(Some(&SCHEME.into()), None, Some(&mut factory)) != 1 {
 			return Err("could not register the coui:// scheme".into());
