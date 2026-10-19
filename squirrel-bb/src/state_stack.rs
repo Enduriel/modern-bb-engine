@@ -37,11 +37,15 @@ struct Child {
 	finishing: bool,
 }
 
-/// The root state itself (the container; not one of its own children).
+/// The root state itself (the container; not one of its own children). It runs no
+/// frames: in the original its `onUpdate` and `onRender` are never called (probed
+/// 2026-10-19: hooked on root_state, neither ran once through the boot, the menu, a
+/// campaign's start and the way back to the menu).
 struct Root {
 	id: i64,
 	state: SqStrongRef,
-	frame: FrameHook,
+	/// Hidden through its `onInit`, shown from then on (see [`RootState::boot`]).
+	hidden: bool,
 }
 
 /// A state's per-frame hooks. Like the original, `onUpdate` and `onRender` are captured
@@ -51,8 +55,9 @@ struct Root {
 /// A child starts hidden: it updates, renders and gets input only once it `show()`s
 /// itself (vanilla's do at the end of their `init()`). In the original, `isVisible()`
 /// answers false from `RootState.add` through the state's `onInit`, and none of a
-/// steady stream of pointer moves reaches it then (probed 2026-10-19). The root is
-/// shown from the start (the original shows it before its `onInit`).
+/// steady stream of pointer moves reaches it then (probed 2026-10-19). The root too
+/// is hidden through its `onInit`; the engine shows it (`onShow`) right after
+/// (probed 2026-10-19, see [`RootState::boot`]).
 struct FrameHook {
 	on_update: Option<SqStrongRef>,
 	on_render: Option<SqStrongRef>,
@@ -148,7 +153,7 @@ impl Machine {
 	/// Whether the state with identity `id` is visible (not hidden).
 	fn is_visible(&self, id: i64) -> bool {
 		if let Some(root) = self.root.as_ref().filter(|r| r.id == id) {
-			return !root.frame.hidden;
+			return !root.hidden;
 		}
 		self.children.iter().find(|c| c.id == id).is_some_and(|c| !c.frame.hidden)
 	}
@@ -156,17 +161,18 @@ impl Machine {
 	/// Mark the state with identity `id` hidden or shown.
 	fn set_hidden(&mut self, id: i64, hidden: bool) {
 		if let Some(root) = self.root.as_mut().filter(|r| r.id == id) {
-			root.frame.hidden = hidden;
+			root.hidden = hidden;
 		} else if let Some(child) = self.children.iter_mut().find(|c| c.id == id) {
 			child.frame.hidden = hidden;
 		}
 	}
 
-	/// A captured hook of every visible state: the root, then the children in
-	/// registration order.
+	/// A captured hook of every visible child, in registration order (the root runs no
+	/// frames, see [`Root`]).
 	fn visible_hooks(&self, hook: fn(&FrameHook) -> Option<SqStrongRef>) -> Vec<SqStrongRef> {
-		let root = self.root.iter().map(|r| &r.frame);
-		root.chain(self.children.iter().map(|c| &c.frame))
+		self.children
+			.iter()
+			.map(|c| &c.frame)
 			.filter(|f| !f.hidden)
 			.filter_map(hook)
 			.collect()
@@ -448,21 +454,29 @@ impl RootState {
 
 	/// Create the root state at `root_path` (normally `"scripts/root_state"`), inject
 	/// the state methods, publish it as the `RootState` global, and run its `onInit`
-	/// — which builds the global UI objects and `add`s the first child state. Returns
-	/// the root. Call [`install`](Self::install) first.
+	/// — which builds the global UI objects and `add`s the first child state — then
+	/// show it (its `onShow`), as the original does: in the original's log
+	/// `RootState::onShow()` (state.nut's own `onShow`) follows the root's `onInit` at
+	/// once, and a hooked root sees `isVisible()` false in `onInit`, true in `onShow`,
+	/// both before the first update (probed 2026-10-19). Returns the root. Call
+	/// [`install`](Self::install) first.
 	pub fn boot(&self, vm: &SQVM, root_path: &str) -> Result<SqStrongRef, String> {
 		let instantiate = self.machine.borrow().instantiate.clone();
 		let root = instantiate(vm, root_path)?;
 		let id = root.identity();
 		inject(&self.machine, vm, &root);
-		let frame = FrameHook::capture(vm, &root, false);
 		self.machine.borrow_mut().root = Some(Root {
 			id,
 			state: root.clone(),
-			frame,
+			hidden: true,
 		});
 		SqTable::root(vm).set("RootState", root.clone());
 		root.call_method(vm, "onInit", ())?;
+		// Then the root is shown, at once: its `onShow` runs right after its `onInit`
+		// returns, before the first update (and so before the `onInit` of the states it
+		// added). Hidden during its `onInit` (`isVisible()` false), shown from then on.
+		self.machine.borrow_mut().set_hidden(id, false);
+		root.call_method(vm, "onShow", ())?;
 		// MapGen exists now: the world generator follows the size settings.
 		crate::native::world_size::follow_settings(vm)?;
 		// The engine's first update would run the states the root added.
@@ -506,19 +520,13 @@ impl RootState {
 		self.machine.borrow_mut().mouse_listener = Some(Rc::new(listener));
 	}
 
-	/// One frame's update pass, as the original's: the root's `onUpdate`, then each
-	/// child in registration order. A child runs its `onUpdate` (if visible) unless it
-	/// is finishing; then, if it is finishing (even by its own update), its `onFinish`
-	/// runs and it leaves the list. States added during the pass wait for the next one.
+	/// One frame's update pass, as the original's: each child in registration order (the
+	/// root runs no `onUpdate`, see [`Root`]). A child runs its `onUpdate` (if visible)
+	/// unless it is finishing; then, if it is finishing (even by its own update), its
+	/// `onFinish` runs and it leaves the list. States added during the pass wait for the
+	/// next one.
 	pub fn update(&self, vm: &SQVM) -> Result<(), String> {
 		init_pending(&self.machine, vm)?;
-		let root_update = {
-			let m = self.machine.borrow();
-			m.root.as_ref().filter(|r| !r.frame.hidden).and_then(|r| r.frame.on_update.clone())
-		};
-		if let Some(on_update) = root_update {
-			on_update.call(vm, ())?;
-		}
 		let ids: Vec<i64> = self.machine.borrow().children.iter().map(|c| c.id).collect();
 		for id in ids {
 			let hook = {
@@ -540,7 +548,7 @@ impl RootState {
 		Ok(())
 	}
 
-	/// Run `onRender` on every visible state, as the original does after the updates.
+	/// Run `onRender` on every visible child, as the original does after the updates.
 	pub fn render(&self, vm: &SQVM) -> Result<(), String> {
 		let renders = self.machine.borrow().visible_hooks(|f| f.on_render.clone());
 		for on_render in renders {
@@ -580,7 +588,7 @@ impl RootState {
 		let targets: Vec<SqStrongRef> = {
 			let m = self.machine.borrow();
 			let children = m.children.iter().rev().filter(|c| !c.frame.hidden).map(|c| c.state.clone());
-			children.chain(m.root.iter().filter(|r| !r.frame.hidden).map(|r| r.state.clone())).collect()
+			children.chain(m.root.iter().filter(|r| !r.hidden).map(|r| r.state.clone())).collect()
 		};
 		for state in targets {
 			if state.call_method_ret::<bool, _>(vm, method, (event.clone(),))?.unwrap_or(false) {

@@ -98,7 +98,8 @@ fn boots_root_adds_children_and_runs_the_sibling_bus() {
 	assert!(root_state.root().is_some());
 	assert!(root_state.state("MenuA").is_some());
 
-	// The full lifecycle ran: root.onInit → add MenuA (onInit→self show) → add MenuB
+	// The full lifecycle ran: root.onInit (adds both) → root shown (onShow, as the
+	// original's, before the children initialize) → MenuA (onInit→self show) → MenuB
 	// (onInit → message siblings → MenuA receives it). getName works throughout
 	// (the names in the log come from the injected getName).
 	let log: Vec<String> = SqTable::root(&vm)
@@ -109,6 +110,7 @@ fn boots_root_adds_children_and_runs_the_sibling_bus() {
 		log,
 		[
 			"RootState:onInit",
+			"RootState:onShow",
 			"MenuA:onInit",
 			"MenuA:onShow",
 			"MenuB:onInit",
@@ -247,6 +249,7 @@ fn an_added_state_waits_hidden_until_it_shows() {
 		vm.run_script("::log.clear();", "clear").expect("clear the log");
 		log
 	};
+	assert_eq!(take(&vm), ["RootState:onShow"], "the boot");
 	let input = |vm: &SQVM| {
 		root_state.mouse_input(vm, MouseInput::moved(10, 20)).expect("mouse");
 		root_state.key_input(vm, KeyInput::pressed(41)).expect("key");
@@ -262,9 +265,10 @@ fn an_added_state_waits_hidden_until_it_shows() {
 	input(&vm);
 	assert_eq!(take(&vm), ["RootState:mouse", "RootState:key"]);
 
-	// Its onInit runs on the next update; still hidden, it runs no frames.
+	// Its onInit runs on the next update; still hidden, it runs no frames (nor does the
+	// root, ever).
 	root_state.update(&vm).expect("update");
-	assert_eq!(take(&vm), ["Late:onInit", "RootState:onUpdate"]);
+	assert_eq!(take(&vm), ["Late:onInit"]);
 	input(&vm);
 	assert_eq!(take(&vm), ["RootState:mouse", "RootState:key"]);
 
@@ -274,7 +278,66 @@ fn an_added_state_waits_hidden_until_it_shows() {
 	root_state.update(&vm).expect("update");
 	assert_eq!(
 		take(&vm),
-		["Late:onShow", "Late:mouse", "RootState:mouse", "Late:key", "RootState:key", "RootState:onUpdate", "Late:onUpdate"]
+		["Late:onShow", "Late:mouse", "RootState:mouse", "Late:key", "RootState:key", "Late:onUpdate"]
+	);
+	root_state.clear();
+}
+
+/// The root's own lifecycle at boot, as the original's (probed 2026-10-19, hooks on
+/// root_state through Modern Hooks): `onInit` with the root hidden (`isVisible()`
+/// false), then at once `onShow` with it shown, before the first update and so before
+/// the `onInit` of the state it added. It never runs `onUpdate` or `onRender` (neither
+/// ran once in the original through the boot, the menu, a campaign's start and the way
+/// back to the menu), and nothing shows it again later.
+#[test]
+fn the_root_shows_after_its_init_and_runs_no_frames() {
+	let mut m = HashMap::new();
+	m.insert(
+		"scripts/states/state".into(),
+		r#"
+		this.state <- {
+			m = {},
+			function onInit() {}
+			function onShow() { ::log.push(this.getName() + ":onShow visible=" + this.isVisible()); }
+			function onUpdate() { ::log.push(this.getName() + ":onUpdate"); }
+			function onRender() { ::log.push(this.getName() + ":onRender"); }
+		};
+		"#
+		.into(),
+	);
+	m.insert(
+		"scripts/root_state".into(),
+		r#"this.root_state <- this.inherit("scripts/states/state", { function onInit() {
+			::log.push("RootState:onInit visible=" + this.isVisible());
+			this.add("Menu", "scripts/states/menu");
+		} });"#
+			.into(),
+	);
+	m.insert(
+		"scripts/states/menu".into(),
+		r#"this.menu <- this.inherit("scripts/states/state", { function onInit() { ::log.push("Menu:onInit"); this.show(); } });"#.into(),
+	);
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let modules = ModuleSystem::new(MemSource(m));
+	modules.install(&mut vm);
+	let root_state = RootState::new(modules.instantiator());
+	root_state.install(&mut vm);
+	vm.run_script("::log <- [];", "setup").expect("setup globals");
+	root_state.boot(&vm, "scripts/root_state").expect("boot");
+	root_state.update(&vm).expect("update");
+	root_state.render(&vm).expect("render");
+	let log = SqTable::root(&vm).get::<SqArray>("log").expect("::log").to_vec::<String>();
+	assert_eq!(
+		log,
+		[
+			"RootState:onInit visible=false",
+			"RootState:onShow visible=true",
+			"Menu:onInit",
+			"Menu:onShow visible=true",
+			"Menu:onUpdate",
+			"Menu:onRender",
+		]
 	);
 	root_state.clear();
 }
