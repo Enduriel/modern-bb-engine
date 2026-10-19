@@ -33,6 +33,7 @@ pub(crate) mod original_world;
 mod overload;
 pub(crate) mod particles;
 mod platform;
+pub mod user_stats;
 mod mt64;
 pub(crate) mod prng;
 mod screen;
@@ -223,7 +224,8 @@ impl NativeConfig {
 		math::install(vm, prng);
 		// The texts' random choices have a stream of their own, as the original's.
 		strings::install(vm, self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ TEXT_SEED)));
-		platform::install(vm, self);
+		let user_stats = user_stats::UserStatsHandle::default();
+		platform::install(vm, self, &user_stats);
 		let engine_rng = self.engine_seed.map_or_else(EngineRng::unseeded, EngineRng::seeded);
 		let sprites = brushes::install(vm, crt.clone());
 		let bird_rng = self.engine_seed.map_or_else(EngineRng::unseeded, |s| EngineRng::seeded(s ^ BIRD_SEED));
@@ -233,7 +235,7 @@ impl NativeConfig {
 		execute::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_camera_callbacks, world_particles, tactical, sprites, engine_rng, video }
+		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_camera_callbacks, world_particles, tactical, sprites, engine_rng, video, user_stats }
 	}
 }
 
@@ -252,6 +254,8 @@ pub struct InstalledNatives {
 	pub(crate) sprites: Sprites,
 	pub(crate) engine_rng: EngineRng,
 	pub(crate) video: VideoSettings,
+	/// The achievements' and stats' service (no VM handles).
+	pub(crate) user_stats: user_stats::UserStatsHandle,
 }
 
 /// Install all native globals with the [default](NativeConfig::default) config.

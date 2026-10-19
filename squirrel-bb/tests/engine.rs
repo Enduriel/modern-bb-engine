@@ -86,3 +86,73 @@ fn engine_accessors_and_run_script() {
 	assert_eq!(answer, Some(42));
 	assert!(engine.root_state().root().is_none(), "not booted yet");
 }
+
+/// A fake Steam behind the engine's achievement and stat natives: the scripts' calls
+/// reach the service the host set, in the original's order (never the real Steam).
+#[test]
+fn achievement_natives_call_the_hosts_service() {
+	use std::cell::RefCell;
+	use std::rc::Rc;
+	use squirrel_bb::UserStats;
+
+	#[derive(Default)]
+	struct Fake(RefCell<Vec<String>>);
+	impl UserStats for Fake {
+		fn achievement(&self, id: &str) -> Option<bool> {
+			self.0.borrow_mut().push(format!("GetAchievement {id}"));
+			Some(id == "FieldHospital")
+		}
+		fn set_achievement(&self, id: &str) -> bool {
+			self.0.borrow_mut().push(format!("SetAchievement {id}"));
+			true
+		}
+		fn stat(&self, name: &str) -> Option<i32> {
+			self.0.borrow_mut().push(format!("GetStat {name}"));
+			(name == "NeverGiveUp_s").then_some(4)
+		}
+		fn set_stat(&self, name: &str, value: i32) -> bool {
+			self.0.borrow_mut().push(format!("SetStat {name} {value}"));
+			true
+		}
+		fn store(&self) -> bool {
+			self.0.borrow_mut().push("StoreStats".into());
+			true
+		}
+	}
+
+	let engine = Engine::new(sources());
+	let fake = Rc::new(Fake::default());
+	engine.user_stats().set(fake.clone());
+	engine
+		.run_script(
+			r#"
+				assert(hasAchievement("FieldHospital") == true);
+				assert(hasAchievement("Kingmaker") == false);
+				updateAchievement("Kingmaker", 1, 1);
+				updateAchievement("NeverGiveUp", 1, 10);
+				assert(getPersistentStat("CrisesDefeatedOnIronman") == 0);
+				setPersistentStat("CrisesDefeatedOnIronman", 3);
+				storeStatistics();
+			"#,
+			"achievements",
+		)
+		.expect("the natives run");
+	assert_eq!(
+		*fake.0.borrow(),
+		[
+			"GetAchievement FieldHospital",
+			"GetAchievement Kingmaker",
+			"GetAchievement Kingmaker",
+			"SetAchievement Kingmaker",
+			"StoreStats",
+			"GetAchievement NeverGiveUp",
+			"GetStat NeverGiveUp_s",
+			"SetStat NeverGiveUp_s 5",
+			"StoreStats",
+			"GetStat CrisesDefeatedOnIronman",
+			"SetStat CrisesDefeatedOnIronman 3",
+			"StoreStats",
+			"StoreStats",
+		]
+	);
+}

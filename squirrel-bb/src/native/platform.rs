@@ -3,22 +3,18 @@
 //!
 //! Behavior comes from the host-supplied [`NativeConfig`](super::NativeConfig):
 //! the build-flag predicates and `hasDLC` (which gate content loading) reflect its
-//! fields, while achievements are no-ops and persistent stats are an in-memory
-//! map. Standard base-lib functions (`collectgarbage`/`dummy`/`enabledebuginfo`/
+//! fields. Achievements and persistent stats go to the host's [`UserStats`] service
+//! (see [`super::user_stats`]). Standard base-lib functions (`collectgarbage`/`dummy`/`enabledebuginfo`/
 //! `resurrectunreachable`) already come from the VM and are not redefined here.
-
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 
 use squirrel::{SQVM, SqRef, SqStrongRef, SqTable, Variadic};
 
 use super::NativeConfig;
+use super::user_stats::UserStatsHandle;
 
-/// Register the platform/misc natives and the `GameInfo` table into the root.
-pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
-	// In-memory persistent stats (vanilla only uses the key 'CrisesDefeatedOnIronman').
-	let stats: Rc<RefCell<HashMap<String, i64>>> = Rc::new(RefCell::new(HashMap::new()));
+/// Register the platform/misc natives and the `GameInfo` table into the root. The
+/// achievement and stat natives call `user_stats`' service.
+pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig, user_stats: &UserStatsHandle) {
 
 	// Copy/clone the config values the 'static closures need.
 	let is_steam = config.is_steam_build;
@@ -31,18 +27,8 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 	let company = config.company.clone();
 
 	// All `make_closure` calls precede the table handles (mutable vs shared borrow).
-	let set_stat = {
-		let stats = stats.clone();
-		vm.make_closure(move |key: String, value: i64| {
-			stats.borrow_mut().insert(key, value);
-		})
-	};
-	let get_stat = {
-		let stats = stats.clone();
-		vm.make_closure(move |key: &str| -> i64 { stats.borrow().get(key).copied().unwrap_or(0) })
-	};
-
-	let root_fns: Vec<(&str, SqStrongRef)> = vec![
+	let mut root_fns: Vec<(&str, SqStrongRef)> = super::user_stats::install(vm, user_stats);
+	root_fns.extend([
 		("isSteamBuild", vm.make_closure(move || is_steam)),
 		("isDevmode", vm.make_closure(move || is_devmode)),
 		("isReleaseBuild", vm.make_closure(move || is_release)),
@@ -51,15 +37,6 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 			"hasDLC",
 			vm.make_closure(move |app_id: i64| owned_dlc.contains(&app_id)),
 		),
-		("hasAchievement", vm.make_closure(|_id: &str| {
-			super::stubs::note("hasAchievement");
-			false
-		})),
-		(
-			"updateAchievement",
-			vm.make_closure(|_id: &str, _value: i64, _max: i64| super::stubs::note("updateAchievement")),
-		),
-		("storeStatistics", super::stubs::closure(vm, "storeStatistics")),
 		("__ping", vm.make_closure(|| {})),
 		("isModified", vm.make_closure(|| {
 			super::stubs::note("isModified");
@@ -71,9 +48,7 @@ pub(crate) fn install(vm: &mut SQVM, config: &NativeConfig) {
 		// `crash` is a debug tool that takes any argument(s); a no-op here.
 		("crash", vm.make_closure(|_args: Variadic<SqRef>| {})),
 		("reloadTextures", super::stubs::closure(vm, "reloadTextures")),
-		("setPersistentStat", set_stat),
-		("getPersistentStat", get_stat),
-	];
+	]);
 
 	let game_info_fns: Vec<(&str, SqStrongRef)> = vec![
 		(

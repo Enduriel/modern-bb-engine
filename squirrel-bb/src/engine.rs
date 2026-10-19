@@ -69,6 +69,8 @@ pub struct Engine<S: ScriptSource> {
 	world_particles: crate::native::particles::ParticlesHandle,
 	tactical_particles: crate::native::particles::ParticlesHandle,
 	battle_effects: crate::native::battle_effects::BattleEffectsHandle,
+	/// The achievements' and stats' service (no VM handles).
+	user_stats: crate::native::user_stats::UserStatsHandle,
 	/// The game's sound (no VM handles).
 	audio: crate::native::audio::Audio,
 	/// The keys the host reported, dispatched each frame (see [`crate::key_queue`]).
@@ -238,6 +240,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			world_particles: natives.world_particles.clone(),
 			tactical_particles: natives.tactical.particles.clone(),
 			battle_effects: natives.tactical.effects.clone(),
+			user_stats: natives.user_stats.clone(),
 			audio,
 			keys: Default::default(),
 			ui_cursor,
@@ -274,6 +277,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn stub_calls(&self) -> Vec<(String, u64)> {
 		crate::native::stubs::calls()
 	}
+	/// The achievements' and stats' service the natives call: the host sets Steam's
+	/// there (the default, [`OfflineStats`](crate::native::user_stats::OfflineStats),
+	/// unlocks nothing).
+	pub fn user_stats(&self) -> &crate::native::user_stats::UserStatsHandle {
+		&self.user_stats
+	}
+
 	/// The game's sound: give it an output with [`Audio::set_out`](crate::Audio::set_out)
 	/// (the default is silent).
 	pub fn audio(&self) -> &crate::native::audio::Audio {
