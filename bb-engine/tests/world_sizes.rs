@@ -3,8 +3,8 @@
 //! campaign on a smaller (140 × 140) and a larger (280 × 280) map than vanilla's: worldgen
 //! makes the map asked for, the fog of war mask keeps vanilla's texel size (2048² up to
 //! the vanilla map, 4096² at twice its width), the world runs, and the campaign saves and
-//! loads in our format. Asked for the original's format, the larger map, which the
-//! original's format can't describe, is saved in ours (the smaller one in the original's).
+//! loads in our format. In the original's format (the default) both save and load too;
+//! the larger map, which the original can't run, is marked so its load menu refuses it.
 //! Vanilla's own 140 × 170 stays seed-exact (`world_boot`). Skips without the Steam
 //! install.
 
@@ -53,6 +53,7 @@ fn campaign_on(cols: i64, rows: i64, mask: u32) {
 	let before = player::eval_string(&engine, WORLD).unwrap().unwrap();
 
 	// Our format, and back.
+	engine.saves().set_format(SaveFormat::Own);
 	engine.run_script("::World.State.saveCampaign(\"sized\");", "save").unwrap();
 	assert!(std::fs::read(dir.join("sized.sav")).unwrap().starts_with(OWN_MAGIC));
 	frames(&engine, 300);
@@ -61,15 +62,21 @@ fn campaign_on(cols: i64, rows: i64, mask: u32) {
 	let patch = engine.world_grid().take_fog_patch().expect("the loaded fog mask");
 	assert_eq!(patch.mask, mask, "the loaded mask keeps its size");
 
-	// The original's format: only for a map the original makes.
+	// The original's format; past its map size, with the version's over-limit bit.
 	engine.saves().set_format(SaveFormat::Original);
 	engine.run_script("::World.State.saveCampaign(\"sized_original\");", "save").unwrap();
-	let original = !std::fs::read(dir.join("sized_original.sav")).unwrap().starts_with(OWN_MAGIC);
-	assert_eq!(original, cols <= 140 && rows <= 170, "{cols} x {rows}: written in the original's format?");
+	let bytes = std::fs::read(dir.join("sized_original.sav")).unwrap();
+	assert!(bytes.starts_with(&[0xbb, 0, 2]), "{cols} x {rows}: the original's container");
+	let version = u32::from_le_bytes(bytes[3..7].try_into().unwrap());
+	let over = cols > 140 || rows > 170;
+	assert_eq!(version, if over { 0x0100_0000 | 65 } else { 65 }, "{cols} x {rows}: the version");
 	frames(&engine, 300);
 	engine.run_script("::World.State.loadCampaign(\"sized_original\");", "load").unwrap();
 	let loaded = player::eval_string(&engine, WORLD).unwrap().unwrap();
 	assert!(loaded.starts_with(&format!("{cols}x{rows} ")), "loaded again: {loaded}");
+	// The scripts see the version they wrote, the bit cleared.
+	let meta = "(function() { foreach (m in ::PersistenceManager.queryStorages()) if (m.getFileName() == \"sized_original\") return m.getVersion(); })()";
+	assert_eq!(player::eval_i64(&engine, meta).unwrap(), Some(65));
 	frames(&engine, 60);
 	let _ = std::fs::remove_dir_all(&dir);
 }

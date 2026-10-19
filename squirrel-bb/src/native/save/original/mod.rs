@@ -23,9 +23,15 @@
 //! through the engine's [`OriginalWorld`](world::OriginalWorld).
 
 /// The largest world map the original's engine makes: `World.resizeScene` (`0x4efac0`)
-/// clamps the scene to 140 columns and 170 rows (with the desert DLC). Its format can't
-/// describe a larger map (the variable world size), whose saves stay in our own.
+/// clamps the scene to 140 columns and 170 rows (with the desert DLC). The layout holds a
+/// larger map (the variable world size), which the original can't run.
 pub(crate) const MAX_MAP: (i64, i64) = (140, 170);
+
+/// Set in the header's version of a save the original can't run (a map past
+/// [`MAX_MAP`]): its load menu lists any version above its own as "Incompatible Version"
+/// and won't load it (probed 2026-10-19). A high bit rather than the next version, so a
+/// later version of the original can't be taken for it; a load here clears it.
+pub(crate) const OVER_LIMIT: i64 = 0x0100_0000;
 
 pub(crate) mod camera;
 pub mod compare;

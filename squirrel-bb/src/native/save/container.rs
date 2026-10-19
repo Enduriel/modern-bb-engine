@@ -68,7 +68,7 @@ pub(crate) fn decode(bytes: Vec<u8>, file_name: &str) -> Result<(Meta, SaveReade
 		return Err(format!("{file_name}: the save's metadata doesn't end where it should"));
 	}
 	let meta = Meta {
-		version: version.into(),
+		version: i64::from(version) & !super::original::OVER_LIMIT,
 		name,
 		file_name: file_name.to_string(),
 		created,

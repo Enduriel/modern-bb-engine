@@ -1,6 +1,8 @@
-//! Saving and loading a campaign, in this engine's own format: `World.save`,
-//! `World.load`, the four save callbacks the world state registers, and the
-//! `PersistenceManager` the save/load menus use.
+//! Saving and loading a campaign: `World.save`, `World.load`, the four save callbacks
+//! the world state registers, and the `PersistenceManager` the save/load menus use.
+//! Campaigns save in the original's format ([`original`]), followed by this engine's
+//! [`extension`] when it has anything to add; saves of this engine's earlier format
+//! still load.
 //!
 //! A save runs like the original's (load order probed 2026-10-13):
 //!
@@ -19,6 +21,7 @@
 //! later importer of the original's save files.
 
 mod container;
+mod extension;
 mod meta;
 pub(crate) use meta::format_float as meta_format_float;
 pub mod original;
@@ -27,6 +30,7 @@ mod storage;
 pub(crate) mod stream;
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -56,6 +60,19 @@ pub(crate) trait SavePart {
 	fn load(&self, cx: &LoadCx) -> Result<(), String>;
 }
 
+/// One named section of the engine's extension of the original's save (see
+/// [`extension`]): state beyond the original's, such as a native mod's.
+pub trait ExtensionSection {
+	/// The section's name, unique among sections (e.g. `"engine.factions"`, a mod's id).
+	fn name(&self) -> &str;
+	/// The section's bytes for a save, or `None` to leave it out.
+	fn save(&self, vm: &SQVM) -> Result<Option<Vec<u8>>, String>;
+	/// After a campaign loaded: the section's bytes, or `None` when the save has none (it
+	/// was written without it, or the original saved the campaign again and dropped the
+	/// extension).
+	fn load(&self, vm: &SQVM, bytes: Option<&[u8]>) -> Result<(), String>;
+}
+
 /// The callbacks `World.setOn*Callback` registers.
 #[derive(Default)]
 struct Callbacks {
@@ -68,6 +85,11 @@ struct Callbacks {
 struct Inner {
 	storage: RefCell<Storage>,
 	parts: RefCell<Vec<Rc<dyn SavePart>>>,
+	/// The extension's sections, by name.
+	sections: RefCell<BTreeMap<String, Rc<dyn ExtensionSection>>>,
+	/// The last loaded save's sections that no [`ExtensionSection`] here owns: written
+	/// back as they were.
+	kept: RefCell<BTreeMap<String, Vec<u8>>>,
 	/// The engine's parts for the original's layout (see [`original`]).
 	original: RefCell<Option<Rc<dyn original::world::OriginalWorld>>>,
 	/// The format campaigns are saved in.
@@ -88,9 +110,10 @@ struct Inner {
 /// The format campaigns are saved in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveFormat {
-	/// This engine's own.
+	/// This engine's own earlier format.
 	Own,
-	/// The original's: its container and its layout, which the original game loads.
+	/// The original's: its container and its layout, which the original game loads,
+	/// followed by this engine's extension when there's anything to put in it.
 	Original,
 }
 
@@ -128,24 +151,13 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 	}));
 	// As the original's World.save, before onBeforeSave (`0x4f46e5`).
 	meta.borrow_mut().set_int("modified".to_string(), i64::from(inner.modified.get()));
-	let mut original = inner.format.get() == SaveFormat::Original;
-	if let Some(world) = inner.original.borrow().as_ref().filter(|_| original) {
+	let original = inner.format.get() == SaveFormat::Original;
+	// A world map past the original's clamp saves in the same layout, marked so the
+	// original refuses it (see [`original::OVER_LIMIT`]).
+	let over_limit = inner.original.borrow().as_ref().is_some_and(|world| {
 		let (w, h) = world.map_size();
-		if w > original::MAX_MAP.0 || h > original::MAX_MAP.1 {
-			// The original's engine makes no map past its clamp, so its format can't
-			// hold one: this engine's own format it is.
-			let warning = format!(
-				"Saving \"{file}\": a {w} x {h} world map is larger than the original's engine makes \
-				 ({} x {}), so it is saved in this engine's own format",
-				original::MAX_MAP.0,
-				original::MAX_MAP.1
-			);
-			if let Some(log) = squirrel::SqTable::root(vm).get::<SqStrongRef>("logWarning") {
-				log.call(vm, (warning,))?;
-			}
-			original = false;
-		}
-	}
+		w > original::MAX_MAP.0 || h > original::MAX_MAP.1
+	});
 	let writer = Rc::new(RefCell::new(SaveWriter {
 		strings: if original { stream::StrLen::U16 } else { stream::StrLen::U32 },
 		..SaveWriter::default()
@@ -158,6 +170,13 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 		let after = inner.callbacks.borrow().save.clone();
 		let cx = SaveCx { vm, writer: writer.clone(), stream: stream.clone() };
 		original::export::save(world.as_ref(), &cx, after)?;
+		if over_limit {
+			meta.borrow_mut().version |= original::OVER_LIMIT;
+		}
+		let sections = extension_sections(inner, vm)?;
+		if !sections.is_empty() {
+			writer.borrow_mut().buf.extend_from_slice(&extension::encode(&sections));
+		}
 		let bytes = container::encode(&meta.borrow(), &writer.borrow().buf);
 		return inner.storage.borrow().write(&file, bytes);
 	}
@@ -176,6 +195,38 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 	inner.storage.borrow().write(&file, bytes)
 }
 
+/// Log `message` as the scripts' `logWarning` does.
+fn warn(vm: &SQVM, message: &str) {
+	if let Some(log) = SqTable::root(vm).get::<SqStrongRef>("logWarning") {
+		let _ = log.call(vm, (message.to_string(),));
+	}
+}
+
+/// The extension's sections for a save: each owner's, and those kept from the last load
+/// that nothing here owns.
+fn extension_sections(inner: &Inner, vm: &SQVM) -> Result<BTreeMap<String, Vec<u8>>, String> {
+	let mut out = inner.kept.borrow().clone();
+	let sections: Vec<_> = inner.sections.borrow().values().cloned().collect();
+	for section in sections {
+		out.remove(section.name());
+		if let Some(bytes) = section.save(vm)? {
+			out.insert(section.name().to_string(), bytes);
+		}
+	}
+	Ok(out)
+}
+
+/// Hand each owner its section (or `None`), and keep the sections nothing owns.
+fn load_extension(inner: &Inner, vm: &SQVM, mut found: BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+	let sections: Vec<_> = inner.sections.borrow().values().cloned().collect();
+	for section in &sections {
+		section.load(vm, found.get(section.name()).map(Vec::as_slice))?;
+		found.remove(section.name());
+	}
+	*inner.kept.borrow_mut() = found;
+	Ok(())
+}
+
 /// Read the campaign back from save `file`, in the order it was written.
 fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String) -> Result<(), String> {
 	let bytes = inner.storage.borrow().read(&file)?;
@@ -190,7 +241,13 @@ fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 			let c = inner.callbacks.borrow();
 			(c.before_load.clone(), c.load.clone())
 		};
-		return original::import::load(world.as_ref(), &cx, version, before, after);
+		original::import::load(world.as_ref(), &cx, version, before, after)?;
+		let found = extension::decode(cx.reader.borrow().rest()).unwrap_or_else(|e| {
+			// The original loads the save regardless; so does this engine.
+			warn(vm, &format!("Loading \"{file}\": {e}; the extension is ignored"));
+			BTreeMap::new()
+		});
+		return load_extension(inner, vm, found);
 	}
 	let before = inner.callbacks.borrow().before_load.clone();
 	run_callback(vm, before, &stream)?;
@@ -214,8 +271,10 @@ impl SaveSystem {
 			inner: Rc::new(Inner {
 				storage: RefCell::new(Storage::Memory(RefCell::default())),
 				parts: RefCell::default(),
+				sections: RefCell::default(),
+				kept: RefCell::default(),
 				original: RefCell::default(),
-				format: Cell::new(SaveFormat::Own),
+				format: Cell::new(SaveFormat::Original),
 				modified: Cell::new(false),
 				callbacks: RefCell::default(),
 				classes: RefCell::default(),
@@ -260,7 +319,7 @@ impl SaveSystem {
 		self.inner.modified.set(modified);
 	}
 
-	/// Save campaigns in `format` (this engine's own unless set). Saves of either format
+	/// Save campaigns in `format` (the original's unless set). Saves of either format
 	/// load.
 	pub fn set_format(&self, format: SaveFormat) {
 		self.inner.format.set(format);
@@ -269,6 +328,12 @@ impl SaveSystem {
 	/// The engine's parts for loading (and writing) the original's layout.
 	pub(crate) fn set_original_world(&self, world: Rc<dyn original::world::OriginalWorld>) {
 		*self.inner.original.borrow_mut() = Some(world);
+	}
+
+	/// Add a section to the extension of the original's save. A section of the same name
+	/// replaces the earlier one.
+	pub fn add_extension_section(&self, section: Rc<dyn ExtensionSection>) {
+		self.inner.sections.borrow_mut().insert(section.name().to_string(), section);
 	}
 
 	/// Add an engine part; parts save and load in the order they were added.
@@ -365,6 +430,7 @@ impl SaveSystem {
 		*self.inner.callbacks.borrow_mut() = Callbacks::default();
 		*self.inner.classes.borrow_mut() = None;
 		self.inner.parts.borrow_mut().clear();
+		self.inner.sections.borrow_mut().clear();
 		*self.inner.original.borrow_mut() = None;
 	}
 }

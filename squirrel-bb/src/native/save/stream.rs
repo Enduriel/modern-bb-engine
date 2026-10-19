@@ -92,6 +92,11 @@ impl SaveReader {
 		self.pos
 	}
 
+	/// Everything not read yet.
+	pub fn rest(&self) -> &[u8] {
+		self.buf.get(self.pos..).unwrap_or_default()
+	}
+
 	/// The next `n` bytes, as they are.
 	pub fn raw(&mut self, n: usize) -> Result<&[u8], String> {
 		let end = self.pos.checked_add(n).ok_or("save data ends early")?;
