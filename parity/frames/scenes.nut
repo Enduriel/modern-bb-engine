@@ -172,6 +172,14 @@ local function showPath( _tile )
 	{
 		// Time runs fast until night falls ("nightFell"), again whenever something (the
 		// world's auto-pause after leaving a town) stops it.
+		// Hours of waiting on the open map: a hostile party could catch the company
+		// (barbarians did, once in a few runs: how many frames the steps before take
+		// follows the page's wall-clock animations, so where the world's parties are by
+		// now varies). Its combat dialog would hold the wait (a menu up, time all but
+		// stopped). As vanilla's contracts keep a party out of the AI's fights, the
+		// company is no one's target until night has fallen.
+		player.setAttackableByAI(false);
+
 		if (::World.getSpeedMult() != 8.0)
 		{
 			state.setAutoPause(false);
@@ -182,9 +190,7 @@ local function showPath( _tile )
 		if (_scene == "nightFell")
 		{
 			// Every 40th poll (20 s of game time where frame_scenes polls), how far the
-			// day has come and what could hold it: night has sometimes not fallen within
-			// the wait under load, cause not yet caught (runs that pass reach it in
-			// 80-100 s of 180).
+			// day has come and what could hold it (runs reach night in 80-100 s of 180).
 			if (!("probeNightPolls" in ::getroottable()))
 			{
 				::probeNightPolls <- 0;
@@ -202,6 +208,7 @@ local function showPath( _tile )
 	}
 	else if (_scene == "nightFell")
 	{
+		player.setAttackableByAI(true);
 		state.setPause(true);
 		::World.setSpeedMult(1.0);
 		::World.getCamera().Zoom = 1.0;
