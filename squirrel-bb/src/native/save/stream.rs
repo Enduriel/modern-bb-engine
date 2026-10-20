@@ -10,14 +10,14 @@
 //! The arguments convert as the original's Sqrat bindings convert them, never raising
 //! (disassembled 2026-10-20): a string parameter takes any value's `tostring()` text up
 //! to its first zero byte (`writeString(array)`, which mod_stronghold does, writes
-//! `"(array : 0x…)"`; null writes `"null"`), a bool parameter any value's truth
-//! (`sq_tobool`), a number parameter a float truncated and any other value as 0 (the
-//! original reads uninitialised memory there; see `SQVM::get_int_lenient`).
+//! `"(array : 0x…)"`; null writes `"(null : 0x00000000)"`), a bool parameter any value's truth
+//! (`sq_tobool`), a number parameter a float truncated as a 32-bit integer and any other
+//! value as 0 (probed 2026-10-20: the original's stream writes 0 too).
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqBytes, SqClass, SqStrongRef, Stringified, Truthy, Variadic};
+use squirrel::{ClassBuilder, DynNumber, Number, Retained, SQVM, SqBytes, SqClass, SqStrongRef, Stringified, Truthy, Variadic};
 
 pub(crate) use super::meta::Meta;
 use super::meta::local_date;
@@ -207,23 +207,32 @@ fn text(s: Stringified) -> String {
 	String::from_utf8_lossy(&s.0).into_owned()
 }
 
-/// A script integer argument as the original casts it (floats truncate).
-fn int(n: Number) -> i64 {
-	n.0 as i64
+/// A script integer argument as the original reads it: its script integers are 32-bit,
+/// so a float is truncated as `cvttss2si` of an `f32` does, out of range or NaN giving
+/// -2147483648 (probed 2026-10-20: `writeU16(1e10)` writes 0, `writeI32(1e10)`
+/// -2147483648).
+fn int(n: DynNumber) -> i64 {
+	match n {
+		DynNumber::Int(i) => i,
+		DynNumber::Float(f) => {
+			let f = (f as f32).trunc();
+			if f.is_nan() || !(-2147483648.0..2147483648.0).contains(&f) { i64::from(i32::MIN) } else { f as i64 }
+		}
+	}
 }
 
 impl StreamClasses {
 	pub fn build(vm: &mut SQVM) -> Self {
 		let meta = ClassBuilder::<SharedMeta>::new("SaveMetaData")
 			.method("getVersion", |m: &mut SharedMeta| m.borrow().version)
-			.method("setVersion", |m: &mut SharedMeta, v: Number| m.borrow_mut().version = int(v))
+			.method("setVersion", |m: &mut SharedMeta, v: DynNumber| m.borrow_mut().version = int(v))
 			.method("getName", |m: &mut SharedMeta| m.borrow().name.clone())
 			.method("getFileName", |m: &mut SharedMeta| m.borrow().file_name.clone())
 			.method("getCreationDate", |m: &mut SharedMeta| local_date(m.borrow().created))
 			.method("getModificationDate", |m: &mut SharedMeta| local_date(m.borrow().modified))
 			.method("hasData", |m: &mut SharedMeta, k: Stringified| m.borrow().has_data(&text(k)))
 			.method("getInt", |m: &mut SharedMeta, k: Stringified| m.borrow().get_int(&text(k)))
-			.method("setInt", |m: &mut SharedMeta, k: Stringified, v: Number| m.borrow_mut().set_int(text(k), int(v)))
+			.method("setInt", |m: &mut SharedMeta, k: Stringified, v: DynNumber| m.borrow_mut().set_int(text(k), int(v)))
 			.method("getFloat", |m: &mut SharedMeta, k: Stringified| m.borrow().get_float(&text(k)))
 			.method("setFloat", |m: &mut SharedMeta, k: Stringified, v: Number| m.borrow_mut().set_float(text(k), v.0))
 			.method("getString", |m: &mut SharedMeta, k: Stringified| m.borrow().get_string(&text(k)))
@@ -233,12 +242,12 @@ impl StreamClasses {
 			.build(vm);
 
 		let out = ClassBuilder::<OutStream>::new("SaveOutputStream")
-			.method("writeU8", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u8(int(v) as u8))
-			.method("writeI8", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u8(int(v) as i8 as u8))
-			.method("writeU16", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u16(int(v) as u16))
-			.method("writeI16", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u16(int(v) as i16 as u16))
-			.method("writeU32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u32(int(v) as u32))
-			.method("writeI32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u32(int(v) as i32 as u32))
+			.method("writeU8", |s: &mut OutStream, v: DynNumber| s.writer.borrow_mut().u8(int(v) as u8))
+			.method("writeI8", |s: &mut OutStream, v: DynNumber| s.writer.borrow_mut().u8(int(v) as i8 as u8))
+			.method("writeU16", |s: &mut OutStream, v: DynNumber| s.writer.borrow_mut().u16(int(v) as u16))
+			.method("writeI16", |s: &mut OutStream, v: DynNumber| s.writer.borrow_mut().u16(int(v) as i16 as u16))
+			.method("writeU32", |s: &mut OutStream, v: DynNumber| s.writer.borrow_mut().u32(int(v) as u32))
+			.method("writeI32", |s: &mut OutStream, v: DynNumber| s.writer.borrow_mut().u32(int(v) as i32 as u32))
 			.method("writeF32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().f32(v.0 as f32))
 			.method("writeBool", |s: &mut OutStream, v: Truthy| s.writer.borrow_mut().bool(v.0))
 			.method("writeString", |s: &mut OutStream, v: Stringified| s.writer.borrow_mut().bytes(&v.0))

@@ -40,6 +40,10 @@ fn the_settings_stick_save_and_load() {
 	run(&engine, "local c = ::Settings.getControlSettings(); c.UseDragStyleScrolling = false; c.UseHardwareCursor = true;");
 	assert_eq!(eval(&engine, "::Settings.getControlSettings().UseDragStyleScrolling"), "false");
 	assert_eq!(eval(&engine, "::Settings.getControlSettings().UseHardwareCursor"), "true");
+	// A bool property takes any value by its truth (probed: `= 0` reads back false).
+	run(&engine, "::Settings.getControlSettings().UseHardwareCursor = 0;");
+	assert_eq!(eval(&engine, "::Settings.getControlSettings().UseHardwareCursor"), "false");
+	run(&engine, "::Settings.getControlSettings().UseHardwareCursor = 1;");
 
 	// Hardware sound is kept; its argument converts as a bool parameter does.
 	run(&engine, "::Settings.setHardwareSound(false);");

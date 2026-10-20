@@ -43,6 +43,11 @@ fn to_hash_is_the_originals() {
 	}
 	let engine = harness::open_install(dir).expect("open install");
 	let long = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ";
+	// The original's own values (probed 2026-10-20), and the port agrees.
+	for (s, original) in [("abc", 200823), ("", 0), ("a", 128), ("tactical.combat", -350123897), (long, 1001279716)] {
+		assert_eq!(hash_30(s.as_bytes()), original, "{s:?}");
+	}
+	assert_eq!(hash_30(&[0xe9, b't', 0xe9]), 68405824);
 	for s in ["abc", "", "a", "tactical.combat", long] {
 		assert_eq!(eval_string(&engine, &format!("::toHash(\"{s}\")")), hash_30(s.as_bytes()).to_string(), "{s:?}");
 	}
@@ -105,6 +110,8 @@ fn a_stronghold_style_save_round_trips() {
 				_out.writeI32(-7.9);
 				_out.writeF32(3);
 				_out.writeU16(null);
+				_out.writeU16(1e10);
+				_out.writeI32(1e10);
 				local meta = _out.getMetaData();
 				meta.setString("bb_probe_array", [1]);
 				meta.setString("bb_probe_int", 42);
@@ -121,6 +128,8 @@ fn a_stronghold_style_save_round_trips() {
 				got.push(_in.readI32());
 				got.push(_in.readF32());
 				got.push(_in.readU16());
+				got.push(_in.readU16());
+				got.push(_in.readI32());
 				got.push(_in.getMetaData().getString("bb_probe_int"));
 				got.push(_in.getMetaData().getString("bb_probe_array"));
 				got.push(_in.readString());
@@ -139,12 +148,13 @@ fn a_stronghold_style_save_round_trips() {
 	let parts: Vec<&str> = loaded.split('|').collect();
 	assert!(parts[0].starts_with("(array : 0x"), "an array's text: {loaded}");
 	let want = [
-		"null", "5.5", "12", "true", // strings: their text
+		"(null : 0x00000000)", "5.5", "12", "true", // strings: their text (null's probed)
 		"true", "false", "true", "false", "false", "true", // bools: their truth
 		"44", "0", "-7", "3", "0", // numbers: cut to the width; a non-number is 0
+		"0", "-2147483648", // a float past 32 bits: cvttss2si's -2^31
 		"42", // metadata: a string parameter too
 	];
-	assert_eq!(&parts[1..17], &want[..], "{loaded}");
-	assert!(parts[17].starts_with("(array : 0x"), "{loaded}");
-	assert_eq!(parts[18], "end", "the stream stays in step: {loaded}");
+	assert_eq!(&parts[1..19], &want[..], "{loaded}");
+	assert!(parts[19].starts_with("(array : 0x"), "{loaded}");
+	assert_eq!(parts[20], "end", "the stream stays in step: {loaded}");
 }

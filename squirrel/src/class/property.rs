@@ -58,8 +58,13 @@ impl FieldValue for bool {
 	fn push_field(self, vm: &SQVM) {
 		vm.push_bool(self);
 	}
+	// A Sqrat property setter reads its value through `Var<bool>`, which is `sq_tobool`
+	// (`0x586df0`): any value, by its truth (verified in the original: `UseHardwareCursor = 0`
+	// reads back false).
 	fn read_field(vm: &SQVM, idx: i64) -> Option<bool> {
-		vm.get_bool(idx).ok()
+		let mut b: squirrel_sys::SQBool = 0;
+		unsafe { squirrel_sys::sq_tobool(vm.as_ptr(), idx, &mut b) };
+		Some(b != 0)
 	}
 }
 

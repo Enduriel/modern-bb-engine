@@ -2,7 +2,8 @@
 //! any value, converted, never an error (from the original's disassembly).
 //!
 //! - [`Stringified`]: Sqrat's `Var<std::string>` (`0x4a33e0`) calls `sq_tostring` on the
-//!   argument (`0x586d10`), so any value is its `tostring()` text (`null` is `"null"`, an
+//!   argument (`0x586d10`), so any value is its `tostring()` text (`null` is
+//!   `"(null : 0x00000000)"`, verified in the original; an
 //!   array `"(array : 0x…)"`, an instance with `_tostring` what that returns), then
 //!   copies it as a C string: up to its first zero byte.
 //! - [`Truthy`]: Sqrat's `Var<bool>` (`0x586df0`) is `sq_tobool`: null, 0, 0.0 and false
@@ -21,6 +22,11 @@ impl SqArg for Stringified {
 		mask.push('.');
 	}
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<Stringified, String> {
+		// The original's `sq_tostring` gives null an object's shape (verified in the original:
+		// `writeString(null)` writes this), where our VM's gives "null".
+		if vm.get_type(idx) == crate::SqObjectType::Null {
+			return Ok(Stringified(b"(null : 0x00000000)".to_vec()));
+		}
 		// `sq_tostring` pushes the text (a negative index is read before the push).
 		if unsafe { squirrel_sys::sq_tostring(vm.as_ptr(), idx) } != SQ_OK {
 			unsafe { squirrel_sys::sq_reseterror(vm.as_ptr()) };
@@ -79,7 +85,7 @@ mod tests {
 		.unwrap();
 		let got = seen.take();
 		let expect = [
-			("null", false),
+			("(null : 0x00000000)", false),
 			("true", true),
 			("false", false),
 			("0", false),
