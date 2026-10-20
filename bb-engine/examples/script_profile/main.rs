@@ -12,6 +12,8 @@
 //!
 //! - `--script` runs a script once the world is up (e.g. to log what a phase does).
 //! - `--frame-times` writes each unprofiled frame's time (ms), a line `phase ms` each.
+//! - Frame times are the main thread's CPU time on Linux (other processes' load on the
+//!   machine doesn't count), the wall clock elsewhere.
 //! - `--live-clock` puts a live clock behind `Time.getExactTime`, as `bb` and the
 //!   original have it (the AI's background work then spreads over frames, and a script
 //!   can time itself); the frame's time otherwise.
@@ -257,12 +259,18 @@ fn step(engine: &GameEngine, dt: f64, profiler: Option<&mut ScriptProfiler>) -> 
 		engine.frame(dt)?;
 		engine.pump_ui().map(|_| ())
 	};
-	let t = Instant::now();
+	let t = thread_cpu_ms();
+	let wall = Instant::now();
 	let result = match profiler {
 		Some(p) => engine.vm().profiled(p, run),
 		None => run(),
 	};
-	let ms = t.elapsed().as_secs_f64() * 1000.0;
+	// The thread's CPU time where the platform has it (other processes' load doesn't
+	// count), else the wall clock.
+	let ms = match (t, thread_cpu_ms()) {
+		(Some(a), Some(b)) => b - a,
+		_ => wall.elapsed().as_secs_f64() * 1000.0,
+	};
 	if let Err(e) = result {
 		eprintln!("frame: {e}");
 	}
@@ -310,4 +318,27 @@ fn new_campaign(engine: &GameEngine) {
 /// Remove the scratch folder's saves (all ours: `bb_probe_*` and what the mods wrote).
 fn cleanup(scratch: &Path) {
 	let _ = std::fs::remove_dir_all(scratch);
+}
+
+/// This thread's CPU time in ms (Linux), so frame times don't count the waits other
+/// processes' load puts the game through.
+#[cfg(target_os = "linux")]
+fn thread_cpu_ms() -> Option<f64> {
+	#[repr(C)]
+	struct Timespec {
+		sec: i64,
+		nsec: i64,
+	}
+	unsafe extern "C" {
+		fn clock_gettime(clock: i32, ts: *mut Timespec) -> i32;
+	}
+	const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+	let mut ts = Timespec { sec: 0, nsec: 0 };
+	// SAFETY: `ts` is a valid out-parameter of the layout glibc's 64-bit timespec has.
+	(unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut ts) } == 0).then(|| ts.sec as f64 * 1000.0 + ts.nsec as f64 / 1e6)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn thread_cpu_ms() -> Option<f64> {
+	None
 }
