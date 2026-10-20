@@ -362,8 +362,9 @@ fn tofloat_and_float_literals_match_the_original() {
 /// precisions: the same text everywhere except at exact ties (the cut falls just
 /// before the expansion's last digit, a 5), where the C library rounds to even and the
 /// original's CRT away from zero. `sq_formatfloat_ieee` (format3_2's) must match the C
-/// library everywhere.
-#[cfg(unix)]
+/// library everywhere. glibc's: that is the reference (macOS's, for one, keeps a
+/// trailing zero `%g` should drop after rounding a tie, as in `%G` of -9049605).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
 fn format_float_agrees_with_libc_apart_from_ties() {
 	use std::ffi::{CStr, CString, c_char, c_int};

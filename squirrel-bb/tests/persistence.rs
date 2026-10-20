@@ -154,12 +154,17 @@ fn a_stream_knows_its_file_and_refuses_the_other_direction() {
 /// of 132 saves): newest modification time first, the time each file's header records
 /// (not its creation time, nor the file system's time). Equal times keep the order the
 /// original's PhysFS lists the folder in: by whole file name, `strcmp`, so case-sensitive
-/// and with `.sav` taking part (`x-1.sav` before `x.sav`).
+/// and with `.sav` taking part (`x-1.sav` before `x.sav`). On a file system that ignores
+/// case (macOS's and Windows' by default, the original's too) `X.sav` is `x.sav`, so it is
+/// left out there.
 #[test]
 fn storages_list_newest_first_then_by_file_name() {
 	let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("storages_list_newest_first");
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
+	std::fs::write(dir.join("case.probe"), b"").unwrap();
+	let folds_case = dir.join("CASE.probe").exists();
+	std::fs::remove_file(dir.join("case.probe")).unwrap();
 	let header = |label: &str, created: u64, modified: u64| {
 		let mut h = vec![0xbb, 0, 2, 0, 0, 0, 0];
 		h.extend_from_slice(&created.to_le_bytes());
@@ -178,7 +183,7 @@ fn storages_list_newest_first_then_by_file_name() {
 		("bb_probe_x-1", 100, 100, 1_700_000_000),
 		("bb_probe_X", 100, 100, 1_700_000_000),
 	];
-	for (name, created, modified, mtime) in saves {
+	for (name, created, modified, mtime) in saves.into_iter().filter(|s| !(folds_case && s.0 == "bb_probe_X")) {
 		let file = std::fs::File::create(dir.join(format!("{name}.sav"))).unwrap();
 		std::io::Write::write_all(&mut &file, &header(name, created, modified)).unwrap();
 		file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime)).unwrap();
@@ -188,12 +193,15 @@ fn storages_list_newest_first_then_by_file_name() {
 
 	let engine = Engine::new(NoScripts);
 	engine.saves().set_directory(dir);
+	let x = if folds_case { "" } else { "bb_probe_X," };
+	let expected = format!("bb_probe_b,bb_probe_A,bb_probe_c,{x}bb_probe_x-1,bb_probe_x,");
+	engine.run_script(&format!("::Expected <- \"{expected}\";"), "expected").unwrap();
 	engine
 		.run_script(
 			r#"
 			local s = "";
 			foreach (m in ::PersistenceManager.queryStorages()) s += m.getFileName() + ",";
-			if (s != "bb_probe_b,bb_probe_A,bb_probe_c,bb_probe_X,bb_probe_x-1,bb_probe_x,") throw "listed " + s;
+			if (s != ::Expected) throw "listed " + s;
 			"#,
 			"list order",
 		)

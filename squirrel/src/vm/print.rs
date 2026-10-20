@@ -4,23 +4,18 @@
 //! Consumers set high-level `Fn(&str)` handlers (see
 //! [`SQVM::set_print_handler`](super::SQVM::set_print_handler)); this module does
 //! the printf formatting and dispatch, so no `squirrel-sys` types leak out. With
-//! no handler installed, output goes to stdout/stderr as before.
+//! no handler installed, output goes to Rust's stdout/stderr.
 
-use std::ffi::{CStr, VaList, c_char, c_int, c_void};
+use std::ffi::{CStr, VaList, c_char, c_int};
 
 unsafe extern "C" {
-	// `scvprintf` maps to these in non-Unicode builds.
+	// `scvprintf` maps to this in non-Unicode builds.
 	unsafe fn vsnprintf(
 		buf: *mut c_char,
 		size: usize,
 		format: *const c_char,
 		ap: VaList<'_>,
 	) -> c_int;
-	unsafe fn vfprintf(stream: *mut c_void, format: *const c_char, ap: VaList<'_>) -> c_int;
-
-	// On glibc, `stdout`/`stderr` are real exported `FILE *` symbols.
-	unsafe static mut stdout: *mut c_void;
-	unsafe static mut stderr: *mut c_void;
 }
 
 /// A compile error reported by the VM, in a Rust-friendly form.
@@ -134,9 +129,9 @@ pub(crate) unsafe extern "C" fn print_trampoline(
 ) {
 	match unsafe { context(vm) }.and_then(|c| c.print.as_ref()) {
 		Some(handler) => unsafe { with_formatted(format, args, |text| handler(text)) },
-		None => {
-			unsafe { vfprintf(stdout, format, args) };
-		}
+		// Through Rust's stdout, not C's `stdout` (glibc exports that `FILE *` but
+		// macOS names it `__stdoutp`), which also keeps the order with Rust's prints.
+		None => unsafe { with_formatted(format, args, |text| print!("{text}")) },
 	}
 }
 
@@ -147,9 +142,7 @@ pub(crate) unsafe extern "C" fn error_trampoline(
 ) {
 	match unsafe { context(vm) }.and_then(|c| c.error.as_ref()) {
 		Some(handler) => unsafe { with_formatted(format, args, |text| handler(text)) },
-		None => {
-			unsafe { vfprintf(stderr, format, args) };
-		}
+		None => unsafe { with_formatted(format, args, |text| eprint!("{text}")) },
 	}
 }
 

@@ -6,10 +6,9 @@ use bb_engine::DatScriptSource;
 use squirrel::SQVM;
 use squirrel_bb::{ModuleSystem, TimeService, install_natives};
 
-/// The install's first archive (the default Steam library under `$HOME`).
+/// The install's first archive (in `harness::STEAM_DATA_DIR`).
 fn data_001() -> std::path::PathBuf {
-	std::path::Path::new(&std::env::var("HOME").unwrap_or_default())
-		.join(".local/share/Steam/steamapps/common/Battle Brothers/data/data_001.dat")
+	std::path::Path::new(bb_engine::harness::STEAM_DATA_DIR).join("data_001.dat")
 }
 
 #[test]

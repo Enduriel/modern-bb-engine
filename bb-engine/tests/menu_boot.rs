@@ -10,7 +10,7 @@ use squirrel_bb::Engine;
 
 use bb_engine::DatScriptSource;
 
-const DATA_DIR: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data");
+use bb_engine::harness::STEAM_DATA_DIR as DATA_DIR;
 
 #[test]
 fn boots_to_a_running_main_menu_headless() {

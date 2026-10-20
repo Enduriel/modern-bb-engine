@@ -5,20 +5,22 @@
 use bb_engine::{DatArchive, transcode_cnut};
 use squirrel::SQVM;
 
-const DATA_001: &str =
-	concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data/data_001.dat");
+/// The install's first archive (in `harness::STEAM_DATA_DIR`).
+fn data_001() -> std::path::PathBuf {
+	std::path::Path::new(bb_engine::harness::STEAM_DATA_DIR).join("data_001.dat")
+}
 
 #[test]
 fn transcodes_and_runs_a_real_compiled_script() {
-	if !std::path::Path::new(DATA_001).exists() {
-		eprintln!("skipping: {DATA_001} not present");
+	if !data_001().exists() {
+		eprintln!("skipping: {} not present", data_001().display());
 		return;
 	}
 
 	// `weak_table_ref` is self-contained: it only uses getroottable + a `class`
 	// definition + `.weakref()` — no engine natives, no Const — so a bare VM runs
 	// it. (It's also preload.nut's very first include.)
-	let mut archive = DatArchive::open(DATA_001).expect("open data_001.dat");
+	let mut archive = DatArchive::open(data_001()).expect("open data_001.dat");
 	let cnut = archive
 		.read("scripts/tools/weak_table_ref.cnut")
 		.expect("read weak_table_ref.cnut");
@@ -55,12 +57,12 @@ fn transcodes_and_runs_a_real_compiled_script() {
 
 #[test]
 fn transcodes_and_loads_every_cnut_in_data_001() {
-	if !std::path::Path::new(DATA_001).exists() {
-		eprintln!("skipping: {DATA_001} not present");
+	if !data_001().exists() {
+		eprintln!("skipping: {} not present", data_001().display());
 		return;
 	}
 
-	let mut archive = DatArchive::open(DATA_001).expect("open data_001.dat");
+	let mut archive = DatArchive::open(data_001()).expect("open data_001.dat");
 	let cnut_names: Vec<String> = archive
 		.names()
 		.into_iter()

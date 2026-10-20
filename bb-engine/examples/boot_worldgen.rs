@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use bb_engine::DatScriptSource;
 use squirrel_bb::Engine;
 
-const DEFAULT_DATA: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data");
+use bb_engine::harness::STEAM_DATA_DIR as DEFAULT_DATA;
 
 fn main() {
 	let dir = PathBuf::from(

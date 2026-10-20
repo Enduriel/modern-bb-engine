@@ -15,7 +15,7 @@ use bb_engine::DatScriptSource;
 use squirrel::{SQVM, SqArray, SqTable};
 use squirrel_bb::{ModuleSystem, TimeService, install_natives};
 
-const DEFAULT_DATA: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data");
+use bb_engine::harness::STEAM_DATA_DIR as DEFAULT_DATA;
 
 fn main() {
 	let dir = PathBuf::from(

@@ -21,28 +21,9 @@ use bb_engine::{harness, tactical_player as player};
 
 const LOADED: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
 
-#[repr(C)]
-struct Mallinfo2 {
-	arena: usize,
-	ordblks: usize,
-	smblks: usize,
-	hblks: usize,
-	hblkhd: usize,
-	usmblks: usize,
-	fsmblks: usize,
-	uordblks: usize,
-	fordblks: usize,
-	keepcost: usize,
-}
-
-unsafe extern "C" {
-	fn mallinfo2() -> Mallinfo2;
-}
-
-/// The C heap's bytes in use (glibc's count; zero under another allocator).
+/// The C heap's bytes in use (zero where the allocator doesn't say).
 fn heap_mb() -> f64 {
-	let m = unsafe { mallinfo2() };
-	(m.uordblks + m.hblkhd) as f64 / 1_048_576.0
+	bb_engine::heap::bytes_in_use() as f64 / 1_048_576.0
 }
 
 struct Options {

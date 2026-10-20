@@ -15,7 +15,7 @@
 
 use std::path::Path;
 
-use bb_engine::{harness, tactical_player as player};
+use bb_engine::{harness, heap, tactical_player as player};
 
 const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 const AT_MENU: &str = "::RootState.get(\"WorldState\") == null && ::RootState.get(\"MainMenuState\").m.MainMenuScreen.isVisible() && !::RootState.get(\"MainMenuState\").m.MainMenuScreen.isAnimating()";
@@ -25,29 +25,6 @@ const BACK_IN_WORLD: &str = "(!(\"State\" in ::Tactical) || ::Tactical.State == 
 
 const WARM_UP: usize = 2;
 const CYCLES: usize = 8;
-
-#[repr(C)]
-struct Mallinfo2 {
-	arena: usize,
-	ordblks: usize,
-	smblks: usize,
-	hblks: usize,
-	hblkhd: usize,
-	usmblks: usize,
-	fsmblks: usize,
-	uordblks: usize,
-	fordblks: usize,
-	keepcost: usize,
-}
-
-unsafe extern "C" {
-	fn mallinfo2() -> Mallinfo2;
-}
-
-fn heap_bytes() -> usize {
-	let m = unsafe { mallinfo2() };
-	m.uordblks + m.hblkhd
-}
 
 fn frames(engine: &harness::GameEngine, n: u32) {
 	for _ in 0..n {
@@ -189,8 +166,8 @@ fn battles_between_loads_do_not_grow_memory() {
 		frames(&engine, 1);
 		let waiting = waiting_in_cycles(&engine);
 		let h = held(&engine);
-		eprintln!("cycle {cycle}: battle result {result:?}, heap {:.2} MB, {waiting} objects waiting in cycles, {h:?}", mb(heap_bytes()));
-		after.push((heap_bytes(), h, waiting));
+		eprintln!("cycle {cycle}: battle result {result:?}, heap {:.2} MB, {waiting} objects waiting in cycles, {h:?}", mb(heap::bytes_in_use()));
+		after.push((heap::bytes_in_use(), h, waiting));
 	}
 	let measured = &after[WARM_UP..];
 	let (base_heap, base_held, _) = &measured[0];

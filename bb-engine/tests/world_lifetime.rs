@@ -11,33 +11,10 @@
 
 use std::path::Path;
 
-use bb_engine::{harness, tactical_player as player};
+use bb_engine::{harness, heap, tactical_player as player};
 
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn heap_mb() -> f64 {
-	#[repr(C)]
-	struct Mallinfo2 {
-		arena: usize,
-		ordblks: usize,
-		smblks: usize,
-		hblks: usize,
-		hblkhd: usize,
-		usmblks: usize,
-		fsmblks: usize,
-		uordblks: usize,
-		fordblks: usize,
-		keepcost: usize,
-	}
-	unsafe extern "C" {
-		fn mallinfo2() -> Mallinfo2;
-	}
-	let m = unsafe { mallinfo2() };
-	(m.uordblks + m.hblkhd) as f64 / 1_048_576.0
-}
-
-#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-fn heap_mb() -> f64 {
-	0.0
+	heap::bytes_in_use() as f64 / 1_048_576.0
 }
 
 #[test]

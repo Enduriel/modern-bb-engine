@@ -3,7 +3,7 @@
 
 use bb_engine::DatArchive;
 
-const DATA_DIR: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data");
+use bb_engine::harness::STEAM_DATA_DIR as DATA_DIR;
 
 /// First `mod_*.zip` in the data dir, if any.
 fn first_mod_zip() -> Option<std::path::PathBuf> {

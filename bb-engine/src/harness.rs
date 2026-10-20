@@ -2,8 +2,10 @@
 //! integration tests: open an install's archives, load config and DLC, boot the menu,
 //! and drive the genuine new-campaign sequence.
 
-use std::io;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::{fmt, io};
 
 use squirrel_bb::{Engine, NativeConfig, installed_dlc};
 
@@ -11,14 +13,58 @@ use crate::assets::{load_fog_stamp, load_sprites};
 use crate::mounts::Mounts;
 use crate::{DatScriptSource, ScriptCache};
 
-/// The data directory of a default Linux Steam install.
-pub const STEAM_DATA_DIR: &str = "~/.local/share/Steam/steamapps/common/Battle Brothers/data";
+/// The game's data directory: `$BB_DATA_DIR`, else that of a default Linux Steam
+/// install. Read once. A stopgap until a platform layer finds installs.
+pub static STEAM_DATA_DIR: &EnvDir = &STEAM_DATA;
+static STEAM_DATA: EnvDir = EnvDir::new("BB_DATA_DIR", "~/.local/share/Steam/steamapps/common/Battle Brothers/data");
 
 /// Saves the original wrote, for the tests of loading and writing its format: its
 /// campaigns as capture probes saved them, with its own dumps of their state (see the
-/// README there). Not in the repository (each save is ~6.7 MB); tests skip without
-/// them.
-pub const ORIGINAL_SAVES_DIR: &str = "original-saves";
+/// README there): `$BB_ORIGINAL_SAVES` (unset: a path that doesn't exist). Not in the
+/// repository (each save is ~6.7 MB); tests skip without them.
+pub static ORIGINAL_SAVES_DIR: &EnvDir = &ORIGINAL_SAVES;
+static ORIGINAL_SAVES: EnvDir = EnvDir::new("BB_ORIGINAL_SAVES", "<BB_ORIGINAL_SAVES is unset>");
+
+/// A directory the environment can override: the variable's value if it's set, else a
+/// default; read on first use. Usable where the `&str` constants it replaced were
+/// (`Path::new`, `PathBuf::from`, formatting).
+pub struct EnvDir {
+	var: &'static str,
+	default: &'static str,
+	path: OnceLock<String>,
+}
+
+impl EnvDir {
+	const fn new(var: &'static str, default: &'static str) -> Self {
+		EnvDir { var, default, path: OnceLock::new() }
+	}
+
+	pub fn as_str(&self) -> &str {
+		self.path.get_or_init(|| {
+			std::env::var_os(self.var)
+				.and_then(|v| v.into_string().ok())
+				.unwrap_or_else(|| self.default.to_string())
+		})
+	}
+}
+
+impl AsRef<OsStr> for EnvDir {
+	fn as_ref(&self) -> &OsStr {
+		self.as_str().as_ref()
+	}
+}
+
+impl AsRef<Path> for EnvDir {
+	fn as_ref(&self) -> &Path {
+		self.as_str().as_ref()
+	}
+}
+
+impl fmt::Display for EnvDir {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_str(self.as_str())
+	}
+}
 
 /// An engine over a real install.
 pub type GameEngine = Engine<DatScriptSource>;

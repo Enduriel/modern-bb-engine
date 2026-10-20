@@ -8,14 +8,14 @@
 //!
 //! After a warm-up, each load leaves the heap where the last one did, the engine holds the
 //! same entities, thinkers, scheduled events and UI connections, and no cycle of script
-//! objects is left for the collector. The heap is glibc's count of bytes in use
-//! (`mallinfo2`): exact, unlike the resident set, which is only a loose backstop here.
+//! objects is left for the collector. The heap is the allocator's count of bytes in use
+//! ([`heap`]): exact, unlike the resident set, which is only a loose backstop here.
 //! One test in its own binary, so no other test allocates meanwhile. Skips without the
 //! Steam install or the original's saves.
 
 use std::path::Path;
 
-use bb_engine::{harness, tactical_player as player};
+use bb_engine::{harness, heap, tactical_player as player};
 
 const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 const AT_MENU: &str = "::RootState.get(\"WorldState\") == null && ::RootState.get(\"MainMenuState\").m.MainMenuScreen.isVisible() && !::RootState.get(\"MainMenuState\").m.MainMenuScreen.isAnimating()";
@@ -29,30 +29,6 @@ const LOADS_FROM_MENU: usize = 8;
 const LOADS_OWN_FORMAT: usize = 10;
 /// Real time between loads: the world state ignores a load within 4 s of the last.
 const FRAMES_BETWEEN: u32 = 360;
-
-#[repr(C)]
-struct Mallinfo2 {
-	arena: usize,
-	ordblks: usize,
-	smblks: usize,
-	hblks: usize,
-	hblkhd: usize,
-	usmblks: usize,
-	fsmblks: usize,
-	uordblks: usize,
-	fordblks: usize,
-	keepcost: usize,
-}
-
-unsafe extern "C" {
-	fn mallinfo2() -> Mallinfo2;
-}
-
-/// Heap bytes in use: allocated chunks, and the large ones mapped on their own.
-fn heap_bytes() -> usize {
-	let m = unsafe { mallinfo2() };
-	m.uordblks + m.hblkhd
-}
 
 fn rss_kb() -> usize {
 	std::fs::read_to_string("/proc/self/status")
@@ -110,7 +86,7 @@ struct After {
 fn after_load(engine: &harness::GameEngine) -> After {
 	let cycles = engine.vm().collect_garbage();
 	After {
-		heap: heap_bytes(),
+		heap: heap::bytes_in_use(),
 		held: held(engine),
 		cycles,
 	}

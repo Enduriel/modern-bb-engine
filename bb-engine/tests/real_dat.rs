@@ -3,17 +3,19 @@
 
 use bb_engine::DatArchive;
 
-const DATA_001: &str =
-	concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data/data_001.dat");
+/// The install's first archive (in `harness::STEAM_DATA_DIR`).
+fn data_001() -> std::path::PathBuf {
+	std::path::Path::new(bb_engine::harness::STEAM_DATA_DIR).join("data_001.dat")
+}
 
 #[test]
 fn reads_a_real_cnut_and_confirms_the_bytecode_header() {
-	if !std::path::Path::new(DATA_001).exists() {
-		eprintln!("skipping: {DATA_001} not present");
+	if !data_001().exists() {
+		eprintln!("skipping: {} not present", data_001().display());
 		return;
 	}
 
-	let mut archive = DatArchive::open(DATA_001).expect("open data_001.dat");
+	let mut archive = DatArchive::open(data_001()).expect("open data_001.dat");
 	assert!(archive.len() > 1000, "data_001 has thousands of entries");
 
 	let cnut = archive

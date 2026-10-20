@@ -371,22 +371,7 @@ struct Sample {
 	ui_log: Option<usize>,
 }
 
-#[repr(C)]
-struct Mallinfo2 {
-	arena: usize,
-	ordblks: usize,
-	smblks: usize,
-	hblks: usize,
-	hblkhd: usize,
-	usmblks: usize,
-	fsmblks: usize,
-	uordblks: usize,
-	fordblks: usize,
-	keepcost: usize,
-}
-
 unsafe extern "C" {
-	fn mallinfo2() -> Mallinfo2;
 	fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::ffi::c_char) -> *mut std::ffi::c_void;
 }
 
@@ -506,7 +491,7 @@ impl Session<'_> {
 		heap_profile(self.samples.len(), point);
 		let drawn = self.game.take_texture_usage().unwrap_or_default();
 		let engine = self.engine();
-		let m = unsafe { mallinfo2() };
+		let m = bb_engine::heap::usage().unwrap_or_default();
 		let (units, dead_units) = (engine.tactical_entities().unit_count(), engine.tactical_entities().dead_unit_count());
 		let (gpu_allocated, gpu_reserved, gpu_by_name) = match self.gpu.device.generate_allocator_report() {
 			Some(report) => {
@@ -527,8 +512,8 @@ impl Session<'_> {
 		let sample = Sample {
 			point: point.to_string(),
 			processes: stats::tree_memory().unwrap_or_default(),
-			heap_used: (m.uordblks + m.hblkhd) as u64,
-			heap_free: m.fordblks as u64,
+			heap_used: m.in_use as u64,
+			heap_free: m.free as u64,
 			renderer: self.game.renderer_memory(),
 			drawn,
 			gpu_allocated,
@@ -734,8 +719,8 @@ fn engine_only(o: &Options) -> Result<String, String> {
 	let mut rows: Vec<(String, Vec<ProcessMemory>, u64, u64)> = Vec::new();
 	let mut sample = |point: &str| {
 		heap_profile(rows.len(), point);
-		let m = unsafe { mallinfo2() };
-		rows.push((point.to_string(), stats::tree_memory().unwrap_or_default(), (m.uordblks + m.hblkhd) as u64, m.fordblks as u64));
+		let m = bb_engine::heap::usage().unwrap_or_default();
+		rows.push((point.to_string(), stats::tree_memory().unwrap_or_default(), m.in_use as u64, m.free as u64));
 	};
 	run(120)?;
 	sample("main menu");

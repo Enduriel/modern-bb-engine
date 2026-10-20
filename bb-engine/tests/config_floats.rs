@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use bb_engine::DatScriptSource;
 use squirrel_bb::Engine;
 
-const DATA_DIR: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/common/Battle Brothers/data");
+use bb_engine::harness::STEAM_DATA_DIR as DATA_DIR;
 
 #[test]
 fn array_literal_floats_and_derived_costs_load_correctly() {

@@ -13,6 +13,7 @@
 //!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
 //!   * [`log_files`] — bb's log files, the earlier sessions' kept as zips
 //!   * [`harness`] — headless boot steps over a real install (menu, new campaign)
+//!   * [`heap`] — the C heap's usage, for the memory tests and tools
 //!   * [`script_profile`] — reports of where the scripts' time goes, by function and mod
 //!
 //! Next: the 3.0.4 → current-version bytecode transcoder (the game ships Squirrel
@@ -25,6 +26,7 @@ pub mod datsource;
 pub mod files;
 pub mod game_queue;
 pub mod harness;
+pub mod heap;
 pub mod log_files;
 pub mod mounts;
 pub mod script_cache;

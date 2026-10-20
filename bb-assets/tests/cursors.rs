@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 
 use bb_assets::parse_cursor;
 
-/// The default Linux Steam install's `cursors`.
+/// The install's `cursors`, beside its data directory (`$BB_DATA_DIR`, else the default
+/// Linux Steam install, as `bb_engine::harness::STEAM_DATA_DIR`).
 fn cursors() -> PathBuf {
-	Path::new(&std::env::var_os("HOME").unwrap_or_default()).join(".local/share/Steam/steamapps/common/Battle Brothers/cursors")
+	match std::env::var_os("BB_DATA_DIR") {
+		Some(data) => Path::new(&data).join("../cursors"),
+		None => Path::new(&std::env::var_os("HOME").unwrap_or_default()).join(".local/share/Steam/steamapps/common/Battle Brothers/cursors"),
+	}
 }
 
 #[test]
