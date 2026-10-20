@@ -59,6 +59,13 @@ impl Settings {
 		self.text.get("ui.show_fps").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
 	}
 
+	/// Whether the game draws its mouse cursor into its frames, as the original does
+	/// (`ui.software_cursor = true`), rather than have the system show it (the default:
+	/// a mouse move then needs no frame drawn; see `game_cursor`).
+	pub fn software_cursor(&self) -> bool {
+		self.text.get("ui.software_cursor").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
+	}
+
 	/// Keep `mode`, in the file at once.
 	pub fn save_video_mode(&mut self, mode: &VideoMode) -> Result<(), String> {
 		video::write(&mut self.text, mode);
@@ -100,7 +107,11 @@ mod tests {
 		assert!(!Settings::load(Some(path.clone())).show_fps(), "no FPS display by default");
 		let text = std::fs::read_to_string(&path).expect("the file") + "ui.show_fps = true\n";
 		std::fs::write(&path, text).expect("write");
-		assert!(Settings::load(Some(path)).show_fps());
+		assert!(Settings::load(Some(path.clone())).show_fps());
+		assert!(!Settings::load(Some(path.clone())).software_cursor(), "the system shows the cursor by default");
+		let text = std::fs::read_to_string(&path).expect("the file") + "ui.software_cursor = true\n";
+		std::fs::write(&path, text).expect("write");
+		assert!(Settings::load(Some(path)).software_cursor());
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }

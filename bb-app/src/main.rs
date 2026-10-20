@@ -37,6 +37,10 @@
 //! - `--fps` shows the frame rate in the top-left corner (vanilla's own FPS module,
 //!   which the original never shows), as `ui.show_fps = true` in the settings does;
 //!   Ctrl+Shift+F shows or hides it while playing. It's off by default.
+//! - The game's mouse cursor shows as the system's cursor (the compositor moves it, so
+//!   moving the mouse over a still picture draws nothing); `ui.software_cursor = true`
+//!   in the settings draws it into the frames instead, as the original does (see
+//!   `bb_app::game_cursor`).
 //! - On a Steam install (see `bb_steam::install` for the rule), achievements and stats
 //!   go to the player's Steam account through Steam's library beside `bb`
 //!   (`libsteam_api.so`, `steam_api64.dll` or `libsteam_api.dylib`), or the one

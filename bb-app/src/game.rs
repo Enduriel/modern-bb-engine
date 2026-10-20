@@ -5,9 +5,11 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bb_engine::files::GameFiles;
+use bb_assets::CursorImage;
 use bb_engine::harness::{self, GameEngine};
 use bb_render::portrait::PortraitRequest;
 use bb_render::world::WorldView;
@@ -17,6 +19,7 @@ use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
 use crate::fps::FpsMeter;
 use crate::front::{Front, Key};
+use crate::game_cursor::{self, CursorPictures, CursorShow};
 use crate::shown::{self, CursorLook, Look, Shown, Under};
 
 /// The longest real time one frame advances the game by.
@@ -32,6 +35,10 @@ pub struct Game {
 	/// How many of the fonts mods registered the renderer has.
 	fonts: usize,
 	cursor: (i64, i64),
+	/// The game's cursor shown as the system's where it can be (see [`game_cursor`]),
+	/// rather than drawn; and its pictures.
+	system_cursor: bool,
+	cursor_pictures: CursorPictures,
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
 	/// What the last frame drawn showed (see [`Game::draw_if_changed`]).
@@ -152,9 +159,9 @@ impl Game {
 	pub fn start(gpu: &Gpu, boot: &Boot) -> Result<Game, String> {
 		let io = |e: std::io::Error| e.to_string();
 		let archives = archives(boot.data_dir, boot.mods).map_err(io)?;
-		let files = GameFiles::open(archives.clone()).map_err(io)?;
+		let files = Arc::new(GameFiles::open(archives.clone()).map_err(io)?);
 		let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-		let mut renderer = WorldRenderer::new(gpu, Arc::new(files), threads);
+		let mut renderer = WorldRenderer::new(gpu, files.clone(), threads);
 		// The game's brushes (a few milliseconds) before the boot, so a first run's sheets
 		// are built on spare workers while worldgen runs (see `bb_render`'s pages).
 		let mut dats: Vec<bb_engine::DatArchive> = archives.iter().filter_map(|p| bb_engine::DatArchive::open(p).ok()).collect();
@@ -167,6 +174,8 @@ impl Game {
 			fonts: 0,
 			battle_map: false,
 			cursor: (0, 0),
+			system_cursor: false,
+			cursor_pictures: CursorPictures::new(files),
 			modifier: 0,
 			shown: Shown::default(),
 			fps: None,
@@ -363,6 +372,7 @@ impl Game {
 		let renderer = &mut self.renderer;
 		self.front
 			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
+		let drawn_cursor = self.cursor_show() == CursorShow::Drawn;
 		let engine = self.front.engine();
 		let (width, height) = (target.width, target.height);
 		// The screen the scripts think in maps onto the frame.
@@ -415,7 +425,7 @@ impl Game {
 		let look = Look {
 			size: (width, height),
 			page_paints: self.front.paints(),
-			cursor: self.cursor_look(target, fit),
+			cursor: if drawn_cursor { self.cursor_look(target, fit) } else { None },
 			fonts: self.fonts,
 			under,
 		};
@@ -468,7 +478,7 @@ impl Game {
 		let front_span = bb_render::frame_timing::span("ui page");
 		self.front.draw(gpu, target);
 		drop(front_span);
-		let cursor = self.draw_cursor(gpu, target, fit);
+		let cursor = if drawn_cursor { self.draw_cursor(gpu, target, fit) } else { FrameStats::default() };
 		let stats = FrameStats {
 			quads: stats.quads + cursor.quads,
 			waiting: stats.waiting + cursor.waiting,
@@ -559,11 +569,40 @@ impl Game {
 		engine.sprites().with(|registry| self.renderer.draw_cursor(gpu, target, registry, &brush, since, at))
 	}
 
-	/// Whether the scripts want the system's cursor (`UseHardwareCursor`) rather than
-	/// the drawn one, and the cursor's name (its `cursors/<name>.cur`).
-	pub fn cursor_choice(&self) -> (bool, String) {
-		let (look, _) = self.engine().cursor();
-		(look.hardware, look.name)
+	/// Show the game's cursor as the system's where it can be, rather than draw it
+	/// (see [`game_cursor`]); it is drawn until this is set, as tests and tools want it.
+	pub fn use_system_cursor(&mut self, on: bool) {
+		self.system_cursor = on;
+	}
+
+	/// What shows as the mouse cursor now (see [`game_cursor`]): drawn by the game, or
+	/// which the system shows.
+	pub fn cursor_show(&mut self) -> CursorShow {
+		let engine = self.front.engine();
+		let (look, at) = engine.cursor();
+		let at_mouse = at == self.cursor;
+		let frame = match &look.brush {
+			Some(brush) if self.system_cursor && at_mouse && !look.hardware => {
+				let since = engine.time().virtual_seconds() as f32 - look.since;
+				let pictures = &mut self.cursor_pictures;
+				engine.sprites().with(|registry| {
+					let built = pictures.get(registry, brush, || cursor_names(engine))?;
+					let (_, sprite) = registry.get(brush)?;
+					let frame = bb_render::cursor_frame_index_at(sprite, since);
+					(frame < built.len()).then_some(frame)
+				})
+			}
+			_ => None,
+		};
+		game_cursor::choose(&look, self.system_cursor, at_mouse, frame)
+	}
+
+	/// The pictures of the cursor sprite `brush`'s frames for the system, once
+	/// [`cursor_show`](Self::cursor_show) has shown it.
+	pub fn cursor_pictures(&mut self, brush: &str) -> Option<Rc<[CursorImage]>> {
+		let engine = self.front.engine();
+		let pictures = &mut self.cursor_pictures;
+		engine.sprites().with(|registry| pictures.get(registry, brush, || cursor_names(engine)))
 	}
 }
 
@@ -593,6 +632,19 @@ fn procedural_png(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, 
 /// centre, y up.
 fn cursor_at(target: &RenderTarget, fit: f32, x: i64, y: i64) -> [f32; 2] {
 	[x as f32 * fit - target.width as f32 * 0.5, target.height as f32 * 0.5 - y as f32 * fit]
+}
+
+/// The cursor sprites the scripts name (`Const.UI.Cursor`'s values, mods' included).
+fn cursor_names(engine: &GameEngine) -> Vec<String> {
+	let vm = engine.vm();
+	let Some(cursors) = SqTable::root(vm)
+		.get::<SqTable>("Const")
+		.and_then(|c| c.get::<SqTable>("UI"))
+		.and_then(|ui| ui.get::<SqTable>("Cursor"))
+	else {
+		return Vec::new();
+	};
+	cursors.keys().iter().filter_map(|key| cursors.get::<String>(key)).collect()
 }
 
 /// `World.isVisible()`: the world map is showing (it isn't at the main menu).

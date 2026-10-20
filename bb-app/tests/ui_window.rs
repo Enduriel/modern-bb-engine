@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use bb_app::front::Key;
 use bb_app::game::Game;
+use bb_app::game_cursor::CursorShow;
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_assets::Image;
 use bb_render::portrait::{PortraitRequest, portrait_size};
@@ -147,6 +148,54 @@ fn cursor_is_drawn_at_the_mouse(game: &mut Game, gpu: &Gpu, target: &RenderTarge
 	Ok(())
 }
 
+/// Step and draw until `n` frames in a row are left undrawn.
+fn settle(game: &mut Game, gpu: &Gpu, target: &RenderTarget, n: u32) -> Result<(), String> {
+	let mut undrawn = 0;
+	for _ in 0..600 {
+		game.step(1000.0 / 60.0)?;
+		undrawn = if game.draw_if_changed(gpu, target).is_none() { undrawn + 1 } else { 0 };
+		if undrawn == n {
+			return Ok(());
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	Err(format!("no {n} frames in a row were left undrawn"))
+}
+
+/// With the game's cursor shown as the system's (the players' default), the system
+/// shows the scripts' sprite, and a mouse move over the still town draws nothing. When
+/// the scripts put the cursor elsewhere than the mouse, the game draws it there.
+fn system_cursor_moves_draw_nothing(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	game.use_system_cursor(true);
+	let show = game.cursor_show();
+	let CursorShow::Sprite { brush, frame: 0 } = &show else {
+		return Err(format!("the system cursor on, {show:?} shows"));
+	};
+	let pictures = game.cursor_pictures(brush).ok_or("no pictures")?;
+	if pictures.is_empty() || pictures[0].width < 16 {
+		return Err(format!("{brush}'s pictures: {} of {} px", pictures.len(), pictures.first().map_or(0, |p| p.width)));
+	}
+	settle(game, gpu, target, 5)?;
+	for (x, y) in [(12, 12), (14, 13), (16, 15)] {
+		game.mouse_moved(x, y)?;
+		game.step(1000.0 / 60.0)?;
+		if game.draw_if_changed(gpu, target).is_some() {
+			return Err(format!("the system's cursor moved to {x}, {y}, and a frame was drawn"));
+		}
+	}
+	game.front().engine().run_script("::UI.setCursorPosition(300, 300);", "move the cursor")?;
+	if game.cursor_show() != CursorShow::Drawn {
+		return Err("the scripts moved the cursor away from the mouse, but it isn't drawn".into());
+	}
+	game.mouse_moved(18, 16)?;
+	if game.cursor_show() != show {
+		return Err(format!("back at the mouse, {:?} shows", game.cursor_show()));
+	}
+	game.use_system_cursor(false);
+	println!("  the system's cursor: {brush}, moves draw nothing");
+	Ok(())
+}
+
 /// Idling in a town (the world paused behind the town's dialog), frames come to show
 /// what the last did, and are left undrawn: the frame left up is pixel for pixel what
 /// drawing it would draw. A move of the mouse draws again (the cursor moved).
@@ -191,6 +240,7 @@ fn unchanged_frames_are_left_undrawn(game: &mut Game, gpu: &Gpu, target: &Render
 		return Err("the cursor moved, but the frame was left undrawn".into());
 	}
 	println!("  idle in a town: frames left undrawn, the same as drawn");
+	system_cursor_moves_draw_nothing(game, gpu, target)?;
 	game.front().engine().run_script(
 		"::World.State.town_screen_main_dialog_module_onLeaveButtonClicked();",
 		"leave the town",

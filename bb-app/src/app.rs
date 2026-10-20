@@ -18,6 +18,7 @@ use winit::window::{CustomCursor, Window, WindowId};
 use bb_app::display::{self, Placement};
 use bb_app::front::Key;
 use bb_app::game::{Boot, Game, Start, Store};
+use bb_app::game_cursor::{self, CursorShow};
 use bb_app::steam::SteamStats;
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
@@ -109,11 +110,16 @@ struct Running {
 	/// Since the last log, the frames that drew sprites without their atlas (still
 	/// loading), and those sprites.
 	stats_waiting: (u32, usize),
-	/// Whether the system's cursor shows over the window (the game draws its own
-	/// otherwise), and which, as last set.
-	system_cursor: Option<(bool, String)>,
+	/// The cursor shown over the window, as last set (see `bb_app::game_cursor`).
+	shown_cursor: Option<CursorShow>,
+	/// The player's choice of the system's cursor for the game's (not
+	/// `ui.software_cursor`).
+	system_cursor: bool,
 	/// The hardware cursors, by name (`<install>/cursors/*.cur`).
 	cursors: HashMap<String, CustomCursor>,
+	/// The game's cursor sprites as the system's, by brush and animation frame, made
+	/// as they first show.
+	sprite_cursors: HashMap<(String, usize), CustomCursor>,
 	/// The wheel's turn short of a whole notch (see `wheel`).
 	wheel: Notches,
 	/// The modifier keys held.
@@ -325,8 +331,10 @@ impl App {
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
 			stats_waiting: (0, 0),
-			system_cursor: None,
+			shown_cursor: None,
+			system_cursor: !self.settings.software_cursor(),
 			cursors: load_cursors(event_loop, &self.options.data_dir),
+			sprite_cursors: HashMap::new(),
 			wheel: Notches::default(),
 			modifiers: ModifiersState::empty(),
 			steam: self.options.steam.clone(),
@@ -450,9 +458,52 @@ impl Running {
 		interval.map(|i| self.last_frame + i)
 	}
 
+	/// Show the cursor the game wants over the window (see `bb_app::game_cursor`): the
+	/// system's hidden while the game draws its own, or none shows; otherwise the
+	/// sprite's frame, or the original's `cursors/<name>.cur` (a name without one keeps
+	/// the last, as the original's). Set only when it changes: an animated cursor's
+	/// frames change on the game's virtual time, checked every frame.
+	fn follow_cursor(&mut self, event_loop: &ActiveEventLoop) {
+		let system = self.system_cursor && game_cursor::shows_pixels(self.window.scale_factor());
+		self.game.use_system_cursor(system);
+		let show = self.game.cursor_show();
+		if self.shown_cursor.as_ref() == Some(&show) {
+			return;
+		}
+		match &show {
+			CursorShow::File(name) => {
+				if let Some(cursor) = self.cursors.get(name) {
+					self.window.set_cursor(cursor.clone());
+				}
+				self.window.set_cursor_visible(true);
+			}
+			CursorShow::Sprite { brush, frame } => {
+				let key = (brush.clone(), *frame);
+				if !self.sprite_cursors.contains_key(&key) {
+					for (i, image) in self.game.cursor_pictures(brush).iter().flat_map(|p| p.iter()).enumerate() {
+						let (width, height) = (image.width as u16, image.height as u16);
+						let (x, y) = image.hotspot;
+						match CustomCursor::from_rgba(image.rgba.clone(), width, height, x, y) {
+							Ok(source) => {
+								self.sprite_cursors.insert((brush.clone(), i), event_loop.create_custom_cursor(source));
+							}
+							Err(e) => eprintln!("cursor {brush} frame {i}: {e}"),
+						}
+					}
+				}
+				if let Some(cursor) = self.sprite_cursors.get(&key) {
+					self.window.set_cursor(cursor.clone());
+				}
+				self.window.set_cursor_visible(true);
+			}
+			CursorShow::Drawn | CursorShow::Hidden => self.window.set_cursor_visible(false),
+		}
+		self.shown_cursor = Some(show);
+	}
+
 	/// One frame: step the game by the real time since the last, draw, present.
 	/// Returns the frame count.
-	fn frame(&mut self) -> Result<u64, String> {
+	fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<u64, String> {
 		let now = Instant::now();
 		let ms = now.duration_since(self.last_frame).as_secs_f64() * 1000.0;
 		self.last_frame = now;
@@ -480,20 +531,7 @@ impl Running {
 			}
 			self.next_stats = Some(now + Duration::from_secs(5));
 		}
-		// The game draws its cursor unless the scripts want the system's (the hardware
-		// cursor setting), which shows `cursors/<name>.cur` (a name without one keeps
-		// the last, as the original's); otherwise the system's is hidden.
-		let choice = self.game.cursor_choice();
-		if self.system_cursor.as_ref() != Some(&choice) {
-			let (hardware, name) = &choice;
-			if *hardware {
-				if let Some(cursor) = self.cursors.get(name) {
-					self.window.set_cursor(cursor.clone());
-				}
-			}
-			self.window.set_cursor_visible(*hardware);
-			self.system_cursor = Some(choice);
-		}
+		self.follow_cursor(event_loop);
 		// The frame at the size it shows at in the window.
 		self.frame_rect = display::frame_rect((self.config.width, self.config.height), self.game.screen());
 		let (_, _, width, height) = self.frame_rect;
@@ -649,7 +687,7 @@ impl App {
 		let Some(running) = self.running.as_mut() else { return };
 		running.redraw_asked = None;
 		let result = running
-			.frame()
+			.frame(event_loop)
 			.and_then(|frames| {
 				for (_, code) in self.options.at.iter().filter(|(at, _)| *at == frames) {
 					running.game.run_script(code)?;
