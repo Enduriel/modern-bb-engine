@@ -402,6 +402,7 @@ impl Game {
 		// just changed, look different every frame.
 		let mut comparable = !tactical;
 		let mut detail_changes = Vec::new();
+		let mut map_edits = Vec::new();
 		let under = if !tactical && world {
 			if let Some(patch) = engine.world_grid().take_fog_patch() {
 				self.renderer.update_fog(gpu, &patch);
@@ -421,9 +422,11 @@ impl Game {
 			let scene = engine.world_scene_where(|_| false);
 			let grid = engine.world_grid();
 			let changes = grid.take_detail_changes();
+			let edits = grid.take_map_edits();
 			drop(scene_span);
-			// A detail whose look changed draws (the renderer takes the changes once).
-			comparable &= changes.is_empty();
+			// A detail spawned, removed or whose look changed draws (the renderer takes
+			// them once).
+			comparable &= changes.is_empty() && edits.is_empty();
 			// Without a map (the main menu before a campaign) the water and the fog draw
 			// nothing, and so don't drift.
 			let map = scene.extent.0 > 0.0 && scene.extent.1 > 0.0;
@@ -432,6 +435,7 @@ impl Game {
 				comparable &= grid.fog_clear_within(rect);
 			}
 			detail_changes = changes;
+			map_edits = edits;
 			Under::World {
 				scene: Box::new(scene),
 				view: (view.center, view.zoom),
@@ -480,7 +484,7 @@ impl Game {
 					failed: battle.failed + overlays.failed,
 				}
 			})
-		} else if let Under::World { scene, view: (center, zoom), map_revision, .. } = &look.under {
+		} else if let Under::World { scene, view: (center, zoom), .. } = &look.under {
 			let view = WorldView {
 				center: *center,
 				zoom: *zoom,
@@ -490,8 +494,9 @@ impl Game {
 			let grid = engine.world_grid();
 			let tiles = || grid.scene_map();
 			let map = WorldMap {
-				revision: *map_revision,
+				revision: grid.map_generation(),
 				tiles: &tiles,
+				edits: &map_edits,
 				changes: &detail_changes,
 			};
 			let _span = bb_render::frame_timing::span("world draw");

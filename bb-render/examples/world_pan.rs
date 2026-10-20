@@ -207,9 +207,10 @@ fn draw(
 		let _span = frame_timing::span("world draw");
 		return engine.sprites().with(|registry| renderer.draw(gpu, target, &scene, registry, &view, atlases));
 	}
-	let (scene, changes) = {
+	let (scene, changes, edits) = {
 		let _span = frame_timing::span("world scene");
-		(engine.world_scene_where(|_| false), engine.world_grid().take_detail_changes())
+		let grid = engine.world_grid();
+		(engine.world_scene_where(|_| false), grid.take_detail_changes(), grid.take_map_edits())
 	};
 	let grid = engine.world_grid();
 	MAP.with(|m| m.set((changes.len(), grid.map_revision())));
@@ -222,8 +223,9 @@ fn draw(
 	}
 	let tiles = || grid.scene_map();
 	let map = bb_render::WorldMap {
-		revision: grid.map_revision(),
+		revision: grid.map_generation(),
 		tiles: &tiles,
+		edits: &edits,
 		changes: &changes,
 	};
 	let _span = frame_timing::span("world draw");

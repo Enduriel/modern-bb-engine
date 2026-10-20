@@ -220,14 +220,44 @@ struct GridState {
 	/// mirroring, details added or removed, the map sized, cleared or loaded (see
 	/// [`WorldGrid::map_revision`]). A detail's look changing goes on `changes`.
 	revision: u64,
+	/// Counts the changes a renderer can't follow edit by edit, which build the kept
+	/// map again (see [`WorldGrid::map_generation`]): all of `revision`'s but details
+	/// spawned or removed, which go on `edits`.
+	generation: u64,
+	/// The details spawned and removed since a renderer last took them, in order (see
+	/// [`WorldGrid::take_map_edits`]).
+	edits: Vec<Edit>,
 	/// The details whose look changed (see [`world_detail::Changes`]).
 	changes: world_detail::Changes,
 }
 
+/// A detail spawned or removed, as [`GridState::edits`] holds it.
+enum Edit {
+	Spawned { tile: usize, detail: Detail },
+	Removed(i64),
+}
+
+/// The most edits held for a renderer: past it they're dropped and the map is built
+/// again whole (nothing takes them in a battle, or in an engine without a renderer).
+const MAX_EDITS: usize = 4096;
+
 impl GridState {
-	/// What the map draws changed in its order (see [`WorldGrid::map_revision`]).
+	/// What the map draws changed in its order in a way a renderer builds it again for
+	/// (see [`WorldGrid::map_revision`], [`WorldGrid::map_generation`]).
 	fn redrawn(&mut self) {
 		self.revision += 1;
+		self.generation += 1;
+		self.edits.clear();
+	}
+
+	/// A detail spawned or removed (see [`WorldGrid::take_map_edits`]).
+	fn edited(&mut self, edit: Edit) {
+		if self.edits.len() == MAX_EDITS {
+			self.redrawn();
+			return;
+		}
+		self.revision += 1;
+		self.edits.push(edit);
 	}
 
 	/// The flat index for square coords, or `None` if out of bounds.
@@ -324,6 +354,8 @@ impl WorldGrid {
 				fog: FogMask::default(),
 				region_texts: Vec::new(),
 				revision: 0,
+				generation: 0,
+				edits: Vec::new(),
 				changes: Default::default(),
 			})),
 		}
@@ -895,6 +927,34 @@ impl WorldGrid {
 		self.grid.borrow().revision
 	}
 
+	/// Counts the changes to the map's order a renderer builds its kept map again for
+	/// (a terrain brush or mirroring, the map sized, cleared or loaded, too many edits
+	/// left untaken); details spawned or removed between are given by
+	/// [`take_map_edits`](Self::take_map_edits) instead. Each of these changes moves
+	/// [`map_revision`](Self::map_revision) too.
+	pub fn map_generation(&self) -> u64 {
+		self.grid.borrow().generation
+	}
+
+	/// The details spawned and removed since the last call or the last change of
+	/// [`map_generation`](Self::map_generation), in order, a spawned one as drawn now
+	/// (hidden ones included). A renderer whose map is of the current generation
+	/// applies them in turn; one that builds it again (from
+	/// [`scene_map`](Self::scene_map), which has them all) drops them.
+	pub fn take_map_edits(&self) -> Vec<crate::scene::MapEdit> {
+		let (edits, now) = {
+			let mut g = self.grid.borrow_mut();
+			(std::mem::take(&mut g.edits), g.drawn_at)
+		};
+		edits
+			.into_iter()
+			.map(|edit| match edit {
+				Edit::Spawned { tile, detail } => crate::scene::MapEdit::Spawned { tile, detail: detail.borrow().scene(now) },
+				Edit::Removed(id) => crate::scene::MapEdit::Removed(id),
+			})
+			.collect()
+	}
+
 	/// The whole map as a renderer keeps it: every tile, each with all its details, those
 	/// not `Visible` included ([`SceneDetail::hidden`](crate::scene::SceneDetail)), so that a
 	/// detail shown again later keeps its place.
@@ -1092,7 +1152,11 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 	hint_brush(t, &data.brush);
 	let detail: Detail = Rc::new(RefCell::new(data));
 	world_detail::note_spin(&spinning, &detail);
-	t.with_drawn_mut(|d| d.details.push(detail.clone()));
+	{
+		let mut g = t.grid.borrow_mut();
+		g.tiles[t.id].details.push(detail.clone());
+		g.edited(Edit::Spawned { tile: t.id, detail: detail.clone() });
+	}
 	let changes = t.grid.borrow().changes.clone();
 	Some(class.instantiate(vm, DetailHandle { detail, changes }))
 }
@@ -1534,7 +1598,12 @@ fn clear_details(t: &TileHandle, vm: &SQVM, args: &[Retained], all_but: bool) {
 		(Some(mask), false) => Clear::Matching(mask),
 		(Some(mask), true) => Clear::AllBut(mask),
 	};
-	t.with_drawn_mut(|d| world_detail::clear(&mut d.details, which));
+	let mut g = t.grid.borrow_mut();
+	let mut removed = Vec::new();
+	world_detail::clear(&mut g.tiles[t.id].details, which, |id| removed.push(id));
+	for id in removed {
+		g.edited(Edit::Removed(id));
+	}
 }
 
 /// Count the 6 hex neighbours whose tile data satisfies `pred`.

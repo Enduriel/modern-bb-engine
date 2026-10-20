@@ -239,6 +239,48 @@ fn a_renderer_learns_what_changed_on_the_map() {
 	grid.clear();
 }
 
+/// Details spawned and removed are edits a renderer follows one by one (the map's
+/// generation stays); a change it can't follow (terrain, the map sized) moves the
+/// generation and drops the edits; edits nothing takes are bounded.
+#[test]
+fn details_spawned_and_removed_are_edits_of_the_kept_map() {
+	use squirrel_bb::scene::MapEdit;
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let grid = WorldGrid::new();
+	grid.set_engine_rng(squirrel_bb::EngineRng::seeded(1));
+	grid.install(&mut vm);
+	let run = |code: &str| vm.run_script(code, "map").expect("script");
+	run("World.resizeScene(4, 4); ::t <- World.getTileSquare(1, 2);");
+	grid.take_map_edits();
+	let generation = grid.map_generation();
+	let revision = grid.map_revision();
+	run("::a <- t.spawnDetail(\"tree\", -10, 32); ::b <- t.spawnDetail(\"hill\", 30, 8, true); a.Alpha = 40; t.clear(8);");
+	assert_eq!(grid.map_generation(), generation, "followed edit by edit");
+	assert_eq!(grid.map_revision(), revision + 3, "each edit moves the revision");
+	let edits = grid.take_map_edits();
+	let tile = (2 * 4 + 1) as usize;
+	match &edits[..] {
+		[MapEdit::Spawned { tile: t1, detail: a }, MapEdit::Spawned { tile: t2, detail: b }, MapEdit::Removed(gone)] => {
+			assert_eq!((*t1, *t2), (tile, tile), "the tile's flat index");
+			assert_eq!((&*a.brush, a.alpha), ("tree", 40), "as drawn when taken");
+			assert_eq!(&*b.brush, "hill");
+			assert_eq!(*gone, b.id, "the hill (type 8) removed");
+		}
+		other => panic!("edits {other:?}"),
+	}
+	assert!(grid.take_map_edits().is_empty(), "taken");
+
+	run("t.spawnDetail(\"hill\", 30, 8, true); t.setBrush(\"plains\");");
+	assert_eq!(grid.map_generation(), generation + 1, "terrain builds the map again");
+	assert!(grid.take_map_edits().is_empty(), "the edits before it are in the map built again");
+
+	run("for (local i = 0; i < 5000; i++) t.spawnDetail(\"hill\", 30, 8, true);");
+	assert_eq!(grid.map_generation(), generation + 2, "too many edits untaken: built again");
+	assert!(grid.take_map_edits().len() < 5000);
+	grid.clear();
+}
+
 #[test]
 fn tile_brush_is_state_like_the_original() {
 	let mut vm = squirrel::SQVM::new(1024);

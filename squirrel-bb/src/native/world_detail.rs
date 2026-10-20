@@ -345,15 +345,19 @@ pub(crate) fn has_type(details: &[Detail], mask: i64) -> bool {
 	details.iter().any(|d| d.borrow().flags & mask != 0)
 }
 
-/// Remove the details `clear` selects.
-pub(crate) fn clear(details: &mut Vec<Detail>, which: Clear) {
+/// Remove the details `clear` selects, giving `removed` each one's id.
+pub(crate) fn clear(details: &mut Vec<Detail>, which: Clear, mut removed: impl FnMut(i64)) {
 	details.retain(|d| {
-		let flags = d.borrow().flags;
-		match which {
+		let d = d.borrow();
+		let keep = match which {
 			Clear::All => false,
-			Clear::Matching(mask) => flags & mask == 0,
-			Clear::AllBut(mask) => flags & mask != 0,
+			Clear::Matching(mask) => d.flags & mask == 0,
+			Clear::AllBut(mask) => d.flags & mask != 0,
+		};
+		if !keep {
+			removed(d.id);
 		}
+		keep
 	});
 }
 
@@ -416,13 +420,13 @@ mod tests {
 	fn clear_selects_by_type_bits() {
 		let all = || vec![detail(0), detail(1), detail(2), detail(3)];
 		let mut d = all();
-		clear(&mut d, Clear::All);
+		clear(&mut d, Clear::All, |_| {});
 		assert!(d.is_empty());
 		let mut d = all();
-		clear(&mut d, Clear::Matching(1));
+		clear(&mut d, Clear::Matching(1), |_| {});
 		assert_eq!(flags(&d), [0, 2]);
 		let mut d = all();
-		clear(&mut d, Clear::AllBut(1));
+		clear(&mut d, Clear::AllBut(1), |_| {});
 		assert_eq!(flags(&d), [1, 3]);
 	}
 

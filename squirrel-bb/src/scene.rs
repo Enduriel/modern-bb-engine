@@ -137,6 +137,18 @@ pub struct SceneTile {
 	pub details: Vec<SceneDetail>,
 }
 
+/// A detail added to the map or removed from it, for a renderer that keeps the map from
+/// frame to frame and follows it edit by edit (see `WorldGrid::take_map_edits`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum MapEdit {
+	/// Spawned on the tile at flat index `tile` (`row * width + col`, the order
+	/// `WorldGrid::scene_map` gives the tiles in), after the tile's other details. As
+	/// drawn when the edits were taken.
+	Spawned { tile: usize, detail: SceneDetail },
+	/// The detail with this id removed.
+	Removed(i64),
+}
+
 /// A tile's detail as drawn (see `world_detail`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneDetail {

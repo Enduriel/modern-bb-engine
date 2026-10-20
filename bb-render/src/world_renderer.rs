@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use bb_assets::{BitmapFont, FileSource, Image, ImageLoader, Slot, SpriteRegistry, TextureCache};
 use squirrel_bb::FogPatch;
-use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
+use squirrel_bb::scene::{MapEdit, SceneDetail, SceneTile, WorldScene};
 use squirrel_bb::scene::tactical::TacticalScene;
 
 use crate::fast_hash::FastMap;
@@ -121,11 +121,14 @@ struct FrameQuads {
 
 /// The world map for [`WorldRenderer::draw_kept`]: what it's kept from.
 pub struct WorldMap<'a> {
-	/// The map's revision (`WorldGrid::map_revision`): its terrain and details are built
-	/// again when it changes.
+	/// The map's generation (`WorldGrid::map_generation`): its terrain and details are
+	/// built again when it changes.
 	pub revision: u64,
 	/// The whole map (`WorldGrid::scene_map`), asked for only then.
 	pub tiles: &'a dyn Fn() -> Vec<SceneTile>,
+	/// The details spawned and removed since the last frame, in order
+	/// (`WorldGrid::take_map_edits`): followed one by one, unless the map is built again.
+	pub edits: &'a [MapEdit],
 	/// The details whose look changed since the last frame
 	/// (`WorldGrid::take_detail_changes`).
 	pub changes: &'a [SceneDetail],
@@ -662,8 +665,9 @@ impl WorldRenderer {
 	}
 
 	/// [`draw`](Self::draw) with the map's terrain and details kept on the GPU from frame
-	/// to frame (see [`crate::kept_map`]): built again only when `map`'s revision (or the
-	/// registry) changes, the details changed written again. The moving layer is kept
+	/// to frame (see [`crate::kept_map`]): built again only when `map`'s generation (or
+	/// the registry) changes, the details spawned or removed put in or taken out, the
+	/// details changed written again. The moving layer is kept
 	/// too, its items built again only when they change (see [`crate::kept_sprites`]).
 	/// `scene`'s own tiles aren't drawn (a scene without them,
 	/// `Engine::world_scene_where(|_| false)`, copies nothing).
@@ -685,6 +689,9 @@ impl WorldRenderer {
 			let _span = crate::frame_timing::span("map built");
 			let tiles = (map.tiles)();
 			self.kept.build(&tiles, registry, built);
+		} else if !map.edits.is_empty() {
+			let _span = crate::frame_timing::span("map edits");
+			self.kept.edit(map.edits, registry);
 		}
 		self.kept.change(map.changes, registry);
 		self.draw_world(gpu, target, scene, registry, view, atlases, Moving::Kept)

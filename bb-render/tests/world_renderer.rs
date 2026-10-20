@@ -11,7 +11,7 @@ use bb_assets::{
 };
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Discard, Gpu, RenderTarget, WorldRenderer};
-use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
+use squirrel_bb::scene::{MapEdit, SceneDetail, SceneTile, WorldScene};
 use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
 struct Files(HashMap<String, Vec<u8>>);
@@ -652,8 +652,9 @@ fn the_cursor_draws_from_a_page_as_from_its_atlas() {
 	assert!(a == b, "the same pixels");
 }
 
-/// A map kept from frame to frame (`draw_kept`) is built once per revision, and a detail
-/// whose look changed is drawn anew, a hidden one shown again in its place.
+/// A map kept from frame to frame (`draw_kept`) is built once per generation, a detail
+/// whose look changed is drawn anew, a hidden one shown again in its place, and details
+/// spawned and removed go in and out without building it again.
 #[test]
 fn a_kept_map_redraws_only_what_changed() {
 	let gpu = match Gpu::headless() {
@@ -698,7 +699,7 @@ fn a_kept_map_redraws_only_what_changed() {
 		..WorldScene::default()
 	};
 	let built = std::cell::Cell::new(0);
-	let mut draw = |revision: u64, map: Vec<SceneDetail>, changes: &[SceneDetail]| {
+	let mut draw_edited = |revision: u64, map: Vec<SceneDetail>, edits: &[MapEdit], changes: &[SceneDetail]| {
 		let whole = || {
 			built.set(built.get() + 1);
 			tiles(map.clone())
@@ -706,6 +707,7 @@ fn a_kept_map_redraws_only_what_changed() {
 		let map = bb_render::WorldMap {
 			revision,
 			tiles: &whole,
+			edits,
 			changes,
 		};
 		renderer.draw_kept(&gpu, &target, &scene, &map, &registry, &view, Atlases::WaitForAll);
@@ -714,6 +716,7 @@ fn a_kept_map_redraws_only_what_changed() {
 		let px = |x: usize| <[u8; 4]>::try_from(&image.rgba[(8 + x) * 4..(8 + x) * 4 + 4]).unwrap();
 		(px(1), px(5))
 	};
+	let mut draw = |revision: u64, map: Vec<SceneDetail>, changes: &[SceneDetail]| draw_edited(revision, map, &[], changes);
 	let map = vec![detail(1, -2.0, false), detail(2, 2.0, true)];
 	assert_eq!(draw(1, map.clone(), &[]), (RED, [0, 0, 0, 255]), "the hidden one isn't drawn");
 	assert_eq!(draw(1, map.clone(), &[]).0, RED);
@@ -727,4 +730,11 @@ fn a_kept_map_redraws_only_what_changed() {
 	// A new revision builds it again: one detail left.
 	assert_eq!(draw(2, vec![detail(2, 2.0, false)], &[]), ([0, 0, 0, 255], RED));
 	assert_eq!(built.get(), 2);
+
+	// One spawned on the left, the right one removed: edits, not a build.
+	let spawned = MapEdit::Spawned { tile: 0, detail: detail(3, -2.0, false) };
+	let now = vec![detail(3, -2.0, false)];
+	assert_eq!(draw_edited(2, now.clone(), &[spawned, MapEdit::Removed(2)], &[]), (RED, [0, 0, 0, 255]));
+	assert_eq!(draw_edited(2, now, &[], &[]), (RED, [0, 0, 0, 255]), "kept so");
+	assert_eq!(built.get(), 2, "not built again");
 }

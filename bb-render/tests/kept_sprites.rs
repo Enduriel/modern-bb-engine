@@ -218,6 +218,7 @@ fn the_kept_moving_layer_draws_what_the_frame_built_draws() {
 			let map = WorldMap {
 				revision: 1,
 				tiles: &none,
+				edits: &[],
 				changes: &[],
 			};
 			kept.begin_frame();

@@ -524,22 +524,32 @@ impl SpriteRenderer {
 
 	/// Keep room for `quads` quads drawn from frame to frame ([`Part::Kept`]): whether
 	/// the room was made anew, its quads to be written again (see
-	/// [`SpriteRenderer::write_kept`]).
+	/// [`SpriteRenderer::write_kept`]). Room that grows keeps what was written (the kept
+	/// map's segments split as details are spawned). It grows in steps of
+	/// [`KEPT_STEP`] quads.
 	pub(crate) fn keep(&self, gpu: &Gpu, quads: usize) -> bool {
 		let kept = &mut self.streams.borrow_mut().kept;
-		let size = (quads.max(1) as u64 * 4 * VERTEX_SIZE).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+		let quad_bytes = 4 * VERTEX_SIZE;
+		let size = quads.max(1) as u64 * quad_bytes;
 		if kept.buffer.as_ref().is_some_and(|b| b.size() >= size) {
 			return false;
 		}
-		kept.buffer = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+		let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("kept sprite vertices"),
-			size: size.next_power_of_two(),
-			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+			size: (quads.max(1) as u64).next_multiple_of(KEPT_STEP) * quad_bytes,
+			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
 			mapped_at_creation: false,
-		}));
-		kept.writes.clear();
-		kept.bytes.clear();
-		true
+		});
+		let Some(old) = kept.buffer.replace(buffer) else {
+			kept.writes.clear();
+			kept.bytes.clear();
+			return true;
+		};
+		// The writes waiting for the next draw go to the new buffer, after the copy.
+		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+		encoder.copy_buffer_to_buffer(&old, 0, kept.buffer.as_ref().expect("made"), 0, old.size());
+		gpu.submit("kept grown", encoder.finish());
+		false
 	}
 
 	/// Write the kept quads from quad `first` on: `quads`, each `(quad, slot)` (its
@@ -753,6 +763,9 @@ impl Streams {
 		}
 	}
 }
+
+/// The kept quads' room grows in steps of this many quads (~850 KB).
+const KEPT_STEP: u64 = 4096;
 
 /// The staging memory's unit: a zoomed-out world map's quads are about 7 MB.
 const STAGING_CHUNK: u64 = 8 << 20;

@@ -5,9 +5,13 @@
 //! order they draw, written to a vertex buffer in world units (the camera and the day's
 //! light are uniforms), and drawn from it every frame; only what changed is built again:
 //!
-//! - The map's order changes (a terrain brush or mirroring set, details spawned or
-//!   cleared, the map sized, cleared or loaded): everything is built again
-//!   (`squirrel_bb::WorldGrid::map_revision`), as the sprite registry's sheets changing.
+//! - The map's order changes in a way it can't follow (a terrain brush or mirroring
+//!   set, the map sized, cleared or loaded): everything is built again
+//!   (`squirrel_bb::WorldGrid::map_generation`), as the sprite registry's sheets
+//!   changing.
+//! - A detail is spawned or removed (`WorldGrid::take_map_edits`; every settlement's
+//!   house lights at dusk and dawn): its quad goes in at its place in the order, or
+//!   out, and only its segment is located and written again.
 //! - A detail's look changes (a script set its colour, brush, offset, …, or it turned,
 //!   stepped or faded on its own): only its quad is written again
 //!   (`WorldGrid::take_detail_changes`). Its place in the order stays: a detail's key is
@@ -21,16 +25,20 @@
 //! footprints, key 0, after the map's own key-0 details) goes between the map's details
 //! with keys ≥ 0 and those below ([`KeptMap::split`]).
 //!
-//! The map is cut into segments of [`SEGMENT`] consecutive quads of that order. A
-//! segment is drawn if its quads' bounds meet the screen, located in the pages when it's
-//! first drawn (a frame then loads as it would have), and drawn in its own calls of up to
-//! eight atlases, so skipping one keeps the order of the rest. Its bounds are its
-//! quads' own corners, so what it skips is off the screen.
+//! The map is cut into segments of consecutive quads of that order, each with room for
+//! [`SEGMENT`] in the kept buffer (a build fills [`FILL`], leaving room for details
+//! spawned later; a full one is split in two, the second half in new room). The
+//! segments are drawn in order wherever their room lies. A segment is drawn if its
+//! quads' bounds meet the screen, located in the pages when it's first drawn (a frame
+//! then loads as it would have), and drawn in its own calls of up to eight atlases, so
+//! skipping one keeps the order of the rest. Its bounds are its quads' own corners, so
+//! what it skips is off the screen.
 
+use std::cmp::Reverse;
 use std::ops::Range;
 
 use bb_assets::SpriteRegistry;
-use squirrel_bb::scene::{SceneDetail, SceneTile};
+use squirrel_bb::scene::{MapEdit, SceneDetail, SceneTile};
 
 use crate::fast_hash::FastMap;
 use crate::pages::{FramePages, Located};
@@ -40,10 +48,14 @@ use crate::world::{
 	AtlasIds, AtlasList, Layer, WorldView, detail_quad, sort_back_to_front, terrain_quad,
 };
 
-/// Quads in a segment.
+/// A segment's room in the kept buffer, in quads.
 pub(crate) const SEGMENT: usize = 256;
 
-/// What the kept map was built from: the map's revision and the registry's sheets.
+/// The quads a build puts in a segment: the rest of its room waits for details spawned
+/// later (a settlement's lights at dusk), so that few segments split.
+pub(crate) const FILL: usize = SEGMENT - SEGMENT / 8;
+
+/// What the kept map was built from: the map's generation and the registry's sheets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Built {
 	pub revision: u64,
@@ -59,19 +71,45 @@ pub(crate) enum From {
 	Page(usize),
 }
 
+/// A quad's place in the original's order (`world_quads`' sort): by layer, the higher
+/// key first, then in push order, which is the tiles row by row (`col` fastest), and on
+/// a tile its terrain and then its details in spawn order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Order {
+	layer: Layer,
+	key: Reverse<i64>,
+	/// The tile's index in the map's order.
+	tile: u32,
+	/// Its detail's place among the tile's, in spawn order (0 for terrain).
+	nth: u32,
+}
+
+/// One kept quad.
+struct Item {
+	/// In its atlas's coordinates, its `texture` indexing `atlases`; `None` draws
+	/// nothing (hidden, or an unknown brush).
+	quad: Option<Quad>,
+	order: Order,
+	/// Its detail's id, [`NO_ID`] for terrain.
+	id: i64,
+}
+
+const NO_ID: i64 = i64::MIN;
+
 /// The map's terrain and details in drawing order.
 #[derive(Default)]
 pub(crate) struct KeptMap {
 	/// `None`: built for one frame only (a scene given whole, see `WorldRenderer::draw`).
 	built: Option<Built>,
-	/// Each quad, in its atlas's coordinates, its `texture` indexing `atlases`; `None`
-	/// draws nothing (hidden, or an unknown brush).
-	items: Vec<Option<Quad>>,
 	atlases: AtlasList,
-	/// Each detail's quad, by its id.
-	ids: FastMap<i64, usize>,
-	split: usize,
+	/// Every segment, each at the room its index gives (`index * SEGMENT` quads in).
 	segments: Vec<Segment>,
+	/// The segments in drawing order.
+	order: Vec<usize>,
+	/// Each detail's quad, by its id: its segment and place in it.
+	ids: FastMap<i64, (usize, usize)>,
+	/// Each tile's next detail's place among its own ([`Order::nth`]).
+	next: Vec<u32>,
 	/// Where each frame was found this frame, by atlas and texture coordinates.
 	memo: FastMap<(usize, [u32; 8]), Located>,
 	/// The pages' generation the segments' bind groups were made at.
@@ -79,12 +117,44 @@ pub(crate) struct KeptMap {
 }
 
 struct Segment {
-	items: Range<usize>,
+	/// Drawn before the details layer's own sprites (terrain and details keyed ≥ 0), or
+	/// after them (see [`KeptMap::calls`]).
+	before: bool,
+	items: Vec<Item>,
 	/// The quads' extent, `[left, right, bottom, top]` (left > right with none).
 	bounds: [f32; 4],
 	placed: Option<Placed>,
-	/// Quads changed since it was placed.
+	/// Quads changed since it was placed (their places in it).
 	patched: Vec<usize>,
+}
+
+impl Segment {
+	fn new(before: bool, items: Vec<Item>) -> Segment {
+		let mut segment = Segment {
+			before,
+			items,
+			bounds: EMPTY,
+			placed: None,
+			patched: Vec::new(),
+		};
+		segment.measure();
+		segment
+	}
+
+	/// Its bounds, measured again.
+	fn measure(&mut self) {
+		self.bounds = EMPTY;
+		for quad in self.items.iter().filter_map(|i| i.quad.as_ref()) {
+			grow(&mut self.bounds, quad);
+		}
+	}
+
+	/// Its quads changed in number or order: it's located and written again whole.
+	fn unplace(&mut self) {
+		self.placed = None;
+		self.patched.clear();
+		self.measure();
+	}
 }
 
 /// A segment located in the pages and written to the kept buffer.
@@ -100,6 +170,7 @@ struct Placed {
 }
 
 struct KeptCall {
+	/// Its quads in the kept buffer.
 	items: Range<usize>,
 	slots: Vec<From>,
 	/// Its bind group, and the views it was made with.
@@ -159,7 +230,8 @@ impl KeptMap {
 		built.is_none() || self.built != built
 	}
 
-	/// Build it from `tiles` (the whole map, or for `built` `None` what one frame shows).
+	/// Build it from `tiles` (the whole map in its order, or for `built` `None` what one
+	/// frame shows).
 	pub(crate) fn build(
 		&mut self,
 		tiles: &[SceneTile],
@@ -167,90 +239,102 @@ impl KeptMap {
 		built: Option<Built>,
 	) {
 		struct Entry {
-			layer: Layer,
-			key: i64,
-			id: Option<i64>,
+			order: Order,
+			id: i64,
 			quad: Option<(usize, Quad)>,
 		}
 		let mut ids = AtlasIds::default();
 		let mut entries = Vec::new();
-		for tile in tiles {
+		self.next.clear();
+		for (t, tile) in tiles.iter().enumerate() {
+			let at = |layer, key, nth| Order {
+				layer,
+				key: Reverse(key),
+				tile: t as u32,
+				nth,
+			};
 			if let Some((key, texture, quad)) = terrain_quad(tile, sprites) {
 				entries.push(Entry {
-					layer: Layer::Terrain,
-					key,
-					id: None,
+					order: at(Layer::Terrain, key, 0),
+					id: NO_ID,
 					quad: Some((ids.id(texture), quad)),
 				});
 			}
-			for detail in &tile.details {
+			for (nth, detail) in tile.details.iter().enumerate() {
 				let quad = (!detail.hidden)
 					.then(|| detail_quad(detail, sprites))
 					.flatten();
 				entries.push(Entry {
-					layer: Layer::Details,
-					key: i64::from(detail.z),
-					id: Some(detail.id),
+					order: at(Layer::Details, i64::from(detail.z), nth as u32),
+					id: detail.id,
 					quad: quad.map(|(texture, quad)| (ids.id(texture), quad)),
 				});
 			}
+			self.next.push(tile.details.len() as u32);
 		}
 		let (mut keys, mut order) = (Vec::new(), Vec::new());
 		sort_back_to_front(
 			entries.len(),
-			|i| (entries[i].layer, entries[i].key),
+			|i| (entries[i].order.layer, entries[i].order.key.0),
 			&mut keys,
 			&mut order,
 		);
 		let mut atlases = AtlasList::default();
 		let mut index = vec![usize::MAX; ids.paths.len()];
-		self.ids.clear();
-		self.items.clear();
-		self.split = order.len();
-		for (at, &i) in order.iter().enumerate() {
-			let entry = &entries[i as usize];
-			if let Some(id) = entry.id {
-				self.ids.insert(id, at);
-			}
-			if entry.layer == Layer::Details && entry.key < 0 && self.split == order.len() {
-				self.split = at;
-			}
-			self.items.push(entry.quad.map(|(texture, quad)| {
-				let atlas = &mut index[texture];
-				if *atlas == usize::MAX {
-					*atlas = atlases.index_of(ids.paths[texture]);
+		let mut items: Vec<Item> = order
+			.iter()
+			.map(|&i| {
+				let entry = &entries[i as usize];
+				Item {
+					quad: entry.quad.map(|(texture, quad)| {
+						let atlas = &mut index[texture];
+						if *atlas == usize::MAX {
+							*atlas = atlases.index_of(ids.paths[texture]);
+						}
+						Quad {
+							texture: *atlas,
+							..quad
+						}
+					}),
+					order: entry.order,
+					id: entry.id,
 				}
-				Quad {
-					texture: *atlas,
-					..quad
-				}
-			}));
-		}
+			})
+			.collect();
+		drop(entries);
 		self.atlases = atlases;
 		self.segments.clear();
-		for part in [0..self.split, self.split..self.items.len()] {
-			let mut start = part.start;
-			while start < part.end {
-				let items = start..(start + SEGMENT).min(part.end);
-				let mut bounds = EMPTY;
-				for quad in self.items[items.clone()].iter().flatten() {
-					grow(&mut bounds, quad);
-				}
-				self.segments.push(Segment {
-					items: items.clone(),
-					bounds,
-					placed: None,
-					patched: Vec::new(),
-				});
-				start = items.end;
+		self.order.clear();
+		self.ids.clear();
+		// The details keyed below 0 are drawn after the details layer's own sprites.
+		let split = items.iter().position(|i| !before(&i.order)).unwrap_or(items.len());
+		let after = items.split_off(split);
+		for (part, is_before) in [(items, true), (after, false)] {
+			let mut part = part.into_iter().peekable();
+			while part.peek().is_some() {
+				let items: Vec<Item> = part.by_ref().take(FILL).collect();
+				self.push_segment(Segment::new(is_before, items));
 			}
 		}
 		self.built = built;
 	}
 
-	/// The kept quads: how many.
+	/// Add `segment` at the end of the drawing order, in new room.
+	fn push_segment(&mut self, segment: Segment) -> usize {
+		let s = self.segments.len();
+		for (at, item) in segment.items.iter().enumerate() {
+			if item.id != NO_ID {
+				self.ids.insert(item.id, (s, at));
+			}
+		}
+		self.segments.push(segment);
+		self.order.push(s);
+		s
+	}
+
+	/// The room the kept buffer needs, in quads.
 	pub(crate) fn len(&self) -> usize {
-		self.items.len()
+		self.segments.len() * SEGMENT
 	}
 
 	/// The kept buffer was made anew: every segment is written again.
@@ -260,26 +344,136 @@ impl KeptMap {
 		}
 	}
 
+	/// Follow the details spawned and removed since it was built or last edited, in
+	/// order (see `squirrel_bb::WorldGrid::take_map_edits`).
+	pub(crate) fn edit(&mut self, edits: &[MapEdit], sprites: &SpriteRegistry) {
+		for edit in edits {
+			match edit {
+				MapEdit::Spawned { tile, detail } => self.insert(*tile, detail, sprites),
+				MapEdit::Removed(id) => self.remove(*id),
+			}
+		}
+	}
+
+	/// `detail`, spawned on tile `tile` after its others, goes in at its place in the
+	/// order.
+	fn insert(&mut self, tile: usize, detail: &SceneDetail, sprites: &SpriteRegistry) {
+		if self.next.len() <= tile {
+			self.next.resize(tile + 1, 0);
+		}
+		let nth = self.next[tile];
+		self.next[tile] += 1;
+		let item = Item {
+			quad: self.detail_quad(detail, sprites),
+			order: Order {
+				layer: Layer::Details,
+				key: Reverse(i64::from(detail.z)),
+				tile: tile as u32,
+				nth,
+			},
+			id: detail.id,
+		};
+		let is_before = before(&item.order);
+		// The first segment of its part whose last quad comes after it, or the part's
+		// last (a part without any gets one, at the split).
+		let (mut found, mut last) = (None, None);
+		for (at, &s) in self.order.iter().enumerate() {
+			let segment = &self.segments[s];
+			if segment.before != is_before {
+				continue;
+			}
+			last = Some(at);
+			if segment.items.last().is_some_and(|i| i.order > item.order) {
+				found = Some(at);
+				break;
+			}
+		}
+		let at = match found.or(last) {
+			Some(at) => at,
+			None => {
+				let s = self.segments.len();
+				self.segments.push(Segment::new(is_before, Vec::new()));
+				let at = if is_before {
+					self.order
+						.iter()
+						.position(|&s| !self.segments[s].before)
+						.unwrap_or(self.order.len())
+				} else {
+					self.order.len()
+				};
+				self.order.insert(at, s);
+				at
+			}
+		};
+		let mut s = self.order[at];
+		let mut place = self.segments[s].items.partition_point(|i| i.order < item.order);
+		if self.segments[s].items.len() == SEGMENT {
+			// Full: its second half goes to new room, after it.
+			let half = SEGMENT / 2;
+			let moved = self.segments[s].items.split_off(half);
+			let is_before = self.segments[s].before;
+			self.segments[s].unplace();
+			let new = self.segments.len();
+			for (i, moved) in moved.iter().enumerate() {
+				if moved.id != NO_ID {
+					self.ids.insert(moved.id, (new, i));
+				}
+			}
+			self.segments.push(Segment::new(is_before, moved));
+			self.order.insert(at + 1, new);
+			if place > half {
+				s = new;
+				place -= half;
+			}
+		}
+		let segment = &mut self.segments[s];
+		segment.items.insert(place, item);
+		segment.unplace();
+		for (i, item) in segment.items.iter().enumerate().skip(place) {
+			if item.id != NO_ID {
+				self.ids.insert(item.id, (s, i));
+			}
+		}
+	}
+
+	/// The detail with id `id` goes out of the order (one never kept is passed over).
+	fn remove(&mut self, id: i64) {
+		let Some((s, place)) = self.ids.remove(&id) else {
+			return;
+		};
+		let segment = &mut self.segments[s];
+		segment.items.remove(place);
+		segment.unplace();
+		for (i, item) in segment.items.iter().enumerate().skip(place) {
+			if item.id != NO_ID {
+				self.ids.insert(item.id, (s, i));
+			}
+		}
+	}
+
+	/// `detail`'s quad as kept: `None` if hidden or its brush is unknown.
+	fn detail_quad(&mut self, detail: &SceneDetail, sprites: &SpriteRegistry) -> Option<Quad> {
+		let quad = (!detail.hidden)
+			.then(|| detail_quad(detail, sprites))
+			.flatten();
+		quad.map(|(texture, quad)| Quad {
+			texture: self.atlases.index_of(texture),
+			..quad
+		})
+	}
+
 	/// Take the details whose look changed: their quads, built again.
 	pub(crate) fn change(&mut self, changes: &[SceneDetail], sprites: &SpriteRegistry) {
 		for detail in changes {
-			let Some(&at) = self.ids.get(&detail.id) else {
+			let Some(&(s, at)) = self.ids.get(&detail.id) else {
 				continue;
 			};
-			let quad = (!detail.hidden)
-				.then(|| detail_quad(detail, sprites))
-				.flatten();
-			let quad = quad.map(|(texture, quad)| Quad {
-				texture: self.atlases.index_of(texture),
-				..quad
-			});
-			if quad == self.items[at] {
+			let quad = self.detail_quad(detail, sprites);
+			let segment = &mut self.segments[s];
+			if quad == segment.items[at].quad {
 				continue;
 			}
-			self.items[at] = quad;
-			// Segments are in order, SEGMENT quads each but where the split cuts one short.
-			let segment = self.segment_of(at);
-			let segment = &mut self.segments[segment];
+			segment.items[at].quad = quad;
 			if let Some(quad) = &quad {
 				grow(&mut segment.bounds, quad);
 			}
@@ -287,17 +481,16 @@ impl KeptMap {
 		}
 	}
 
-	fn segment_of(&self, item: usize) -> usize {
-		self.segments.partition_point(|s| s.items.end <= item)
-	}
-
-	/// The segments `view` shows, in order.
+	/// The segments `view` shows, in drawing order.
 	pub(crate) fn shown(&self, view: &WorldView) -> Shown {
 		let [left, right, bottom, top] = view.bounds(0.0);
 		Shown {
-			segments: (0..self.segments.len())
-				.filter(|&i| {
-					let [l, r, b, t] = self.segments[i].bounds;
+			segments: self
+				.order
+				.iter()
+				.copied()
+				.filter(|&s| {
+					let [l, r, b, t] = self.segments[s].bounds;
 					l <= right && r >= left && b <= top && t >= bottom
 				})
 				.collect(),
@@ -359,9 +552,9 @@ impl KeptMap {
 		}
 	}
 
-	/// Where quad `i` is drawn from.
-	fn locate(&mut self, i: usize, cx: &mut Placing) -> At {
-		let Some(quad) = self.items[i] else {
+	/// Where quad `at` of segment `s` is drawn from.
+	fn locate(&mut self, s: usize, at: usize, cx: &mut Placing) -> At {
+		let Some(quad) = self.segments[s].items[at].quad else {
 			return At::Nothing;
 		};
 		let path = &self.atlases.paths[quad.texture];
@@ -396,15 +589,15 @@ impl KeptMap {
 		let mut patched = std::mem::take(&mut self.segments[s].patched);
 		patched.sort_unstable();
 		patched.dedup();
-		let start = self.segments[s].items.start;
+		let base = s * SEGMENT;
 		let mut writes = Vec::new();
 		for &i in &patched {
-			let at = self.locate(i, cx);
+			let at = self.locate(s, i, cx);
 			let placed = self.segments[s].placed.as_mut().expect("placed");
 			let call = placed
 				.calls
 				.iter_mut()
-				.find(|c| c.items.contains(&i))
+				.find(|c| c.items.contains(&(base + i)))
 				.expect("a call holds every quad");
 			let drawn = match at {
 				At::Waiting => return false,
@@ -431,8 +624,8 @@ impl KeptMap {
 					Some((quad, slot as u32))
 				}
 			};
-			placed.drawn[i - start] = drawn.is_some();
-			writes.push((i, drawn));
+			placed.drawn[i] = drawn.is_some();
+			writes.push((base + i, drawn));
 		}
 		for (i, drawn) in writes {
 			cx.sprites.write_kept(i, [drawn]);
@@ -440,25 +633,25 @@ impl KeptMap {
 		true
 	}
 
-	/// Locate segment `s` whole, batch it in calls and write it.
+	/// Locate segment `s` whole, batch it in calls and write it to its room.
 	fn place_segment(&mut self, s: usize, generation: u64, cx: &mut Placing) {
-		let items = self.segments[s].items.clone();
+		let (base, len) = (s * SEGMENT, self.segments[s].items.len());
 		self.segments[s].patched.clear();
 		let mut placed = Placed {
 			generation,
 			calls: vec![KeptCall {
-				items: items.start..items.start,
+				items: base..base,
 				slots: Vec::new(),
 				group: None,
 			}],
 			pages: Vec::new(),
 			whole: Vec::new(),
-			drawn: Vec::with_capacity(items.len()),
+			drawn: Vec::with_capacity(len),
 			waiting: 0,
 		};
-		let mut writes = Vec::with_capacity(items.len());
-		for i in items.clone() {
-			let drawn = match self.locate(i, cx) {
+		let mut writes = Vec::with_capacity(len);
+		for i in 0..len {
+			let drawn = match self.locate(s, i, cx) {
 				At::Nothing => None,
 				At::Waiting => {
 					placed.waiting += 1;
@@ -471,7 +664,7 @@ impl KeptMap {
 						None => {
 							if call.slots.len() == SLOTS {
 								placed.calls.push(KeptCall {
-									items: i..i,
+									items: base + i..base + i,
 									slots: Vec::new(),
 									group: None,
 								});
@@ -494,10 +687,10 @@ impl KeptMap {
 				}
 			};
 			placed.drawn.push(drawn.is_some());
-			placed.calls.last_mut().expect("a call").items.end = i + 1;
+			placed.calls.last_mut().expect("a call").items.end = base + i + 1;
 			writes.push(drawn);
 		}
-		cx.sprites.write_kept(items.start, writes);
+		cx.sprites.write_kept(base, writes);
 		self.segments[s].placed = Some(placed);
 	}
 
@@ -540,11 +733,7 @@ impl KeptMap {
 		shown: &'a Shown,
 		atlas: usize,
 	) -> impl Iterator<Item = &'a Quad> + 'a {
-		shown
-			.segments
-			.iter()
-			.flat_map(|&s| self.items[self.segments[s].items.clone()].iter().flatten())
-			.filter(move |q| q.texture == atlas)
+		self.shown_quads(shown).filter(move |q| q.texture == atlas)
 	}
 
 	/// The quads of the segments `shown`, in their atlases' coordinates (usage tracking).
@@ -555,7 +744,7 @@ impl KeptMap {
 		shown
 			.segments
 			.iter()
-			.flat_map(|&s| self.items[self.segments[s].items.clone()].iter().flatten())
+			.flat_map(|&s| self.segments[s].items.iter().filter_map(|i| i.quad.as_ref()))
 	}
 
 	/// Give each call of the segments `shown` its bind group, made again if the views its
@@ -585,7 +774,8 @@ impl KeptMap {
 		}
 	}
 
-	/// The draw calls of the segments `shown` before the split (`before`) or after it.
+	/// The draw calls of the segments `shown` drawn before the details layer's own
+	/// sprites (`before`: terrain and details keyed ≥ 0) or after them.
 	pub(crate) fn calls<'a>(
 		&'a self,
 		shown: &Shown,
@@ -595,7 +785,7 @@ impl KeptMap {
 			.segments
 			.iter()
 			.map(|&s| &self.segments[s])
-			.filter(|s| (s.items.start < self.split) == before)
+			.filter(|s| s.before == before)
 			.filter_map(|s| s.placed.as_ref())
 			.flat_map(|p| &p.calls)
 			.filter(|c| !c.items.is_empty())
@@ -606,6 +796,12 @@ impl KeptMap {
 			})
 			.collect()
 	}
+}
+
+/// Whether a quad of `order` is drawn before the details layer's own sprites: the
+/// terrain and the details keyed ≥ 0.
+fn before(order: &Order) -> bool {
+	order.layer != Layer::Details || order.key.0 >= 0
 }
 
 #[cfg(test)]
@@ -635,12 +831,22 @@ mod tests {
 		}
 	}
 
+	/// Each kept quad in drawing order: what it shows (`-` for nothing).
 	fn names(map: &KeptMap) -> Vec<String> {
-		map.items
+		items(map)
 			.iter()
-			.map(|q| {
-				q.as_ref()
-					.map_or("-".to_string(), |q| name_of(q).to_string())
+			.map(|(q, _, _)| q.as_ref().map_or("-".to_string(), |q| name_of(q).to_string()))
+			.collect()
+	}
+
+	/// Each kept quad in drawing order, its detail's id, and whether it's drawn before
+	/// the details layer's own sprites.
+	fn items(map: &KeptMap) -> Vec<(Option<Quad>, i64, bool)> {
+		map.order
+			.iter()
+			.flat_map(|&s| {
+				let segment = &map.segments[s];
+				segment.items.iter().map(|i| (i.quad, i.id, segment.before))
 			})
 			.collect()
 	}
@@ -658,13 +864,13 @@ mod tests {
 		let mut map = KeptMap::default();
 		map.build(&tiles, &registry(), None);
 		assert_eq!(names(&map), ["rock", "rock", "mark", "-", "rock", "rock"]);
-		assert_eq!(map.split, 5, "before the detail keyed below 0");
 		assert_eq!(
-			map.segments
+			map.order
 				.iter()
-				.map(|s| s.items.clone())
+				.map(|&s| (map.segments[s].items.len(), map.segments[s].before))
 				.collect::<Vec<_>>(),
-			[0..5, 5..6]
+			[(5, true), (1, false)],
+			"split before the detail keyed below 0"
 		);
 
 		// Shown again, it's drawn where it was.
@@ -676,5 +882,73 @@ mod tests {
 			["rock", "rock", "mark", "rock", "rock", "rock"]
 		);
 		assert_eq!(map.segments[0].patched, [3]);
+	}
+
+	/// Details spawned and removed one by one give the map a build of the tiles as they
+	/// end up gives, quad for quad: keys ≥ 0 and below, ties between tiles and on one
+	/// tile, hidden ones, a part with no segment yet, and segments filling and splitting.
+	#[test]
+	fn edits_keep_the_order_a_build_gives() {
+		let registry = registry();
+		let brushes = ["rock", "mark", "step", "drop"];
+		// A small generator (xorshift), so the run is the same every time.
+		let mut state = 0x2545_f491_4f6c_dd1du64;
+		let mut next = move |n: u64| {
+			state ^= state << 13;
+			state ^= state >> 7;
+			state ^= state << 17;
+			state % n
+		};
+		let mut id = 0;
+		let mut new_detail = |next: &mut dyn FnMut(u64) -> u64, tile: usize| {
+			id += 1;
+			let mut d = detail(id, brushes[next(4) as usize], next(9) as i32 - 3);
+			d.hidden = next(10) == 0;
+			d.pos = (tile as f32 * 3.0, next(50) as f32);
+			d
+		};
+		// Only details keyed ≥ 0 at first: the part after the split has no segment.
+		let mut tiles: Vec<SceneTile> = (0..40)
+			.map(|t| {
+				let mut tile = tile(t as f64, Vec::new());
+				for _ in 0..next(12) {
+					let mut d = new_detail(&mut next, t);
+					d.z = d.z.abs();
+					tile.details.push(d);
+				}
+				tile
+			})
+			.collect();
+		let mut map = KeptMap::default();
+		map.build(&tiles, &registry, None);
+		assert!(map.segments.iter().all(|s| s.before));
+		let segments = map.segments.len();
+		for round in 0..12 {
+			let mut edits = Vec::new();
+			for _ in 0..60 {
+				let t = next(tiles.len() as u64) as usize;
+				if next(3) == 0 && !tiles[t].details.is_empty() {
+					let at = next(tiles[t].details.len() as u64) as usize;
+					let gone = tiles[t].details.remove(at);
+					edits.push(MapEdit::Removed(gone.id));
+				} else {
+					// Crowd a few tiles, so that segments fill and split.
+					let t = if round % 2 == 0 { t % 3 } else { t };
+					let d = new_detail(&mut next, t);
+					tiles[t].details.push(d.clone());
+					edits.push(MapEdit::Spawned { tile: t, detail: d });
+				}
+			}
+			map.edit(&edits, &registry);
+			let mut built = KeptMap::default();
+			built.build(&tiles, &registry, None);
+			assert_eq!(items(&map), items(&built), "round {round}");
+			for (&id, &(s, at)) in &map.ids {
+				assert_eq!(map.segments[s].items[at].id, id, "where detail {id} is kept");
+			}
+			assert!(map.segments.iter().all(|s| s.items.len() <= SEGMENT));
+		}
+		assert!(map.segments.len() > segments, "segments split, and a part began");
+		assert!(map.segments.iter().any(|s| !s.before));
 	}
 }
