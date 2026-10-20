@@ -579,3 +579,61 @@ fn instances_carry_the_originals_extra_slots() {
 	)
 	.expect("the original's extra slots");
 }
+
+/// Lazy class levels (the default) look to scripts exactly as plain ones do: the same
+/// script, run once over each, sees the same slots in the same iteration order, the same
+/// bindings and identities, through super slots, writes to the levels, a class patched
+/// after instances exist (they keep what they were made from), and `m` written through.
+#[test]
+fn lazy_levels_look_like_plain_ones() {
+	const SCRIPT: &str = r#"
+	local out = [];
+	local function show(label, t) {
+		local s = label + ":";
+		foreach (k, v in t) s += " " + k + "=" + (typeof v == "function" ? "fn:" + v.getinfos().name : typeof v == "table" || typeof v == "userdata" ? typeof v : v);
+		out.push(s + " #" + t.len());
+	}
+	local p = ::new("scripts/entity/tactical/player"), q = ::new("scripts/entity/tactical/player");
+	out.push("identity " + (p.getHitpoints == p.getHitpoints) + " " + (p.getHitpoints == q.getHitpoints) + " " + (p.actor.getHitpoints == p.getHitpoints)
+		+ " " + (p.create == q.create) + " " + (p.actor.whoAmI.call(q) == p) + " " + p.getName());
+	out.push("rawin " + p.actor.rawin("getHitpoints") + " " + p.actor.rawin("getMoodState") + " " + p.actor.entity.rawin("whoAmI") + " " + p.actor.entity.rawin("InstanceName"));
+	// Writes to an ancestor level, a new slot on it, and m written through.
+	p.actor.extra <- function() { return "extra"; };
+	p.actor.entity.getName = function() { return "patched on the instance"; };
+	p.m.ID = 7;
+	// The class patched after p and q exist: they keep what they were made from.
+	::player_class.actor.getHitpoints = function() { return -1; };
+	::player_class.actor.added <- 1;
+	::player_class.actor.entity.whoAmI = function() { return "patched class"; };
+	local r = ::new("scripts/entity/tactical/player");
+	out.push("patched " + p.getHitpoints() + " " + ("added" in p.actor) + " " + r.getHitpoints() + " " + ("added" in r.actor) + " " + (p.actor.entity.whoAmI() == p) + " " + r.actor.entity.whoAmI());
+	out.push("names " + p.getName() + " " + q.getName() + " " + p.actor.extra() + " " + p.m.ID + " " + q.m.ID);
+	foreach (i, t in [p, p.actor, p.actor.entity, q.actor, r.actor, r.actor.entity, ::player_class.actor, ::player_class.actor.entity, ::actor_class, p.m, p.actor.m, p.actor.entity.m])
+		show("level" + i, t);
+	// After iterating (the levels are plain now): reads, identity and delete still agree.
+	local f = p.actor.getHitpoints;
+	out.push("after " + (f == p.getHitpoints) + " " + p.getHitpoints() + " " + delete p.actor.extra + " " + ("extra" in p.actor) + " " + clone q.actor.entity == null);
+	show("clone", clone r.actor.entity);
+	q.actor.entity.rawdelete("whoAmI");
+	show("deleted", q.actor.entity);
+	r.actor.clear();
+	show("cleared", r.actor);
+	::__out <- out.reduce(@(a, b) a + "\n" + b);
+	"#;
+	let run = |lazy: bool| {
+		let (vm, modules) = vm_with(&[
+			("scripts/entity/tactical/entity", L_ENTITY),
+			("scripts/entity/tactical/actor", "this.actor <- this.inherit(\"scripts/entity/tactical/entity\", { m = { Hitpoints = 10, Stored = null }, function create() { this.m.Name = \"actor\"; } function getHitpoints() { return this.m.Hitpoints; } }); ::actor_class <- this.actor;"),
+			("scripts/entity/tactical/player", &format!("{L_PLAYER} ::player_class <- this.player;")),
+		]);
+		modules.set_lazy_levels(lazy);
+		vm.run_script(SCRIPT, "compare").expect("the script runs");
+		let out = squirrel::SqTable::root(&vm).get::<String>("__out").expect("its output");
+		vm.collect_garbage();
+		out
+	};
+	let plain = run(false);
+	let lazy = run(true);
+	assert_eq!(lazy, plain, "lazy levels:\n{lazy}\n\nplain levels:\n{plain}");
+	assert!(plain.contains("patched 10 false -1 true true patched class"), "{plain}");
+}

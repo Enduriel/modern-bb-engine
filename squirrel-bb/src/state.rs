@@ -51,6 +51,9 @@ pub(crate) struct State<S: ScriptSource> {
 	/// The `self` and `base` natives every instance gets on its base level (bound to
 	/// it); set by `ModuleSystem::install`.
 	pub(crate) class_natives: Option<(SqStrongRef, SqStrongRef)>,
+	/// Whether class levels are lazy clones (see `class.rs`): on, unless
+	/// `BB_LAZY_LEVELS=0` (to compare with plain clones).
+	pub(crate) lazy_levels: bool,
 }
 
 impl<S: ScriptSource> State<S> {
@@ -66,6 +69,7 @@ impl<S: ScriptSource> State<S> {
 			instance_counts: HashMap::new(),
 			fonts: Vec::new(),
 			class_natives: None,
+			lazy_levels: std::env::var("BB_LAZY_LEVELS").map_or(true, |v| v != "0"),
 		}
 	}
 }

@@ -37,11 +37,24 @@
 //! classes inheriting from it later) only: Reforged sets `BaseItemScript` on one named
 //! weapon this way. `new` builds an instance from the leaf's own chain.
 //!
+//! **Lazy levels.** Every level table above, an instance's and a class's
+//! ancestor copy alike, is a *lazy clone* of the level it copies (`SqTable::lazy_clone`,
+//! VM support in squirrel-sys `sqtable.cpp`): it behaves exactly as the plain clone (and,
+//! for an instance's ancestor levels, the binding of every closure to the leaf) would,
+//! but holds only what was read or written. An inherited method is bound to the leaf
+//! when first read and kept, so it is the same object on every read and differs per
+//! instance, as in the original. Iterating a level, cloning it or deleting a slot first
+//! turns it into the plain table, laid out slot for slot as the clone would be (so
+//! `foreach` order is the same), and a write to a prototype after instances were made
+//! from it isn't seen by them (they keep a copy of it as it was). With a large mod
+//! corpus and a day-5 save this took the VM from ~466 to ~240 MB; `BB_LAZY_LEVELS=0` builds
+//! plain clones, to compare.
+//!
 //! Re-entrancy: running a script (or a constructor) re-enters these functions, so
 //! every [`SharedState`] borrow is taken in a short scope and never held across a
 //! VM call.
 
-use squirrel::{SQVM, SqStrongRef, SqTable};
+use squirrel::{CensusTrack, SQVM, SqStrongRef, SqTable};
 
 use crate::error::ScriptError;
 use crate::hash::{basename, class_name_hash, normalize_path};
@@ -112,7 +125,8 @@ pub(crate) fn inherit<S: ScriptSource>(
 	mut body: SqTable,
 ) -> Result<SqStrongRef, ScriptError> {
 	let parent = prototype(vm, state, parent_path)?;
-	let parent_levels = copy_levels(vm, &parent);
+	let lazy = state.borrow().lazy_levels;
+	let parent_levels = copy_levels(vm, &parent, lazy);
 	let parent_norm = normalize_path(parent_path);
 
 	// The child's own path is the script currently being loaded.
@@ -152,6 +166,9 @@ pub(crate) fn new_instance<S: ScriptSource>(
 	// Load the class (and, through `inherit`, its whole chain).
 	let leaf = prototype(vm, state, &norm)?;
 
+	// The layout is the engine's work, not the scripts': a census tracks what scripts
+	// touch from `create()` on.
+	vm.census_track(CensusTrack::Pause);
 	// The class's own chain, leaf → … → base, through its super slots.
 	let mut chain = vec![leaf];
 	while let Some(parent) = super_level(chain.last().expect("the chain is never empty")) {
@@ -162,9 +179,10 @@ pub(crate) fn new_instance<S: ScriptSource>(
 	// prototype (its own methods + metadata), with its own deep-cloned `m` whose
 	// delegate is the parent level's `m`, and the parent level as both delegate and
 	// super-slot.
+	let lazy = state.borrow().lazy_levels;
 	let mut levels: Vec<SqTable> = Vec::with_capacity(chain.len());
 	for proto in chain.iter().rev() {
-		let mut table = proto.shallow_clone();
+		let mut table = if lazy { proto.lazy_clone() } else { proto.shallow_clone() };
 		let mut m = match proto.get_owned::<SqTable>("m") {
 			Some(own) => own.deep_clone(),
 			None => SqTable::new(vm),
@@ -191,7 +209,11 @@ pub(crate) fn new_instance<S: ScriptSource>(
 	let leaf_table = leaf_table.as_table(vm).expect("leaf is a table");
 	let ancestors = levels.len() - 1;
 	for table in &mut levels[..ancestors] {
-		table.bind_closures_to(&leaf_table);
+		if lazy {
+			table.lazy_bind_to(&leaf_table);
+		} else {
+			table.bind_closures_to(&leaf_table);
+		}
 	}
 
 	// What else the original puts on an instance (parity probe `menu/class_layout`):
@@ -224,6 +246,7 @@ pub(crate) fn new_instance<S: ScriptSource>(
 
 	let mut instance = prev.expect("the chain is never empty");
 	instance.set("ClassNameHash", class_name_hash(&norm));
+	vm.census_track(CensusTrack::Resume);
 	instance
 		.call_method("create", ())
 		.map_err(ScriptError::Runtime)?;
@@ -266,8 +289,8 @@ fn super_level<'vm>(level: &SqTable<'vm>) -> Option<SqTable<'vm>> {
 /// super slot: each level a shallow copy with its own deep-copied `m`, delegating to the
 /// copy of its parent level (and its `m` to that level's `m`), as the original links
 /// them (probed: `del=parent`, `m` delegating to the parent's `m`).
-fn copy_levels<'vm>(vm: &'vm SQVM, level: &SqTable<'vm>) -> SqStrongRef {
-	let mut copy = level.shallow_clone();
+fn copy_levels<'vm>(vm: &'vm SQVM, level: &SqTable<'vm>, lazy: bool) -> SqStrongRef {
+	let mut copy = if lazy { level.lazy_clone() } else { level.shallow_clone() };
 	let mut m = match level.get_owned::<SqTable>("m") {
 		Some(own) => own.deep_clone(),
 		None => SqTable::new(vm),
@@ -275,7 +298,7 @@ fn copy_levels<'vm>(vm: &'vm SQVM, level: &SqTable<'vm>) -> SqStrongRef {
 	let parent = level.get_owned::<String>("SuperName").and_then(|name| Some((level.get_owned::<SqTable>(&name)?, name)));
 	match parent {
 		Some((parent, name)) => {
-			let parent_copy = copy_levels(vm, &parent);
+			let parent_copy = copy_levels(vm, &parent, lazy);
 			let parent_copy = parent_copy.as_table(vm).expect("a level is a table");
 			if let Some(parent_m) = parent_copy.get_owned::<SqTable>("m") {
 				m.set_delegate(&parent_m);

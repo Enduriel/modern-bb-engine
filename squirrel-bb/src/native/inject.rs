@@ -7,7 +7,7 @@
 //! call is looked up on, the native sees the leaf as `this` and
 //! [`SQVM::this_identity`](squirrel::SQVM::this_identity) resolves one record.
 
-use squirrel::{SQVM, SqStrongRef, SqTable};
+use squirrel::{CensusTrack, SQVM, SqStrongRef, SqTable};
 
 use crate::class::instance_levels;
 
@@ -19,6 +19,7 @@ use crate::class::instance_levels;
 /// Returns the identities of all the instance's level tables (leaf first), for hosts
 /// that also key records by level.
 pub(crate) fn inject_natives(vm: &SQVM, leaf: &SqTable, methods: &[(&str, SqStrongRef)]) -> Vec<i64> {
+	vm.census_track(CensusTrack::Pause);
 	let leaf_ref = leaf.to_strong();
 	let levels = instance_levels(leaf_ref.as_table(vm).expect("leaf is a table"));
 	let identities = levels.iter().map(|t| t.to_strong().identity()).collect();
@@ -31,5 +32,6 @@ pub(crate) fn inject_natives(vm: &SQVM, leaf: &SqTable, methods: &[(&str, SqStro
 			base.set(name, bound);
 		}
 	}
+	vm.census_track(CensusTrack::Resume);
 	identities
 }

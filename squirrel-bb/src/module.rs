@@ -119,6 +119,13 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		}
 	}
 
+	/// Build class levels as lazy clones (the default) or as plain ones (see `class.rs`,
+	/// "Lazy levels"): the scripts see the same either way, which the tests compare.
+	/// Set it before any class loads.
+	pub fn set_lazy_levels(&self, lazy: bool) {
+		self.state.borrow_mut().lazy_levels = lazy;
+	}
+
 	/// Install the native module-system functions into `vm`'s root table:
 	/// `include`, `inherit`, `new`, `isKindOf`, and the `IO` hash registry
 	/// (`scriptFilenameByHash` / `scriptHashByFilename`). Call once, before any
