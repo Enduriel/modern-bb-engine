@@ -13,12 +13,8 @@ library only: a minimal WebSocket client.
 import base64, json, os, socket, struct, sys, urllib.request
 from collections import defaultdict
 
-PORT = int(sys.argv[1])
-ORIGIN = f"http://127.0.0.1:{PORT}"
-
-
-def http_json(path):
-    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}")
+def http_json(port, path):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}")
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read())
 
@@ -28,10 +24,11 @@ class WS:
         rest = url.split("://", 1)[1]
         hostport, path = rest.split("/", 1)
         host, port = hostport.split(":")
+        origin = f"http://127.0.0.1:{port}"
         self.s = socket.create_connection((host, int(port)), timeout=60)
         key = base64.b64encode(os.urandom(16)).decode()
         self.s.sendall((f"GET /{path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: {ORIGIN}\r\n\r\n").encode())
+                        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nOrigin: {origin}\r\n\r\n").encode())
         head = b""
         while b"\r\n\r\n" not in head:
             head += self.s.recv(1)
@@ -95,7 +92,7 @@ def size_of(attrs):
 
 
 def main():
-    version = http_json("/json/version")
+    version = http_json(int(sys.argv[1]), "/json/version")
     ws = WS(version["webSocketDebuggerUrl"])
     events = []
     ws.call("Tracing.start", {
@@ -131,4 +128,5 @@ def main():
                 print(f"   {v / MB:8.1f} MB  {k}" + (f"   ({detail})" if detail else ""))
 
 
-main()
+if __name__ == "__main__":
+    main()
