@@ -1,12 +1,10 @@
 //! [`Identity`]: a native-fn argument yielding any object's stable identity hash.
 //!
-//! This backs Battle Brothers' `toHash(x)` global, which scripts use to derive a
-//! unique-per-object id (e.g. `item.getInstanceID() == toHash(this).tostring()`).
-//! The exact engine formula is unknown — the mod-kit author noted only "some sort
-//! of hashing function, but I couldn't immediately identify it" — but the
-//! observable contract is "a stable integer that is unique per live object", which
-//! the object's address satisfies for reference types (Squirrel never relocates a
-//! live object: it is plain reference-counting, no compaction). So:
+//! A stable integer that is unique per live object, which the object's address
+//! satisfies for reference types (Squirrel never relocates a live object: it is plain
+//! reference-counting, no compaction). Native method injection keys on it. (The
+//! scripts' `toHash(x)` is [`ScriptHash`](crate::ScriptHash), the original's formula.)
+//! So:
 //!
 //!   * reference types (instance/table/array/string/closure/…) → their pointer,
 //!   * scalars (integer/bool) → the value, float → its bit pattern, null → 0.

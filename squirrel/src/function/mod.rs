@@ -18,6 +18,7 @@ mod forward;
 mod into_fn;
 mod number;
 mod ret;
+mod sqrat_args;
 mod strong_ref;
 mod this;
 mod variadic;
@@ -27,6 +28,7 @@ mod tests;
 
 pub use forward::{ForwardArgs, Forwarded, MemberKey, StackArg, StackArgs};
 pub use number::{DynNumber, Number};
+pub use sqrat_args::{Stringified, Truthy};
 pub use strong_ref::{Retained, SqStrongRef};
 pub use this::This;
 pub use variadic::Variadic;

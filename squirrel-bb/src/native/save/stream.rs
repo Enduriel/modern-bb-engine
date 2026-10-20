@@ -6,11 +6,18 @@
 //! byte, a string as its byte length then its bytes. The length is a `u16` in the
 //! original's format and a `u32` in this engine's own (see [`StrLen`]). Values are
 //! truncated to the written width, as a C++ cast would.
+//!
+//! The arguments convert as the original's Sqrat bindings convert them, never raising
+//! (disassembled 2026-10-20): a string parameter takes any value's `tostring()` text up
+//! to its first zero byte (`writeString(array)`, which mod_stronghold does, writes
+//! `"(array : 0x…)"`; null writes `"null"`), a bool parameter any value's truth
+//! (`sq_tobool`), a number parameter a float truncated and any other value as 0 (the
+//! original reads uninitialised memory there; see `SQVM::get_int_lenient`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqBytes, SqClass, SqStrongRef, Variadic};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqBytes, SqClass, SqStrongRef, Stringified, Truthy, Variadic};
 
 pub(crate) use super::meta::Meta;
 use super::meta::local_date;
@@ -195,6 +202,11 @@ fn the_other_way<T: 'static>(b: ClassBuilder<T>, names: &[&str], what: &'static 
 	})
 }
 
+/// A string argument as text (the metadata keeps text).
+fn text(s: Stringified) -> String {
+	String::from_utf8_lossy(&s.0).into_owned()
+}
+
 /// A script integer argument as the original casts it (floats truncate).
 fn int(n: Number) -> i64 {
 	n.0 as i64
@@ -209,13 +221,15 @@ impl StreamClasses {
 			.method("getFileName", |m: &mut SharedMeta| m.borrow().file_name.clone())
 			.method("getCreationDate", |m: &mut SharedMeta| local_date(m.borrow().created))
 			.method("getModificationDate", |m: &mut SharedMeta| local_date(m.borrow().modified))
-			.method("hasData", |m: &mut SharedMeta, k: String| m.borrow().has_data(&k))
-			.method("getInt", |m: &mut SharedMeta, k: String| m.borrow().get_int(&k))
-			.method("setInt", |m: &mut SharedMeta, k: String, v: Number| m.borrow_mut().set_int(k, int(v)))
-			.method("getFloat", |m: &mut SharedMeta, k: String| m.borrow().get_float(&k))
-			.method("setFloat", |m: &mut SharedMeta, k: String, v: Number| m.borrow_mut().set_float(k, v.0))
-			.method("getString", |m: &mut SharedMeta, k: String| m.borrow().get_string(&k))
-			.method("setString", |m: &mut SharedMeta, k: String, v: String| m.borrow_mut().set_string(k, v))
+			.method("hasData", |m: &mut SharedMeta, k: Stringified| m.borrow().has_data(&text(k)))
+			.method("getInt", |m: &mut SharedMeta, k: Stringified| m.borrow().get_int(&text(k)))
+			.method("setInt", |m: &mut SharedMeta, k: Stringified, v: Number| m.borrow_mut().set_int(text(k), int(v)))
+			.method("getFloat", |m: &mut SharedMeta, k: Stringified| m.borrow().get_float(&text(k)))
+			.method("setFloat", |m: &mut SharedMeta, k: Stringified, v: Number| m.borrow_mut().set_float(text(k), v.0))
+			.method("getString", |m: &mut SharedMeta, k: Stringified| m.borrow().get_string(&text(k)))
+			.method("setString", |m: &mut SharedMeta, k: Stringified, v: Stringified| {
+				m.borrow_mut().set_string(text(k), text(v))
+			})
 			.build(vm);
 
 		let out = ClassBuilder::<OutStream>::new("SaveOutputStream")
@@ -226,8 +240,8 @@ impl StreamClasses {
 			.method("writeU32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u32(int(v) as u32))
 			.method("writeI32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().u32(int(v) as i32 as u32))
 			.method("writeF32", |s: &mut OutStream, v: Number| s.writer.borrow_mut().f32(v.0 as f32))
-			.method("writeBool", |s: &mut OutStream, v: bool| s.writer.borrow_mut().bool(v))
-			.method("writeString", |s: &mut OutStream, v: SqBytes| s.writer.borrow_mut().bytes(&v.0))
+			.method("writeBool", |s: &mut OutStream, v: Truthy| s.writer.borrow_mut().bool(v.0))
+			.method("writeString", |s: &mut OutStream, v: Stringified| s.writer.borrow_mut().bytes(&v.0))
 			.method("getMetaData", |s: &mut OutStream, vm: &SQVM| -> SqStrongRef {
 				s.meta_class.instantiate(vm, s.meta.clone())
 			})

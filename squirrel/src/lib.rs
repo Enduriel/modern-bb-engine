@@ -6,6 +6,7 @@ mod function;
 mod identity;
 mod object;
 mod profile;
+mod script_hash;
 mod types;
 mod vm;
 
@@ -13,11 +14,13 @@ pub use class::{ClassBuilder, Native, SqClass};
 pub(crate) use consts::{SQ_ERROR, SQ_OK};
 pub(crate) use function::CallArgs;
 pub use function::{
-	DynNumber, ForwardArgs, Forwarded, MemberKey, Number, Retained, SqStrongRef, StackArg, StackArgs, This, Variadic,
+	DynNumber, ForwardArgs, Forwarded, MemberKey, Number, Retained, SqStrongRef, StackArg, StackArgs, Stringified, This, Truthy,
+	Variadic,
 };
 pub use identity::{Identity, IdentityHasher, IdentityMap};
 pub(crate) use object::SqObject;
 pub use object::SqObjectType;
+pub use script_hash::ScriptHash;
 pub use profile::{CallNode, FunctionKind, Profile, ProfiledFunction, ScriptProfiler};
 pub use types::{SqArray, SqBytes, SqRef, SqTable, SqText};
 pub use vm::{CensusTrack, CompileError, ErrorValue, Frame, Local, RuntimeError, SQVM};

@@ -1,13 +1,12 @@
-//! The BB `toHash(obj)` root global.
-//!
-//! Returns a stable integer identifier for any object — the pointer for reference
-//! types (instances, tables, …), the value for scalars. `item.getInstanceID()`
-//! uses `toHash(this).tostring()` to key an item by identity; mods use it similarly.
-//! The identity logic lives in [`squirrel::Identity`].
+//! The BB `toHash(obj)` root global, as the original's (see [`squirrel::ScriptHash`]):
+//! a string's content hash, an integer's or bool's value, a float truncated, and the
+//! address (shifted) for everything else. `item.getInstanceID()` uses
+//! `toHash(this).tostring()` to key an item by identity; Reforged seeds its "fixed"
+//! rolls with the hash of a string, which must be the same in every run.
 
-use squirrel::{Identity, SQVM};
+use squirrel::{SQVM, ScriptHash};
 
 /// Register the `toHash` root global.
 pub(crate) fn install(vm: &mut SQVM) {
-	vm.register("toHash", |x: Identity| x.0);
+	vm.register("toHash", |x: ScriptHash| x.0);
 }
