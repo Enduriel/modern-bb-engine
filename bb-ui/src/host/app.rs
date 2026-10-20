@@ -134,6 +134,10 @@ wrap_app! {
 					None => command_line.append_switch(Some(&(*name).into())),
 				}
 			}
+			// macOS: Chromium keeps its cookie key in the user's keychain; the page needs no
+			// secrets, so it stays out of it.
+			#[cfg(target_os = "macos")]
+			command_line.append_switch(Some(&"use-mock-keychain".into()));
 			if let Some(port) = self.devtools_port {
 				let origins = devtools_origins(port);
 				command_line.append_switch_with_value(Some(&"remote-allow-origins".into()), Some(&origins.as_str().into()));

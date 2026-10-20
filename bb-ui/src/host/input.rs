@@ -139,14 +139,30 @@ pub(super) fn send_key(
 	modifiers: u32,
 	character: u16,
 ) {
-	host.send_key_event(Some(&KeyEvent {
+	#[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+	let mut event = KeyEvent {
 		type_,
 		modifiers,
 		windows_key_code: code,
 		character,
 		unmodified_character: character,
 		..Default::default()
-	}));
+	};
+	// macOS: the Mac key and its characters, which Chromium reads there (`mac_keys`). A
+	// character event's key is the one that types the character.
+	#[cfg(target_os = "macos")]
+	{
+		let vk = if type_ == KeyEventType::CHAR { char::from_u32(code as u32).map_or(0, |c| key_for(c).0) } else { code };
+		if let Some((native, plain)) = super::mac_keys::mac_key(vk) {
+			event.native_key_code = native;
+			if character == 0 {
+				let shifted = modifiers & SHIFT_DOWN != 0 && (0x61..=0x7A).contains(&plain);
+				event.character = if shifted { plain - 0x20 } else { plain };
+				event.unmodified_character = plain;
+			}
+		}
+	}
+	host.send_key_event(Some(&event));
 }
 
 /// One press: key down, its character if it has one, key up.
@@ -190,8 +206,13 @@ pub const WHEEL_DELTA_PER_NOTCH: i32 = 30 * 120;
 pub(super) fn wheel(host: &BrowserHost, x: i32, y: i32, notches: i32) {
 	let event = MouseEvent { x, y, modifiers: 0 };
 	host.send_mouse_move_event(Some(&event), 0);
-	host.send_mouse_wheel_event(Some(&event), 0, WHEEL_DELTA_PER_NOTCH * notches);
+	host.send_mouse_wheel_event(Some(&event), 0, WHEEL_DELTA_PER_NOTCH / CHROMIUM_WHEEL_SCALE * notches);
 }
+
+/// How many times Chromium counts the delta of an offscreen wheel event in the page's
+/// `wheelDelta`: three times on macOS (measured: 3600 sent showed as 10800), once
+/// elsewhere.
+const CHROMIUM_WHEEL_SCALE: i32 = if cfg!(target_os = "macos") { 3 } else { 1 };
 
 #[cfg(test)]
 mod tests {

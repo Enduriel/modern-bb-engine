@@ -37,12 +37,17 @@ mod bridge_server;
 mod bridge_wire;
 mod client;
 mod damage;
+#[cfg(target_os = "linux")]
 mod fonts;
 mod frame;
 pub mod goldens;
 mod input;
 mod ipc;
 mod live_input;
+#[cfg(target_os = "macos")]
+mod mac;
+#[cfg(target_os = "macos")]
+mod mac_keys;
 mod memory;
 mod page_frames;
 mod page_log;
@@ -96,6 +101,31 @@ fn cef_dir() -> PathBuf {
 	exe_dir.filter(|dir| dir.join("icudtl.dat").is_file()).unwrap_or_else(|| PathBuf::from(CEF_DIR))
 }
 
+/// Wait up to `timeout` for a message on `rx`. On macOS the waiting thread is CEF's UI
+/// thread too, so it runs CEF's work meanwhile (every [`PUMP_EVERY`]).
+fn recv<T>(rx: &mpsc::Receiver<T>, timeout: Duration) -> Option<T> {
+	#[cfg(target_os = "macos")]
+	{
+		let deadline = Instant::now() + timeout;
+		loop {
+			mac::pump();
+			let left = deadline.checked_duration_since(Instant::now()).unwrap_or_default();
+			match rx.recv_timeout(left.min(PUMP_EVERY)) {
+				Ok(message) => return Some(message),
+				Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+				Err(mpsc::RecvTimeoutError::Timeout) if left.is_zero() => return None,
+				Err(mpsc::RecvTimeoutError::Timeout) => {}
+			}
+		}
+	}
+	#[cfg(not(target_os = "macos"))]
+	rx.recv_timeout(timeout).ok()
+}
+
+/// How often a waiting game thread runs CEF's work on macOS.
+#[cfg(target_os = "macos")]
+const PUMP_EVERY: Duration = Duration::from_millis(1);
+
 /// How long the game waits for the page to answer one call (time spent serving the
 /// page's own calls back into the game doesn't count).
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -108,14 +138,24 @@ pub type Serve<'a> = dyn FnMut(&Json) -> Reply + 'a;
 /// for the page (its text laid out in whole pixels, [`fonts`]). Call it first thing
 /// in `main`, before any other thread exists, and exit with the code it returns.
 pub fn run_subprocess() -> Option<i32> {
+	#[cfg(target_os = "macos")]
+	if let Err(e) = mac::load_framework(&cef_dir()) {
+		eprintln!("bb-ui: {e}");
+		return std::env::args().any(|a| a.starts_with("--type=")).then_some(1);
+	}
 	let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 	let args = Args::new();
 	let command_line = args.as_cmd_line()?;
 	if command_line.has_switch(Some(&"type".into())) == 0 {
 		// SAFETY: first thing in `main` (this function's contract), so no other thread
 		// exists yet.
+		#[cfg(target_os = "linux")]
 		if let Err(e) = unsafe { fonts::hint_fully() } {
 			eprintln!("bb-ui: the page's text won't be laid out in whole pixels: {e}");
+		}
+		#[cfg(target_os = "macos")]
+		if let Err(e) = mac::install_application() {
+			eprintln!("bb-ui: {e}");
 		}
 		return None;
 	}
@@ -232,16 +272,30 @@ impl UiHost {
 		let settings = Settings {
 			no_sandbox: 1,
 			windowless_rendering_enabled: 1,
-			multi_threaded_message_loop: 1,
 			root_cache_path: path(config.cache_dir.clone()),
 			log_file: path(config.cef_log.clone().unwrap_or_else(|| config.cache_dir.join("cef.log"))),
 			log_severity: LogSeverity::WARNING,
-			resources_dir_path: path(cef_dir.clone()),
-			locales_dir_path: path(cef_dir.join("locales")),
 			// Transparent: the UI is drawn over the game's scene.
 			background_color: 0,
 			remote_debugging_port: config.devtools_port.map_or(0, i32::from),
 			..Default::default()
+		};
+		// CEF's UI thread: its own on Windows and Linux; on macOS the main thread, which
+		// runs CEF's work whenever the game polls or waits (`mac`). There the framework
+		// holds the resources, and every child process runs this program too.
+		#[cfg(not(target_os = "macos"))]
+		let settings = Settings {
+			multi_threaded_message_loop: 1,
+			resources_dir_path: path(cef_dir.clone()),
+			locales_dir_path: path(cef_dir.join("locales")),
+			..settings
+		};
+		#[cfg(target_os = "macos")]
+		let settings = Settings {
+			external_message_pump: 1,
+			framework_dir_path: mac::framework_dir(&cef_dir).map(path).unwrap_or_default(),
+			browser_subprocess_path: std::env::current_exe().map(path).unwrap_or_default(),
+			..settings
 		};
 		if initialize(
 			Some(args.as_main_args()),
@@ -252,9 +306,7 @@ impl UiHost {
 		{
 			return Err("CEF failed to initialize (see its cef.log)".into());
 		}
-		ready_rx
-			.recv_timeout(Duration::from_secs(30))
-			.map_err(|_| "CEF did not finish initializing".to_string())?;
+		recv(&ready_rx, Duration::from_secs(30)).ok_or("CEF did not finish initializing")?;
 
 		let (events_tx, events) = mpsc::channel();
 		let shared = Arc::new(Shared {
@@ -320,6 +372,8 @@ impl UiHost {
 
 	/// Every event that arrived since the last poll, in order. Doesn't wait.
 	pub fn poll(&self) -> Vec<Event> {
+		#[cfg(target_os = "macos")]
+		mac::pump();
 		let mut events: Vec<Event> = self.deferred.borrow_mut().drain(..).collect();
 		events.extend(self.events.try_iter());
 		events
@@ -330,7 +384,7 @@ impl UiHost {
 		if let Some(event) = self.deferred.borrow_mut().pop_front() {
 			return Some(event);
 		}
-		self.events.recv_timeout(timeout).ok()
+		recv(&self.events, timeout)
 	}
 
 	/// Wait up to `timeout` for an event matching `wanted` and return it; every other
@@ -339,7 +393,7 @@ impl UiHost {
 		let deadline = Instant::now() + timeout;
 		loop {
 			let left = deadline.checked_duration_since(Instant::now())?;
-			let event = self.events.recv_timeout(left).ok()?;
+			let event = recv(&self.events, left)?;
 			if wanted(&event) {
 				return Some(event);
 			}
@@ -404,7 +458,7 @@ impl UiHost {
 			let left = deadline
 				.checked_duration_since(Instant::now())
 				.ok_or_else(late)?;
-			match self.events.recv_timeout(left).map_err(|_| late())? {
+			match recv(&self.events, left).ok_or_else(late)? {
 				Event::Request {
 					kind: RequestKind::Park,
 					responder,
@@ -505,10 +559,7 @@ impl UiHost {
 			let left = deadline
 				.checked_duration_since(Instant::now())
 				.ok_or_else(|| format!("the page did not answer within {CALL_TIMEOUT:?}"))?;
-			let event = self
-				.events
-				.recv_timeout(left)
-				.map_err(|_| format!("the page did not answer within {CALL_TIMEOUT:?}"))?;
+			let event = recv(&self.events, left).ok_or_else(|| format!("the page did not answer within {CALL_TIMEOUT:?}"))?;
 			match event {
 				Event::Reply { id: reply, result } if !nested && reply == id => return result,
 				Event::Request {
