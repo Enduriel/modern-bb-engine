@@ -56,3 +56,36 @@ pub(crate) unsafe fn push_deep_clone(vm: &SQVM, idx: i64) {
 		_ => unsafe { squirrel_sys::sq_push(ptr, src) },
 	}
 }
+
+/// Push a lazy deep clone of the table at `idx`: the copy [`push_deep_clone`] makes of it,
+/// standing for that copy as a lazy table does (squirrel-sys `sq_lazycopy`), its nested
+/// tables and arrays deep-cloned now (a write to the source's own containers must not show
+/// through), everything else read through until written.
+///
+/// Net stack effect: `+1`. The value at `idx` must be a table.
+pub(crate) unsafe fn push_lazy_deep_clone(vm: &SQVM, idx: i64) {
+	let ptr = vm.as_ptr();
+	let top = unsafe { squirrel_sys::sq_gettop(ptr) };
+	let src = if idx < 0 { top + idx + 1 } else { idx };
+	unsafe {
+		if squirrel_sys::sq_lazycopy(ptr, src) != SQ_OK {
+			squirrel_sys::sq_reseterror(ptr);
+			push_deep_clone(vm, src);
+			return;
+		}
+		// [.., copy]
+		let copy_idx = squirrel_sys::sq_gettop(ptr);
+		squirrel_sys::sq_pushnull(ptr); // [.., copy, iter]
+		while squirrel_sys::sq_next(ptr, src) == SQ_OK {
+			// [.., copy, iter, key, value]
+			if matches!(vm.get_type(-1), SqObjectType::Table | SqObjectType::Array) {
+				push_deep_clone(vm, -1); // [.., key, value, clone]
+				squirrel_sys::sq_remove(ptr, -2); // [.., copy, iter, key, clone]
+				squirrel_sys::sq_rawset(ptr, copy_idx); // pops key + clone -> [.., copy, iter]
+			} else {
+				squirrel_sys::sq_pop(ptr, 2); // [.., copy, iter]
+			}
+		}
+		squirrel_sys::sq_pop(ptr, 1); // [.., copy]
+	}
+}

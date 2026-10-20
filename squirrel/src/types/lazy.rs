@@ -71,8 +71,9 @@ impl<'vm> SqTable<'vm> {
 mod tests {
 	use crate::{SQVM, SqArray, SqStrongRef, SqTable};
 
-	/// A VM with `lazyclone(t)`, `lazybind(t, env)` and `eagerbind(t, env)` (a plain
-	/// table's closures bound, as the class system binds a clone's).
+	/// A VM with `lazyclone(t)`, `lazybind(t, env)`, `eagerbind(t, env)` (a plain
+	/// table's closures bound, as the class system binds a clone's), `deepclone(t)`,
+	/// `lazydeepclone(t)` and `lazyinject(t, slots, keys, env)`.
 	fn vm() -> SQVM {
 		let mut vm = SQVM::new(1024);
 		vm.register("lazyclone", |vm: &SQVM, t: SqTable| -> SqStrongRef {
@@ -86,6 +87,14 @@ mod tests {
 		vm.register("eagerbind", |vm: &SQVM, mut t: SqTable, env: SqTable| {
 			let _ = vm;
 			t.bind_closures_to(&env);
+		});
+		vm.register("deepclone", |vm: &SQVM, t: SqTable| -> SqStrongRef {
+			let _ = vm;
+			t.deep_clone().to_strong()
+		});
+		vm.register("lazydeepclone", |vm: &SQVM, t: SqTable| -> SqStrongRef {
+			let _ = vm;
+			t.lazy_deep_clone().to_strong()
 		});
 		vm.register("lazyinject", |vm: &SQVM, mut t: SqTable, slots: SqTable, keys: SqArray, env: SqTable| -> bool {
 			let _ = vm;
@@ -141,6 +150,9 @@ mod tests {
 		local e = clone p; eagerbind(e, env);
 		local l = lazyclone(p); lazybind(l, env);
 		pairs.push([e, l]);
+		// Unbound, and a deep copy's, as a member table `m` is.
+		pairs.push([clone p, lazyclone(p)]);
+		pairs.push([deepclone(p), lazydeepclone(p)]);
 		for (local step = 0; step < 60; step++) {
 			local pr = pairs[rnd(pairs.len())];
 			local e = pr[0], l = pr[1];
@@ -187,12 +199,16 @@ mod tests {
 						local l2 = lazyclone(p); lazybind(l2, env);
 						pairs.push([e2, l2]);
 					}
+					else if (rnd(3) == 0) pairs.push([clone p, lazyclone(p)]);
+					else if (rnd(2) == 0) pairs.push([deepclone(p), lazydeepclone(p)]);
 					break;
 				case 6:
 					check("iteration", dump(e), dump(l));
 					break;
 				case 7:
-					check("clone", dump(clone e), dump(clone l));
+					local ce = clone e, cl = clone l;
+					check("clone", dump(ce), dump(cl));
+					if (rnd(3) == 0) pairs.push([ce, cl]);
 					break;
 				case 8:
 					// A lazy clone of a lazy table, unbound (a class's copy of its ancestors).

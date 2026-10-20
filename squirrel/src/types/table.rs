@@ -27,6 +27,9 @@ pub struct SqTable<'vm> {
 	pub(super) obj: squirrel_sys::HSQOBJECT,
 }
 
+/// The fewest slots a table has for [`SqTable::lazy_deep_clone`] to make a lazy copy.
+const LAZY_MIN_SLOTS: usize = 8;
+
 impl<'vm> SqTable<'vm> {
 	/// Create a new, empty Squirrel table.
 	pub fn new(vm: &'vm SQVM) -> Self {
@@ -256,6 +259,27 @@ impl<'vm> SqTable<'vm> {
 			let clone = SqTable::from_stack(self.vm, -1).expect("deep clone of a table is a table");
 			squirrel_sys::sq_pop(ptr, 2);
 			clone
+		}
+	}
+
+	/// What [`deep_clone`](Self::deep_clone) gives, as a lazy table: it behaves exactly as
+	/// that copy would, but holds only the nested tables and arrays (deep-cloned now) and
+	/// what is written to it; the rest is read from this table as it is now (a later write
+	/// to this table isn't seen through it). Iterating it or deleting from it makes it the
+	/// plain copy. See `lazy.rs`.
+	pub fn lazy_deep_clone(&self) -> SqTable<'vm> {
+		// A small table costs less plain than lazy (the lazy state alone is ~100 bytes),
+		// and a read that misses it isn't worth a second lookup.
+		if self.len() < LAZY_MIN_SLOTS {
+			return self.deep_clone();
+		}
+		let ptr = self.vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [self]
+			super::deep::push_lazy_deep_clone(self.vm, -1); // [self, copy]
+			let copy = SqTable::from_stack(self.vm, -1).expect("a lazy deep clone of a table is a table");
+			squirrel_sys::sq_pop(ptr, 2);
+			copy
 		}
 	}
 
