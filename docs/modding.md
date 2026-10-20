@@ -12,8 +12,8 @@ if ("ModernEngine" in ::getroottable())
 }
 ```
 
-`::ModernEngine.Version` is the API's version (an integer, `1` for now). A later
-version only adds to this page.
+`::ModernEngine.Version` is the API's version (an integer, `2` for now). A later
+version only adds to this page. Each section names the version that added it.
 
 ## Fonts for text in any language (`registerFont`, version 1)
 
@@ -95,3 +95,28 @@ On the UI (the game's HTML pages, drawn by Chromium):
   the page's `<head>`. A mod's own CSS for other font families (its own
   `@font-face`) is unaffected; it can register its font too, by one of the families
   above, to cover vanilla's.
+
+## Modern variants of the string library (`split3_2`, `format3_2`, version 2)
+
+The game runs Squirrel 3.0, and its scripts and mods rely on 3.0's string library.
+Where this engine's newer Squirrel behaves differently, it behaves as 3.0 does, so
+`split` and `format` give what they give in the original game. The newer behaviour is
+still there, under the same name with a `3_2` suffix, for mods that want it. They're
+root functions, so check for them (or for `::ModernEngine.Version >= 2`) before use:
+
+```squirrel
+local parts = ("split3_2" in ::getroottable()) ? ::split3_2(text, ",") : ::split(text, ",");
+```
+
+- `split3_2(str, separators, skipempty = false)`: Squirrel 3.2's `split`. Every
+  character of `separators` separates, and empty tokens are kept:
+  `split3_2("a,,b", ",")` is `["a", "", "b"]`, where the original's `split` gives
+  `["a", "b"]`. With `skipempty` true, empty tokens are dropped. `str` ends at its
+  first NUL; `separators` may contain one.
+- `format3_2(fmt, ...)`: Squirrel 3.2's `format`. Unlike the original's `format`, it
+  reads the whole format string (NULs included), takes a bool for `%d` (as 1 or 0),
+  and rounds floats as C and IEEE 754 specify: an exact tie goes to the even digit,
+  so `format3_2("%.0f", 2.5)` is `"2"` and `format3_2("%.2f", 0.125)` is `"0.12"`,
+  where the original's `format` gives `"3"` and `"0.13"`. inf and NaN are written
+  `inf`, `nan` and `-nan`. The text is the same on every platform: neither function
+  uses the system's C library for floats.
