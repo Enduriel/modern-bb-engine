@@ -5,6 +5,7 @@ mod consts;
 mod function;
 mod identity;
 mod object;
+mod profile;
 mod types;
 mod vm;
 
@@ -17,6 +18,7 @@ pub use function::{
 pub use identity::Identity;
 pub(crate) use object::SqObject;
 pub use object::SqObjectType;
+pub use profile::{CallNode, FunctionKind, Profile, ProfiledFunction, ScriptProfiler};
 pub use types::{SqArray, SqBytes, SqRef, SqTable, SqText};
 pub use vm::{CompileError, ErrorValue, Frame, Local, RuntimeError, SQVM};
 

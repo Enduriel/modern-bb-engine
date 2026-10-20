@@ -42,6 +42,9 @@ struct ClosureFn {
 	invoke: Box<dyn FnMut(&SQVM) -> squirrel_sys::SQInteger>,
 	nparamscheck: i64,
 	typemask: String,
+	/// What the profiler calls it: the closure's type name (which names the function
+	/// that made it) and where it was registered.
+	label: String,
 }
 
 impl SqFunction for ClosureFn {
@@ -53,6 +56,12 @@ impl SqFunction for ClosureFn {
 	}
 	fn typemask(&self) -> Option<&str> {
 		Some(self.typemask.as_str())
+	}
+	fn label(&self) -> &str {
+		&self.label
+	}
+	fn set_location(&mut self, at: &'static std::panic::Location<'static>) {
+		self.label = format!("{} at {}:{}", self.label, at.file(), at.line());
 	}
 }
 
@@ -103,7 +112,7 @@ macro_rules! impl_into_sq_function {
 					}
 				};
 
-				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
 			}
 		}
 
@@ -152,7 +161,7 @@ macro_rules! impl_into_sq_function {
 					}
 				};
 
-				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
 			}
 		}
 
@@ -194,7 +203,7 @@ macro_rules! impl_into_sq_function {
 					}
 				};
 
-				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
 			}
 		}
 
@@ -242,7 +251,7 @@ macro_rules! impl_into_sq_function {
 					}
 				};
 
-				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
 			}
 		}
 
@@ -284,7 +293,7 @@ macro_rules! impl_into_sq_function {
 					}
 				};
 
-				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
 			}
 		}
 
@@ -331,7 +340,7 @@ macro_rules! impl_into_sq_function {
 					}
 				};
 
-				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
 			}
 		}
 	};
@@ -388,6 +397,7 @@ where
 			invoke: Box::new(invoke),
 			nparamscheck,
 			typemask,
+			label: std::any::type_name::<Func>().to_string(),
 		})
 	}
 }
@@ -419,6 +429,7 @@ where
 			invoke: Box::new(invoke),
 			nparamscheck,
 			typemask,
+			label: std::any::type_name::<Func>().to_string(),
 		})
 	}
 }

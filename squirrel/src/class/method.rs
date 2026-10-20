@@ -29,6 +29,8 @@ struct MethodFn {
 	invoke: Box<dyn FnMut(&SQVM) -> squirrel_sys::SQInteger>,
 	nparamscheck: i64,
 	typemask: String,
+	/// `payload type.method`, for the profiler.
+	label: String,
 }
 
 impl SqFunction for MethodFn {
@@ -40,6 +42,9 @@ impl SqFunction for MethodFn {
 	}
 	fn typemask(&self) -> Option<&str> {
 		Some(self.typemask.as_str())
+	}
+	fn label(&self) -> &str {
+		&self.label
 	}
 }
 
@@ -98,6 +103,7 @@ macro_rules! impl_into_sq_method {
 			$($arg: SqArg + 'static,)*
 		{
 			fn into_method_fn(self, name: String) -> Box<dyn SqFunction> {
+				let label = format!("{}.{}", std::any::type_name::<T>(), name);
 				#[allow(unused_mut)]
 				let mut typemask = String::from("."); // the `this` (instance) slot
 				$( <$arg as SqArg>::push_typemask(&mut typemask); )*
@@ -127,7 +133,7 @@ macro_rules! impl_into_sq_method {
 					}
 				};
 
-				Box::new(MethodFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(MethodFn { invoke: Box::new(invoke), nparamscheck, typemask, label })
 			}
 		}
 
@@ -144,6 +150,7 @@ macro_rules! impl_into_sq_method {
 			$($arg: SqArg + 'static,)*
 		{
 			fn into_method_fn(self, name: String) -> Box<dyn SqFunction> {
+				let label = format!("{}.{}", std::any::type_name::<T>(), name);
 				#[allow(unused_mut)]
 				let mut typemask = String::from(".");
 				$( <$arg as SqArg>::push_typemask(&mut typemask); )*
@@ -172,7 +179,7 @@ macro_rules! impl_into_sq_method {
 					}
 				};
 
-				Box::new(MethodFn { invoke: Box::new(invoke), nparamscheck, typemask })
+				Box::new(MethodFn { invoke: Box::new(invoke), nparamscheck, typemask, label })
 			}
 		}
 	};
@@ -202,6 +209,7 @@ where
 	Var: SqArg + 'static,
 {
 	fn into_method_fn(self, name: String) -> Box<dyn SqFunction> {
+		let label = format!("{}.{}", std::any::type_name::<T>(), name);
 		let mut func = self;
 		let invoke = move |vm: &SQVM| -> squirrel_sys::SQInteger {
 			let payload = resolve_receiver!(vm, name, T);
@@ -228,6 +236,7 @@ where
 			invoke: Box::new(invoke),
 			nparamscheck: -1,
 			typemask: String::from("."),
+			label,
 		})
 	}
 }
@@ -245,6 +254,7 @@ where
 	Var: SqArg + 'static,
 {
 	fn into_method_fn(self, name: String) -> Box<dyn SqFunction> {
+		let label = format!("{}.{}", std::any::type_name::<T>(), name);
 		let mut func = self;
 		let invoke = move |vm: &SQVM| -> squirrel_sys::SQInteger {
 			let payload = resolve_receiver!(vm, name, T);
@@ -269,6 +279,7 @@ where
 			invoke: Box::new(invoke),
 			nparamscheck: -1,
 			typemask: String::from("."),
+			label,
 		})
 	}
 }

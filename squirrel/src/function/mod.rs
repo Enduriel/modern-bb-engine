@@ -72,6 +72,14 @@ pub trait SqFunction {
 	fn typemask(&self) -> Option<&str> {
 		None
 	}
+
+	/// What the profiler calls this function: by default its type's name.
+	fn label(&self) -> &str {
+		std::any::type_name::<Self>()
+	}
+
+	/// The function is registered by code at `at` (named in its [`label`](Self::label)).
+	fn set_location(&mut self, _at: &'static std::panic::Location<'static>) {}
 }
 
 unsafe extern "C" fn trampoline(vm: squirrel_sys::HSQUIRRELVM) -> squirrel_sys::SQInteger {
@@ -89,7 +97,10 @@ unsafe extern "C" fn trampoline(vm: squirrel_sys::HSQUIRRELVM) -> squirrel_sys::
 	}
 
 	let func = unsafe { &mut *(ptr as *mut Box<dyn SqFunction>) };
-	func.invoke(&vm)
+	let Some(depth) = crate::profile::native_enter(func.label()) else { return func.invoke(&vm) };
+	let result = func.invoke(&vm);
+	crate::profile::native_exit(depth);
+	result
 }
 
 impl SQVM {
@@ -145,11 +156,14 @@ impl SQVM {
 	///
 	/// The schema (arity + type mask) is derived from the signature exactly as for
 	/// [`register`](Self::register).
+	#[track_caller]
 	pub fn make_closure<Marker, Func>(&mut self, func: Func) -> SqStrongRef
 	where
 		Func: IntoSqFunction<Marker>,
 	{
-		self.push_closure(func.into_sq_function()); // [closure]
+		let mut func = func.into_sq_function();
+		func.set_location(std::panic::Location::caller());
+		self.push_closure(func); // [closure]
 		let closure = SqStrongRef::from_stack(self, -1);
 		unsafe { squirrel_sys::sq_pop(self.as_ptr(), 1) };
 		closure
@@ -169,10 +183,13 @@ impl SQVM {
 	/// vm.register("greet", |name: String| format!("hi {name}"));
 	/// vm.register("sum", |Variadic(xs): Variadic<i64>| xs.into_iter().sum::<i64>());
 	/// ```
+	#[track_caller]
 	pub fn register<Marker, Func>(&mut self, name: &str, func: Func)
 	where
 		Func: IntoSqFunction<Marker>,
 	{
-		self.push_native_function(func.into_sq_function(), name);
+		let mut func = func.into_sq_function();
+		func.set_location(std::panic::Location::caller());
+		self.push_native_function(func, name);
 	}
 }
