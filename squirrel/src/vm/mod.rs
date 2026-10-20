@@ -120,6 +120,30 @@ impl SQVM {
 		unsafe { squirrel_sys::sq_collectgarbage(self.ptr) }
 	}
 
+	/// Write a census of the VM's heap to `path`: every collectable object with its size
+	/// in bytes, and the slots, environments and shapes an offline analysis of where the
+	/// script objects' memory goes needs (`parity/perf/script_memory.py` reads it).
+	pub fn write_census(&self, path: &std::path::Path) -> Result<(), String> {
+		let path = std::ffi::CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+		match unsafe { squirrel_sys::sq_census(self.ptr, path.as_ptr()) } {
+			crate::SQ_OK => Ok(()),
+			_ => Err("could not write the census".to_string()),
+		}
+	}
+
+	/// Track which tables scripts read, write, iterate and clone, by key, and which
+	/// closures table reads hand out, for the next [`write_census`](Self::write_census).
+	/// Measurement only: it slows every table access while on.
+	pub fn census_track(&self, track: CensusTrack) {
+		let mode = match track {
+			CensusTrack::Start => 1,
+			CensusTrack::Stop => 0,
+			CensusTrack::Pause => 2,
+			CensusTrack::Resume => 3,
+		};
+		unsafe { squirrel_sys::sq_censustrack(self.ptr, mode) }
+	}
+
 	/// The objects that only reference cycles keep alive, as an array, without freeing
 	/// them (`None` if there are none): what [`collect_garbage`](Self::collect_garbage)
 	/// would free. For finding what leaks.
@@ -166,4 +190,14 @@ impl Drop for SQVM {
 			}
 		}
 	}
+}
+
+/// What [`SQVM::census_track`] does: start tracking (forgetting what was tracked), stop,
+/// or pause and resume around the engine's own accesses (pauses nest).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CensusTrack {
+	Start,
+	Stop,
+	Pause,
+	Resume,
 }

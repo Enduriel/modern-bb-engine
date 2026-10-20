@@ -12,6 +12,7 @@ mod bytes;
 mod consts;
 mod deep;
 mod dynamic;
+mod lazy;
 mod table;
 mod text;
 mod value;

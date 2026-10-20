@@ -20,7 +20,7 @@ pub(crate) use object::SqObject;
 pub use object::SqObjectType;
 pub use profile::{CallNode, FunctionKind, Profile, ProfiledFunction, ScriptProfiler};
 pub use types::{SqArray, SqBytes, SqRef, SqTable, SqText};
-pub use vm::{CompileError, ErrorValue, Frame, Local, RuntimeError, SQVM};
+pub use vm::{CensusTrack, CompileError, ErrorValue, Frame, Local, RuntimeError, SQVM};
 
 /// A hash of the vendored VM's sources and build options. It changes whenever the VM or
 /// its compiler does, so caches of bytecode can key on it.
