@@ -7,10 +7,11 @@
 //! cargo run --release -p bb-engine --example script_profile -- \
 //!     [--vanilla] [--only PREFIXES] [--save NAME | --new-campaign] [--saves DIR]
 //!     [--frames N] [--hz HZ] [--phases paused,town,running,battle] [--top N] [--out REPORT.md]
-//!     [--script FILE.nut] [--live-clock]
+//!     [--script FILE.nut] [--live-clock] [--frame-times FILE]
 //! ```
 //!
 //! - `--script` runs a script once the world is up (e.g. to log what a phase does).
+//! - `--frame-times` writes each unprofiled frame's time (ms), a line `phase ms` each.
 //! - `--live-clock` puts a live clock behind `Time.getExactTime`, as `bb` and the
 //!   original have it (the AI's background work then spreads over frames, and a script
 //!   can time itself); the frame's time otherwise.
@@ -53,6 +54,7 @@ struct Options {
 	out: Option<PathBuf>,
 	script: Option<PathBuf>,
 	live_clock: bool,
+	frame_times: Option<PathBuf>,
 }
 
 fn options() -> Options {
@@ -68,6 +70,7 @@ fn options() -> Options {
 		out: None,
 		script: None,
 		live_clock: false,
+		frame_times: None,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -85,6 +88,7 @@ fn options() -> Options {
 			"--out" => o.out = Some(PathBuf::from(value())),
 			"--script" => o.script = Some(PathBuf::from(value())),
 			"--live-clock" => o.live_clock = true,
+			"--frame-times" => o.frame_times = Some(PathBuf::from(value())),
 			other => panic!("unknown argument {other}"),
 		}
 	}
@@ -146,15 +150,17 @@ fn main() {
 		o.frames,
 		o.hz
 	);
+	let mut frame_log = String::new();
 	for phase in &o.phases {
 		enter_phase(&engine, phase, load.is_some());
 		let dt = 1000.0 / o.hz;
 		for _ in 0..120 {
 			step(&engine, dt, None);
 		}
-		let (plain, spread) = timed(&engine, dt, o.frames, None);
+		let (plain, spread, times) = timed(&engine, dt, o.frames, None);
+		frame_log += &times.iter().map(|t| format!("{phase} {t:.4}\n")).collect::<String>();
 		let mut profiler = ScriptProfiler::new();
-		let (profiled, _) = timed(&engine, dt, o.frames, Some(&mut profiler));
+		let (profiled, _, _) = timed(&engine, dt, o.frames, Some(&mut profiler));
 		let state = player::eval_string(&engine, STATE).ok().flatten().unwrap_or_default();
 		let notes = format!(
 			"{state}\n\n- a frame (the engine's frame and the UI client's replies): {plain:.3} ms unprofiled (p50 {:.3}, p99 {:.3}, max {:.3}), {profiled:.3} ms profiled",
@@ -165,6 +171,9 @@ fn main() {
 	match &o.out {
 		Some(path) => std::fs::write(path, &text).expect("write the report"),
 		None => print!("{text}"),
+	}
+	if let Some(path) = &o.frame_times {
+		std::fs::write(path, &frame_log).expect("write the frame times");
 	}
 	cleanup(&scratch);
 }
@@ -229,14 +238,15 @@ fn enter_battle(engine: &GameEngine, loaded: bool) {
 	panic!("battle: not started after 3000 frames");
 }
 
-/// Step `frames` frames, profiled into `profiler` if given: the mean frame in ms, and the
-/// frames' p50, p99 and max.
-fn timed(engine: &GameEngine, dt: f64, frames: u32, mut profiler: Option<&mut ScriptProfiler>) -> (f64, (f64, f64, f64)) {
-	let mut times: Vec<f64> = (0..frames).map(|_| step(engine, dt, profiler.as_deref_mut())).collect();
+/// Step `frames` frames, profiled into `profiler` if given: the mean frame in ms, the
+/// frames' p50, p99 and max, and every frame's time in order.
+fn timed(engine: &GameEngine, dt: f64, frames: u32, mut profiler: Option<&mut ScriptProfiler>) -> (f64, (f64, f64, f64), Vec<f64>) {
+	let times: Vec<f64> = (0..frames).map(|_| step(engine, dt, profiler.as_deref_mut())).collect();
 	let mean = times.iter().sum::<f64>() / frames.max(1) as f64;
-	times.sort_by(f64::total_cmp);
-	let at = |q: f64| times.get(((times.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0.0);
-	(mean, (at(0.5), at(0.99), at(1.0)))
+	let mut sorted = times.clone();
+	sorted.sort_by(f64::total_cmp);
+	let at = |q: f64| sorted.get(((sorted.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0.0);
+	(mean, (at(0.5), at(0.99), at(1.0)), times)
 }
 
 /// One frame: the engine's frame and the UI client's replies (profiled into `profiler`
