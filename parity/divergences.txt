@@ -10,11 +10,6 @@ menu/vm | int 1 shl 31 | 64-bit integers: no wrap at 2^31
 menu/vm | int -1 ushr 1 | 64-bit integers: a logical shift of -1 keeps 63 bits
 menu/math | abs(-2147483648) | 64-bit integers: abs(INT_MIN) does not overflow
 
-# Float formatting comes from the C runtime: the original's (MSVC's, or Wine's under
-# Proton) differs from glibc's for NaN and for exact decimal ties.
-menu/math | pow(-8, 0.333) | NaN prints as "-nan", not MSVC's "-nan(ind)"
-menu/strings | format %5.1f|%-4d| | an exact tie (2.25 to 1 decimal) rounds to even, the original rounds up
-
 # The original reads uninitialized memory here (a stale pointer when probed); ours is
 # transparent black.
 menu/color_vec | createColor #xyz RGBA | malformed '#' colour: the original returns stack garbage

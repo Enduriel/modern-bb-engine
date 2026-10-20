@@ -11,6 +11,8 @@ mod print;
 mod script;
 mod stack;
 #[cfg(test)]
+mod float_format_tests;
+#[cfg(test)]
 mod stdlib_parity_tests;
 
 pub use print::CompileError;
