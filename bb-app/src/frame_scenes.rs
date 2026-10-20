@@ -9,7 +9,7 @@
 //! set up, its `until` polled, 3 s to settle, its shot taken, its button clicked. The
 //! drawn cursor is left out: the original's screenshots have none.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bb_assets::Image;
@@ -23,10 +23,9 @@ use crate::game::Game;
 const SEED: &str = "bbuitest";
 const STEP: Duration = Duration::from_secs(180);
 
-/// The scenes' script, the probe's own.
-fn scenes_script() -> Result<String, String> {
-	let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/frames/scenes.nut");
-	std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))
+/// The frame parity scenes' script, the probe's own.
+pub fn default_scenes() -> PathBuf {
+	Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/frames/scenes.nut")
 }
 
 /// One of the script's `::probeSteps`.
@@ -89,11 +88,19 @@ fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64) -> Resu
 
 /// Walk the scenes on a `screen` of the given size (the original's video mode: a probe
 /// can't change it), handing each shot to `shot` by name as it's taken.
-pub fn shoot(
+pub fn shoot(gpu: &Gpu, screen: (i64, i64), shot: impl FnMut(&str, Image) -> Result<(), String>) -> Result<(), String> {
+	shoot_scenes(gpu, screen, &default_scenes(), shot)
+}
+
+/// As [`shoot`], walking the steps of another scene script (a probe's own, written as
+/// `parity/frames/scenes.nut` is).
+pub fn shoot_scenes(
 	gpu: &Gpu,
 	screen: (i64, i64),
+	scenes: &Path,
 	mut shot: impl FnMut(&str, Image) -> Result<(), String>,
 ) -> Result<(), String> {
+	let script = std::fs::read_to_string(scenes).map_err(|e| format!("{}: {e}", scenes.display()))?;
 	let mode = VideoMode {
 		width: screen.0,
 		height: screen.1,
@@ -114,7 +121,7 @@ pub fn shoot(
 		loop {
 			engine.init_pending_states()?;
 			if engine.root_state().state("WorldState").is_some() {
-				engine.run_script(&scenes_script()?, "scenes.nut")?;
+				engine.run_script(&script, "scenes.nut")?;
 				break;
 			}
 			if Instant::now() >= deadline {
