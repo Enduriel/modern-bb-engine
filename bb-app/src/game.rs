@@ -11,7 +11,7 @@ use bb_engine::files::GameFiles;
 use bb_engine::harness::{self, GameEngine};
 use bb_render::portrait::PortraitRequest;
 use bb_render::world::WorldView;
-use bb_render::{Atlases, Clock, Discard, FrameStats, Gpu, RenderTarget, WorldRenderer, write_png};
+use bb_render::{Atlases, Clock, Discard, FrameStats, Gpu, RenderTarget, WorldMap, WorldRenderer, write_png};
 use squirrel::{SqStrongRef, SqTable};
 use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
@@ -353,13 +353,23 @@ impl Game {
 				width,
 				height,
 			};
-			// Only the tiles the screen can show: the map is tens of thousands.
+			// The map's terrain and details are kept by the renderer (built again when
+			// the map's revision changes, the details changed redrawn); the scene is the
+			// rest, without its tiles.
 			let scene_span = bb_render::frame_timing::span("world scene");
-			let scene = engine.world_scene_where(|pos| view.shows(pos));
+			let scene = engine.world_scene_where(|_| false);
+			let grid = engine.world_grid();
+			let changes = grid.take_detail_changes();
 			drop(scene_span);
+			let tiles = || grid.scene_map();
+			let map = WorldMap {
+				revision: grid.map_revision(),
+				tiles: &tiles,
+				changes: &changes,
+			};
 			let _span = bb_render::frame_timing::span("world draw");
 			engine.sprites().with(|registry| {
-				self.renderer.draw(gpu, target, &scene, registry, &view, Atlases::DrawReady)
+				self.renderer.draw_kept(gpu, target, &scene, &map, registry, &view, Atlases::DrawReady)
 			})
 		} else {
 			// Neither shows (the main menu, after `World.setVisible(false)`): the UI is

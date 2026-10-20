@@ -12,11 +12,12 @@ use std::sync::Arc;
 
 use bb_assets::{BitmapFont, FileSource, Image, ImageLoader, Slot, SpriteRegistry, TextureCache};
 use squirrel_bb::FogPatch;
-use squirrel_bb::scene::WorldScene;
+use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
 use squirrel_bb::scene::tactical::TacticalScene;
 
 use crate::fast_hash::FastMap;
 use crate::fog::FogPass;
+use crate::kept_map::{self, Built, KeptMap, Placing};
 use crate::gpu::Gpu;
 use crate::fonts::shaper::{GLYPH_PAGE, TextShaper, glyph_page};
 use crate::fonts::{FontDb, Registration};
@@ -24,12 +25,12 @@ use crate::labels::{LabelFont, WHITE};
 use crate::mips::{MipMaker, samples_mips};
 use crate::pages::{FramePages, Located};
 use crate::residency::{Drawer, Residency};
-use crate::sprite::{Quad, SceneUniforms, SpriteRenderer};
+use crate::sprite::{Part, Quad, SceneUniforms, SpriteRenderer};
 use crate::tactical::tactical_quads;
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::water::WaterPass;
-use crate::world::{QuadScratch, WorldFonts, WorldView, world_quads_with};
+use crate::world::{QuadScratch, WorldFonts, WorldView, world_quads_around_map};
 
 /// Whether a frame waits for atlases that are still loading.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,15 +93,28 @@ pub struct WorldRenderer {
 	/// out, the map is tens of thousands of sprites, megabytes a frame to allocate.
 	quad_scratch: QuadScratch,
 	frame: FrameQuads,
+	/// The world map's terrain and details, kept from frame to frame.
+	kept: KeptMap,
 }
 
 /// A draw's quads located (see [`WorldRenderer::resolve`]) and bound (see
-/// [`WorldRenderer::bind`]: the map's, then the labels').
+/// [`WorldRenderer::bind`]), in parts drawn in turn.
 #[derive(Default)]
 struct FrameQuads {
 	resolved: Vec<Option<(From, Quad)>>,
-	first: Vec<Quad>,
-	second: Vec<Quad>,
+	parts: [Vec<Quad>; 3],
+}
+
+/// The world map for [`WorldRenderer::draw_kept`]: what it's kept from.
+pub struct WorldMap<'a> {
+	/// The map's revision (`WorldGrid::map_revision`): its terrain and details are built
+	/// again when it changes.
+	pub revision: u64,
+	/// The whole map (`WorldGrid::scene_map`), asked for only then.
+	pub tiles: &'a dyn Fn() -> Vec<SceneTile>,
+	/// The details whose look changed since the last frame
+	/// (`WorldGrid::take_detail_changes`).
+	pub changes: &'a [SceneDetail],
 }
 
 /// The game's own outline fonts, the bitmap fonts' sources.
@@ -212,6 +226,7 @@ impl WorldRenderer {
 			glyph_pages: Vec::new(),
 			quad_scratch: QuadScratch::default(),
 			frame: FrameQuads::default(),
+			kept: KeptMap::default(),
 		}
 	}
 
@@ -356,11 +371,12 @@ impl WorldRenderer {
 		drawer: Drawer,
 		view: (f32, Option<u32>),
 		out: &mut Vec<Option<(From, Quad)>>,
-	) {
+	) -> bool {
 		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
 		self.textures.pump(upload);
 		let wait = atlases == Atlases::WaitForAll;
 		let mut whole = vec![false; map.atlases.paths.len()];
+		let asked;
 		out.clear();
 		out.reserve(map.quads.len());
 		{
@@ -418,7 +434,7 @@ impl WorldRenderer {
 			}
 			// What this frame lacks is loaded now (a draw that waits for all), or given
 			// the pages' wait budget.
-			let asked = match pages.as_mut() {
+			asked = match pages.as_mut() {
 				Some(p) if wait => {
 					p.load_asks_now(gpu, mips);
 					true
@@ -454,24 +470,27 @@ impl WorldRenderer {
 			self.residency.drawn(path, drawer);
 		}
 		self.add_mips(gpu, map, view.0, view.1);
+		asked
 	}
 
-	/// The textures `resolved` draws from, and its quads pointing at them in order, those
-	/// before `split` into `first` and the rest into `second` (a quad not drawn, waiting
-	/// or its atlas failed with no stand-in, is left out).
+	/// The textures `resolved` draws from, and its quads pointing at them in order, into
+	/// `parts`: those before `splits[0]` into the first, those from there to `splits[1]`
+	/// into the second, and so on (a quad not drawn, waiting or its atlas failed with no
+	/// stand-in, is left out).
 	fn bind<'a>(
 		&'a self,
 		map: &crate::world::WorldQuads,
 		resolved: &[Option<(From, Quad)>],
-		split: usize,
-		(first, second): (&mut Vec<Quad>, &mut Vec<Quad>),
+		splits: &[usize],
+		parts: &mut [Vec<Quad>],
 	) -> (Vec<&'a GpuTexture>, FrameStats) {
 		let mut stats = FrameStats::default();
 		let mut ready: Vec<&'a GpuTexture> = Vec::new();
 		let mut slots: FastMap<From, Option<usize>> = FastMap::default();
 		let mut counted = std::collections::HashSet::new();
-		first.clear();
-		second.clear();
+		for part in parts.iter_mut() {
+			part.clear();
+		}
 		for (i, entry) in resolved.iter().enumerate() {
 			let Some((from, quad)) = entry else {
 				stats.waiting += 1;
@@ -494,7 +513,7 @@ impl WorldRenderer {
 				Some(ready.len() - 1)
 			});
 			match slot {
-				Some(texture) => (if i < split { &mut *first } else { &mut *second }).push(Quad { texture, ..*quad }),
+				Some(texture) => parts[splits.iter().filter(|&&s| s <= i).count()].push(Quad { texture, ..*quad }),
 				None => stats.waiting += 1,
 			}
 		}
@@ -510,6 +529,8 @@ impl WorldRenderer {
 	/// The game discarded a scene: what only it needed goes, and the warmed images no
 	/// draw asked for.
 	pub fn discard(&mut self, discard: Discard) {
+		// The kept map's bind groups hold their textures.
+		self.kept.forget_groups();
 		self.textures.drop_all_decoded();
 		if let Some(pages) = &mut self.pages {
 			match discard {
@@ -578,13 +599,19 @@ impl WorldRenderer {
 	/// going first.
 	fn fit_budget(&mut self) {
 		let resident = self.resident();
-		for path in self.residency.over_budget(&resident) {
+		let over = self.residency.over_budget(&resident);
+		if !over.is_empty() {
+			// The kept map's bind groups hold their textures.
+			self.kept.forget_groups();
+		}
+		for path in over {
 			self.textures.remove(&path);
 		}
 		// The pages share what the whole textures leave of the budget.
 		let whole: u64 = self.resident().iter().map(|(_, bytes)| bytes).sum();
 		if let Some(pages) = &mut self.pages {
 			pages.fit(self.residency.budget().saturating_sub(whole));
+			self.kept.follow_generation(pages.generation());
 		}
 		let mut held = self.textures.decoded();
 		let mut total: u64 = held.iter().map(|(_, _, bytes)| bytes).sum();
@@ -600,8 +627,49 @@ impl WorldRenderer {
 
 	/// Draw `scene` into `target`, clearing it first: the water, the map, then the fog
 	/// of war where its mask has it (once [`update_fog`](Self::update_fog) gave one),
-	/// then the labels.
+	/// then the labels. The map is `scene`'s tiles, built for this frame only (see
+	/// [`draw_kept`](Self::draw_kept) for a map kept from frame to frame).
 	pub fn draw(
+		&mut self,
+		gpu: &Gpu,
+		target: &RenderTarget,
+		scene: &WorldScene,
+		registry: &SpriteRegistry,
+		view: &WorldView,
+		atlases: Atlases,
+	) -> FrameStats {
+		self.kept.build(&scene.tiles, registry, None);
+		self.draw_world(gpu, target, scene, registry, view, atlases)
+	}
+
+	/// [`draw`](Self::draw) with the map's terrain and details kept on the GPU from frame
+	/// to frame (see [`crate::kept_map`]): built again only when `map`'s revision (or the
+	/// registry) changes, the details changed written again. `scene`'s own tiles aren't
+	/// drawn (a scene without them, `Engine::world_scene_where(|_| false)`, copies nothing).
+	pub fn draw_kept(
+		&mut self,
+		gpu: &Gpu,
+		target: &RenderTarget,
+		scene: &WorldScene,
+		map: &WorldMap,
+		registry: &SpriteRegistry,
+		view: &WorldView,
+		atlases: Atlases,
+	) -> FrameStats {
+		let built = Some(Built {
+			revision: map.revision,
+			sheets: registry.sheets().len(),
+		});
+		if self.kept.stale(built) {
+			let _span = crate::frame_timing::span("map built");
+			let tiles = (map.tiles)();
+			self.kept.build(&tiles, registry, built);
+		}
+		self.kept.change(map.changes, registry);
+		self.draw_world(gpu, target, scene, registry, view, atlases)
+	}
+
+	fn draw_world(
 		&mut self,
 		gpu: &Gpu,
 		target: &RenderTarget,
@@ -619,7 +687,7 @@ impl WorldRenderer {
 		};
 		let world = {
 			let _span = crate::frame_timing::span("world quads");
-			world_quads_with(scene, registry, view, fonts, &mut self.quad_scratch)
+			world_quads_around_map(scene, registry, view, fonts, &mut self.quad_scratch)
 		};
 		self.upload_glyphs(gpu);
 		self.record_usage(&world, view.zoom, None);
@@ -636,12 +704,54 @@ impl WorldRenderer {
 			self.residency.drawn(path, Drawer::World);
 		}
 		let resolve_span = crate::frame_timing::span("resolve+bind");
+		// The kept map's segments on screen, located (those not yet, or anew) before the
+		// rest, so that the frames either asks for are waited for together.
+		if self.sprites.keep(gpu, self.kept.len()) {
+			self.kept.unplace();
+		}
+		if let Some(pages) = &mut self.pages {
+			pages.pump(gpu, &self.mips);
+		}
+		let generation = |pages: &Option<FramePages>| pages.as_ref().map_or(0, FramePages::generation);
+		let at = generation(&self.pages);
+		self.kept.begin_frame(at);
+		let mut shown = self.kept.shown(view);
+		let wait = atlases == Atlases::WaitForAll;
+		let whole_path = |path: &str| path.starts_with(FONT_DIR);
+		self.kept.place(&mut shown, at, &mut Placing {
+			pages: self.pages.as_mut(),
+			wait,
+			sprites: &self.sprites,
+			whole: &whole_path,
+		});
 		let mut frame = std::mem::take(&mut self.frame);
-		self.resolve(gpu, &world, atlases, Drawer::World, (view.zoom, None), &mut frame.resolved);
-		let (ready, mut stats) = self.bind(&world, &frame.resolved, world.labels_from, (&mut frame.first, &mut frame.second));
+		let asked = self.resolve(gpu, &world, atlases, Drawer::World, (view.zoom, None), &mut frame.resolved);
+		let now = generation(&self.pages);
+		if (asked && shown.waiting > 0) || now != at {
+			self.kept.begin_frame(now);
+			self.kept.frames_came();
+			self.kept.place(&mut shown, now, &mut Placing {
+				pages: self.pages.as_mut(),
+				wait,
+				sprites: &self.sprites,
+				whole: &whole_path,
+			});
+		}
+		let (kept_failed, kept_unready) = self.kept_atlases(gpu, &shown, atlases, view.zoom);
+		{
+			let (pages, textures, blank) = (&self.pages, &self.textures, self.sprites.blank_view());
+			let paths = self.kept.atlas_paths().to_vec();
+			self.kept.bind(&shown, &self.sprites, gpu, |from| match from {
+				kept_map::From::Page(page) => &pages.as_ref().expect("paged").texture(page).view,
+				kept_map::From::Whole(atlas) => textures.slot(&paths[atlas]).and_then(Slot::texture).map_or(blank, |t| &t.view),
+			});
+		}
+		let (ready, mut stats) = self.bind(&world, &frame.resolved, &[world.details_end, world.labels_from], &mut frame.parts);
 		drop(resolve_span);
-		let (map, labels) = (&frame.first, &frame.second);
-		stats.quads = map.len() + labels.len();
+		let [details, map, labels] = &frame.parts;
+		stats.quads = details.len() + map.len() + labels.len() + shown.quads - kept_unready;
+		stats.waiting += shown.waiting + kept_unready;
+		stats.failed += kept_failed;
 		// The day's light: on lit sprites, the water and the fog.
 		let ambient = argb_floats(scene.light.color);
 		let uniforms = SceneUniforms {
@@ -664,8 +774,12 @@ impl WorldRenderer {
 		};
 		let clear = (!water).then_some(CLEAR);
 		let sprites_span = crate::frame_timing::span("sprites draw");
-		self.sprites
-			.draw(gpu, target, &uniforms, clear, map, &ready);
+		// The map's terrain and details keyed from 0 up, the details layer's own (region
+		// names, footprints), the map's details keyed below 0, then the entities and the
+		// effects.
+		let (before, after) = (self.kept.calls(&shown, true), self.kept.calls(&shown, false));
+		let parts = [Part::Kept(&before), Part::Streamed(details), Part::Kept(&after), Part::Streamed(map)];
+		self.sprites.draw_parts(gpu, target, &uniforms, clear, &parts, &ready);
 		drop(sprites_span);
 
 		if scene.fog_of_war {
@@ -683,13 +797,67 @@ impl WorldRenderer {
 		}
 
 		self.sprites
-			.draw(gpu, target, &uniforms, None, &labels, &ready);
+			.draw(gpu, target, &uniforms, None, labels, &ready);
 		drop(ready);
 		self.frame = frame;
 		self.quad_scratch.recycle(world);
 		let _span = crate::frame_timing::span("fit budget");
 		self.fit_budget();
 		stats
+	}
+
+	/// The atlases the kept map's segments `shown` draw whole: loaded (or waited for),
+	/// drawn now, given their mips if drawn at `zoom` samples them, and their usage
+	/// recorded if tracked. Returns how many failed to load, and the quads drawn from
+	/// those not ready (or failed with no stand-in), which draw nothing.
+	fn kept_atlases(&mut self, gpu: &Gpu, shown: &kept_map::Shown, atlases: Atlases, zoom: f32) -> (usize, usize) {
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
+		if self.usage.is_some() {
+			let mut list = crate::world::AtlasList::default();
+			for path in self.kept.atlas_paths() {
+				list.index_of(path);
+			}
+			let map = crate::world::WorldQuads {
+				quads: self.kept.shown_quads(shown).copied().collect(),
+				atlases: list,
+				labels_from: 0,
+				details_end: 0,
+			};
+			self.record_usage(&map, zoom, None);
+		}
+		let (mut failed, mut unready) = (0, 0);
+		for atlas in self.kept.drawn_from(shown, self.pages.as_mut()) {
+			let path = self.kept.atlas_paths()[atlas].clone();
+			match atlases {
+				Atlases::WaitForAll => {
+					let _ = self.textures.get_now(&path, upload);
+				}
+				Atlases::DrawReady => {
+					let _ = self.textures.get_or_upload(&path, upload);
+				}
+			}
+			self.residency.drawn(&path, Drawer::World);
+			if matches!(self.textures.slot(&path), Some(Slot::Missing(..) | Slot::Failed(_))) {
+				failed += 1;
+			}
+			if self.textures.slot(&path).and_then(Slot::texture).is_none() {
+				unready += self.kept.whole_quads(shown, atlas).count();
+			}
+			let Some(size) = self
+				.textures
+				.slot(&path)
+				.and_then(Slot::texture)
+				.filter(|t| t.texture.mip_level_count() == 1 && !path.starts_with(FONT_DIR))
+				.map(|t| (t.width, t.height))
+			else {
+				continue;
+			};
+			if self.kept.whole_quads(shown, atlas).any(|quad| samples_mips(quad, zoom, size, None)) {
+				let (mips, textures) = (&self.mips, &mut self.textures);
+				textures.update(&path, |texture| Some(mips.with_mips(gpu, texture)));
+			}
+		}
+		(failed, unready)
 	}
 
 	/// Draw a battle map's terrain into `target`, clearing it first (see [`crate::tactical`]).
@@ -702,7 +870,10 @@ impl WorldRenderer {
 		view: &WorldView,
 		atlases: Atlases,
 	) -> FrameStats {
-		let map = tactical_quads(scene, registry, view);
+		let map = {
+			let _span = crate::frame_timing::span("battle quads");
+			tactical_quads(scene, registry, view)
+		};
 		self.index(registry);
 		let camera_level = scene.camera.level.clamp(0, 3) as u32;
 		self.record_usage(&map, view.zoom, self.depth_of_field.then_some(camera_level));
@@ -780,10 +951,13 @@ impl WorldRenderer {
 		(zoom, dof_below): (f32, Option<u32>),
 	) -> FrameStats {
 		let mut frame = std::mem::take(&mut self.frame);
+		let resolve_span = crate::frame_timing::span("resolve+bind");
 		self.resolve(gpu, map, atlases, drawer, (zoom, dof_below), &mut frame.resolved);
-		let (ready, mut stats) = self.bind(map, &frame.resolved, map.quads.len(), (&mut frame.first, &mut frame.second));
-		stats.quads = frame.first.len();
-		self.sprites.draw(gpu, target, uniforms, clear, &frame.first, &ready);
+		let (ready, mut stats) = self.bind(map, &frame.resolved, &[], &mut frame.parts[..1]);
+		drop(resolve_span);
+		stats.quads = frame.parts[0].len();
+		let _span = crate::frame_timing::span("sprites draw");
+		self.sprites.draw(gpu, target, uniforms, clear, &frame.parts[0], &ready);
 		drop(ready);
 		self.frame = frame;
 		stats

@@ -142,6 +142,7 @@ pub fn portrait_quads(portrait: &ScenePortrait, hidden: &[String], sprites: &Spr
 		quads,
 		atlases,
 		labels_from,
+		details_end: 0,
 	}
 }
 

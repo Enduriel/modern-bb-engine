@@ -191,6 +191,9 @@ pub(crate) struct FramePages {
 	/// Frames went at a discard: pack the rest again before the next draw.
 	compact_due: bool,
 	frame: u64,
+	/// Counts the times a frame left its place or an atlas went whole (see
+	/// [`FramePages::generation`]).
+	generation: u64,
 }
 
 fn bit(drawer: Drawer) -> u8 {
@@ -228,6 +231,7 @@ impl FramePages {
 			warmed: HashSet::new(),
 			compact_due: false,
 			frame: 0,
+			generation: 0,
 		}
 	}
 
@@ -296,6 +300,21 @@ impl FramePages {
 
 	pub(crate) fn begin_frame(&mut self, frame: u64) {
 		self.frame = frame;
+	}
+
+	/// Changes when a frame that was placed leaves its place (evicted, or moved by a
+	/// compaction) or an atlas goes whole: what was located before may be elsewhere now.
+	/// A frame coming in changes nothing that was located.
+	pub(crate) fn generation(&self) -> u64 {
+		self.generation
+	}
+
+	/// Page `page` is drawn from this frame (as [`FramePages::locate`] marks it): quads
+	/// located before, and kept, draw from it.
+	pub(crate) fn touch_page(&mut self, page: usize) {
+		if let Some(used) = self.pages.used.get_mut(page) {
+			*used = self.frame;
+		}
 	}
 
 	/// Where to draw `quad` of `atlas` from for `drawer`: its frame's place; or waiting
@@ -426,6 +445,7 @@ impl FramePages {
 		if trial.pages().count() >= self.pages.alloc.pages().count() {
 			return;
 		}
+		self.generation += 1;
 		let mut fresh = Pages::new(self.pages.size);
 		let moves: Vec<Place> = keys.iter().map(|key| fresh.place(gpu, self.resident[key].region)).collect();
 		let mut encoder = gpu
@@ -462,7 +482,9 @@ impl FramePages {
 		for (key, to) in keys.iter().zip(moves) {
 			let r = self.resident.get_mut(key).expect("a resident frame");
 			mips.remake_region(gpu, &fresh.texture(to.page).texture, (to.x, to.y, r.region.w, r.region.h), LEVELS as u32);
-			fresh.used[to.page] = fresh.used[to.page].max(r.frame);
+			// Last drawn when its frame or its page was (quads kept from frame to frame
+			// mark only their pages, see `touch_page`).
+			fresh.used[to.page] = fresh.used[to.page].max(r.frame).max(self.pages.used[r.place.page]);
 			r.place = to;
 		}
 		self.pages = fresh;
@@ -483,6 +505,7 @@ impl FramePages {
 			Err(_) => {
 				// Drawn whole from now on: the atlas's own loading (and its "texture
 				// missing" stand-in) takes over.
+				self.generation += 1;
 				self.pending.retain(|(a, _)| *a != atlas);
 				self.whole.insert(atlas);
 			}
@@ -539,6 +562,7 @@ impl FramePages {
 
 	fn evict(&mut self, key: &(String, TexelRect)) {
 		if let Some(r) = self.resident.remove(key) {
+			self.generation += 1;
 			self.pages.free(r.place);
 		}
 	}

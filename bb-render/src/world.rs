@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use bb_assets::{BrushFrame, SpriteRegistry};
-use squirrel_bb::scene::WorldScene;
+use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
 
 use crate::fast_hash::FastMap;
 use crate::labels::{LabelFont, label_quads};
@@ -114,13 +114,13 @@ struct Drawable {
 /// path is mostly the same string (its sheet's), so it's found by where the string is,
 /// without hashing its text for every sprite.
 #[derive(Default)]
-struct AtlasIds<'a> {
-	paths: Vec<&'a str>,
+pub(crate) struct AtlasIds<'a> {
+	pub(crate) paths: Vec<&'a str>,
 	by_address: FastMap<(usize, usize), usize>,
 }
 
 impl<'a> AtlasIds<'a> {
-	fn id(&mut self, path: &'a str) -> usize {
+	pub(crate) fn id(&mut self, path: &'a str) -> usize {
 		let paths = &mut self.paths;
 		*self.by_address.entry((path.as_ptr() as usize, path.len())).or_insert_with(|| {
 			paths.push(path);
@@ -169,7 +169,7 @@ impl AtlasList {
 /// layer (details, entities, effects) and draws them in turn; tile terrain is drawn
 /// before all of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Layer {
+pub(crate) enum Layer {
 	Terrain,
 	Details,
 	Entities,
@@ -193,6 +193,9 @@ pub struct WorldQuads {
 	pub atlases: AtlasList,
 	/// Where the labels start in `quads` (they draw over the fog of war).
 	pub labels_from: usize,
+	/// Where the details layer ends in `quads` (the map's kept terrain and details draw
+	/// around what of it is built each frame, see `crate::kept_map`).
+	pub details_end: usize,
 }
 
 /// The quads that draw `scene` in `view`.
@@ -214,6 +217,29 @@ pub fn world_quads_with<'a>(
 	fonts: WorldFonts<'a>,
 	scratch: &mut QuadScratch,
 ) -> WorldQuads {
+	quads_of(scene, sprites, view, fonts, scratch, true)
+}
+
+/// [`world_quads_with`] without the tiles' terrain and details: what changes from frame
+/// to frame around the map kept on the GPU (see `crate::kept_map`).
+pub(crate) fn world_quads_around_map<'a>(
+	scene: &'a WorldScene,
+	sprites: &'a SpriteRegistry,
+	view: &WorldView,
+	fonts: WorldFonts<'a>,
+	scratch: &mut QuadScratch,
+) -> WorldQuads {
+	quads_of(scene, sprites, view, fonts, scratch, false)
+}
+
+fn quads_of<'a>(
+	scene: &'a WorldScene,
+	sprites: &'a SpriteRegistry,
+	view: &WorldView,
+	fonts: WorldFonts<'a>,
+	scratch: &mut QuadScratch,
+	tiles: bool,
+) -> WorldQuads {
 	let on_screen = |pos: (f64, f64)| view.shows(pos);
 	let QuadScratch { drawables, order, keys, quads } = scratch;
 	drawables.clear();
@@ -228,82 +254,33 @@ pub fn world_quads_with<'a>(
 	            anchor: [f32; 2],
 	            offset: [f32; 2],
 	            look: Look| {
-		let Some((sheet, sprite)) = sprites.get(brush) else {
-			return;
-		};
-		// The frame its animation shows (see `squirrel_bb::native::sprite_anim`).
-		let Some(frame) = sprite.frames.get(frame as usize).or(sprite.frames.first()) else {
-			return;
-		};
-		// Offsets scale with the sprite (so an unscaled sprite keeps its screen
-		// offset too).
-		let anchor = [
-			anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
-			anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
-		];
-		drawables.push(Drawable {
-			layer,
-			key: key + i64::from(sprite.depth_bias),
-			quad: Quad {
-				texture: ids.id(&sheet.sheet.texture),
-				..frame_quad(frame, anchor, look)
-			},
-		});
+		if let Some((texture, depth_bias, quad)) = sprite_quad(sprites, brush, frame, anchor, offset, look) {
+			drawables.push(Drawable {
+				layer,
+				key: key + i64::from(depth_bias),
+				quad: Quad {
+					texture: ids.id(texture),
+					..quad
+				},
+			});
+		}
 	};
 
-	for tile in scene.tiles.iter().filter(|t| on_screen(t.pos)) {
-		let anchor = [tile.pos.0 as f32, tile.pos.1 as f32];
-		if !tile.brush.is_empty() {
-			let key = anchor[1] as i64;
-			let pushed = drawables.len();
-			push(
-				drawables,
-				&mut ids,
-				Layer::Terrain,
+	for tile in scene.tiles.iter().filter(|t| tiles && on_screen(t.pos)) {
+		if let Some((key, texture, quad)) = terrain_quad(tile, sprites) {
+			drawables.push(Drawable {
+				layer: Layer::Terrain,
 				key,
-				&tile.brush,
-				0,
-				anchor,
-				[0.0; 2],
-				Look::PLAIN,
-			);
-			// A flipped tile swaps its texture's left and right, in place (`0x573ab3`).
-			if tile.flipped {
-				if let Some(d) = drawables.get_mut(pushed) {
-					let uv = &mut d.quad.uv;
-					(uv[0][0], uv[1][0], uv[2][0], uv[3][0]) = (uv[1][0], uv[0][0], uv[3][0], uv[2][0]);
-				}
-			}
+				quad: Quad { texture: ids.id(texture), ..quad },
+			});
 		}
-		for detail in &tile.details {
-			let look = Look {
-				scale: detail.scale as f32,
-				flipped: detail.flipped,
-				alpha: detail.alpha as f32,
-				rotation: detail.rotation as f32,
-				tint: [(detail.tint >> 16) as u8, (detail.tint >> 8) as u8, detail.tint as u8],
-			};
-			let pushed = drawables.len();
-			// At its place (the tile's centre plus the spawn's offset).
-			push(
-				drawables,
-				&mut ids,
-				Layer::Details,
-				0,
-				&detail.brush,
-				detail.frame,
-				[detail.pos.0, detail.pos.1],
-				[0.0; 2],
-				look,
-			);
-			// The original's key, as the spawn made it (`0x4fb707`): int(y) + depth bias +
-			// z level − the spawn tile's axial-r parity. Its `Saturation` (the steppe's
-			// brush is 0.8), and `IgnoreAmbientColor` (a house's lit windows at night, see
-			// [`unlit`]).
-			if let Some(d) = drawables.get_mut(pushed) {
-				d.key = i64::from(detail.z);
-				d.quad.saturation = detail.saturation as f32;
-				d.quad.flags = unlit(detail.ignore_ambient);
+		for detail in tile.details.iter().filter(|d| !d.hidden) {
+			if let Some((texture, quad)) = detail_quad(detail, sprites) {
+				drawables.push(Drawable {
+					layer: Layer::Details,
+					key: i64::from(detail.z),
+					quad: Quad { texture: ids.id(texture), ..quad },
+				});
 			}
 		}
 	}
@@ -573,10 +550,14 @@ pub fn world_quads_with<'a>(
 	// Back to front: by layer, then the higher key first, ties in push order. The order
 	// is unique, so sorting compact keys (and gathering after) gives the same order as
 	// sorting the drawables themselves, at a fraction of the moves.
-	sort_back_to_front(drawables, keys, order);
+	sort_back_to_front(drawables.len(), |i| (drawables[i].layer, drawables[i].key), keys, order);
 	let labels_from = order
 		.iter()
 		.position(|&i| drawables[i as usize].layer == Layer::Labels)
+		.unwrap_or(order.len());
+	let details_end = order
+		.iter()
+		.position(|&i| drawables[i as usize].layer > Layer::Details)
 		.unwrap_or(order.len());
 	// The atlases in first-use order.
 	let mut atlases = AtlasList::default();
@@ -595,7 +576,71 @@ pub fn world_quads_with<'a>(
 		quads,
 		atlases,
 		labels_from,
+		details_end,
 	}
+}
+
+/// Sprite `brush`'s quad showing `frame` of it (its first if it has no such frame) at
+/// `anchor` plus `offset` (both scaled with it), drawn as `look` says: its atlas, its
+/// depth bias and its quad (texture 0). `None` for an unknown brush or one without frames.
+pub(crate) fn sprite_quad<'a>(
+	sprites: &'a SpriteRegistry,
+	brush: &str,
+	frame: u32,
+	anchor: [f32; 2],
+	offset: [f32; 2],
+	look: Look,
+) -> Option<(&'a str, i8, Quad)> {
+	let (sheet, sprite) = sprites.get(brush)?;
+	// The frame its animation shows (see `squirrel_bb::native::sprite_anim`).
+	let frame = sprite.frames.get(frame as usize).or(sprite.frames.first())?;
+	// Offsets scale with the sprite (so an unscaled sprite keeps its screen offset too).
+	let anchor = [
+		anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
+		anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
+	];
+	Some((&sheet.sheet.texture, sprite.depth_bias, frame_quad(frame, anchor, look)))
+}
+
+/// A tile's terrain: its sort key in the terrain layer (its row's y plus the brush's
+/// depth bias), its atlas and its quad. `None` without a brush.
+pub(crate) fn terrain_quad<'a>(tile: &SceneTile, sprites: &'a SpriteRegistry) -> Option<(i64, &'a str, Quad)> {
+	if tile.brush.is_empty() {
+		return None;
+	}
+	let anchor = [tile.pos.0 as f32, tile.pos.1 as f32];
+	let (texture, depth_bias, mut quad) = sprite_quad(sprites, &tile.brush, 0, anchor, [0.0; 2], Look::PLAIN)?;
+	// A flipped tile swaps its texture's left and right, in place (`0x573ab3`).
+	if tile.flipped {
+		let uv = &mut quad.uv;
+		(uv[0][0], uv[1][0], uv[2][0], uv[3][0]) = (uv[1][0], uv[0][0], uv[3][0], uv[2][0]);
+	}
+	Some((anchor[1] as i64 + i64::from(depth_bias), texture, quad))
+}
+
+/// A detail's atlas and quad, at its place (its tile's centre plus the spawn's offset).
+/// Its sort key in the details layer is its own `z`, as the spawn made it (`0x4fb707`):
+/// int(y) + depth bias + z level − the spawn tile's axial-r parity. `None` for an unknown
+/// brush (a hidden detail is drawn as any other: the caller leaves it out).
+pub(crate) fn detail_quad<'a>(detail: &SceneDetail, sprites: &'a SpriteRegistry) -> Option<(&'a str, Quad)> {
+	let look = Look {
+		scale: detail.scale as f32,
+		flipped: detail.flipped,
+		alpha: detail.alpha as f32,
+		rotation: detail.rotation as f32,
+		tint: [(detail.tint >> 16) as u8, (detail.tint >> 8) as u8, detail.tint as u8],
+	};
+	let (texture, _, quad) = sprite_quad(sprites, &detail.brush, detail.frame, [detail.pos.0, detail.pos.1], [0.0; 2], look)?;
+	// Its `Saturation` (the steppe's brush is 0.8), and `IgnoreAmbientColor` (a house's lit
+	// windows at night, see [`unlit`]).
+	Some((
+		texture,
+		Quad {
+			saturation: detail.saturation as f32,
+			flags: unlit(detail.ignore_ambient),
+			..quad
+		},
+	))
 }
 
 /// Put in `order` the drawables' indices back to front: by layer, then the higher key
@@ -603,24 +648,25 @@ pub fn world_quads_with<'a>(
 /// sorting compact keys and gathering after gives the same as sorting the drawables
 /// themselves, at a fraction of the moves; the keys pack into one `u64` when they fit
 /// (they always do on vanilla's maps), which sorts fastest.
-fn sort_back_to_front(drawables: &[Drawable], keys: &mut Vec<u64>, order: &mut Vec<u32>) {
+pub(crate) fn sort_back_to_front(count: usize, layer_key: impl Fn(usize) -> (Layer, i64), keys: &mut Vec<u64>, order: &mut Vec<u32>) {
 	order.clear();
 	keys.clear();
 	// Layer: 3 bits; key: 32, reversed; index: 29.
 	const INDEX_BITS: u32 = 29;
-	let fits = drawables.len() < 1 << INDEX_BITS && drawables.iter().all(|d| i32::try_from(d.key).is_ok());
+	let fits = count < 1 << INDEX_BITS && (0..count).all(|i| i32::try_from(layer_key(i).1).is_ok());
 	if fits {
-		keys.extend(drawables.iter().enumerate().map(|(i, d)| {
-			let reversed = u64::from(!((d.key as i32 as u32) ^ 0x8000_0000));
-			(d.layer as u64) << 61 | reversed << INDEX_BITS | i as u64
+		keys.extend((0..count).map(|i| {
+			let (layer, key) = layer_key(i);
+			let reversed = u64::from(!((key as i32 as u32) ^ 0x8000_0000));
+			(layer as u64) << 61 | reversed << INDEX_BITS | i as u64
 		}));
 		keys.sort_unstable();
 		order.extend(keys.iter().map(|k| (k & ((1 << INDEX_BITS) - 1)) as u32));
 	} else {
-		order.extend(0..drawables.len() as u32);
+		order.extend(0..count as u32);
 		order.sort_unstable_by_key(|&i| {
-			let d = &drawables[i as usize];
-			(d.layer, std::cmp::Reverse(d.key), i)
+			let (layer, key) = layer_key(i as usize);
+			(layer, std::cmp::Reverse(key), i)
 		});
 	}
 }

@@ -651,3 +651,80 @@ fn the_cursor_draws_from_a_page_as_from_its_atlas() {
 	assert!(a.rgba.iter().any(|&v| v != 0), "the cursor shows");
 	assert!(a == b, "the same pixels");
 }
+
+/// A map kept from frame to frame (`draw_kept`) is built once per revision, and a detail
+/// whose look changed is drawn anew, a hidden one shown again in its place.
+#[test]
+fn a_kept_map_redraws_only_what_changed() {
+	let gpu = match Gpu::headless() {
+		Ok(gpu) => gpu,
+		Err(e) => {
+			eprintln!("skipping: {e}");
+			return;
+		}
+	};
+	const RED: [u8; 4] = [255, 0, 0, 255];
+	let files = Files(HashMap::from([("gfx/test.png".to_string(), solid_png(RED))]));
+	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
+	let registry = registry();
+	let view = WorldView {
+		center: [0.0, 0.0],
+		zoom: 1.0,
+		width: 8,
+		height: 4,
+	};
+	let target = RenderTarget::new(&gpu, 8, 4);
+	let detail = |id: i64, x: f32, hidden: bool| SceneDetail {
+		id,
+		hidden,
+		brush: "dot".into(),
+		pos: (x, 0.0),
+		..SceneDetail::default()
+	};
+	let tiles = |details: Vec<SceneDetail>| {
+		vec![SceneTile {
+			col: 0,
+			row: 0,
+			pos: (0.0, 0.0),
+			terrain: 2,
+			discovered: true,
+			brush: "".into(),
+			flipped: false,
+			details,
+		}]
+	};
+	let scene = WorldScene {
+		fog_of_war: false,
+		..WorldScene::default()
+	};
+	let built = std::cell::Cell::new(0);
+	let mut draw = |revision: u64, map: Vec<SceneDetail>, changes: &[SceneDetail]| {
+		let whole = || {
+			built.set(built.get() + 1);
+			tiles(map.clone())
+		};
+		let map = bb_render::WorldMap {
+			revision,
+			tiles: &whole,
+			changes,
+		};
+		renderer.draw_kept(&gpu, &target, &scene, &map, &registry, &view, Atlases::WaitForAll);
+		let image = target.read(&gpu).expect("read back");
+		// Left of the centre, and right of it (a row in the middle).
+		let px = |x: usize| <[u8; 4]>::try_from(&image.rgba[(8 + x) * 4..(8 + x) * 4 + 4]).unwrap();
+		(px(1), px(5))
+	};
+	let map = vec![detail(1, -2.0, false), detail(2, 2.0, true)];
+	assert_eq!(draw(1, map.clone(), &[]), (RED, [0, 0, 0, 255]), "the hidden one isn't drawn");
+	assert_eq!(draw(1, map.clone(), &[]).0, RED);
+	assert_eq!(built.get(), 1, "built once");
+
+	let dark = SceneDetail { tint: 0, ..detail(1, -2.0, false) };
+	let (left, right) = draw(1, map.clone(), &[dark, detail(2, 2.0, false)]);
+	assert_eq!((left[0], right), (0, RED), "darkened, and shown again");
+	assert_eq!(built.get(), 1, "only the changed quads were written");
+
+	// A new revision builds it again: one detail left.
+	assert_eq!(draw(2, vec![detail(2, 2.0, false)], &[]), ([0, 0, 0, 255], RED));
+	assert_eq!(built.get(), 2);
+}

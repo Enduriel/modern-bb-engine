@@ -701,6 +701,7 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		quads: b.quads,
 		atlases: b.atlases,
 		labels_from,
+		details_end: 0,
 	}
 }
 
