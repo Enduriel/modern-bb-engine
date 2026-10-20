@@ -8,16 +8,20 @@
 //! the game's frame. Nothing of the page passes through the CPU.
 //!
 //! CEF's rules for the buffer: it may only be used during the paint's callback, comes
-//! from a pool (a different buffer each paint), must not be cached, and goes back to
-//! the pool when the callback returns. So every paint is imported anew, and the copy is
-//! submitted and waited for (that submission only, not the whole device) before
-//! [`UiPage::copy_dmabuf`] returns. It runs on CEF's thread; the device and queue are
+//! from a pool (a different buffer each paint), and goes back to the pool when the
+//! callback returns. So the copy is submitted and waited for (that submission only, not
+//! the whole device) before [`UiPage::copy_dmabuf`] returns. Each pooled buffer is
+//! imported once and kept while the browser keeps handing it over (`imports`): the
+//! import holds its own reference to the buffer and is only read during a callback that
+//! hands over that buffer. It runs on CEF's thread; the device and queue are
 //! shared with the game's thread, whose submissions it is ordered with by the queue.
 //!
 //! The pixels themselves are read back only on demand ([`UiPage::read`]): a small
 //! region for "is the cursor over the UI" (bb-ui caches it per paint), the whole page
 //! for a screenshot.
 
+#[cfg(target_os = "linux")]
+mod imports;
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -64,7 +68,9 @@ pub struct CopyStats {
 	pub rects: u64,
 	/// Pixels copied.
 	pub pixels: u64,
-	/// Time importing the paints' buffers.
+	/// The paints' buffers imported (a buffer handed over again isn't), and the time
+	/// that took.
+	pub imports: u64,
 	pub import: Duration,
 	/// Time recording, submitting and waiting for the copies.
 	pub copy: Duration,
@@ -82,6 +88,7 @@ impl CopyStats {
 			paints: self.paints - earlier.paints,
 			rects: self.rects - earlier.rects,
 			pixels: self.pixels - earlier.pixels,
+			imports: self.imports - earlier.imports,
 			import: self.import.saturating_sub(earlier.import),
 			copy: self.copy.saturating_sub(earlier.copy),
 			failures: self.failures - earlier.failures,
@@ -105,6 +112,9 @@ struct Inner {
 	page: Mutex<Option<PageTexture>>,
 	generations: AtomicU64,
 	stats: Mutex<CopyStats>,
+	/// The browser's paint buffers imported so far (kept while it reuses them).
+	#[cfg(target_os = "linux")]
+	imports: Mutex<imports::Imports>,
 }
 
 /// The page's latest frame on the GPU, shared between the browser's paint thread
@@ -138,6 +148,8 @@ impl UiPage {
 				page: Mutex::new(None),
 				generations: AtomicU64::new(0),
 				stats: Mutex::new(CopyStats::default()),
+				#[cfg(target_os = "linux")]
+				imports: Mutex::new(imports::Imports::default()),
 			}),
 		})
 	}

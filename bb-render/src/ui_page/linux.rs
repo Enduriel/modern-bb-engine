@@ -8,11 +8,15 @@
 //! `VK_QUEUE_FAMILY_FOREIGN_EXT` with a layout that keeps its contents (tiled or
 //! compressed modifiers, CEF ≥156), and wait on Chromium's write fence (NVIDIA attaches
 //! no implicit fence to the buffer; Mesa does, so on Mesa the copy sees the finished
-//! paint).
+//! paint). Each pooled buffer is imported once and kept (`imports`), so wgpu
+//! transitions it to a copy source only on its first paint, not before each; that is
+//! fine for linear buffers, and the foreign-queue acquire will have to be recorded
+//! before every copy.
 
 use std::os::fd::BorrowedFd;
 use std::time::Instant;
 
+use super::imports::Key;
 use super::{Region, UiPage};
 use crate::gpu::Gpu;
 
@@ -67,8 +71,23 @@ impl UiPage {
 		if buffer.width == 0 || buffer.height == 0 {
 			return Err("the browser painted an empty frame".into());
 		}
+		let key = Key::of(buffer)?;
+		let (source, imported) = {
+			let mut imports = self.inner.imports.lock().unwrap_or_else(|e| e.into_inner());
+			imports.get(key, || self.import(buffer))?
+		};
+		if imported {
+			self.stats_mut().imports += 1;
+		}
+		// Kept (see `imports`): read only now, during the paint's callback.
+		self.copy_from(&source, rects)
+	}
+
+	/// Import `buffer` as a texture to copy from.
+	fn import(&self, buffer: &DmaBuf) -> Result<wgpu::Texture, String> {
 		let started = Instant::now();
-		// Vulkan takes ownership of the fd it imports; the browser keeps its own.
+		// Vulkan takes ownership of the fd it imports; the browser keeps its own. Ours
+		// keeps the buffer alive as long as the import.
 		let fd = buffer.fd.try_clone_to_owned().map_err(|e| format!("duplicating the paint's buffer: {e}"))?;
 		// CEF 154's buffers are linear (see the module notes).
 		let modifier = if buffer.modifier == DRM_FORMAT_MOD_INVALID { DRM_FORMAT_MOD_LINEAR } else { buffer.modifier };
@@ -110,7 +129,6 @@ impl UiPage {
 			device.create_texture_from_hal::<wgpu::hal::api::Vulkan>(hal_texture, &descriptor, wgpu::TextureUses::UNINITIALIZED)
 		};
 		self.stats_mut().import += started.elapsed();
-		// The import is dropped after the copy finished, before the browser reuses it.
-		self.copy_from(&source, rects)
+		Ok(source)
 	}
 }

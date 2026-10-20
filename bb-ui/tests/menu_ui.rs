@@ -252,6 +252,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		"the game's procedural image didn't reach the page",
 	)?;
 
+	every_paint_shows_its_own_content(&session)?;
 	images_with_nothing_to_show_paint_nothing(&session)?;
 	faces_are_never_faked(&session)?;
 	text_lays_out_in_whole_pixels(&session)?;
@@ -748,6 +749,43 @@ fn images_with_nothing_to_show_paint_nothing(session: &UiSession) -> Result<(), 
 				.all(|(name, paints)| painting.iter().any(|(n, p)| n == name && p == paints)),
 		format!("which images paint: {painting:?}, expected {expected:?}"),
 	)
+}
+
+/// Each paint shows what the page painted last, with the browser's pooled paint buffers
+/// imported once and kept (bb-render's `UiPage`): a box changes colour 24 times (each
+/// pooled buffer is handed over again several times), and after each change the page's
+/// frame shows the new colour, not one a buffer held when it was handed over before.
+fn every_paint_shows_its_own_content(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		"(function () { var box = document.createElement('div'); box.id = 'bb-colours';
+			box.style.cssText = 'position:absolute;left:8px;top:8px;width:24px;height:24px;z-index:99999;background:rgb(0,0,0)';
+			document.body.appendChild(box); return true; })()",
+	)?;
+	let scale = session.host().scale();
+	let (x, y) = ((20.0 * scale) as u32, (20.0 * scale) as u32);
+	let result = (|| {
+		for step in 1..=24u8 {
+			let (r, g) = (step * 10, 255 - step * 10);
+			session.eval(&format!("document.getElementById('bb-colours').style.background = 'rgb({r},{g},0)'; true"))?;
+			let deadline = Instant::now() + Duration::from_secs(5);
+			loop {
+				session.run_frames(0.02)?;
+				let frame = session.host().frame().ok_or("nothing painted")?;
+				let at = ((y * frame.width + x) * 4) as usize;
+				let bgra = frame.bgra.get(at..at + 4).ok_or("the box is outside the frame")?;
+				if bgra == [0, g, r, 255] {
+					break;
+				}
+				ensure(
+					Instant::now() < deadline,
+					format!("colour {step}: the frame shows BGRA {bgra:?}, not [0, {g}, {r}, 255] (after {} paints)", frame.paints),
+				)?;
+			}
+		}
+		Ok(())
+	})();
+	session.eval("$('#bb-colours').remove(); true")?;
+	result
 }
 
 /// The natural width of `image` (a JS expression) once it has loaded or failed.

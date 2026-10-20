@@ -14,14 +14,14 @@
 //!   every page frame: the worst case).
 //!
 //! Per scene: the game's frame rate, the page's paints a second, the time our paint
-//! handler takes (importing the paint's GPU buffer, copying what changed and waiting for
-//! it), the pixels copied, the game's draw of the page ("ui page" span), each process's
-//! CPU (the game's, by its busiest threads, and the page's renderer), and memory (PSS).
+//! handler takes (importing a paint's GPU buffer the first time, copying what changed
+//! and waiting for it), the pixels copied, the game's draw of the page ("ui page" span),
+//! CPU by process and thread with wake-ups ([`procs`]; in µs a paint too), the GPU's
+//! busy time and memory, and memory (PSS).
 //! Then what "is the cursor over the UI" costs (`alpha_at`, read back from the GPU a
 //! tile at a time): a mouse sweeping a still page, and one moving every frame over the
 //! whole view fading (every call reads back).
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -31,6 +31,10 @@ use bb_engine::harness::STEAM_DATA_DIR;
 use bb_engine::tactical_player as player;
 use bb_render::{Gpu, RenderTarget};
 use squirrel_bb::VideoMode;
+
+mod procs;
+
+use procs::Sample;
 
 const AT_MENU: &str = "::RootState.get(\"MainMenuState\") != null && ::RootState.get(\"MainMenuState\").m.MainMenuScreen.isVisible() && !::RootState.get(\"MainMenuState\").m.MainMenuScreen.isAnimating()";
 
@@ -128,35 +132,7 @@ impl Run<'_> {
 	}
 }
 
-/// CPU time (user + system) of `pid`, or of one of its threads.
-fn cpu_of(stat_path: &str) -> Option<(String, Duration)> {
-	let stat = std::fs::read_to_string(stat_path).ok()?;
-	let (head, tail) = stat.rsplit_once(')')?;
-	let name = head.split_once('(')?.1.to_string();
-	let fields: Vec<&str> = tail.split_whitespace().collect();
-	let ticks = fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?;
-	Some((name, Duration::from_millis(ticks * 10)))
-}
-
-/// CPU time by thread name in this process, and by role in each child.
-fn cpu_now(children: &[(u32, String)]) -> HashMap<String, Duration> {
-	let mut cpu = HashMap::new();
-	if let Ok(tasks) = std::fs::read_dir("/proc/self/task") {
-		for task in tasks.flatten() {
-			if let Some((name, time)) = cpu_of(&task.path().join("stat").to_string_lossy()) {
-				*cpu.entry(format!("game: {name}")).or_default() += time;
-			}
-		}
-	}
-	for (pid, role) in children {
-		if let Some((_, time)) = cpu_of(&format!("/proc/{pid}/stat")) {
-			*cpu.entry(role.clone()).or_default() += time;
-		}
-	}
-	cpu
-}
-
-fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32, String)]) -> Result<(), String> {
+fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, procs: &[(u32, String)]) -> Result<(), String> {
 	run.eval(CLEAR)?;
 	if !setup.is_empty() {
 		let ok = run.eval(setup)?;
@@ -171,7 +147,7 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 	}
 	let host = run.game.front().session().host();
 	let (paints, copies, ticks) = (host.paint_stats(), run.game.front().copy_stats(), run.eval("window.__ppTicks || 0")?);
-	let cpu = cpu_now(children);
+	let before = Sample::take(procs);
 	bb_render::frame_timing::take();
 	run.cadence = [0; 4];
 	let start = Instant::now();
@@ -186,7 +162,7 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 	let paints = host.paint_stats().since(&paints);
 	let copies = run.game.front().copy_stats().since(&copies);
 	let ticks = run.eval("window.__ppTicks || 0")?.as_i64().unwrap_or(0) as f64 - ticks.as_i64().unwrap_or(0) as f64;
-	let cpu_after = cpu_now(children);
+	let after = Sample::take(procs);
 	let per_frame = |v: f64| v / frames as f64;
 	let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
 	println!("== {name}: {frames} frames in {wall:.2} s = {:.1} fps", frames as f64 / wall);
@@ -205,11 +181,12 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 		println!("  page script ticks (Velocity progress): {:.1}/s", ticks / wall);
 	}
 	println!(
-		"  copy (GPU to GPU): {} paints in {} rects, {:.3} MiB a frame; import {:.3} ms, copy + wait {:.3} ms a paint",
+		"  copy (GPU to GPU): {} paints in {} rects, {:.3} MiB a frame; {} buffers imported, {:.3} ms each; copy + wait {:.3} ms a paint",
 		copies.paints,
 		copies.rects,
 		per_frame(mib(copies.pixels * 4)),
-		if copies.paints > 0 { copies.import.as_secs_f64() * 1000.0 / copies.paints as f64 } else { 0.0 },
+		copies.imports,
+		if copies.imports > 0 { copies.import.as_secs_f64() * 1000.0 / copies.imports as f64 } else { 0.0 },
 		if copies.paints > 0 { copies.copy.as_secs_f64() * 1000.0 / copies.paints as f64 } else { 0.0 },
 	);
 	let span = |n: &str| spans.iter().find(|(s, _)| *s == n).map_or(0.0, |(_, t)| per_frame(t.as_secs_f64() * 1000.0));
@@ -217,23 +194,41 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 	if let Some((used, reserved)) = run.gpu.allocator_use() {
 		println!("  wgpu's allocator: {:.1} MiB used in {:.1} MiB of blocks", mib(used), mib(reserved));
 	}
-	let mut used: Vec<(String, f64)> = cpu_after
-		.iter()
-		.map(|(k, t)| (k.clone(), t.saturating_sub(cpu.get(k).copied().unwrap_or_default()).as_secs_f64()))
-		.filter(|(_, t)| *t > 0.0)
-		.collect();
-	used.sort_by(|a, b| b.1.total_cmp(&a.1));
-	let game: f64 = used.iter().filter(|(k, _)| k.starts_with("game: ")).map(|(_, t)| t).sum();
-	let rest: f64 = used.iter().filter(|(k, _)| !k.starts_with("game: ")).map(|(_, t)| t).sum();
+	let threads = after.threads_since(&before);
+	let total = |role: Option<&str>| -> (f64, u64) {
+		let mut t = (0.0, 0);
+		for (k, cpu, wakes) in &threads {
+			let game = k.starts_with("game: ");
+			if role.is_none_or(|r| (r == "game") == game) {
+				t.0 += cpu.as_secs_f64();
+				t.1 += wakes;
+			}
+		}
+		t
+	};
+	let ((game, game_wakes), (rest, rest_wakes), (all, _)) = (total(Some("game")), total(Some("children")), total(None));
 	println!(
-		"  CPU: game process {:.0}% of a core ({:.3} ms a frame), CEF children {:.0}% ({:.3} ms a frame)",
+		"  CPU: game process {:.1}% of a core ({:.3} ms a frame), CEF children {:.1}% ({:.3} ms a frame); {}",
 		game / wall * 100.0,
 		per_frame(game * 1000.0),
 		rest / wall * 100.0,
-		per_frame(rest * 1000.0)
+		per_frame(rest * 1000.0),
+		if paints.paints > 0 {
+			format!("{:.0} µs of CPU a paint in all", all * 1e6 / paints.paints as f64)
+		} else {
+			"no paints".to_string()
+		},
 	);
-	let top: Vec<String> = used.iter().take(8).map(|(k, t)| format!("{k} {:.0}%", t / wall * 100.0)).collect();
+	println!("  wake-ups/s: game process {:.0}, CEF children {:.0}", game_wakes as f64 / wall, rest_wakes as f64 / wall);
+	let top: Vec<String> =
+		threads.iter().take(10).map(|(k, t, w)| format!("{k} {:.1}% ({:.0}/s)", t.as_secs_f64() / wall * 100.0, *w as f64 / wall)).collect();
 	println!("    {}", top.join(", "));
+	let gpu: Vec<String> = after
+		.gpu_since(&before)
+		.iter()
+		.map(|(role, busy, bytes)| format!("{role} {:.1}% busy, {:.0} MiB", busy.as_secs_f64() / wall * 100.0, mib(*bytes)))
+		.collect();
+	println!("  GPU (DRM clients): {}", gpu.join("; "));
 	Ok(())
 }
 
@@ -318,15 +313,11 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 	while settle.elapsed() < Duration::from_secs(1) {
 		run.frame()?;
 	}
-	let children: Vec<(u32, String)> = bb_app::stats::tree_memory()
-		.unwrap_or_default()
-		.into_iter()
-		.filter(|p| p.role != "game")
-		.map(|p| (p.pid, p.role))
-		.collect();
+	let procs: Vec<(u32, String)> =
+		bb_app::stats::tree_memory().unwrap_or_default().into_iter().map(|p| (p.pid, p.role)).collect();
 	println!("{w}x{h} at {hz} Hz, {seconds} s a scene");
 	for (name, setup) in [("idle", ""), ("css small", CSS_SMALL), ("velocity", VELOCITY), ("css full", CSS_FULL), ("idle again", "")] {
-		scene(&mut run, name, setup, seconds, &children)?;
+		scene(&mut run, name, setup, seconds, &procs)?;
 	}
 	alpha_cost(&mut run)?;
 	run.eval(CLEAR)?;
