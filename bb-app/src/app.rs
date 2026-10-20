@@ -87,6 +87,12 @@ struct Running {
 	/// presented (see `bb_app::shown`), and what paces such frames.
 	unchanged: bool,
 	pacer: Pacer,
+	/// When the redraw now awaited was asked for (see `App::about_to_wait`).
+	redraw_asked: Option<Instant>,
+	/// With `BB_TEST_UNPRESENTED=N`, frame N is drawn but never presented, as a present
+	/// that came back out of date: the window tests' check that the game draws on
+	/// without the compositor's answer (see `REDRAW_STALLED`).
+	unpresented: Option<u64>,
 	/// With `BB_STATS`, when the renderer's memory is logged next, and the frames since
 	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
@@ -304,6 +310,8 @@ impl App {
 			frames: 0,
 			unchanged: false,
 			pacer,
+			redraw_asked: None,
+			unpresented: std::env::var("BB_TEST_UNPRESENTED").ok().and_then(|v| v.parse().ok()),
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
@@ -514,7 +522,12 @@ impl Running {
 		let present_span = bb_render::frame_timing::span("present");
 		self.presenter.draw(&self.gpu, &self.target, &view, self.frame_rect);
 		self.window.pre_present_notify();
-		self.gpu.queue.present(texture);
+		if self.unpresented == Some(self.frames) {
+			eprintln!("frame {} not presented (BB_TEST_UNPRESENTED)", self.frames);
+			drop(texture);
+		} else {
+			self.gpu.queue.present(texture);
+		}
 		drop(present_span);
 		self.pacer.presented(now, after_presented);
 		if let Some(times) = &mut self.frame_times {
@@ -590,6 +603,54 @@ impl Running {
 	}
 }
 
+/// How long a redraw asked for may take to come before the frame is drawn without it.
+/// On Wayland, winit holds a redraw back until the compositor answers the last frame's
+/// callback (asked for by `pre_present_notify`). The compositor may never answer it: it
+/// needn't while the window isn't shown (the protocol's own words), and it can't when
+/// the present didn't reach it (a present that came back out of date, which wgpu drops
+/// silently, commits nothing). Without this the game stood still for good: its scripts,
+/// its page and its quit (seen as "bb didn't exit" in the window tests, the main thread
+/// idle in winit's poll). The frame drawn then commits the surface, which carries the
+/// callback still asked for, and the compositor's pace takes over again. Well above a
+/// refresh interval (16.7 ms at 60 Hz, 33 at 30), so a paced window never sees it.
+const REDRAW_STALLED: Duration = Duration::from_millis(100);
+
+impl App {
+	/// The frame for a redraw: step, draw and present it, run the scripts due at it, put
+	/// the scripts' video mode on the window, and quit when the game's over or the shot
+	/// is taken.
+	fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+		let Some(running) = self.running.as_mut() else { return };
+		running.redraw_asked = None;
+		let result = running
+			.frame()
+			.and_then(|frames| {
+				for (_, code) in self.options.at.iter().filter(|(at, _)| *at == frames) {
+					running.game.run_script(code)?;
+				}
+				running.follow_video(&mut self.settings);
+				Ok(frames)
+			})
+			.and_then(|frames| match &self.options.shot {
+				// The scripts finished their last state (the main menu's Quit, or Escape
+				// there): the game is over, as the original's.
+				_ if running.game.quit() => Ok(true),
+				Some((after, path)) if frames >= *after => {
+					let image = running.target.read(&running.gpu)?;
+					save_png(path.to_string_lossy().as_ref(), &image)?;
+					eprintln!("wrote {}", path.display());
+					Ok(true)
+				}
+				_ => Ok(false),
+			});
+		match result {
+			Ok(true) => self.quit(event_loop),
+			Ok(false) => {}
+			Err(e) => self.fail(event_loop, e),
+		}
+	}
+}
+
 impl ApplicationHandler for App {
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
 		if self.running.is_some() {
@@ -619,25 +680,7 @@ impl ApplicationHandler for App {
 				running.game.forget_shown();
 				Ok(false)
 			}
-			WindowEvent::RedrawRequested => running.frame().and_then(|frames| {
-				for (_, code) in self.options.at.iter().filter(|(at, _)| *at == frames) {
-					running.game.run_script(code)?;
-				}
-				running.follow_video(&mut self.settings);
-				Ok(frames)
-			})
-			.and_then(|frames| match &self.options.shot {
-				// The scripts finished their last state (the main menu's Quit, or Escape
-				// there): the game is over, as the original's.
-				_ if running.game.quit() => Ok(true),
-				Some((after, path)) if frames >= *after => {
-					let image = running.target.read(&running.gpu)?;
-					save_png(path.to_string_lossy().as_ref(), &image)?;
-					eprintln!("wrote {}", path.display());
-					Ok(true)
-				}
-				_ => Ok(false),
-			}),
+			WindowEvent::RedrawRequested => return self.redraw(event_loop),
 			other => running.event(other).map(|()| false),
 		};
 		match result {
@@ -648,12 +691,25 @@ impl ApplicationHandler for App {
 	}
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-		let Some(running) = &self.running else { return };
+		let Some(running) = &mut self.running else { return };
+		let now = Instant::now();
 		match running.next_frame_at() {
-			Some(at) if Instant::now() < at => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+			Some(at) if now < at => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
 			_ => {
-				event_loop.set_control_flow(ControlFlow::Wait);
-				running.window.request_redraw();
+				let asked = *running.redraw_asked.get_or_insert(now);
+				if now >= asked + REDRAW_STALLED {
+					// The compositor never answered (see `REDRAW_STALLED`).
+					self.redraw(event_loop);
+					if let Some(running) = &mut self.running {
+						let asked = Instant::now();
+						running.redraw_asked = Some(asked);
+						event_loop.set_control_flow(ControlFlow::WaitUntil(asked + REDRAW_STALLED));
+						running.window.request_redraw();
+					}
+				} else {
+					event_loop.set_control_flow(ControlFlow::WaitUntil(asked + REDRAW_STALLED));
+					running.window.request_redraw();
+				}
 			}
 		}
 	}

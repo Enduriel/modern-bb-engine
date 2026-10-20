@@ -30,7 +30,12 @@ fn run_dir(name: &str) -> PathBuf {
 
 /// Run `bb` with `args` (and `--mute`) in a headless gamescope of `width` × `height`,
 /// or `None` to skip: no install, no gamescope, or a gamescope that couldn't start.
-fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run> {
+fn run_bb(dir: &Path, size: (u32, u32), args: &[&str]) -> Option<Run> {
+	run_bb_with(dir, size, args, &[])
+}
+
+/// [`run_bb`] with `env` set for `bb` too.
+fn run_bb_with(dir: &Path, (width, height): (u32, u32), args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
 	if !Path::new(STEAM_DATA_DIR).exists() {
 		eprintln!("skipping: {STEAM_DATA_DIR} not present");
 		return None;
@@ -70,6 +75,7 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		.env("BB_SAVES_DIR", dir.join("saves"))
 		// So a run that hangs can have its stacks read (`dump_stacks`).
 		.env("BB_ALLOW_TRACE", "1")
+		.envs(env.iter().copied())
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
 		.env("BB_TEST_STDERR", &stderr)
@@ -207,6 +213,21 @@ fn bb_exits_cleanly() {
 	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
 	assert_eq!(run.status, "0", "bb's exit status (139: the crash at exit)\n{}", run.stderr);
 	assert!(shot.exists(), "the shot taken before the exit");
+}
+
+/// A frame whose present never reaches the compositor (one that came back out of date,
+/// which wgpu drops silently) leaves winit waiting on Wayland's frame callback for good:
+/// under load, `bb` stood still there at once in several of these tests ("didn't exit",
+/// its main thread idle in winit's poll). It draws on without the callback and ends.
+#[test]
+fn bb_draws_on_after_a_frame_the_compositor_never_saw() {
+	let dir = run_dir("unpresented");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--shot", "60", shot.to_str().unwrap()];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &[("BB_TEST_UNPRESENTED", "20")]) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	assert!(run.stderr.contains("frame 20 not presented"), "{}", run.stderr);
+	assert!(shot.exists(), "the shot 40 frames after it");
 }
 
 /// The scripts quit (back to the main menu, then its Quit, which finishes their last
