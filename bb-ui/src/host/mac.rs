@@ -46,6 +46,25 @@ pub(super) fn framework_dir(cef_dir: &Path) -> Option<PathBuf> {
 	framework_path(cef_dir).and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
+/// The program CEF's child processes run: the app bundle's helper app
+/// (`Contents/Frameworks/<name> Helper.app`, which keeps them out of the Dock) if there
+/// is one, else this program itself.
+pub(super) fn subprocess_path() -> Option<PathBuf> {
+	let exe = std::env::current_exe().ok()?;
+	let helper = format!("{} Helper", exe.file_name()?.to_string_lossy());
+	let bundled = exe.parent()?.join("../Frameworks").join(format!("{helper}.app/Contents/MacOS")).join(&helper);
+	Some(if bundled.is_file() { bundled } else { exe })
+}
+
+/// The app bundle this program runs in (`<name>.app`, from `Contents/MacOS/<exe>`), if
+/// any. CEF must be told: without it, a program in a bundle had its child processes run
+/// from the wrong place and the page's renderer never started.
+pub(super) fn main_bundle() -> Option<PathBuf> {
+	let exe = std::env::current_exe().ok()?;
+	let bundle = exe.parent()?.parent()?.parent()?;
+	bundle.extension().is_some_and(|e| e == "app").then(|| bundle.to_path_buf())
+}
+
 /// Load the framework, once per process, before any other CEF call.
 pub(super) fn load_framework(cef_dir: &Path) -> Result<(), String> {
 	thread_local! {

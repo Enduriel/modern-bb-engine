@@ -294,7 +294,8 @@ impl UiHost {
 		let settings = Settings {
 			external_message_pump: 1,
 			framework_dir_path: mac::framework_dir(&cef_dir).map(path).unwrap_or_default(),
-			browser_subprocess_path: std::env::current_exe().map(path).unwrap_or_default(),
+			browser_subprocess_path: mac::subprocess_path().map(path).unwrap_or_default(),
+			main_bundle_path: mac::main_bundle().map(path).unwrap_or_default(),
 			..settings
 		};
 		if initialize(
