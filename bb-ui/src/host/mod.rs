@@ -52,6 +52,7 @@ mod memory;
 mod page_frames;
 mod page_log;
 mod paint_stats;
+mod pump_schedule;
 mod renderer;
 mod responder;
 mod scheme;
@@ -83,6 +84,7 @@ pub use responder::Responder;
 pub use page_frames::PageFrames;
 pub use page_log::{Echo, LogLine};
 pub use paint_stats::PaintStats;
+pub use pump_schedule::Waker;
 pub use session::UiSession;
 pub use session_play::ProceduralRequest;
 
@@ -390,6 +392,26 @@ impl UiHost {
 		}
 		#[cfg(not(target_os = "macos"))]
 		std::thread::sleep(duration);
+	}
+
+	/// When CEF wants its work run next, if it asked: on macOS, where the game runs it
+	/// ([`pump`](Self::pump)); never elsewhere, where CEF has a thread of its own.
+	pub fn pump_due(&self) -> Option<Instant> {
+		pump_schedule::SCHEDULE.due()
+	}
+
+	/// Run CEF's work if it is due (macOS; nothing elsewhere).
+	pub fn pump(&self) {
+		#[cfg(target_os = "macos")]
+		if pump_schedule::SCHEDULE.take_due(Instant::now()) {
+			mac::pump();
+		}
+	}
+
+	/// Have `waker` wake the game's loop when CEF wants its work run sooner than it last
+	/// asked (macOS; called from any thread). `None` stops it.
+	pub fn set_pump_waker(&self, waker: Option<Waker>) {
+		pump_schedule::SCHEDULE.set_waker(waker);
 	}
 
 	/// Every event that arrived since the last poll, in order. Doesn't wait.
@@ -848,6 +870,7 @@ impl Transport for UiHost {
 
 impl Drop for UiHost {
 	fn drop(&mut self) {
+		pump_schedule::SCHEDULE.set_waker(None);
 		// Release a page still waiting on the game.
 		drop(self.pending.take());
 		let browser = self

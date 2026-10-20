@@ -88,6 +88,22 @@ impl Front {
 		self.session.engine()
 	}
 
+	/// When the browser wants its work run next, if it asked: on macOS, where the game's
+	/// thread runs it ([`pump`](Self::pump)); never elsewhere.
+	pub fn pump_due(&self) -> Option<std::time::Instant> {
+		self.session.host().pump_due()
+	}
+
+	/// Run the browser's work if it is due (macOS).
+	pub fn pump(&self) {
+		self.session.host().pump()
+	}
+
+	/// Have `waker` wake the window's loop when the browser wants its work run sooner.
+	pub fn set_pump_waker(&self, waker: Option<super::Waker>) {
+		self.session.host().set_pump_waker(waker);
+	}
+
 	/// The page and the game together, for checks.
 	pub fn session(&self) -> &UiSession {
 		&self.session

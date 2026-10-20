@@ -12,6 +12,15 @@ pub struct Front {
 }
 
 impl Front {
+	/// No browser: nothing to run (see the page's).
+	pub fn pump_due(&self) -> Option<std::time::Instant> {
+		None
+	}
+
+	pub fn pump(&self) {}
+
+	pub fn set_pump_waker(&self, _waker: Option<super::Waker>) {}
+
 	/// Boot the game as `boot` says, to the main menu or on into a new campaign, its
 	/// opening event closed. (No page, so no DevTools.)
 	pub fn boot(_gpu: &Gpu, boot: &Boot) -> Result<Front, String> {

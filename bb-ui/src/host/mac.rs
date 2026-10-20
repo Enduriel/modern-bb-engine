@@ -145,5 +145,7 @@ pub(super) fn install_application() -> Result<(), String> {
 /// thread. Callbacks only pass events to the game, so calling this with no lock held is
 /// safe at any point the game waits or polls.
 pub(super) fn pump() {
+	// What CEF asked for is done now; it asks again for what's left.
+	super::pump_schedule::SCHEDULE.clear();
 	cef::do_message_loop_work();
 }

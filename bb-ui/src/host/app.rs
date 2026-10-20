@@ -100,6 +100,11 @@ wrap_browser_process_handler! {
 			}
 		}
 
+		// Only with `external_message_pump` (macOS): when to run CEF's work.
+		fn on_schedule_message_pump_work(&self, delay_ms: i64) {
+			super::pump_schedule::SCHEDULE.schedule(delay_ms);
+		}
+
 		fn on_context_initialized(&self) {
 			set_preferences();
 			if let Some(ready) = self.ready.lock().unwrap_or_else(|e| e.into_inner()).take() {

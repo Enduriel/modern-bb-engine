@@ -33,6 +33,9 @@ pub use headless::Front;
 #[cfg(feature = "ui")]
 pub use page::Front;
 
+/// Wakes the window's loop, from any thread (see [`Front::set_pump_waker`]).
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
 /// A key as the window reports it.
 #[derive(Clone, Debug, Default)]
 pub struct Key {

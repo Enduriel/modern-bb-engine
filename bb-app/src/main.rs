@@ -161,7 +161,7 @@ fn main() -> ExitCode {
 		let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
 		let display = Box::new(event_loop.owned_display_handle());
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(display));
-		let mut app = app::App::new(options, instance);
+		let mut app = app::App::new(options, instance, event_loop.create_proxy());
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
 		app.error.take().map_or(Ok(()), Err)
 	};

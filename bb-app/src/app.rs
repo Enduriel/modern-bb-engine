@@ -11,7 +11,7 @@ use bb_render::{Gpu, Presenter, RenderTarget, save_png};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
@@ -197,6 +197,8 @@ pub struct App {
 	instance: wgpu::Instance,
 	running: Option<Running>,
 	settings: Settings,
+	/// Wakes the loop when the browser wants its work run (macOS; see `about_to_wait`).
+	proxy: EventLoopProxy<()>,
 	/// The first error, which ends the loop.
 	pub error: Option<String>,
 }
@@ -211,7 +213,7 @@ impl Drop for App {
 }
 
 impl App {
-	pub fn new(options: Options, instance: wgpu::Instance) -> Self {
+	pub fn new(options: Options, instance: wgpu::Instance, proxy: EventLoopProxy<()>) -> Self {
 		let settings = match &options.settings {
 			Some(path) => Settings::load(Some(path.clone())),
 			None => Settings::load_default(),
@@ -221,6 +223,7 @@ impl App {
 			instance,
 			running: None,
 			settings,
+			proxy,
 			error: None,
 		}
 	}
@@ -353,6 +356,12 @@ impl App {
 		};
 		running.resize(size);
 		running.follow_monitor_refresh();
+		// The browser's work runs on this thread on macOS: wake the loop when it's due
+		// sooner than the loop would wake anyway (`about_to_wait`).
+		let proxy = std::sync::Mutex::new(self.proxy.clone());
+		running.game.front().set_pump_waker(Some(std::sync::Arc::new(move || {
+			let _ = proxy.lock().unwrap_or_else(|e| e.into_inner()).send_event(());
+		})));
 		Ok(running)
 	}
 
@@ -771,9 +780,13 @@ impl ApplicationHandler for App {
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		let Some(running) = &mut self.running else { return };
+		// The browser's work, when it asked for it (macOS: this thread is its UI thread),
+		// and the wait no later than its next.
+		running.game.front().pump();
+		let pump_due = running.game.front().pump_due();
 		let now = Instant::now();
 		match running.next_frame_at() {
-			Some(at) if now < at => event_loop.set_control_flow(ControlFlow::WaitUntil(at)),
+			Some(at) if now < at => event_loop.set_control_flow(ControlFlow::WaitUntil(pump_due.map_or(at, |due| due.min(at)))),
 			_ => {
 				let asked = *running.redraw_asked.get_or_insert(now);
 				if now >= asked + REDRAW_STALLED {
@@ -786,7 +799,8 @@ impl ApplicationHandler for App {
 						running.window.request_redraw();
 					}
 				} else {
-					event_loop.set_control_flow(ControlFlow::WaitUntil(asked + REDRAW_STALLED));
+					let stalled = asked + REDRAW_STALLED;
+					event_loop.set_control_flow(ControlFlow::WaitUntil(pump_due.map_or(stalled, |due| due.min(stalled))));
 					running.window.request_redraw();
 				}
 			}
