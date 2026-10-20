@@ -131,7 +131,7 @@ impl SavePart for RostersPart {
 					w.f64(rec.pos.0);
 					w.f64(rec.pos.1);
 					// In layering order.
-					let sprites: Vec<(&String, &SqStrongRef)> = rec.sprites.iter().collect();
+					let sprites: Vec<(&std::rc::Rc<str>, &SqStrongRef)> = rec.sprites.iter().collect();
 					w.u32(sprites.len() as u32);
 					for (name, handle) in sprites {
 						w.str(name);

@@ -91,7 +91,7 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 
 fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 	Ok(SpriteData {
-		brush: r.str()?,
+		brush: r.str()?.into(),
 		color: crate::native::sprite_color::SpriteColor::new(r.u32()?),
 		scale: r.f64()?,
 		visible: r.bool()?,
@@ -113,8 +113,8 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 }
 
 /// Sorted `(name, handle)` pairs, for a stable layout.
-fn sorted<'a>(map: impl IntoIterator<Item = (&'a String, &'a SqStrongRef)>) -> Vec<(String, SqStrongRef)> {
-	let mut v: Vec<(String, SqStrongRef)> = map.into_iter().map(|(k, h)| (k.clone(), h.clone())).collect();
+fn sorted<'a>(map: impl IntoIterator<Item = (&'a std::rc::Rc<str>, &'a SqStrongRef)>) -> Vec<(std::rc::Rc<str>, SqStrongRef)> {
+	let mut v: Vec<(std::rc::Rc<str>, SqStrongRef)> = map.into_iter().map(|(k, h)| (k.clone(), h.clone())).collect();
 	v.sort_by(|a, b| a.0.cmp(&b.0));
 	v
 }
@@ -157,7 +157,7 @@ impl SavePart for EntitiesPart {
 				}
 				.write(&mut w);
 				// In layer order, so sprites a load adds keep their place.
-				let sprites: Vec<(String, SqStrongRef)> =
+				let sprites: Vec<(std::rc::Rc<str>, SqStrongRef)> =
 					rec.sprites.iter().map(|(n, h)| (n.clone(), h.clone())).collect();
 				w.u32(sprites.len() as u32);
 				for (name, handle) in sprites {
@@ -273,7 +273,7 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 			let mut rd = cx.reader.borrow_mut();
 			let name = rd.str()?;
 			data = LabelData {
-				text: rd.bytes()?,
+				text: rd.bytes()?.into(),
 				visible: rd.bool()?,
 				color: rd.u32()?,
 				offset: (rd.f64()?, rd.f64()?),
@@ -286,14 +286,14 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 			};
 			name
 		};
-		let existing = m.borrow().entities[idx].labels.get(&name).cloned();
+		let existing = m.borrow().entities[idx].labels.get(name.as_str()).cloned();
 		match existing {
 			Some(handle) => {
 				label_class.with_payload(vm, &handle, |l| *l = data);
 			}
 			None => {
 				let handle = label_class.instantiate(vm, data);
-				m.borrow_mut().entities[idx].labels.insert(name, handle);
+				m.borrow_mut().entities[idx].labels.insert(name.into(), handle);
 			}
 		}
 	}

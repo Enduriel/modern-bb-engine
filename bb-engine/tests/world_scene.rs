@@ -44,13 +44,13 @@ fn a_new_campaign_world_is_ready_to_draw() {
 	let id = id.get_value::<Number>(engine.vm()).expect("number").0 as i64;
 	let player = scene.entities.iter().find(|e| e.id == id).expect("player in the scene");
 	assert_eq!(player.pos, (14160.0, 16740.0));
-	let names: Vec<&str> = player.sprites.iter().map(|s| s.name.as_str()).collect();
+	let names: Vec<&str> = player.sprites.iter().map(|s| &*s.name).collect();
 	let order = ["banner", "base", "body", "bodyUp", "combat", "lighting", "zoom_banner"];
 	let positions: Vec<usize> = order.iter().map(|n| names.iter().position(|m| m == n).expect(n)).collect();
 	assert!(positions.is_sorted(), "added in script order: {names:?}");
-	let body = player.sprites.iter().find(|s| s.name == "body").expect("body");
-	assert_eq!(body.brush, "figure_player_01");
-	let selection = player.sprites.iter().find(|s| s.name == "selection").expect("selection");
+	let body = player.sprites.iter().find(|s| *s.name == *"body").expect("body");
+	assert_eq!(&*body.brush, "figure_player_01");
+	let selection = player.sprites.iter().find(|s| *s.name == *"selection").expect("selection");
 	assert_eq!(selection.offset, (-30.0, 30.0));
 	assert!(!selection.scaling);
 
@@ -92,7 +92,7 @@ fn a_new_campaign_world_is_ready_to_draw() {
 		.expect("label bytes");
 	assert_eq!(SqTable::root(engine.vm()).get::<i64>("__labelLength"), Some(2));
 	assert!(
-		engine.world_scene().entities.iter().flat_map(|e| &e.labels).any(|l| l.text == [0x41, 0xE9]),
+		engine.world_scene().entities.iter().flat_map(|e| &e.labels).any(|l| *l.text == [0x41, 0xE9]),
 		"the scene has the label's bytes"
 	);
 

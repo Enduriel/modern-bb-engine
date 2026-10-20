@@ -180,7 +180,7 @@ mod tests {
 	fn label(text: &str) -> SceneLabel {
 		SceneLabel {
 			name: "name".into(),
-			text: text.into(),
+			text: text.as_bytes().into(),
 			visible: true,
 			color: 0x80ff_0000,
 			offset: (0.0, 0.0),

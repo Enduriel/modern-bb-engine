@@ -39,7 +39,7 @@ fn han_font() -> Registration {
 fn label(text: &str) -> SceneLabel {
 	SceneLabel {
 		name: "name".into(),
-		text: text.as_bytes().to_vec(),
+		text: text.as_bytes().into(),
 		visible: true,
 		color: 0xffff_ffff,
 		offset: (0.0, 0.0),
@@ -57,7 +57,7 @@ fn scene() -> WorldScene {
 	};
 	WorldScene {
 		entities: vec![entity(1, 120.0, SETTLEMENT), entity(2, -40.0, "Lorrested")],
-		region_texts: vec![SceneRegionText { text: REGION.as_bytes().to_vec(), scale: 0.5, rotation: 0.0, pos: (0.0, -160.0), id: 3 }],
+		region_texts: vec![SceneRegionText { text: REGION.as_bytes().into(), scale: 0.5, rotation: 0.0, pos: (0.0, -160.0), id: 3 }],
 		..WorldScene::default()
 	}
 }

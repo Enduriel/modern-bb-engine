@@ -37,7 +37,7 @@ pub(crate) fn rgba(argb: u32) -> [u8; 4] {
 /// saved).
 fn apply_sprite(s: &mut SpriteData, entry: &SpriteEntry, sprites: &Sprites) {
 	let saved: &Sprite = &entry.sprite;
-	s.brush = brush_name(sprites, saved.brush);
+	s.brush = sprites.name(&brush_name(sprites, saved.brush));
 	s.visible = saved.flags & VISIBLE != 0;
 	s.flipped = saved.flags & FLIPPED != 0;
 	s.ignore_ambient = saved.flags & IGNORE_AMBIENT_COLOR != 0;
@@ -149,7 +149,7 @@ impl WorldEntities {
 		let brush = brush_name(&m.sprites, sprite.brush);
 		m.footprints.push(Footprint {
 			pos: head.pos,
-			brush,
+			brush: brush.into(),
 			scale: sprite.scale,
 			expires,
 			visibility: f32::from_bits(head.i14 as u32),

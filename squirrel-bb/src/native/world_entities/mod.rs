@@ -54,7 +54,8 @@ mod view;
 /// the renderer reads through the world scene.
 #[derive(Clone)]
 struct SpriteData {
-	brush: String,
+	/// Shared with the brushes' names and the scenes a renderer reads.
+	brush: std::rc::Rc<str>,
 	/// `Color` (and `Alpha`), with any fade in progress.
 	color: SpriteColor,
 	scale: f64,
@@ -90,7 +91,7 @@ struct SpriteData {
 impl SpriteData {
 	fn fresh() -> Self {
 		SpriteData {
-			brush: String::new(),
+			brush: "".into(),
 			color: SpriteColor::default(),
 			scale: 1.0,
 			visible: true,
@@ -117,7 +118,8 @@ impl SpriteData {
 #[derive(Clone)]
 struct LabelData {
 	/// Bytes, not necessarily UTF-8: the original draws a label one glyph per byte.
-	text: Vec<u8>,
+	/// Shared with the scenes a renderer reads.
+	text: std::rc::Rc<[u8]>,
 	visible: bool,
 	/// ARGB (`Color`, set from a `color` object).
 	color: u32,
@@ -137,7 +139,7 @@ struct LabelData {
 impl Default for LabelData {
 	fn default() -> Self {
 		LabelData {
-			text: Vec::new(),
+			text: std::rc::Rc::from([]),
 			visible: false,
 			color: 0xffff_ffff,
 			offset: (0.0, 0.0),
@@ -191,7 +193,8 @@ struct EntityRecord {
 	/// The portrait draws the sprites at their offsets (`setAlwaysApplySpriteOffset`).
 	portrait_offsets: bool,
 	sprites: slots::Slots,
-	labels: HashMap<String, SqStrongRef>,
+	/// By name, shared with the scenes a renderer reads.
+	labels: HashMap<std::rc::Rc<str>, SqStrongRef>,
 }
 
 /// Shared entity host state: the registry, the `this.new` capability, the stub classes,
@@ -523,7 +526,7 @@ impl SpriteState for SpriteData {
 	}
 	fn store_brush(&mut self, sprites: &Sprites, brush: String) {
 		self.brush_bits = sprites.brush_bits(&brush, self.brush_bits);
-		self.brush = brush;
+		self.brush = sprites.name(&brush);
 	}
 	fn set_offset(&mut self, x: f64, y: f64) {
 		self.offset = (x, y);
@@ -588,8 +591,8 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 	ClassBuilder::<LabelData>::new("WorldEntityLabel")
 		.property(
 			"Text",
-			|l: &LabelData| SqBytes(l.text.clone()),
-			|l: &mut LabelData, v: SqBytes| l.text = v.0,
+			|l: &LabelData| SqBytes(l.text.to_vec()),
+			|l: &mut LabelData, v: SqBytes| l.text = v.0.into(),
 		)
 		.property(
 			"Visible",
@@ -777,7 +780,7 @@ impl WorldEntities {
 				m.borrow().ids.next();
 				let label = class.instantiate(vm, LabelData::default());
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.labels.insert(name, label.clone());
+					rec.labels.insert(name.into(), label.clone());
 				}
 				Some(label)
 			})
@@ -787,7 +790,7 @@ impl WorldEntities {
 			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
 				m.borrow()
 					.record(vm.this_identity())
-					.and_then(|rec| rec.labels.get(&name).cloned())
+					.and_then(|rec| rec.labels.get(name.as_str()).cloned())
 			})
 		};
 		let has_label = {
@@ -795,7 +798,7 @@ impl WorldEntities {
 			vm.make_closure(move |vm: &SQVM, name: String| -> bool {
 				m.borrow()
 					.record(vm.this_identity())
-					.is_some_and(|rec| rec.labels.contains_key(&name))
+					.is_some_and(|rec| rec.labels.contains_key(name.as_str()))
 			})
 		};
 		// Faction: getFaction is native; script setFaction calls native setFactionEx
@@ -818,7 +821,7 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String| {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.labels.remove(&name);
+					rec.labels.remove(name.as_str());
 				}
 			})
 		};
@@ -1158,8 +1161,8 @@ impl WorldEntities {
 			.iter()
 			.filter_map(|(name, handle)| {
 				class.with_payload(vm, handle, |s| crate::scene::PortraitSprite {
-					name: name.clone(),
-					brush: s.brush.clone(),
+					name: name.to_string(),
+					brush: s.brush.to_string(),
 					color: s.color.color,
 					scale: s.scale as f32,
 					rotation: s.rotation,

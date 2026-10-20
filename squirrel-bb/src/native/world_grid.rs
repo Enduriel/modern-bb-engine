@@ -126,7 +126,7 @@ impl super::save::SavePart for GridPart {
 			.map(|_| {
 				Ok(SceneRegionText {
 					id: r.i64()?,
-					text: r.bytes()?,
+					text: r.bytes()?.into(),
 					scale: r.f32()?,
 					rotation: r.f32()?,
 					pos: (r.f32()?, r.f32()?),
@@ -704,7 +704,7 @@ impl WorldGrid {
 				let id = g.ids.next();
 				g.region_texts.push(SceneRegionText {
 					id,
-					text: name.0,
+					text: name.0.into(),
 					scale: scale.0 as f32,
 					rotation: rotation.0 as f32,
 					pos: (coord("X"), coord("Y")),

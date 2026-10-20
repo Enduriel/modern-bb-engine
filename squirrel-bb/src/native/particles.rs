@@ -67,7 +67,8 @@ impl Default for Stage {
 /// What a script asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EffectSpec {
-	pub brushes: Vec<String>,
+	/// Shared with the scenes a renderer reads.
+	pub brushes: Vec<std::rc::Rc<str>>,
 	/// Where it is: the tile's world position plus the offset.
 	pub pos: (f32, f32),
 	/// Real-time ms before it starts.
@@ -124,7 +125,7 @@ struct Emitter {
 /// A particle as drawn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneParticle {
-	pub brush: String,
+	pub brush: std::rc::Rc<str>,
 	/// World units, y up.
 	pub pos: (f32, f32),
 	/// ARGB.
@@ -379,7 +380,7 @@ pub(crate) fn parse_effect(vm: &SQVM, args: &[Retained]) -> Option<EffectSpec> {
 	let int = |a: &Retained| a.0.get_value::<Number>(vm).map(|n| n.0.max(0.0) as u32);
 	let list = |a: &Retained| a.0.get_value::<squirrel::SqArray>(vm);
 	let brushes = list(brushes)?;
-	let brushes: Vec<String> = (0..brushes.len()).filter_map(|i| brushes.get::<String>(i)).collect();
+	let brushes: Vec<std::rc::Rc<str>> = (0..brushes.len()).filter_map(|i| brushes.get::<String>(i)).map(Into::into).collect();
 	let stages = list(stages)?;
 	let stages: Vec<Stage> =
 		(0..stages.len()).filter_map(|i| stages.get::<SqStrongRef>(i)).map(|t| stage(vm, &t)).collect();

@@ -14,7 +14,7 @@ use std::rc::Rc;
 const FADE: f32 = 1.0;
 
 struct Wave {
-	brush: String,
+	brush: Rc<str>,
 	pos: (f32, f32),
 	drift: (f32, f32),
 	lifetime: f32,
@@ -28,7 +28,8 @@ struct Wave {
 /// A wave, as a renderer reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneWave {
-	pub brush: String,
+	/// Shared with the wave.
+	pub brush: Rc<str>,
 	pub pos: (f32, f32),
 	/// 0 to 255.
 	pub alpha: f32,
@@ -53,7 +54,7 @@ impl WaveField {
 
 	pub fn spawn(&mut self, brush: &str, pos: (f32, f32), drift: (f32, f32), lifetime: f32) {
 		self.waves.push(Wave {
-			brush: brush.to_string(),
+			brush: brush.into(),
 			pos,
 			drift,
 			lifetime,

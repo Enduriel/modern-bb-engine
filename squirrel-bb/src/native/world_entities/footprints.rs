@@ -40,7 +40,8 @@ const OPACITY: f32 = 0.8;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Footprint {
 	pub pos: (f32, f32),
-	pub brush: String,
+	/// Shared with the scenes a renderer reads.
+	pub brush: std::rc::Rc<str>,
 	pub scale: f32,
 	/// Virtual time (s) its stay ends.
 	pub expires: f32,
@@ -163,7 +164,7 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 				machine.footprints.spawn(
 					Footprint {
 						pos: (x as f32, y as f32),
-						brush: brush.to_string(),
+						brush: brush.into(),
 						scale: scale.0 as f32,
 						expires: 0.0,
 						visibility: visibility.0 as f32,

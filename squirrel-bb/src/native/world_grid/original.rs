@@ -219,7 +219,7 @@ fn region_text(t: &SceneRegionText) -> SceneEntity {
 			color: 0x66ff_ffff,
 			color2: 0xffff_ffff,
 			b9c: false,
-			text: t.text.clone(),
+			text: t.text.to_vec(),
 		}),
 	}
 }
@@ -275,7 +275,7 @@ fn region_texts(scene: &Scene) -> Vec<SceneRegionText> {
 		.filter_map(|e| match &e.body {
 			Body::Text(t) => Some(SceneRegionText {
 				id: e.head.id.into(),
-				text: t.text.clone(),
+				text: t.text.clone().into(),
 				scale: t.size / REGION_TEXT_SIZE,
 				rotation: e.head.rotation,
 				pos: e.head.pos,

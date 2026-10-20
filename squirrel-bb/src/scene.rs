@@ -76,7 +76,7 @@ pub struct PortraitSprite {
 /// A footprint (`World.spawnFootprint`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneFootprint {
-	pub brush: String,
+	pub brush: std::rc::Rc<str>,
 	pub pos: (f32, f32),
 	pub scale: f32,
 	/// 0 to 255.
@@ -106,7 +106,7 @@ impl Default for SceneLight {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneRegionText {
 	/// One glyph per byte, like [`SceneLabel::text`].
-	pub text: Vec<u8>,
+	pub text: std::rc::Rc<[u8]>,
 	/// The scale the script gave (`0.5`, `0.75` or `1` by the region's size).
 	pub scale: f32,
 	/// Degrees, counter-clockwise.
@@ -208,10 +208,11 @@ pub struct SceneEntity {
 /// One of an entity's text labels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneLabel {
-	pub name: String,
+	/// Shared with the entity (a frame's scene copies no text).
+	pub name: std::rc::Rc<str>,
 	/// One glyph per byte, as the original draws it: scripts' bytes, not necessarily
 	/// UTF-8.
-	pub text: Vec<u8>,
+	pub text: std::rc::Rc<[u8]>,
 	pub visible: bool,
 	/// ARGB.
 	pub color: u32,
@@ -222,9 +223,10 @@ pub struct SceneLabel {
 /// One of an entity's named sprites.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneSprite {
-	pub name: String,
+	/// Shared with the entity, as the brush (a frame's scene copies no text).
+	pub name: std::rc::Rc<str>,
 	/// The brush drawn (`""` for none).
-	pub brush: String,
+	pub brush: std::rc::Rc<str>,
 	/// ARGB as drawn now (a fade in progress included).
 	pub color: u32,
 	pub scale: f64,

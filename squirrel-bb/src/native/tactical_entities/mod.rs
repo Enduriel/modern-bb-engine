@@ -1282,7 +1282,7 @@ impl TacticalEntities {
 					.iter()
 					.filter_map(|(name, handle)| {
 						class.with_payload(vm, handle, |s| crate::scene::tactical::SceneTacticalSprite {
-							name: name.clone(),
+							name: name.to_string(),
 							brush: s.brush.clone(),
 							color: s.color.shown(now),
 							scale: s.scale as f32,
@@ -1322,7 +1322,7 @@ impl TacticalEntities {
 			.iter()
 			.filter_map(|(name, handle)| {
 				class.with_payload(vm, handle, |s| crate::scene::PortraitSprite {
-					name: name.clone(),
+					name: name.to_string(),
 					brush: s.brush.clone(),
 					color: portrait_look(s).0,
 					scale: s.scale as f32,

@@ -245,7 +245,7 @@ fn shake(m: &Machine, vm: &SQVM, entity: &SqStrongRef, tile: &SqStrongRef, a: Ar
 /// The bits of the unit's sprites named in `layers` (`0x4a9560`: the `i`th sprite's bit
 /// is `i % 32`; unknown names add none).
 fn layer_mask(m: &TacticalMachine, unit: usize, layers: &[String]) -> u32 {
-	let names: Vec<&String> = m.units[unit].sprites.iter().map(|(n, _)| n).collect();
+	let names: Vec<&str> = m.units[unit].sprites.iter().map(|(n, _)| &**n).collect();
 	layers
 		.iter()
 		.filter_map(|l| names.iter().position(|n| *n == l))

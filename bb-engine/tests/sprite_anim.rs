@@ -13,7 +13,7 @@ fn combat_frames(engine: &GameEngine) -> Vec<(i64, u32)> {
 		.world_scene()
 		.entities
 		.iter()
-		.filter_map(|e| e.sprites.iter().find(|s| s.name == "combat" && s.brush == "battle_animation").map(|s| (e.id, s.frame)))
+		.filter_map(|e| e.sprites.iter().find(|s| *s.name == *"combat" && *s.brush == *"battle_animation").map(|s| (e.id, s.frame)))
 		.collect()
 }
 
