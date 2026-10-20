@@ -49,6 +49,12 @@
 //!   with achievements off (said once in the log).
 //! - With `BB_STATS=1` the game's total CPU and memory, its CEF processes included, is
 //!   logged every 5 seconds.
+//! - Profiling the frame (see `parity/perf/frame_breakdown.py`): `BB_FRAME_TIMES=PATH` writes
+//!   each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls)
+//!   to that file; with `BB_GPU_TIMES=1` too, each GPU submission's time (timestamp
+//!   queries; the frame then waits for the GPU). `BB_SCRIPT_PROFILE=REPORT.md` profiles the
+//!   scripts. Under a preloaded jemalloc with profiling on, `BB_HEAP_PROFILE_DIR=DIR` dumps a
+//!   heap profile every `BB_HEAP_PROFILE_SECS` (10) seconds (builds without `ui`).
 
 mod app;
 mod window_mode;
@@ -154,6 +160,8 @@ fn main() -> ExitCode {
 		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
 		// environment): the stats logger, the renderer's and the page's start after it.
 		options.steam = unsafe { bb_app::steam::start(&options.data_dir, &steam) };
+		// Heap profiles every so often, under a preloaded jemalloc (`BB_HEAP_PROFILE_DIR`).
+		bb_app::heap_profile::spawn_periodic_from_env();
 		// The game's total CPU and memory, with its CEF processes, every 5 s.
 		if std::env::var_os("BB_STATS").is_some_and(|v| v != "0") {
 			bb_app::stats::spawn_logger(std::time::Duration::from_secs(5));

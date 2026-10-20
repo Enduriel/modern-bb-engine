@@ -371,45 +371,15 @@ struct Sample {
 	ui_log: Option<usize>,
 }
 
-unsafe extern "C" {
-	fn dlsym(handle: *mut std::ffi::c_void, symbol: *const std::ffi::c_char) -> *mut std::ffi::c_void;
-}
-
-type Mallctl = unsafe extern "C" fn(
-	name: *const std::ffi::c_char,
-	old: *mut std::ffi::c_void,
-	old_len: *mut usize,
-	new: *mut std::ffi::c_void,
-	new_len: usize,
-) -> std::ffi::c_int;
-
 /// Under jemalloc with profiling on (`LD_PRELOAD=libjemalloc.so.2 MALLOC_CONF=prof:true`)
 /// and `BB_HEAP_PROFILE_DIR` set: dump a heap profile of this moment there, named after
 /// the point (`parity/perf/heap_owners.py` reads it). Without them, nothing.
 fn heap_profile(index: usize, point: &str) {
 	let Some(dir) = std::env::var_os("BB_HEAP_PROFILE_DIR") else { return };
-	// `RTLD_DEFAULT`: the symbol wherever it is loaded (the preloaded jemalloc).
-	let mallctl = unsafe { dlsym(std::ptr::null_mut(), c"mallctl".as_ptr()) };
-	if mallctl.is_null() {
-		eprintln!("BB_HEAP_PROFILE_DIR: jemalloc isn't loaded");
-		return;
-	}
-	let mallctl: Mallctl = unsafe { std::mem::transmute(mallctl) };
 	let name: String = point.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
 	let path = Path::new(&dir).join(format!("{index:02}-{name}.heap"));
-	let Ok(path) = std::ffi::CString::new(path.to_string_lossy().into_owned()) else { return };
-	let mut file = path.as_ptr();
-	let done = unsafe {
-		mallctl(
-			c"prof.dump".as_ptr(),
-			std::ptr::null_mut(),
-			std::ptr::null_mut(),
-			(&raw mut file).cast(),
-			std::mem::size_of::<*const std::ffi::c_char>(),
-		)
-	};
-	if done != 0 {
-		eprintln!("heap profile {}: mallctl error {done}", path.to_string_lossy());
+	if let Err(e) = bb_app::heap_profile::dump(&path) {
+		eprintln!("heap profile {}: {e}", path.display());
 	}
 }
 
