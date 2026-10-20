@@ -18,6 +18,7 @@ mod cursor;
 mod fog;
 pub mod fonts;
 pub mod frame_diff;
+pub mod frame_timing;
 mod gpu;
 pub mod labels;
 mod memory;

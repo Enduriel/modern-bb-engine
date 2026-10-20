@@ -93,6 +93,40 @@ struct Running {
 	wheel: Notches,
 	/// Steam's API, whose callbacks run once a frame.
 	steam: Option<Rc<SteamStats>>,
+	/// With `BB_FRAME_TIMES=PATH`, each frame's time by span goes to that file (see
+	/// `bb_render::frame_timing`); with `BB_FRAME_TIMES_GPU=1` too, each frame waits for
+	/// the GPU, as the span `gpu`.
+	frame_times: Option<FrameTimes>,
+}
+
+/// The per-frame times file (`BB_FRAME_TIMES`).
+struct FrameTimes {
+	out: std::io::BufWriter<std::fs::File>,
+	wait_gpu: bool,
+}
+
+impl FrameTimes {
+	fn from_env() -> Option<FrameTimes> {
+		let path = std::env::var_os("BB_FRAME_TIMES").filter(|p| !p.is_empty())?;
+		let file = std::fs::File::create(&path).map_err(|e| eprintln!("BB_FRAME_TIMES: {e}")).ok()?;
+		bb_render::frame_timing::enable();
+		Some(FrameTimes {
+			out: std::io::BufWriter::new(file),
+			wait_gpu: std::env::var_os("BB_FRAME_TIMES_GPU").is_some_and(|v| v != "0"),
+		})
+	}
+
+	/// One line: the frame's number, the time since the last frame's start, its own work,
+	/// the camera's zoom, the quads drawn, then each span, all in milliseconds.
+	fn write(&mut self, frame: u64, interval: f64, work: Duration, zoom: f32, quads: usize) {
+		use std::io::Write;
+		let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+		let mut line = format!("{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads}", ms(work));
+		for (name, time) in bb_render::frame_timing::take() {
+			line.push_str(&format!(" {}={:.3}", name.replace(' ', "_"), ms(time)));
+		}
+		let _ = writeln!(self.out, "{line}");
+	}
 }
 
 /// The original's hardware cursors: each `<install>/cursors/<name>.cur` (the install
@@ -255,6 +289,7 @@ impl App {
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
 			steam: self.options.steam.clone(),
+			frame_times: FrameTimes::from_env(),
 		};
 		running.resize(size);
 		Ok(running)
@@ -408,7 +443,10 @@ impl Running {
 			self.stats_waiting.0 += 1;
 			self.stats_waiting.1 += drawn.waiting;
 		}
-		let texture = match self.surface.get_current_texture() {
+		let acquire_span = bb_render::frame_timing::span("acquire");
+		let acquired = self.surface.get_current_texture();
+		drop(acquire_span);
+		let texture = match acquired {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
 			wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
 				self.surface.configure(&self.gpu.device, &self.config);
@@ -417,9 +455,19 @@ impl Running {
 			_ => return Ok(self.frames),
 		};
 		let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let present_span = bb_render::frame_timing::span("present");
 		self.presenter.draw(&self.gpu, &self.target, &view, self.frame_rect);
 		self.window.pre_present_notify();
 		self.gpu.queue.present(texture);
+		drop(present_span);
+		if let Some(times) = &mut self.frame_times {
+			if times.wait_gpu {
+				let _span = bb_render::frame_timing::span("gpu");
+				let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
+			}
+			let zoom = self.game.world_zoom();
+			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads);
+		}
 		if self.next_stats.is_some() {
 			self.stats_frames.0 += 1;
 			self.stats_frames.1 += now.elapsed();

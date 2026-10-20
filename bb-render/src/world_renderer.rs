@@ -542,7 +542,10 @@ impl WorldRenderer {
 			region: label_font(&self.region_font),
 			shaper: Some(&self.text),
 		};
-		let world = world_quads(scene, registry, view, fonts);
+		let world = {
+			let _span = crate::frame_timing::span("world quads");
+			world_quads(scene, registry, view, fonts)
+		};
 		self.upload_glyphs(gpu);
 		self.record_usage(&world, view.zoom, None);
 		self.index(registry);
@@ -557,8 +560,10 @@ impl WorldRenderer {
 			}
 			self.residency.drawn(path, Drawer::World);
 		}
+		let resolve_span = crate::frame_timing::span("resolve+bind");
 		let resolved = self.resolve(gpu, &world, atlases, Drawer::World, (view.zoom, None));
 		let (ready, quads, mut stats) = self.bind(&world, &resolved);
+		drop(resolve_span);
 		let map: Vec<Quad> = quads[..world.labels_from].iter().flatten().copied().collect();
 		let labels: Vec<Quad> = quads[world.labels_from..].iter().flatten().copied().collect();
 		stats.quads = map.len() + labels.len();
@@ -583,8 +588,10 @@ impl WorldRenderer {
 			_ => false,
 		};
 		let clear = (!water).then_some(CLEAR);
+		let sprites_span = crate::frame_timing::span("sprites draw");
 		self.sprites
 			.draw(gpu, target, &uniforms, clear, &map, &ready);
+		drop(sprites_span);
 
 		if scene.fog_of_war {
 			if let Some(fog_texture) = self.textures.slot(FOG_TEXTURE).and_then(Slot::texture) {
@@ -602,6 +609,7 @@ impl WorldRenderer {
 
 		self.sprites
 			.draw(gpu, target, &uniforms, None, &labels, &ready);
+		let _span = crate::frame_timing::span("fit budget");
 		self.fit_budget();
 		stats
 	}

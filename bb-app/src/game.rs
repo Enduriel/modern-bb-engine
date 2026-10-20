@@ -230,8 +230,14 @@ impl Game {
 		memory
 	}
 
+	/// The world camera's zoom (for the frame times' log).
+	pub fn world_zoom(&self) -> f32 {
+		self.front.engine().world_camera().zoom
+	}
+
 	/// Advance the game by `ms` of real time.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
+		let _span = bb_render::frame_timing::span("step");
 		self.front.step(ms.clamp(0.0, MAX_FRAME_MS))
 	}
 
@@ -348,7 +354,10 @@ impl Game {
 				height,
 			};
 			// Only the tiles the screen can show: the map is tens of thousands.
+			let scene_span = bb_render::frame_timing::span("world scene");
 			let scene = engine.world_scene_where(|pos| view.shows(pos));
+			drop(scene_span);
+			let _span = bb_render::frame_timing::span("world draw");
 			engine.sprites().with(|registry| {
 				self.renderer.draw(gpu, target, &scene, registry, &view, Atlases::DrawReady)
 			})
@@ -362,7 +371,9 @@ impl Game {
 		let renderer = &mut self.renderer;
 		self.front
 			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
+		let front_span = bb_render::frame_timing::span("ui page");
 		self.front.draw(gpu, target);
+		drop(front_span);
 		let cursor = self.draw_cursor(gpu, target, fit);
 		FrameStats {
 			quads: stats.quads + cursor.quads,
