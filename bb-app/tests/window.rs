@@ -251,16 +251,20 @@ fn bb_draws_on_after_a_frame_the_compositor_never_saw() {
 fn bb_ends_when_the_scripts_quit() {
 	let dir = run_dir("quit");
 	let settings = dir.join("settings.cfg");
-	// Back to the main menu once the world is up (worldgen takes a while), as the
-	// in-game menu's Quit does; then the main menu's Quit once the world is gone.
-	let exit = r#"if (!("__exited" in getroottable()) && ("State" in ::World) && ::World.State != null && ::World.State.m.WorldScreen != null) { ::__exited <- true; ::World.State.m.MenuStack.popAll(true); ::World.State.exitGame(); }"#;
+	// Back to the main menu once the world is up and out of its loading screen
+	// (worldgen takes a while), as the in-game menu's Quit does; then the main menu's
+	// Quit once the world is gone. Both are tried every 30 frames, and do nothing until
+	// their moment.
+	let exit = r#"if (!("__exited" in getroottable()) && ("State" in ::World) && ::World.State != null && ::World.State.m.WorldScreen != null && !::World.State.isInLoadingScreen()) { ::__exited <- true; ::World.State.m.MenuStack.popAll(true); ::World.State.exitGame(); }"#;
 	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__exited" in getroottable()) && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
+	let exits: Vec<String> = (1..=80).map(|i| (i * 30).to_string()).collect();
+	let quits: Vec<String> = (1..=100).map(|i| (i * 60).to_string()).collect();
 	let mut args = vec!["--new-campaign", "--settings", settings.to_str().unwrap()];
-	for frame in ["600", "1200", "1800", "2400"] {
-		args.extend(["--at", frame, exit]);
+	for frame in &exits {
+		args.extend(["--at", frame.as_str(), exit]);
 	}
-	for frame in ["3000", "3600", "4200", "4800"] {
-		args.extend(["--at", frame, quit]);
+	for frame in &quits {
+		args.extend(["--at", frame.as_str(), quit]);
 	}
 	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
 	assert_eq!(run.status, "0", "bb's exit status\n{}", run.stderr);
@@ -347,7 +351,7 @@ fn bb_starts_a_modded_campaign_at_once() {
 	std::fs::create_dir_all(&saves).expect("the saves folder");
 	// Every 250 ms of real time: press MSU's Save on its new-campaign settings page once
 	// it shows, note the world once it's up and go back to the main menu (the world's
-	// scheduled events end with it), where `quit` (tried every 300 frames) Quits.
+	// scheduled events end with it), where `quit` (tried every 30 frames) Quits.
 	let player = r#"
 ::__player <- { saved = false, world = false, exited = false };
 ::__playerTick <- function( _d ) {
@@ -373,7 +377,7 @@ fn bb_starts_a_modded_campaign_at_once() {
 ::Time.scheduleEvent(::TimeUnit.Real, 250, ::__playerTick, null);
 "#;
 	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__player" in getroottable()) && ::__player.exited && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
-	let frames: Vec<String> = (1..=40).map(|i| (i * 300).to_string()).collect();
+	let frames: Vec<String> = (1..=400).map(|i| (i * 30).to_string()).collect();
 	let mut args = vec![
 		"--mods",
 		"--new-campaign",
