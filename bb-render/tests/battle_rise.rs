@@ -28,9 +28,9 @@ fn rising(engine: &harness::GameEngine, id: i64) -> ((f64, f64), (f64, f64)) {
 	(unit.pos, (tile.pos.0, tile.pos.1 + 40.0 * tile.level as f64))
 }
 
-/// The corners of the quads unit `id` adds to a view of `tile` (what the renderer draws
-/// of it and its bars).
-fn unit_quads(engine: &harness::GameEngine, id: i64, tile: (f64, f64)) -> Vec<[[f32; 2]; 4]> {
+/// The quads unit `id` adds to a view of `tile` (what the renderer draws of it and its
+/// bars), each with its place in the draw order, and every quad of that view.
+fn unit_quads(engine: &harness::GameEngine, id: i64, tile: (f64, f64)) -> (Vec<(usize, [[f32; 2]; 4])>, Vec<[[f32; 2]; 4]>) {
 	let scene = engine.tactical_scene();
 	let mut without = scene.clone();
 	without.entities.retain(|e| e.id != id);
@@ -43,10 +43,20 @@ fn unit_quads(engine: &harness::GameEngine, id: i64, tile: (f64, f64)) -> Vec<[[
 	let (all, rest) = engine.sprites().with(|registry| {
 		(tactical_quads(&scene, registry, &view).quads, tactical_quads(&without, registry, &view).quads)
 	});
-	all.iter()
-		.filter(|q| !rest.iter().any(|r| r.corners == q.corners && r.uv == q.uv))
-		.map(|q| q.corners)
-		.collect()
+	let unit = all
+		.iter()
+		.enumerate()
+		.filter(|(_, q)| !rest.iter().any(|r| r.corners == q.corners && r.uv == q.uv))
+		.map(|(i, q)| (i, q.corners))
+		.collect();
+	(unit, all.iter().map(|q| q.corners).collect())
+}
+
+/// Whether the quad with these corners covers `p`.
+fn covers(corners: &[[f32; 2]; 4], p: [f32; 2]) -> bool {
+	let (xs, ys) = (corners.map(|c| c[0]), corners.map(|c| c[1]));
+	let (min, max) = (|v: [f32; 4]| v.iter().copied().fold(f32::INFINITY, f32::min), |v: [f32; 4]| v.iter().copied().fold(f32::NEG_INFINITY, f32::max));
+	p[0] >= min(xs) && p[0] <= max(xs) && p[1] >= min(ys) && p[1] <= max(ys)
 }
 
 #[test]
@@ -108,15 +118,18 @@ fn a_unit_spawned_mid_battle_rises_on_its_tile() {
 	let (pos, tile) = rising(&engine, id);
 	assert_eq!(pos.0, tile.0, "rises in its tile's column: at {pos:?}, tile at {tile:?}");
 	assert!(pos.1 < tile.1 && pos.1 > tile.1 - 200.0, "still coming up: at {pos:?}, tile at {tile:?}");
-	// Its upper part shows; what is below the tile in front of it doesn't (the south
-	// hex's upper edge, 40 below the anchor, over the middle 80 units: the original's
-	// screenshots).
-	let quads = unit_quads(&engine, id, tile);
+	// Its upper part shows over its tile; what is below the tile in front of it is drawn
+	// over by that tile, which comes after it in the draw order (the original's tile
+	// pass draws a tile's units right after the tile, and doesn't depth test).
+	let (quads, all) = unit_quads(&engine, id, tile);
 	let (x, y) = (tile.0 as f32, tile.1 as f32);
-	assert!(quads.iter().flatten().any(|p| p[1] > y), "its upper part shows while it rises");
-	for p in quads.iter().flatten().filter(|p| (p[0] - x).abs() <= 40.0) {
-		assert!(p[1] >= y - 40.0 - 1e-3, "drawn below the tile in front: {p:?}, its tile at {tile:?}");
-	}
+	assert!(quads.iter().any(|(_, q)| q.iter().any(|p| p[1] > y)), "its upper part shows while it rises");
+	let sunk = [x, y - 60.0];
+	let last = quads.iter().filter(|(_, q)| covers(q, sunk)).map(|&(i, _)| i).max().expect("its sunk part is drawn");
+	assert!(
+		all[last + 1..].iter().any(|q| covers(q, sunk)),
+		"the tile in front draws over its sunk part at {sunk:?}, its tile at {tile:?}"
+	);
 
 	// Risen: on its tile, and the scripts read the same positions as the original's.
 	frames(&engine, 60);
@@ -124,8 +137,9 @@ fn a_unit_spawned_mid_battle_rises_on_its_tile() {
 	assert_eq!(pos, tile, "stands on its tile");
 	// And the renderer draws its sprites there, on and over the tile.
 	let centres: Vec<[f32; 2]> = unit_quads(&engine, id, tile)
+		.0
 		.iter()
-		.map(|c| [c.iter().map(|p| p[0]).sum::<f32>() / 4.0, c.iter().map(|p| p[1]).sum::<f32>() / 4.0])
+		.map(|(_, c)| [c.iter().map(|p| p[0]).sum::<f32>() / 4.0, c.iter().map(|p| p[1]).sum::<f32>() / 4.0])
 		.collect();
 	assert!(centres.len() >= 3, "the unit's sprites are drawn ({} quads)", centres.len());
 	for c in &centres {

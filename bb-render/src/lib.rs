@@ -32,7 +32,6 @@ pub mod residency;
 mod screenshot;
 pub mod sprite;
 pub mod tactical;
-mod tactical_clip;
 mod target;
 #[cfg(test)]
 mod test_sprites;

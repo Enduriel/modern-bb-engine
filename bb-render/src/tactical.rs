@@ -20,8 +20,14 @@
 //! tile. Either way it lands on whichever of the two was drawn first. Last comes the
 //! highlighter's mark, if the tile has one (`0x55ac88`).
 //!
-//! The details and the units and objects on the map are scene nodes of their own, drawn
-//! after all the tiles.
+//! What stands and lies on a tile (its details, pools, units and objects with their
+//! bars, footsteps, splats) draws right after that tile, before the next one: the tile
+//! node draws its child layer's list for each tile inside the tile loop (`0x55afc9` →
+//! `0x55d480`), and only for a tile not above the camera's level. Nothing is depth
+//! tested (the GL device's depth mode, `0x52fc00`, is never set to anything but off), so
+//! a unit is hidden by whatever the tiles in front draw over it: a unit rising from the
+//! ground behind the front tiles' tops and grass, one behind a higher tile behind its
+//! wall, bars and all (disassembled and verified against the original).
 
 use bb_assets::SpriteRegistry;
 use squirrel_bb::scene::tactical::{
@@ -30,7 +36,6 @@ use squirrel_bb::scene::tactical::{
 };
 
 use crate::sprite::Quad;
-use crate::tactical_clip::FrontEdges;
 use crate::world::{
 	AtlasList, CLOUD_REACH, CLOUD_SHADOW_ALPHA, CLOUD_SHADOW_DROP, CLOUD_SHADOW_SCALE, Look, WorldQuads, WorldView,
 	frame_quad,
@@ -76,24 +81,6 @@ const DEFAULT_SOCKET: &str = "socket_earth";
 const N: (i64, (i64, i64)) = (0, (0, 1));
 const NE: (i64, (i64, i64)) = (1, (1, 0));
 const NW: (i64, (i64, i64)) = (5, (-1, 1));
-
-/// The front neighbours.
-const SE: (i64, i64) = (1, -1);
-const S: (i64, i64) = (0, -1);
-const SW: (i64, i64) = (-1, 0);
-
-/// Which of `tile`'s front neighbours hide what sinks below their upper edges: those
-/// drawn (discovered) and not lower than it (see `tactical_clip`).
-fn front_edges(scene: &TacticalScene, tile: &SceneTacticalTile) -> FrontEdges {
-	let (q, r) = axial(tile);
-	let hides = |(dq, dr): (i64, i64)| tile_at(scene, q + dq, r + dr).is_some_and(|n| n.discovered && n.level >= tile.level);
-	FrontEdges {
-		anchor: [tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H],
-		south_west: hides(SW),
-		south: hides(S),
-		south_east: hides(SE),
-	}
-}
 
 /// The edge facing back the other way.
 fn opposite(direction: i64) -> i64 {
@@ -386,7 +373,7 @@ struct OnTile<'a> {
 /// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
 /// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
 /// desaturated. Then the path's footsteps on the tile, and the rain's splats.
-fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32, front: &FrontEdges) {
+fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
 	let hidden = if tile.visible { 1.0 } else { FOGGED_SATURATION };
@@ -415,15 +402,9 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: F
 		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
 	for entity in on.standing.iter().filter(|e| tile.visible || e.visible_in_fog) {
-		let before = b.quads.len();
 		draw_entity_sprites(b, entity, Some(fade), hidden, level);
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
-		}
-		// A unit sunk into the ground (rising from it) shows only above the tiles in
-		// front of it, bars and all (see `tactical_clip`).
-		if entity.is_actor {
-			crate::tactical_clip::clip_quads(&mut b.quads, before, front);
 		}
 	}
 	// A footstep sorts after what stands on its tile: the tile's list goes by key,
@@ -602,10 +583,12 @@ fn draw_clouds(b: &mut Builder, scene: &TacticalScene, view: &WorldView) {
 	}
 }
 
-/// The quads that draw `scene` in `view`: every tile in the original's order, then the
-/// details and entities, then the weather. A tile the player hasn't discovered isn't
-/// drawn, nor anything on it (see [`SceneTacticalTile::discovered`]): the map stays
-/// black there, but for the edges of discovered tiles' terrain reaching over it.
+/// The quads that draw `scene` in `view`: every tile in the original's order, each
+/// followed by what is on it, then the effects layer and the weather. A tile the player
+/// hasn't discovered isn't drawn, nor anything on it (see
+/// [`SceneTacticalTile::discovered`]): the map stays black there, but for the edges of
+/// discovered tiles' terrain reaching over it. On a tile above the camera's level (cut
+/// off and capped), nothing is drawn but the tile.
 pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry, view: &WorldView) -> WorldQuads {
 	let [left, right, bottom, top] = view.bounds(SOCKET_W);
 	let raise = LEVEL_H * 3.0;
@@ -648,16 +631,16 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		atlases: AtlasList::default(),
 		quads: Vec::new(),
 	};
-	for tile in &order {
-		draw_tile(&mut b, scene, tile);
-	}
 	// Overlays draw sharp, at the camera's level.
 	let overlay_level = scene.camera.level.clamp(0, 3) as u32;
 	for tile in &order {
+		draw_tile(&mut b, scene, tile);
+		if tile.level > scene.camera.level {
+			continue;
+		}
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let fade = Fade::of(scene, tile);
-		let front = front_edges(scene, tile);
-		draw_dressing(&mut b, tile, on.get(&index).unwrap_or(&nothing), fade, overlay_level, &front);
+		draw_dressing(&mut b, tile, on.get(&index).unwrap_or(&nothing), fade, overlay_level);
 	}
 	// The marks on the tiles map objects stand on (`HighlightBlockedTiles`): sprites in
 	// the effects layer, made at the battle's setup before anything else there (so over
@@ -1049,6 +1032,49 @@ mod tests {
 		assert_eq!(quads[splat].color[3], 0xc0);
 		assert_eq!(names.last(), Some(&"drop"), "the rain over the map: {names:?}");
 		assert_eq!(quads.last().map(|q| q.color[3]), Some(0x60));
+	}
+
+	/// A column of tiles, row 0 at the front, with the camera at `camera_level`.
+	fn column(levels: &[i64], camera_level: i64) -> TacticalScene {
+		TacticalScene {
+			width: 1,
+			height: levels.len() as i64,
+			tiles: levels
+				.iter()
+				.enumerate()
+				.map(|(row, &level)| SceneTacticalTile {
+					row: row as i64,
+					pos: (0.0, row as f64 * HEX_H as f64),
+					level,
+					..tile(0, true)
+				})
+				.collect(),
+			camera: squirrel_bb::scene::tactical::SceneCamera {
+				level: camera_level,
+				..Default::default()
+			},
+			..TacticalScene::default()
+		}
+	}
+
+	#[test]
+	fn what_stands_on_a_tile_draws_before_the_tiles_in_front() {
+		// The unit on the back tile; the front tile after it covers what of it is lower.
+		let mut scene = column(&[0, 0], 3);
+		scene.entities = vec![entity(1, 1, "unit", false, false)];
+		let names: Vec<&str> = quads_of(&scene).iter().map(name_of).collect();
+		assert_eq!(names, ["tile", "unit", "tile"]);
+	}
+
+	#[test]
+	fn nothing_on_a_tile_above_the_camera_is_drawn() {
+		let mut scene = column(&[2], 1);
+		scene.entities = vec![entity(1, 0, "unit", false, false), entity(2, 0, "rock", true, false)];
+		let names: Vec<&str> = quads_of(&scene).iter().map(name_of).collect();
+		assert!(!names.iter().any(|&n| n == "unit" || n == "rock"), "cut off with its tile: {names:?}");
+		scene.camera.level = 2;
+		let names: Vec<&str> = quads_of(&scene).iter().map(name_of).collect();
+		assert_eq!(&names[names.len() - 2..], ["unit", "rock"], "at the camera's level: {names:?}");
 	}
 
 	#[test]
