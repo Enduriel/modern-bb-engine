@@ -80,7 +80,7 @@ fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64) -> Resu
 		game.step(1000.0 / 60.0)?;
 		game.draw(gpu, target);
 		if let Some(rest) = frame.checked_sub(start.elapsed()) {
-			std::thread::sleep(rest);
+			game.front().session().host().idle(rest);
 		}
 	}
 	Ok(())

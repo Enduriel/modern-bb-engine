@@ -371,6 +371,27 @@ impl UiHost {
 		Ok(host)
 	}
 
+	/// Let `duration` pass. On macOS the waiting thread is CEF's UI thread, so it runs
+	/// CEF's work meanwhile (as [`recv`] does): a loop that slept between frames held up
+	/// the page's work (its frames, paints and calls) until the next frame there.
+	/// Elsewhere it sleeps.
+	pub fn idle(&self, duration: Duration) {
+		#[cfg(target_os = "macos")]
+		{
+			let deadline = Instant::now() + duration;
+			loop {
+				mac::pump();
+				let left = deadline.saturating_duration_since(Instant::now());
+				if left.is_zero() {
+					break;
+				}
+				std::thread::sleep(left.min(PUMP_EVERY));
+			}
+		}
+		#[cfg(not(target_os = "macos"))]
+		std::thread::sleep(duration);
+	}
+
 	/// Every event that arrived since the last poll, in order. Doesn't wait.
 	pub fn poll(&self) -> Vec<Event> {
 		#[cfg(target_os = "macos")]
