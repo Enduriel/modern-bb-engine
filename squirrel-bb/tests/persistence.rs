@@ -149,3 +149,53 @@ fn a_stream_knows_its_file_and_refuses_the_other_direction() {
 		)
 		.expect("both directions' members");
 }
+
+/// `queryStorages` lists as the original's (disassembled, then probed against a folder
+/// of 132 saves): newest modification time first, the time each file's header records
+/// (not its creation time, nor the file system's time). Equal times keep the order the
+/// original's PhysFS lists the folder in: by whole file name, `strcmp`, so case-sensitive
+/// and with `.sav` taking part (`x-1.sav` before `x.sav`).
+#[test]
+fn storages_list_newest_first_then_by_file_name() {
+	let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("storages_list_newest_first");
+	let _ = std::fs::remove_dir_all(&dir);
+	std::fs::create_dir_all(&dir).unwrap();
+	let header = |label: &str, created: u64, modified: u64| {
+		let mut h = vec![0xbb, 0, 2, 0, 0, 0, 0];
+		h.extend_from_slice(&created.to_le_bytes());
+		h.extend_from_slice(&modified.to_le_bytes());
+		h.extend_from_slice(&(label.len() as u16).to_le_bytes());
+		h.extend_from_slice(label.as_bytes());
+		h.extend_from_slice(&[0, 0, 0xbb, 0]);
+		h
+	};
+	// (name, created, modified, the file system's modification time)
+	let saves = [
+		("c", 200, 200, 1_900_000_000),
+		("A", 500, 300, 1_800_000_000),
+		("x", 100, 100, 1_700_000_000),
+		("b", 100, 400, 1_600_000_000),
+		("x-1", 100, 100, 1_700_000_000),
+		("X", 100, 100, 1_700_000_000),
+	];
+	for (name, created, modified, mtime) in saves {
+		let file = std::fs::File::create(dir.join(format!("{name}.sav"))).unwrap();
+		std::io::Write::write_all(&mut &file, &header(name, created, modified)).unwrap();
+		file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime)).unwrap();
+	}
+	std::fs::write(dir.join("broken.sav"), b"not a save").unwrap();
+	std::fs::write(dir.join("notes.txt"), header("notes", 900, 900)).unwrap();
+
+	let engine = Engine::new(NoScripts);
+	engine.saves().set_directory(dir);
+	engine
+		.run_script(
+			r#"
+			local s = "";
+			foreach (m in ::PersistenceManager.queryStorages()) s += m.getFileName() + ",";
+			if (s != "b,A,c,X,x-1,x,") throw "listed " + s;
+			"#,
+			"list order",
+		)
+		.expect("the original's order");
+}

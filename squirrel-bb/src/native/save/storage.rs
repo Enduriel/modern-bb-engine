@@ -81,22 +81,24 @@ impl Storage {
 		}
 	}
 
-	/// The names of every stored save.
+	/// The names of every stored save, in the original's order: its PhysFS lists a
+	/// folder sorted by `strcmp` of the whole file names (`<name>.sav`, byte by byte,
+	/// case-sensitive), whatever order the file system gives them in.
 	pub fn names(&self) -> Vec<String> {
-		match self {
+		let mut names: Vec<String> = match self {
 			Storage::Memory(m) => m.borrow().keys().cloned().collect(),
 			Storage::Dir(dir) => {
 				let Ok(entries) = std::fs::read_dir(dir) else {
 					return Vec::new();
 				};
-				let mut names: Vec<String> = entries
+				entries
 					.flatten()
 					.filter_map(|e| e.file_name().to_str()?.strip_suffix(".sav").map(str::to_string))
-					.collect();
-				names.sort();
-				names
+					.collect()
 			}
-		}
+		};
+		names.sort_by_cached_key(|n| format!("{n}.sav"));
+		names
 	}
 }
 

@@ -13,7 +13,7 @@
 mod cost;
 #[cfg(test)]
 mod ground_truth;
-mod heap;
+pub(crate) mod heap;
 mod hop;
 pub use hop::BattleMotion;
 mod pathfind;

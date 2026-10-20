@@ -20,7 +20,7 @@ pub(super) fn push_by_index(h: &mut [usize], mut hole: usize, top: usize, val: u
 
 /// Move the hole at `hole` down to the bottom (taking the larger child), then sift
 /// `val` up into it. `bottom` is the heap's length.
-pub(super) fn pop_hole_by_index(h: &mut [usize], mut hole: usize, bottom: usize, val: usize, less: &impl Fn(usize, usize) -> bool) {
+pub(crate) fn pop_hole_by_index(h: &mut [usize], mut hole: usize, bottom: usize, val: usize, less: &impl Fn(usize, usize) -> bool) {
 	let top = hole;
 	let mut idx = hole;
 	// (bottom - 1) >> 1, as a signed division (bottom >= 1 here).
@@ -61,7 +61,7 @@ pub(super) fn pop(h: &mut Vec<usize>, less: &impl Fn(usize, usize) -> bool) -> O
 }
 
 /// `std::make_heap`.
-pub(super) fn make(h: &mut [usize], less: &impl Fn(usize, usize) -> bool) {
+pub(crate) fn make(h: &mut [usize], less: &impl Fn(usize, usize) -> bool) {
 	let n = h.len();
 	if n < 2 {
 		return;

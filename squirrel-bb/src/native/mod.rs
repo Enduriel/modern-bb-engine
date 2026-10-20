@@ -34,6 +34,7 @@ mod overload;
 pub(crate) mod particles;
 mod platform;
 pub mod user_stats;
+mod msvc_sort;
 mod mt64;
 pub(crate) mod prng;
 mod screen;
