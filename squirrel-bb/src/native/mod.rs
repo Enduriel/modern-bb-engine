@@ -42,7 +42,7 @@ mod settings;
 pub(crate) mod video_mode;
 pub(crate) mod moving_sprites;
 pub(crate) mod spin;
-pub(crate) use settings::temp_gameplay_flag;
+pub(crate) use settings::{gameplay_flag, temp_gameplay_flag};
 pub(crate) mod sprite_anim;
 pub(crate) mod sprite_class;
 pub(crate) mod sprite_color;

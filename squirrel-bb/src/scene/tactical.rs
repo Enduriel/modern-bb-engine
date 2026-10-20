@@ -48,6 +48,24 @@ pub struct TacticalScene {
 	pub rain: Vec<SceneRainDrop>,
 	/// The rain's splats on the ground, each drawn with its tile's entities.
 	pub rain_splats: Vec<SceneRainSplat>,
+	/// The units' orientation overlays the camera drew this frame (its `render()`,
+	/// from the battle state's `onRender`): in screen space, over the whole battle and
+	/// under the UI.
+	pub orientation: Vec<SceneOrientationOverlay>,
+}
+
+/// A unit's orientation overlay: the round portrait of a unit the map doesn't show
+/// (on a tile above the camera's level, hidden behind a tile, or off screen), drawn
+/// unscaled by the zoom (see `native::camera_overlays`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SceneOrientationOverlay {
+	pub brush: String,
+	/// Screen pixels from the centre (of the game's screen, the video mode), y up; the
+	/// brush's offset is still to add.
+	pub pos: (f32, f32),
+	pub scale: f32,
+	/// ARGB, its fade applied.
+	pub color: u32,
 }
 
 /// A falling drop (`Tactical.getWeather().buildRain`).

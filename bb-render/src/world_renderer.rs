@@ -1108,6 +1108,27 @@ impl WorldRenderer {
 		self.draw_quads(gpu, target, &map, &uniforms, None, Atlases::DrawReady, Drawer::Other, (1.0, None))
 	}
 
+	/// Draw a battle's orientation overlays over what `target` holds, `fit` target
+	/// pixels to a pixel of the game's screen (see [`crate::orientation`]). An atlas
+	/// still loading draws nothing (with `Atlases::DrawReady`).
+	pub fn draw_orientation(
+		&mut self,
+		gpu: &Gpu,
+		target: &RenderTarget,
+		registry: &SpriteRegistry,
+		overlays: &[squirrel_bb::scene::tactical::SceneOrientationOverlay],
+		fit: f32,
+		atlases: Atlases,
+	) -> FrameStats {
+		let Some(map) = crate::orientation::orientation_quads(registry, overlays, fit) else {
+			return FrameStats::default();
+		};
+		let uniforms = SceneUniforms::centered([0.0, 0.0], target.width as f32, target.height as f32);
+		self.record_usage(&map, 1.0, None);
+		self.index(registry);
+		self.draw_quads(gpu, target, &map, &uniforms, None, atlases, Drawer::Battle, (1.0, None))
+	}
+
 	/// Draw `map`'s quads into `target`, over `clear` or what it holds, with the atlases
 	/// they use as ready (or waited for).
 	fn draw_quads(

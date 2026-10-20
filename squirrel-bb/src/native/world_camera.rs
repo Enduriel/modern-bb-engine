@@ -202,7 +202,7 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 	// The camera class's entity overlays (see `camera_overlays`); vanilla uses them only
 	// in battles.
 	b = b
-		.method("addEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, overlay: Retained| c.2.add(vm, &overlay.0))
+		.method("addEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, overlay: Retained| c.2.add(vm, &overlay.0, |_| Some((0, 0))))
 		.method("removeEntityOverlay", |c: &mut CameraHandle, vm: &SQVM, entity: Retained| c.2.remove(vm, &entity.0))
 		.method("removeEntityOverlays", |c: &mut CameraHandle| c.2.clear())
 		.method("queryEntityOverlays", |c: &mut CameraHandle, vm: &SQVM, Variadic(_a): Variadic<Retained>| c.2.states(vm));

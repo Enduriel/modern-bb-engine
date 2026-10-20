@@ -487,6 +487,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.move_cameras(real_delta_ms);
 		self.turn_sprites();
 		self.audio.update();
+		self.tactical_grid.begin_frame();
 		self.root_state.render(&self.vm)?;
 		self.root_state.run_background(&self.vm)?;
 		// What a battle's end, leaving a campaign or a load discarded this frame.

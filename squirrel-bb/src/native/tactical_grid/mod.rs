@@ -16,6 +16,7 @@ pub(crate) mod heads;
 mod heat;
 mod picking;
 mod camera_callbacks;
+mod orientation;
 mod tile;
 #[cfg(test)]
 mod vis_ground_truth;
@@ -106,6 +107,9 @@ impl TacticalTileData {
 /// Who stands on each tile, as sight needs it (from the entity host).
 pub(crate) type OccupantLookup = Rc<dyn Fn() -> Vec<Option<visibility::Occupant>>>;
 
+/// The tile a unit stands on, by its script identity (the entity host's records).
+pub(crate) type UnitTileLookup = Rc<dyn Fn(i64) -> Option<usize>>;
+
 /// What `tile.spawnObject(path)` runs: create the object entity `path` on tile `id`.
 pub(crate) type ObjectSpawner = Rc<dyn Fn(&SQVM, &str, usize) -> Result<SqStrongRef, String>>;
 
@@ -127,6 +131,7 @@ pub(crate) struct TacticalGridState {
 	properties_delegate: Option<SqStrongRef>,
 	object_spawner: Option<ObjectSpawner>,
 	occupant_lookup: Option<OccupantLookup>,
+	unit_tile_lookup: Option<UnitTileLookup>,
 	clear_hook: Option<ClearHook>,
 	/// `Tactical.getCamera()`'s fields.
 	camera: camera::CameraState,
@@ -154,6 +159,7 @@ impl TacticalGridState {
 			properties_delegate: None,
 			object_spawner: None,
 			occupant_lookup: None,
+			unit_tile_lookup: None,
 			clear_hook: None,
 			camera: camera::CameraState::default(),
 			camera_class: None,
@@ -457,6 +463,17 @@ impl TacticalGrid {
 		self.grid.borrow_mut().occupant_lookup = Some(lookup);
 	}
 
+	/// Set how the camera's orientation overlays find their units' tiles.
+	pub(crate) fn set_unit_tile_lookup(&self, lookup: UnitTileLookup) {
+		self.grid.borrow_mut().unit_tile_lookup = Some(lookup);
+	}
+
+	/// A frame begins: no orientation overlay drawn yet (the camera's `render()` draws
+	/// them, from the battle state's `onRender`).
+	pub(crate) fn begin_frame(&self) {
+		self.grid.borrow_mut().camera.overlays.begin_frame();
+	}
+
 	/// Set what else `tile.clear(flags)` clears (the battle effects on the tile).
 	pub(crate) fn set_clear_hook(&self, hook: ClearHook) {
 		self.grid.borrow_mut().clear_hook = Some(hook);
@@ -546,6 +563,7 @@ impl TacticalGrid {
 			blocked_tiles: Vec::new(),
 			rain: Vec::new(),
 			rain_splats: Vec::new(),
+			orientation: c.overlays.drawn().to_vec(),
 		}
 	}
 
@@ -846,6 +864,7 @@ impl TacticalGrid {
 		g.properties_delegate = None;
 		g.object_spawner = None;
 		g.occupant_lookup = None;
+		g.unit_tile_lookup = None;
 		g.clear_hook = None;
 		g.camera_class = None;
 		g.camera.callbacks = Default::default();

@@ -29,6 +29,24 @@ function bbClickButton(label)
 	console.error('PROBE js: no visible button ' + label);
 }
 
+// The orientation overlays' click targets in a battle shot: per overlay its id, classes
+// and box.
+function bbSendOverlays(shot)
+{
+	if (shot.indexOf('battle_orientation') !== 0)
+	{
+		return;
+	}
+	var lines = [];
+	$('.orientation-overlay-module .overlay').each(function ()
+	{
+		var r = this.getBoundingClientRect();
+		var data = $(this).data('overlay');
+		lines.push((data ? data.id : '?') + ' ' + this.className + ' ' + r.left + ' ' + r.top + ' ' + r.width + ' ' + r.height);
+	});
+	BbProbe.send('overlays_' + shot, lines.join('\n'));
+}
+
 function bbScene(name, then)
 {
 	SQ.call(Screens.WorldScreen.mSQHandle, 'probeScene', name, then);
@@ -97,6 +115,7 @@ function bbStep(steps, index)
 				{
 					console.error('PROBE js: shot ' + step.shot + ' failed: ' + error);
 				}
+				bbSendOverlays(step.shot);
 				finish();
 			});
 		}, 3000);

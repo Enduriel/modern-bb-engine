@@ -36,6 +36,10 @@ local mode = ::Settings.getVideoMode();
 	{ scene = "rise80", shot = "battle_rise_80", until = null, click = null },
 	{ scene = "occl", shot = "battle_occlusion", until = null, click = null },
 	{ scene = "occlCut", shot = "battle_occlusion_cut", until = null, click = null },
+	{ scene = "orient", shot = "battle_orientation", until = null, click = null },
+	{ scene = "orientHidden", shot = "battle_orientation_hidden", until = null, click = null },
+	{ scene = "orientZoom", shot = null, until = null, click = null },
+	{ scene = "orientOff", shot = "battle_orientation_offscreen", until = null, click = null },
 	{ scene = "occlClear", shot = null, until = null, click = null },
 	{ scene = "winBattle", shot = "battle_results", until = "resultsShown", click = "Continue" },
 	{ scene = null, shot = "battle_loot", until = null, click = null }
@@ -96,6 +100,26 @@ local function showPath( _tile )
 	}
 
 	return "path of " + costs.Tiles + " tiles, " + costs.ActionPointsRequired + " AP";
+}
+
+// The orientation overlays the battle camera reports (queryEntityOverlays), those that
+// show: whose (name and tile), where, offscreen or not, and how much lower.
+local function overlayNote()
+{
+	local shown = [];
+	local all = ::Tactical.getCamera().queryEntityOverlays();
+	foreach( o in all )
+	{
+		if (!("id" in o) || !o.visible) continue;
+		local e = ::Tactical.getEntityByID(o.id);
+		local t = e.getTile();
+		shown.push(e.getName() + "@" + t.SquareCoords.X + "," + t.SquareCoords.Y + " " + o.x + "," + o.y
+			+ (o.isOffscreen ? " offscreen" : "") + " +" + o.yOffset);
+	}
+	local text = "";
+	foreach( i, line in shown )
+		text += (i > 0 ? "; " : "") + line;
+	return all.len() + " overlays, " + shown.len() + " shown: " + text;
 }
 
 ::World.State.m.WorldScreen.probeScene <- function ( _scene )
@@ -496,10 +520,12 @@ local function showPath( _tile )
 		zd1.setPos(::createVec(0, -60));
 		local zd2 = zombie(d.getNextTile(3));
 		::probeOccl <- [za, zb, zc, tree, boulder, zd1, zd2];
+		::probeOcclTiles <- [a, b, cc, d];
 		local cx = (a.Pos.X + b.Pos.X + cc.Pos.X + d.Pos.X) / 4.0;
 		local cy = (a.Pos.Y + b.Pos.Y + cc.Pos.Y + d.Pos.Y) / 4.0;
 		local cam = ::Tactical.getCamera();
-		cam.setPos(::createVec(cx, cy));
+		::probeOcclCamera <- ::createVec(cx, cy);
+		cam.setPos(::probeOcclCamera);
 		cam.Level = 3;
 		local where = function ( _t ) { return _t.SquareCoords.X + "," + _t.SquareCoords.Y + " (" + _t.Pos.X + "," + _t.Pos.Y + ")"; };
 		note = "A " + where(a) + " B " + where(b) + " C " + where(cc) + " D " + where(d) + "; camera " + cx + "," + cy
@@ -511,8 +537,56 @@ local function showPath( _tile )
 		// stands on them is drawn (B's unit, on level 1).
 		::Tactical.getCamera().Level = 0;
 	}
+	else if (_scene == "orient")
+	{
+		// The units' orientation overlays (the camera's round portraits): the camera
+		// still at level 0, so B's unit (on level 1) shows as one over its tile, a level
+		// lower; and the first brother's tile raised above the camera's level too (a
+		// player's overlay is the company banner, at 3/4 size).
+		local bros = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
+		local t = bros[0].getTile();
+		t.Level = 1;
+		note = "brother " + t.SquareCoords.X + "," + t.SquareCoords.Y;
+	}
+	else if (_scene == "orientHidden")
+	{
+		// The camera back over the occlusion set-ups at level 3, and A's front tile (S)
+		// two levels above A: its unit is hidden behind it, the camera more than a level
+		// above, so its overlay shows over A.
+		note = "before: " + overlayNote();
+		local a = ::probeOcclTiles[0];
+		a.getNextTile(3).Level = 2;
+		local cam = ::Tactical.getCamera();
+		cam.setPos(::probeOcclCamera);
+		cam.Level = 3;
+	}
+	else if (_scene == "orientZoom")
+	{
+		// The map fits the screen at zoom 1, so no unit can be off screen: the scene
+		// scale doubled lets the camera zoom in to 0.5 (from the next frame on).
+		note = "before: " + overlayNote();
+		local mode = ::Settings.getVideoMode();
+		::probeSceneScale <- mode.SceneScale;
+		mode.SceneScale = 2.0;
+		::Settings.setVideoMode(mode);
+	}
+	else if (_scene == "orientOff")
+	{
+		// Zoomed in to 0.5 over the set-ups, the camera 500 to the left of their centre:
+		// the units to the right are off screen, their overlays where their line to the
+		// screen's centre leaves it.
+		local cam = ::Tactical.getCamera();
+		cam.Zoom = 0.5;
+		cam.setPos(::createVec(::probeOcclCamera.X - 500, ::probeOcclCamera.Y));
+		note = "zoom " + cam.Zoom + " camera " + cam.getPos().X + "," + cam.getPos().Y;
+	}
 	else if (_scene == "occlClear")
 	{
+		note = "before: " + overlayNote();
+		local mode = ::Settings.getVideoMode();
+		mode.SceneScale = ::probeSceneScale;
+		::Settings.setVideoMode(mode);
+		::Tactical.getCamera().Zoom = 1.0;
 		// What the rise and the occlusion set-ups spawned goes again (no kill: the
 		// results screen and the loot stay as they were), the camera back where the
 		// effects left it.

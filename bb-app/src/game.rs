@@ -448,7 +448,15 @@ impl Game {
 				height,
 			};
 			engine.sprites().with(|registry| {
-				self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady)
+				let battle = self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady);
+				// The camera's orientation overlays, over the battle and under the UI.
+				let overlays =
+					self.renderer.draw_orientation(gpu, target, registry, &scene.orientation, fit, Atlases::DrawReady);
+				FrameStats {
+					quads: battle.quads + overlays.quads,
+					waiting: battle.waiting + overlays.waiting,
+					failed: battle.failed + overlays.failed,
+				}
 			})
 		} else if let Under::World { scene, view: (center, zoom), map_revision, .. } = &look.under {
 			let view = WorldView {

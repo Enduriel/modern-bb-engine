@@ -1243,6 +1243,8 @@ impl TacticalEntities {
 		grid.set_object_spawner(placement::object_spawner(&self.machine));
 		let m = self.machine.clone();
 		grid.set_occupant_lookup(Rc::new(move || vision::occupants(&m)));
+		let m = self.machine.clone();
+		grid.set_unit_tile_lookup(Rc::new(move |identity| m.borrow().record(identity).and_then(|r| r.tile)));
 	}
 
 	/// The navigator's handle on the units.

@@ -28,6 +28,7 @@ mod kept_sprites;
 pub mod labels;
 mod memory;
 mod mips;
+pub mod orientation;
 mod pages;
 pub mod portrait;
 mod present;

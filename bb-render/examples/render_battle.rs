@@ -143,7 +143,9 @@ fn main() {
 	let mut renderer = WorldRenderer::new(&gpu, files, 8);
 	let target = RenderTarget::new(&gpu, width, height);
 	let stats = engine.sprites().with(|registry| {
-		renderer.draw_tactical(&gpu, &target, &scene, registry, &view, Atlases::WaitForAll)
+		let battle = renderer.draw_tactical(&gpu, &target, &scene, registry, &view, Atlases::WaitForAll);
+		renderer.draw_orientation(&gpu, &target, registry, &scene.orientation, 1.0, Atlases::WaitForAll);
+		battle
 	});
 	eprintln!("{stats:?}");
 	let image = target.read(&gpu).expect("read back");

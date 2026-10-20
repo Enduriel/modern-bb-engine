@@ -97,6 +97,16 @@ impl Camera {
 		c
 	}
 
+	/// The view's size in world units: the screen's times the zoom, rounded.
+	pub fn extent(&self) -> (f32, f32) {
+		self.extent
+	}
+
+	/// What the view may show, `[min x, min y, max x, max y]`, if bounded.
+	pub fn bounds(&self) -> Option<[f32; 4]> {
+		self.bounds
+	}
+
 	/// `quake`: push along `dir` by `strength` over `out` seconds of virtual time from
 	/// `now`, then back over `back`. Not while gliding.
 	pub fn quake(&mut self, dir: (f32, f32), strength: f32, out: f32, back: f32, now: f32) {
