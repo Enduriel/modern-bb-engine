@@ -10,7 +10,15 @@ pub fn exclusive_fullscreen(event_loop: &ActiveEventLoop) -> bool {
 	!event_loop.is_wayland()
 }
 
-#[cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))]
+/// macOS: no. Its fullscreen is a borderless window in a Space of its own; an exclusive
+/// mode switches the display's mode (a 5K Retina display's 5120x2880 is a 1x mode, so
+/// the window's scale changed under it and it came out twice the size).
+#[cfg(target_os = "macos")]
+pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
+	false
+}
+
+#[cfg(not(all(unix, not(any(target_os = "ios", target_os = "android")))))]
 pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
 	true
 }
