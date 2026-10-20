@@ -8,6 +8,7 @@
 
 mod bytecode;
 mod print;
+mod runtime_error;
 mod script;
 mod stack;
 #[cfg(test)]
@@ -16,6 +17,7 @@ mod float_format_tests;
 mod stdlib_parity_tests;
 
 pub use print::CompileError;
+pub use runtime_error::{ErrorValue, Frame, Local, RuntimeError};
 
 use print::{VmContext, compile_error_trampoline, error_trampoline, print_trampoline};
 
@@ -87,6 +89,23 @@ impl SQVM {
 		unsafe {
 			squirrel_sys::sqstd_seterrorhandlers(self.as_ptr());
 			squirrel_sys::sq_setcompilererrorhandler(self.as_ptr(), Some(compile_error_trampoline));
+		}
+	}
+
+	/// Hand every uncaught runtime error to `handler`, as data (the thrown value and the
+	/// call stack with each frame's locals), before the failing call returns. Replaces
+	/// [`install_standard_error_handlers`](Self::install_standard_error_handlers)'
+	/// runtime part (the last call wins); compile errors keep going to
+	/// [`set_compile_error_handler`](Self::set_compile_error_handler).
+	pub fn set_runtime_error_handler(&mut self, handler: impl Fn(&RuntimeError) + 'static) {
+		self.context().set_runtime_error(Box::new(handler));
+		let context = self.context() as *mut VmContext;
+		unsafe {
+			// The context rides along as the closure's free variable: threads have no
+			// foreign pointer of their own.
+			squirrel_sys::sq_pushuserpointer(self.as_ptr(), context as squirrel_sys::SQUserPointer);
+			squirrel_sys::sq_newclosure(self.as_ptr(), Some(runtime_error::runtime_error_trampoline), 1);
+			squirrel_sys::sq_seterrorhandler(self.as_ptr());
 		}
 	}
 

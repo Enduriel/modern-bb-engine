@@ -18,7 +18,7 @@ pub use identity::Identity;
 pub(crate) use object::SqObject;
 pub use object::SqObjectType;
 pub use types::{SqArray, SqBytes, SqRef, SqTable};
-pub use vm::{CompileError, SQVM};
+pub use vm::{CompileError, ErrorValue, Frame, Local, RuntimeError, SQVM};
 
 /// A hash of the vendored VM's sources and build options. It changes whenever the VM or
 /// its compiler does, so caches of bytecode can key on it.

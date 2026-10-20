@@ -37,6 +37,7 @@ pub(crate) struct VmContext {
 	print: Option<Box<dyn Fn(&str)>>,
 	error: Option<Box<dyn Fn(&str)>>,
 	compile_error: Option<Box<dyn Fn(&CompileError)>>,
+	runtime_error: Option<Box<dyn Fn(&super::RuntimeError)>>,
 	/// While set, compile errors are kept here instead of going to the handler
 	/// ([`SQVM::compile_capturing`](super::SQVM::compile_capturing)).
 	captured: std::cell::RefCell<Option<Option<CompileError>>>,
@@ -48,6 +49,7 @@ impl VmContext {
 			print: None,
 			error: None,
 			compile_error: None,
+			runtime_error: None,
 			captured: std::cell::RefCell::new(None),
 		})
 	}
@@ -60,6 +62,13 @@ impl VmContext {
 	}
 	pub(crate) fn set_compile_error(&mut self, handler: Box<dyn Fn(&CompileError)>) {
 		self.compile_error = Some(handler);
+	}
+
+	pub(crate) fn set_runtime_error(&mut self, handler: Box<dyn Fn(&super::RuntimeError)>) {
+		self.runtime_error = Some(handler);
+	}
+	pub(crate) fn runtime_error(&self) -> Option<&dyn Fn(&super::RuntimeError)> {
+		self.runtime_error.as_deref()
 	}
 
 	/// Start keeping compile errors instead of reporting them.
