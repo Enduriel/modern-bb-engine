@@ -94,6 +94,9 @@ def read(path):
                 arrays[p[1]] = (int(p[2]), int(p[3]), int(p[4]), int(p[5]))
             elif kind == "S":
                 strings = (int(p[1]), int(p[2]))
+            elif kind == "G":
+                # A function prototype's compact debug information, in bytes.
+                other["G"] += int(p[1])
             elif kind in "OUIKX":
                 other[kind] += int(p[2]) if kind != "X" else 0
                 other[kind + "#"] += 1
@@ -319,9 +322,12 @@ def main():
         parts["parameters"] += npar * 16
         parts["functions"] += nf * 16
         parts["outer var infos"] += no * 40
-        parts["line infos"] += nli * 16
-        parts["local var infos"] += nlv * 40
+        if not other["G"]:
+            parts["line infos"] += nli * 16
+            parts["local var infos"] += nlv * 40
         parts["header"] += 232
+    if other["G"]:
+        parts["debug info (compact)"] = other["G"]
     print("Function prototypes by part (MB, approximate): " + ", ".join(f"{k} {v / 1048576:.1f}" for k, v in parts.most_common()) + "\n")
 
     # The original's 32-bit build: 8-byte values, 4-byte pointers.
