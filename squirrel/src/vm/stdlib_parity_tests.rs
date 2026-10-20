@@ -88,3 +88,47 @@ fn format_matches_squirrel_3_0() {
 		::eq("widths", @() format("[%10s][%-10s][%.3s]", "ab", "ab", "abcdef"), "\"[        ab][ab        ][abc]\"");
 	"#);
 }
+
+/// This engine's extensions: the modern (Squirrel 3.2) `split` and `format`, kept
+/// under a `3_2` suffix beside the original's (docs/modding.md, "Modern variants").
+#[test]
+fn split3_2_keeps_empty_tokens_unless_asked() {
+	run(r#"
+		::eq("a,,b", @() split3_2("a,,b", ","), "[\"a\",\"\",\"b\"]");
+		::eq("a,,b skip", @() split3_2("a,,b", ",", true), "[\"a\",\"b\"]");
+		::eq("a,,b keep", @() split3_2("a,,b", ",", false), "[\"a\",\"\",\"b\"]");
+		::eq(",a,", @() split3_2(",a,", ","), "[\"\",\"a\"]");
+		::eq("perks", @() split3_2("a#2°b#2°", "°"), "[\"a#2\",\"\",\"b#2\",\"\"]");
+		::eq("perks skip", @() split3_2("a#2°b#2°", "°", true), "[\"a#2\",\"b#2\"]");
+		::eq("empty", @() split3_2("", ","), "[]");
+		::eq("empty seps", @() split3_2("abc", ""), "ERROR: empty separators string");
+		::eq("nul in seps", @() split3_2("a;b", ",\0;"), "[\"a\",\"b\"]");
+		// the original's split is unchanged
+		::eq("split", @() split("a,,b", ","), "[\"a\",\"b\"]");
+	"#);
+}
+
+#[test]
+fn format3_2_is_squirrel_3_2s_with_ieee_rounding() {
+	run(r#"
+		::eq("tie 0.5", @() format3_2("%.0f", 0.5), "\"0\"");
+		::eq("tie 1.5", @() format3_2("%.0f", 1.5), "\"2\"");
+		::eq("tie 2.5", @() format3_2("%.0f", 2.5), "\"2\"");
+		::eq("tie -2.5", @() format3_2("%.0f", -2.5), "\"-2\"");
+		::eq("tie 0.125", @() format3_2("%.2f", 0.125), "\"0.12\"");
+		::eq("tie 0.375", @() format3_2("%.2f", 0.375), "\"0.38\"");
+		::eq("e tie", @() format3_2("%.0e", 2.5), "\"2e+00\"");
+		::eq("g tie", @() format3_2("%g", 1234565.0), "\"1.23456e+06\"");
+		::eq("non-tie", @() format3_2("%.1f", 0.26), "\"0.3\"");
+		::eq("nan", @() format3_2("%f", (1e308 * 10) - (1e308 * 10)), "\"-nan\"");
+		::eq("nan 0 flag", @() format3_2("[%08f]", (1e308 * 10) - (1e308 * 10)), "\"[    -nan]\"");
+		::eq("inf", @() format3_2("%+G", 1e308 * 10), "\"+INF\"");
+		::eq("bool d", @() format3_2("%d", true), "\"1\"");
+		::eq("nul in fmt", @() format3_2("a\0%d", 5), "\"a\\x005\"");
+		::eq("missing", @() format3_2("%d"), "ERROR: not enough parameters for the given format string");
+		::eq("mixed", @() format3_2("%s=%5.1f|%-4d|", "x", 2.25, 7), "\"x=  2.2|7   |\"");
+		// the original's format is unchanged
+		::eq("format tie", @() format("%.0f", 2.5), "\"3\"");
+		::eq("format bool", @() format("%d", true), "ERROR: integer expected for the specified format");
+	"#);
+}

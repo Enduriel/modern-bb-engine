@@ -2,7 +2,8 @@
 //! (`"ModernEngine" in ::getroottable()`) and use what it adds over vanilla. For mod
 //! authors: `docs/modding.md`.
 //!
-//! - `ModernEngine.Version`: the API's version (1).
+//! - `ModernEngine.Version`: the API's version (2: version 1 plus the stdlib's modern
+//!   variants `split3_2` and `format3_2`, root functions from squirrel-sys).
 //! - `ModernEngine.registerFont(path, options = null)`: a font file in the game's files
 //!   (a mod's zip included) for engine-drawn text the bitmap fonts can't draw:
 //!   - `For`: the vanilla fonts it stands in for, a name or an array of them: bitmap
@@ -29,7 +30,7 @@ use crate::source::ScriptSource;
 use crate::state::SharedState;
 
 /// The API's version (`ModernEngine.Version`).
-pub const VERSION: i64 = 1;
+pub const VERSION: i64 = 2;
 
 /// The bitmap fonts vanilla draws engine text with (`gfx/fonts/<name>.fnt`).
 pub const BITMAP_FONTS: [&str; 3] = ["cinzel_20", "cinzel_bold_20", "cinzel_bold_100"];
