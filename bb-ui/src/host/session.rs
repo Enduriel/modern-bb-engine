@@ -153,7 +153,7 @@ impl UiSession {
 	}
 
 	/// React to one event from the page.
-	fn handle(&self, event: Event) {
+	pub(super) fn handle(&self, event: Event) {
 		match event {
 			Event::Request {
 				kind: RequestKind::Call | RequestKind::Task,

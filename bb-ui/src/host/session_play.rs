@@ -47,6 +47,26 @@ impl UiSession {
 		Ok(())
 	}
 
+	/// One frame of `ms` real time for a game loop that draws while the page works: the
+	/// game's frame (the page parked), the page laid out at the UI scale, then the page
+	/// let go on until the next step (or input) parks it, with what it sent so far
+	/// handled. The page's turn is the time between frames, so it parks once a frame
+	/// where [`step`](Self::step) and [`unpark`](Self::unpark) park it twice: what it
+	/// calls on its own turn is answered as the next frame parks it (`park` serves calls
+	/// while it waits), before that frame's scripts, as the original's UI runs between
+	/// the game's frames.
+	pub fn step_unparked(&self, ms: f64) -> Result<(), String> {
+		self.park();
+		self.engine().frame(ms)?;
+		self.follow_ui_scale();
+		self.follow_fonts();
+		self.unpark();
+		for event in self.host().poll() {
+			self.handle(event);
+		}
+		Ok(())
+	}
+
 	/// From the main menu, start a new campaign on map seed `seed` as the menu's Start
 	/// does: the loading screen, then the world with its opening event. It runs over the
 	/// next frames.

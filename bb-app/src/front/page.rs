@@ -90,8 +90,7 @@ impl Front {
 	/// Advance the game by `ms` of real time, answering the page. The page then runs
 	/// on while the frame is drawn, until the scripts next run.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
-		self.session.step(ms)?;
-		self.session.unpark();
+		self.session.step_unparked(ms)?;
 		// A page frame for each game frame: after its draw (`draw`), or now for a frame
 		// that wasn't drawn (a loop that only steps), so the page never stands still.
 		if !std::mem::replace(&mut self.drawn, false) {
