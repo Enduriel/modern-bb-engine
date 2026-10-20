@@ -230,8 +230,9 @@ impl<S: ScriptSource> ModuleSystem<S> {
 	/// `inherit`/`new` closures (and any subsystem holding the
 	/// [`instantiator`](Self::instantiator), e.g. the state stack) capture the shared
 	/// `State`, so it — and the prototype `SqStrongRef`s it holds — stays alive until
-	/// those VM closures are freed *during* `sq_close`. Releasing prototype refs at
-	/// that point is a use-after-free (the objects are mid-teardown). Clearing here,
+	/// those VM closures are freed *during* `sq_close`. Refs dropped at that point
+	/// release nothing (the VM is mid-teardown; see `squirrel`'s `vm::closing`), so
+	/// the prototypes would only go when `sq_close` frees everything. Clearing here,
 	/// while the VM is fully alive, releases them safely; the later (empty) `State`
 	/// drop during `sq_close` is then a no-op. (Not bound by `'static` so [`Drop`]
 	/// impls — e.g. [`Engine`](crate::Engine) — can call it.)

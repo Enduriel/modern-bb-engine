@@ -7,10 +7,13 @@
 //!   * [`print`]  — the print / error / compile-error handler dispatch
 
 mod bytecode;
+pub(crate) mod closing;
 mod print;
 mod runtime_error;
 mod script;
 mod stack;
+#[cfg(test)]
+mod close_tests;
 #[cfg(test)]
 mod float_format_tests;
 #[cfg(test)]
@@ -152,7 +155,12 @@ impl Drop for SQVM {
 			// then close the VM and drop it. Closing first means no callback can
 			// fire against a freed context.
 			let context = squirrel_sys::sq_getforeignptr(self.ptr) as *mut VmContext;
+			// The objects `sq_close` frees drop their Rust state, and with it any
+			// strong refs they hold; those must not release against the closing VM
+			// (see `closing`).
+			let closing = closing::Closing::begin(self.ptr);
 			squirrel_sys::sq_close(self.ptr);
+			drop(closing);
 			if !context.is_null() {
 				drop(Box::from_raw(context));
 			}

@@ -25,10 +25,12 @@ use crate::{SQ_OK, SQVM, SqTable, SqValue};
 /// ```
 ///
 /// # Invariant
-/// An `SqStrongRef` releases against the VM it was created from, so it must be
-/// dropped before that VM is closed. In practice the engine owns the VM at the
-/// top and the structures holding strong refs are dropped before it, so this holds
-/// naturally.
+/// An `SqStrongRef` releases against the VM it was created from. A ref that Rust
+/// code outside the VM owns (a host service, a scheduler, a cache) must be dropped
+/// before that VM is closed: the engine clears its services first. A ref that the
+/// VM's own objects own (a native closure's captures, a native class's slots or
+/// payloads) is dropped by `sq_close` itself and then releases nothing, because
+/// closing frees every object anyway (see `vm::closing`).
 ///
 /// # Re-entrancy
 /// [`call`](SqStrongRef::call) runs arbitrary Squirrel, which may re-enter native
@@ -384,6 +386,11 @@ impl Clone for SqStrongRef {
 
 impl Drop for SqStrongRef {
 	fn drop(&mut self) {
+		// A ref the VM's own objects hold drops while `sq_close` frees them, after
+		// the VM it would release against is gone (see `vm::closing`).
+		if crate::vm::closing::is_closing(self.vm) {
+			return;
+		}
 		unsafe { squirrel_sys::sq_release(self.vm, &mut self.obj) };
 	}
 }

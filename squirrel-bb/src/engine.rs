@@ -4,10 +4,11 @@
 //! The four host services ([`ModuleSystem`], [`TimeService`], [`UiBridge`],
 //! [`RootState`]) each hold [`SqStrongRef`](squirrel::SqStrongRef)s into the VM that
 //! MUST be released before `sq_close` — and merely dropping a service handle is not
-//! enough, because VM-resident closures keep its state alive until `sq_close` (which
-//! is then too late: releasing during teardown is a use-after-free). So each service
-//! has a `clear()`, and forgetting to call all four before closing the VM is an easy,
-//! crashing mistake.
+//! enough, because VM-resident closures keep its state alive until `sq_close`. So
+//! each service has a `clear()` that releases its refs while the VM is fully alive.
+//! (Refs that `sq_close` itself drops, with the objects it frees, release nothing:
+//! see `squirrel`'s `vm::closing`. Clearing first keeps the release ordered and
+//! leaves nothing for teardown to skip.)
 //!
 //! `Engine` removes that footgun: it owns all of them, and its [`Drop`] `clear()`s
 //! every service *while the VM is still fully alive*, then lets the `vm` field (the
