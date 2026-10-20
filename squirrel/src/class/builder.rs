@@ -253,19 +253,7 @@ impl<T: 'static> SqClass<T> {
 	/// The payload's place is read from the VM once per ref (and its clones) and kept
 	/// in it: an instance's payload never moves, and the ref keeps the instance alive.
 	pub fn with_payload<R>(&self, vm: &SQVM, instance: &SqStrongRef, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-		let mut up = instance.cached_payload();
-		if up.is_null() {
-			instance.push(vm); // [instance]
-			up = unsafe { super::payload::any_payload(vm, -1) }.unwrap_or(std::ptr::null_mut());
-			unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) }; // []
-			if up.is_null() {
-				return None;
-			}
-			instance.cache_payload(up);
-		}
-		// The caller's strong ref keeps the instance (and so the payload) alive.
-		let payload = unsafe { super::payload::payload_of::<T>(up) }?;
-		Some(f(unsafe { &mut (*payload).value }))
+		instance.with_native(vm, f)
 	}
 
 	/// Create an instance carrying `value` as its payload, returned as an owned
@@ -305,4 +293,26 @@ fn closure_ref(vm: &mut SQVM, func: Box<dyn SqFunction>) -> SqStrongRef {
 	let closure = SqStrongRef::from_stack(vm, -1);
 	unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
 	closure
+}
+
+impl SqStrongRef {
+	/// Run `f` on the payload of the native instance this refers to, if it carries a `T`
+	/// (checked by typetag and `TypeId`); `None` otherwise (another type, or not a native
+	/// instance). As [`SqClass::with_payload`], without needing the class: for a native
+	/// that reads a native argument (a vector, a tile) but also takes other values.
+	pub fn with_native<T: 'static, R>(&self, vm: &SQVM, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+		let mut up = self.cached_payload();
+		if up.is_null() {
+			self.push(vm); // [instance]
+			up = unsafe { super::payload::any_payload(vm, -1) }.unwrap_or(std::ptr::null_mut());
+			unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) }; // []
+			if up.is_null() {
+				return None;
+			}
+			self.cache_payload(up);
+		}
+		// This strong ref keeps the instance (and so the payload) alive.
+		let payload = unsafe { super::payload::payload_of::<T>(up) }?;
+		Some(f(unsafe { &mut (*payload).value }))
+	}
 }

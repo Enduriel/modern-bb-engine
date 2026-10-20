@@ -254,8 +254,30 @@ impl<'vm> SqArray<'vm> {
 	}
 
 	/// Collect the elements read as `T`, skipping any that are not a `T`.
+	///
+	/// Reads them in one pass with the array pushed once (no script runs between the
+	/// reads, so its length can't change), not through [`get`](Self::get)'s per-element
+	/// length check and push.
 	pub fn to_vec<T: SqValue>(&self) -> Vec<T::Item<'vm>> {
-		self.iter::<T>().collect()
+		let len = self.len();
+		let mut out = Vec::with_capacity(len);
+		let ptr = self.vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [arr]
+			for index in 0..len {
+				squirrel_sys::sq_pushinteger(ptr, index as i64); // [arr, idx]
+				if squirrel_sys::sq_get(ptr, -2) != SQ_OK {
+					continue; // sq_get popped the key -> [arr]
+				}
+				// [arr, value]
+				if let Some(value) = T::read(self.vm, -1) {
+					out.push(value);
+				}
+				squirrel_sys::sq_pop(ptr, 1); // [arr]
+			}
+			squirrel_sys::sq_pop(ptr, 1); // []
+		}
+		out
 	}
 
 	/// Promote this borrowed handle to an owned [`SqStrongRef`] of the same array
