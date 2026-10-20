@@ -92,6 +92,8 @@ pub use page_frames::PageFrames;
 pub use page_log::{Echo, LogLine};
 #[cfg(target_os = "linux")]
 pub use paint_sink::DmaBufPlane;
+#[cfg(target_os = "macos")]
+pub use paint_sink::IOSurface;
 pub use paint_sink::{PageSink, PaintBuffer, SharedPaint};
 pub use paint_stats::PaintStats;
 pub use pump_schedule::Waker;
@@ -306,7 +308,7 @@ impl UiHost {
 			Some(ready_tx),
 			config.devtools_port,
 			Some(bridge.endpoint().to_switch()),
-			Some(display.ozone()),
+			display.ozone(),
 		);
 
 		let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());

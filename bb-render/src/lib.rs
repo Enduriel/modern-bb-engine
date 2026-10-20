@@ -67,5 +67,7 @@ pub use texture::{GpuTexture, TEXTURE_FORMAT};
 pub use ui_layer::UiLayer;
 #[cfg(target_os = "linux")]
 pub use ui_page::DmaBuf;
+#[cfg(target_os = "macos")]
+pub use ui_page::IOSurface;
 pub use ui_page::{CopyStats as UiCopyStats, Region as UiRegion, UiPage};
 pub use world_renderer::{Atlases, Clock, Discard, FrameStats, WorldMap, WorldRenderer};

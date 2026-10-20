@@ -324,6 +324,7 @@ dependencies = [
  "bb-assets",
  "bb-engine",
  "cosmic-text",
+ "objc2 0.6.5",
  "png",
  "squirrel",
  "squirrel-bb",

@@ -17,7 +17,8 @@ use crate::coui::SCHEME;
 /// Offscreen, composited on the GPU: Chromium's GPU process composites the page and
 /// hands each paint over as a GPU buffer (`shared_texture_enabled`,
 /// `OnAcceleratedPaint`), never as pixels in memory. ANGLE runs on the system's EGL
-/// (`gl-egl`, what CEF picks for offscreen GPU paints on Linux). The page's content is
+/// on Linux (`gl-egl`, what CEF picks for offscreen GPU paints there) and on Metal on
+/// macOS (Chromium's default there, [`ANGLE`]). The page's content is
 /// rasterized on the GPU too (Chromium's default there): where the page repaints, it
 /// takes about a third of the CPU that CPU raster does. `BB_UI_CPU_RASTER=1` rasterizes
 /// on the CPU instead (`--disable-gpu-rasterization`), to compare.
@@ -46,7 +47,7 @@ use crate::coui::SCHEME;
 /// process: `--single-process` isn't supported upstream, and our page's handlers assume
 /// their own process.
 const SWITCHES: &[(&str, Option<&str>)] = &[
-	("use-angle", Some("gl-egl")),
+	("use-angle", Some(ANGLE)),
 	("mute-audio", None),
 	("no-first-run", None),
 	("disable-extensions", None),
@@ -76,6 +77,12 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 /// for no measurable frame or CPU cost. Recheck on a V8 upgrade: the flag's meaning
 /// may change.
 const V8_FLAGS: &str = "--optimize-for-size";
+
+/// The backend ANGLE (Chromium's GL) draws through: see [`SWITCHES`].
+#[cfg(not(target_os = "macos"))]
+const ANGLE: &str = "gl-egl";
+#[cfg(target_os = "macos")]
+const ANGLE: &str = "metal";
 
 /// The origins allowed to drive the page over DevTools at `port`
 /// (`--remote-allow-origins`; Chromium refuses a DevTools WebSocket from any other

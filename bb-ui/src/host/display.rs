@@ -6,22 +6,41 @@
 //! native buffers and delivers no paints at all. So the page needs a display connection,
 //! though it never opens a window: the game's own (its window's), or, for the tests and
 //! tools, a headless gamescope's ([`with_display`]).
+//!
+//! On macOS there is nothing to choose: Chromium's GPU process makes its IOSurfaces
+//! through Metal whether or not the program has a window or a display session.
 
+#[cfg(target_os = "linux")]
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::ExitCode;
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 
 /// Which windowing system Chromium connects to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Display {
+	#[cfg(target_os = "linux")]
 	X11,
+	#[cfg(target_os = "linux")]
 	Wayland,
+	/// The system's own (macOS): no connection to choose.
+	#[cfg(not(target_os = "linux"))]
+	Native,
 }
 
 impl Display {
 	/// The display connection this process has: Wayland's if `WAYLAND_DISPLAY` is set
 	/// (as winit picks it), else X11's if `DISPLAY` is; `BB_UI_OZONE=x11|wayland`
-	/// chooses. None: an error saying what to do.
+	/// chooses. None: an error saying what to do. Not Linux: [`Display::Native`].
+	#[cfg(not(target_os = "linux"))]
+	pub fn from_env() -> Result<Display, String> {
+		Ok(Display::Native)
+	}
+
+	/// See the other OSes' `from_env`.
+	#[cfg(target_os = "linux")]
 	pub fn from_env() -> Result<Display, String> {
 		let set = |name: &str| std::env::var_os(name).is_some_and(|v| !v.is_empty());
 		match std::env::var("BB_UI_OZONE").ok().as_deref() {
@@ -42,26 +61,40 @@ impl Display {
 		}
 	}
 
-	/// Chromium's `--ozone-platform` for it.
-	pub(super) fn ozone(self) -> &'static str {
+	/// Chromium's `--ozone-platform` for it (Linux's only).
+	pub(super) fn ozone(self) -> Option<&'static str> {
 		match self {
-			Display::X11 => "x11",
-			Display::Wayland => "wayland",
+			#[cfg(target_os = "linux")]
+			Display::X11 => Some("x11"),
+			#[cfg(target_os = "linux")]
+			Display::Wayland => Some("wayland"),
+			#[cfg(not(target_os = "linux"))]
+			Display::Native => None,
 		}
 	}
 }
 
+#[cfg(target_os = "linux")]
 /// Says where a wrapped process runs: unset, [`with_display`] starts a headless
 /// gamescope; `gamescope` inside it; `current` uses this session's display connection.
 const MODE: &str = "BB_UI_DISPLAY";
 /// Where the wrapped process writes its exit status (gamescope doesn't pass it on).
+#[cfg(target_os = "linux")]
 const STATUS: &str = "BB_UI_DISPLAY_STATUS";
 
 /// Run `run` (a test's or tool's `main`, after [`run_subprocess`](super::run_subprocess))
 /// with a display connection for the page, never the player's: this program runs again
 /// inside a headless gamescope (nothing shows on any screen), and its exit status comes
 /// back out. `BB_UI_DISPLAY=current` runs it on the session's own display connection
-/// instead. Without gamescope it fails, saying so.
+/// instead. Without gamescope it fails, saying so. On macOS it just runs `run`: the page
+/// needs no display connection there ([`Display::Native`]).
+#[cfg(not(target_os = "linux"))]
+pub fn with_display(run: impl FnOnce() -> ExitCode) -> ExitCode {
+	run()
+}
+
+/// See the other OSes' `with_display`.
+#[cfg(target_os = "linux")]
 pub fn with_display(run: impl FnOnce() -> ExitCode) -> ExitCode {
 	match std::env::var(MODE).ok().as_deref() {
 		Some("current" | "gamescope") => {
@@ -88,6 +121,7 @@ pub fn with_display(run: impl FnOnce() -> ExitCode) -> ExitCode {
 	}
 }
 
+#[cfg(target_os = "linux")]
 /// Lines gamescope (and its Vulkan layer, in our process) prints about itself.
 fn gamescope_noise(line: &str) -> bool {
 	const PREFIXES: &[&str] = &[
@@ -110,6 +144,7 @@ fn gamescope_noise(line: &str) -> bool {
 	PREFIXES.iter().any(|p| line.starts_with(p))
 }
 
+#[cfg(target_os = "linux")]
 /// Pass `from`'s lines on to `to`, without gamescope's own.
 fn forward(from: impl Read + Send + 'static, mut to: impl Write + Send + 'static) -> std::thread::JoinHandle<()> {
 	std::thread::spawn(move || {
@@ -121,6 +156,7 @@ fn forward(from: impl Read + Send + 'static, mut to: impl Write + Send + 'static
 	})
 }
 
+#[cfg(target_os = "linux")]
 /// Run this program again, with its arguments, inside a headless gamescope.
 fn in_gamescope() -> Result<ExitCode, String> {
 	let exe = std::env::current_exe().map_err(|e| format!("this program's path: {e}"))?;

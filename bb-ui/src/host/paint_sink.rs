@@ -4,9 +4,11 @@
 //! copies what changed into a texture of its own (bb-render's `UiPage`). bb-ui itself
 //! never touches the GPU.
 //!
-//! Only Linux's buffers (DMA-BUFs) so far; Windows' D3D11 shared handles and macOS's
-//! IOSurfaces are still to come.
+//! Linux's buffers (DMA-BUFs) and macOS's (IOSurfaces) so far; Windows' D3D11 shared
+//! handles are still to come.
 
+#[cfg(target_os = "macos")]
+use std::marker::PhantomData;
 #[cfg(target_os = "linux")]
 use std::os::fd::BorrowedFd;
 
@@ -23,6 +25,29 @@ pub struct DmaBufPlane<'a> {
 	pub size: u64,
 }
 
+/// A paint's IOSurface (an `IOSurfaceRef`), the browser's: valid only during the
+/// paint's call.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug)]
+pub struct IOSurface<'a> {
+	surface: std::ptr::NonNull<std::ffi::c_void>,
+	call: PhantomData<&'a ()>,
+}
+
+#[cfg(target_os = "macos")]
+impl IOSurface<'_> {
+	/// # Safety
+	/// `surface` is an `IOSurfaceRef` that stays valid for the lifetime given.
+	pub(super) unsafe fn new(surface: std::ptr::NonNull<std::ffi::c_void>) -> Self {
+		IOSurface { surface, call: PhantomData }
+	}
+
+	/// The `IOSurfaceRef`.
+	pub fn as_ptr(&self) -> *mut std::ffi::c_void {
+		self.surface.as_ptr()
+	}
+}
+
 /// The GPU buffer a paint is in.
 #[derive(Clone, Copy, Debug)]
 pub enum PaintBuffer<'a> {
@@ -30,8 +55,11 @@ pub enum PaintBuffer<'a> {
 	/// given: the driver's implicit layout).
 	#[cfg(target_os = "linux")]
 	DmaBuf { planes: &'a [DmaBufPlane<'a>], modifier: u64 },
+	/// macOS: an IOSurface.
+	#[cfg(target_os = "macos")]
+	IOSurface(IOSurface<'a>),
 	/// No other operating system's yet.
-	#[cfg(not(target_os = "linux"))]
+	#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 	#[doc(hidden)]
 	Unsupported(std::marker::PhantomData<&'a ()>),
 }

@@ -2,7 +2,7 @@
 //!
 //! Chromium paints the page on the GPU and hands each paint over as one of its own GPU
 //! buffers (CEF's accelerated paint, a shared texture): a DMA-BUF on Linux ([`linux`]),
-//! a D3D11 shared handle on Windows and an IOSurface on macOS (not yet).
+//! an IOSurface on macOS ([`macos`]) and a D3D11 shared handle on Windows (not yet).
 //! Each paint is imported and the parts it changed (its dirty rectangles) are copied,
 //! GPU to GPU, into a texture of ours, which [`UiLayer`](crate::UiLayer) blends over
 //! the game's frame. Nothing of the page passes through the CPU.
@@ -10,10 +10,12 @@
 //! CEF's rules for the buffer: it may only be used during the paint's callback, comes
 //! from a pool (a different buffer each paint), and goes back to the pool when the
 //! callback returns. So the copy is submitted and waited for (that submission only, not
-//! the whole device) before [`UiPage::copy_dmabuf`] returns. Each pooled buffer is
-//! imported once and kept while the browser keeps handing it over (`imports`): the
-//! import holds its own reference to the buffer and is only read during a callback that
-//! hands over that buffer. It runs on CEF's thread; the device and queue are
+//! the whole device) before [`UiPage::copy_dmabuf`] (or `copy_iosurface`) returns. Each
+//! pooled buffer is imported once and kept while the browser keeps handing it over
+//! (`imports`; on macOS each pooled IOSurface likewise, see `macos`): the import holds
+//! its own reference to the buffer and is only read during a callback that hands over
+//! that buffer. It runs on CEF's thread (on macOS the main thread, which runs CEF's work
+//! for the game); the device and queue are
 //! shared with the game's thread, whose submissions it is ordered with by the queue.
 //!
 //! The pixels themselves are read back only on demand ([`UiPage::read`]): a small
@@ -24,6 +26,8 @@
 mod imports;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -31,6 +35,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 pub use linux::DmaBuf;
+#[cfg(target_os = "macos")]
+pub use macos::IOSurface;
 
 use crate::gpu::Gpu;
 
@@ -115,6 +121,9 @@ struct Inner {
 	/// The browser's paint buffers imported so far (kept while it reuses them).
 	#[cfg(target_os = "linux")]
 	imports: Mutex<imports::Imports>,
+	/// macOS: the browser's pooled surfaces, imported once each (see `macos`).
+	#[cfg(target_os = "macos")]
+	imports: Mutex<macos::Imports>,
 }
 
 /// The page's latest frame on the GPU, shared between the browser's paint thread
@@ -127,7 +136,8 @@ pub struct UiPage {
 
 impl UiPage {
 	/// The device features importing the browser's paints needs (Linux: Vulkan's
-	/// DMA-BUF import), for [`Gpu::headless_with`] and [`Gpu::for_surface_with`].
+	/// DMA-BUF import; macOS: none, Metal does it), for [`Gpu::headless_with`] and
+	/// [`Gpu::for_surface_with`].
 	pub const FEATURES: wgpu::Features = features();
 
 	/// The page on `gpu`, which must have been opened with [`UiPage::FEATURES`]: fails,
@@ -150,6 +160,8 @@ impl UiPage {
 				stats: Mutex::new(CopyStats::default()),
 				#[cfg(target_os = "linux")]
 				imports: Mutex::new(imports::Imports::default()),
+				#[cfg(target_os = "macos")]
+				imports: Mutex::new(macos::Imports::default()),
 			}),
 		})
 	}
@@ -352,7 +364,11 @@ fn supported(gpu: &Gpu) -> Result<(), String> {
 	{
 		linux::supported(gpu)
 	}
-	#[cfg(not(target_os = "linux"))]
+	#[cfg(target_os = "macos")]
+	{
+		macos::supported(gpu)
+	}
+	#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 	{
 		let _ = gpu;
 		Err("the UI page's shared GPU textures aren't implemented on this operating system yet".into())

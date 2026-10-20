@@ -16,6 +16,7 @@ impl PageSink for GpuPage {
 	fn paint(&self, paint: &SharedPaint) -> Result<(), String> {
 		let rects: Vec<UiRegion> = paint.dirty.iter().map(|r| region(*r)).collect();
 		match paint.buffer {
+			#[cfg(target_os = "linux")]
 			PaintBuffer::DmaBuf { planes, modifier } => {
 				let [plane] = planes else {
 					return Err(format!("a paint in {} planes; the page takes one", planes.len()));
@@ -30,6 +31,16 @@ impl PageSink for GpuPage {
 					bgra: paint.bgra,
 				};
 				self.0.copy_dmabuf(&buffer, &rects)
+			}
+			#[cfg(target_os = "macos")]
+			PaintBuffer::IOSurface(surface) => {
+				let buffer = bb_render::IOSurface {
+					surface: surface.as_ptr(),
+					width: paint.width,
+					height: paint.height,
+					bgra: paint.bgra,
+				};
+				self.0.copy_iosurface(&buffer, &rects)
 			}
 		}
 	}
