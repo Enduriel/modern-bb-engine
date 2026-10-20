@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, IdentityMap, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::{Natives, inject_natives};
 use super::overload::{make_dispatcher, overload_key, single_overload};
@@ -215,7 +215,7 @@ struct TacticalMachine {
 	instantiate: Instantiator,
 	rosters: HashMap<i64, Vec<SqStrongRef>>,
 	units: Vec<UnitRecord>,
-	by_identity: HashMap<i64, usize>,
+	by_identity: IdentityMap<usize>,
 	roster_class: Option<SqClass<RosterData>>,
 	sprite_class: Option<SqClass<UnitSpriteData>>,
 	/// Unit ids, shared with the world's entities (see `entity_ids`).
@@ -704,7 +704,7 @@ impl TacticalEntities {
 				instantiate,
 				rosters: HashMap::new(),
 				units: Vec::new(),
-				by_identity: HashMap::new(),
+				by_identity: IdentityMap::default(),
 				roster_class: None,
 				sprite_class: None,
 				ids: EntityIds::default(),

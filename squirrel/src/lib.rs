@@ -15,7 +15,7 @@ pub(crate) use function::CallArgs;
 pub use function::{
 	DynNumber, ForwardArgs, Forwarded, MemberKey, Number, Retained, SqStrongRef, StackArg, StackArgs, This, Variadic,
 };
-pub use identity::Identity;
+pub use identity::{Identity, IdentityHasher, IdentityMap};
 pub(crate) use object::SqObject;
 pub use object::SqObjectType;
 pub use profile::{CallNode, FunctionKind, Profile, ProfiledFunction, ScriptProfiler};
