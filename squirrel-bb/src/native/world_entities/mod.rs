@@ -493,9 +493,7 @@ fn reap(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, now: i64) -> Resu
 
 /// The `X`/`Y` of a script vector.
 fn vec_xy(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
-	let x = v.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
-	let y = v.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
-	(x, y)
+	crate::native::vec::xy(vm, v)
 }
 
 /// The axial tile under a world pixel position (`World.worldToTile`).
@@ -779,7 +777,7 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<(), String> {
 				let world = world_access(&m, "setPos")?;
-				let xy = crate::native::vec::xy(vm, &world.vec2f, &pos.0);
+				let xy = crate::native::vec::xy(vm, &pos.0);
 				let (q, r) = world.grid.world_to_tile(xy.0, xy.1);
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.pos = xy;

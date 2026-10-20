@@ -195,6 +195,9 @@ struct GridState {
 	/// The navigation-path class, used by `World.getNavigator().findPath` to mint
 	/// path handles. Set during `install`; released by `clear`.
 	nav_path_class: Option<SqClass<PathData>>,
+	/// The `vec2f` class, for `tileToWorld`'s vectors (set by the host; released by
+	/// `clear`).
+	vec2f: Option<super::vec::VecClass>,
 	/// Where brushes set on tiles and details hint their atlases.
 	sprites: Sprites,
 	/// The engine's random stream: new details' mirroring, scale and rotation.
@@ -310,6 +313,7 @@ impl WorldGrid {
 				class: None,
 				detail_class: None,
 				nav_path_class: None,
+				vec2f: None,
 				sprites: Sprites::default(),
 				engine_rng: EngineRng::unseeded(),
 				ids: EntityIds::default(),
@@ -577,8 +581,7 @@ impl WorldGrid {
 		let uncover_fog_of_war = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| {
-				let px = pos.0.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
-				let py = pos.0.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+				let (px, py) = super::vec::xy(vm, &pos.0);
 				let mut grid = g.borrow_mut();
 				let (w, h) = (grid.width, grid.height);
 				let (cq, cr) = world_layout::world_to_tile(px, py, w, h);
@@ -644,8 +647,7 @@ impl WorldGrid {
 		let world_to_tile = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<SqStrongRef, String> {
-				let px = pos.0.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
-				let py = pos.0.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+				let (px, py) = super::vec::xy(vm, &pos.0);
 				let (w, h) = {
 					let grid = g.borrow();
 					(grid.width, grid.height)
@@ -798,7 +800,7 @@ impl WorldGrid {
 			vm.make_closure(move || nav.clone())
 		};
 
-		let tile_to_world = tile_to_world_overloads(vm);
+		let tile_to_world = tile_to_world_overloads(vm, &self.grid);
 		let mut world = SqTable::root(vm)
 			.get::<SqTable>("World")
 			.expect("World table must be installed before WorldGrid");
@@ -959,6 +961,12 @@ impl WorldGrid {
 		g.class = None;
 		g.detail_class = None;
 		g.nav_path_class = None;
+		g.vec2f = None;
+	}
+
+	/// Make `tileToWorld`'s vectors of `vec2f`. Call before the scripts run.
+	pub(crate) fn set_vec_class(&self, vec2f: super::vec::VecClass) {
+		self.grid.borrow_mut().vec2f = Some(vec2f);
 	}
 
 	/// `World.clearScene()`'s share: the details and the region names go, and fog of
@@ -1087,19 +1095,25 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 
 /// `World.tileToWorld(coords)` / `tileToWorld(x, y)`: an axial tile's centre in world
 /// pixels, as a vector.
-fn tile_to_world_overloads(vm: &mut SQVM) -> Vec<(String, SqStrongRef)> {
-	fn centre(vm: &SQVM, q: i64, r: i64) -> Result<Option<SqStrongRef>, String> {
-		let create_vec = SqTable::root(vm)
-			.get::<SqStrongRef>("createVec")
-			.ok_or("tileToWorld: createVec missing")?;
-		create_vec.call_ret::<SqStrongRef, _>(vm, world_layout::tile_pos(q, r + q / 2))
+fn tile_to_world_overloads(vm: &mut SQVM, grid: &Rc<RefCell<GridState>>) -> Vec<(String, SqStrongRef)> {
+	fn centre(grid: &RefCell<GridState>, vm: &SQVM, q: i64, r: i64) -> Result<Option<SqStrongRef>, String> {
+		let (x, y) = world_layout::tile_pos(q, r + q / 2);
+		// No script runs while the vector is made, so the borrow can't be observed.
+		if let Some(vec2f) = grid.borrow().vec2f.as_ref() {
+			return Ok(Some(vec2f.instantiate(vm, super::vec::Vec2f { x, y })));
+		}
+		// A grid the host gave no class (standalone): the script's `createVec`.
+		let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("tileToWorld: createVec missing")?;
+		create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
 	}
-	let from_coords = vm.make_closure(|vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
+	let g = grid.clone();
+	let from_coords = vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
 		let q = coords.0.get_member::<i64>(vm, "X").ok_or("tileToWorld: coords need X")?;
 		let r = coords.0.get_member::<i64>(vm, "Y").ok_or("tileToWorld: coords need Y")?;
-		centre(vm, q, r)
+		centre(&g, vm, q, r)
 	});
-	let from_xy = vm.make_closure(|vm: &SQVM, q: i64, r: i64| centre(vm, q, r));
+	let g = grid.clone();
+	let from_xy = vm.make_closure(move |vm: &SQVM, q: i64, r: i64| centre(&g, vm, q, r));
 	let dispatch = make_dispatcher(vm, "tileToWorld");
 	vec![
 		(overload_key("tileToWorld", 1), from_coords),
@@ -1171,8 +1185,7 @@ fn build_world_navigation_path_class(vm: &mut SQVM) -> SqClass<PathData> {
 				let g = p.grid.borrow();
 				(g.tiles[id].q, g.tiles[id].r)
 			};
-			let x = pos.0.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
-			let y = pos.0.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+			let (x, y) = super::vec::xy(vm, &pos.0);
 			let centre = world_layout::tile_pos(q, r + q / 2);
 			super::world_query::distance(centre, (x, y)) <= 4.0
 		})

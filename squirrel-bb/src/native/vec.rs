@@ -27,8 +27,8 @@ pub(crate) type VecClass = SqClass<Vec2f>;
 
 /// The `X` and `Y` of a script vector: a `vec2f`'s straight from its payload, anything
 /// else's read as members (a number each, else 0).
-pub(crate) fn xy(vm: &SQVM, class: &VecClass, v: &SqStrongRef) -> (f64, f64) {
-	class.with_payload(vm, v, |p| (p.x, p.y)).unwrap_or_else(|| {
+pub(crate) fn xy(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
+	v.with_native(vm, |p: &mut Vec2f| (p.x, p.y)).unwrap_or_else(|| {
 		let x = v.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
 		let y = v.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
 		(x, y)

@@ -173,11 +173,7 @@ pub(crate) fn install(
 	let is_visible = vm.make_closure(move || visible.get());
 	// World.move(from, to, max): `from` moved toward `to` by at most `max` pixels.
 	let step = vm.make_closure(|vm: &SQVM, from: Retained, to: Retained, max: Number| -> Option<SqStrongRef> {
-		let xy = |v: &SqStrongRef| {
-			let x = v.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
-			let y = v.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
-			(x, y)
-		};
+		let xy = |v: &SqStrongRef| super::vec::xy(vm, v);
 		let (x, y) = super::world_layout::step_toward(xy(&from.0), xy(&to.0), max.0);
 		SqTable::root(vm)
 			.get::<SqStrongRef>("createVec")

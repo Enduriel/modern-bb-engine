@@ -112,6 +112,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		world_grid.set_sprites(natives.sprites.clone());
 		world_grid.set_engine_rng(natives.engine_rng.clone());
 		world_grid.set_camera(natives.world_camera.clone());
+		world_grid.set_vec_class(natives.vec2f.clone());
 		world_grid.install(&mut vm);
 		// After the grid natives.
 		let world_entities = WorldEntities::new(modules.instantiator());
