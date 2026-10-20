@@ -1,22 +1,23 @@
 //! The scripts with their real UI page, in the browser host (see [`super`]).
 
 use bb_engine::harness::GameEngine;
-use bb_render::{Gpu, RenderTarget, UiLayer};
-use bb_ui::host::{Echo, HostConfig, Modifiers, MouseButton, UiSession};
+use bb_render::{Gpu, RenderTarget, UiLayer, UiRegion};
+use bb_ui::host::{Echo, HostConfig, Modifiers, MouseButton, PageFrames, UiSession};
 
 use super::Key;
 use crate::game::{Boot, Start};
 
-/// How often the page paints, per second.
-const PAGE_FRAME_RATE: i32 = 60;
+/// How often the page makes frames a second while a session waits on it without game
+/// frames (otherwise one per game frame, see [`Front::draw`]).
+const PAGE_WAITING_RATE: i32 = 60;
 
 pub struct Front {
 	session: UiSession,
 	layer: UiLayer,
-	/// The paint last uploaded to the layer.
-	painted: u64,
 	/// Buttons whose press went to the page (bit `1 << id`): their release follows.
 	captured: u32,
+	/// Whether the last game frame was drawn, and so began the page's frame.
+	drawn: bool,
 }
 
 impl Front {
@@ -29,7 +30,8 @@ impl Front {
 			width: mode.width.max(1) as u32,
 			height: mode.height.max(1) as u32,
 			devtools_port: devtools,
-			frame_rate: PAGE_FRAME_RATE,
+			// The page keeps up with the game's frames, at any refresh rate.
+			frames: PageFrames::Game { waiting_rate: PAGE_WAITING_RATE },
 			// A live clock behind Time.getExactTime, as the original's: the AI's
 			// background work then spreads over frames.
 			exact_clock: squirrel_bb::ExactClock::Live,
@@ -70,8 +72,8 @@ impl Front {
 		Ok(Front {
 			session,
 			layer: UiLayer::new(gpu),
-			painted: 0,
 			captured: 0,
+			drawn: false,
 		})
 	}
 
@@ -89,6 +91,11 @@ impl Front {
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
 		self.session.step(ms)?;
 		self.session.unpark();
+		// A page frame for each game frame: after its draw (`draw`), or now for a frame
+		// that wasn't drawn (a loop that only steps), so the page never stands still.
+		if !std::mem::replace(&mut self.drawn, false) {
+			self.session.host().begin_frame();
+		}
 		Ok(())
 	}
 
@@ -180,6 +187,11 @@ impl Front {
 		}
 	}
 
+	/// What uploading the page's paints has cost so far.
+	pub fn upload_stats(&self) -> bb_render::UploadStats {
+		self.layer.upload_stats()
+	}
+
 	/// The bytes the page's texture takes on the GPU.
 	pub fn layer_bytes(&self) -> u64 {
 		self.layer.bytes()
@@ -187,13 +199,21 @@ impl Front {
 
 	/// Draw the page's latest paint over `target`.
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
-		let (layer, painted) = (&mut self.layer, &mut self.painted);
-		self.session.host().with_frame(|frame| {
-			if frame.paints != *painted {
-				layer.upload(gpu, frame.width, frame.height, &frame.bgra);
-				*painted = frame.paints;
+		// Only what the page repainted since the last frame.
+		let layer = &mut self.layer;
+		self.session.host().take_damage(|frame, damage| {
+			if !damage.is_empty() {
+				let regions: Vec<UiRegion> = damage
+					.iter()
+					.map(|r| UiRegion { x: r.x, y: r.y, width: r.width, height: r.height })
+					.collect();
+				layer.upload_regions(gpu, frame.width, frame.height, &frame.bgra, &regions);
 			}
 		});
 		self.layer.draw(gpu, target);
+		// The page's next frame, painted by the next game frame's draw (bb-ui's
+		// `PageFrames::Game`).
+		self.session.host().begin_frame();
+		self.drawn = true;
 	}
 }

@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use cef::*;
 
 use super::ipc;
+use super::frame::Painted;
+use super::paint_stats::PaintCounters;
 use super::bridge_server::RequestKind;
 use super::responder::Responder;
 
@@ -51,21 +53,12 @@ pub enum Event {
 	RendererGone(String),
 }
 
-/// The latest painted frame of the page.
-pub struct FrameBuffer {
-	pub width: u32,
-	pub height: u32,
-	/// BGRA, rows top to bottom.
-	pub bgra: Vec<u8>,
-	/// How many paints have happened so far.
-	pub paints: u64,
-}
-
 /// State shared between the CEF threads and the game thread.
 pub(super) struct Shared {
 	pub events: Mutex<mpsc::Sender<Event>>,
 	pub browser: Mutex<Option<Browser>>,
-	pub frame: Mutex<Option<FrameBuffer>>,
+	/// The latest frame, and what changed in it since the owner last took that.
+	pub frame: Mutex<Painted>,
 	/// The view's width and height (CSS pixels); see [`UiHost::resize`](super::UiHost::resize).
 	pub size: Mutex<(i32, i32)>,
 	/// Screen pixels per CSS pixel: the UI scale, which the page is drawn at (see
@@ -73,6 +66,8 @@ pub(super) struct Shared {
 	pub scale: Mutex<f64>,
 	/// How many images `coui://` has served from the game's files.
 	pub images_served: AtomicU64,
+	/// What the paints cost on our side.
+	pub paint_counters: PaintCounters,
 }
 
 impl Shared {
@@ -124,7 +119,7 @@ wrap_render_handler! {
 			&self,
 			_browser: Option<&mut Browser>,
 			type_: PaintElementType,
-			_dirty_rects: Option<&[Rect]>,
+			dirty_rects: Option<&[Rect]>,
 			buffer: *const u8,
 			width: ::std::os::raw::c_int,
 			height: ::std::os::raw::c_int,
@@ -132,27 +127,23 @@ wrap_render_handler! {
 			if type_ != PaintElementType::VIEW || buffer.is_null() || width <= 0 || height <= 0 {
 				return;
 			}
+			let started = std::time::Instant::now();
 			let len = width as usize * height as usize * 4;
 			// SAFETY: CEF passes a BGRA buffer of `width * height` pixels.
 			let pixels = unsafe { std::slice::from_raw_parts(buffer, len) };
-			let mut frame = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
-			let paints = frame.as_ref().map_or(0, |f| f.paints) + 1;
-			match frame.as_mut() {
-				Some(f) if f.bgra.len() == len => f.bgra.copy_from_slice(pixels),
-				_ => {
-					*frame = Some(FrameBuffer {
-						width: width as u32,
-						height: height as u32,
-						bgra: pixels.to_vec(),
-						paints: 0,
-					})
-				}
-			}
-			if let Some(f) = frame.as_mut() {
-				f.width = width as u32;
-				f.height = height as u32;
-				f.paints = paints;
-			}
+			let dirty = dirty_rects.unwrap_or_default();
+			let whole = [Rect { x: 0, y: 0, width, height }];
+			// None said: all of it.
+			let dirty = if dirty.is_empty() { &whole[..] } else { dirty };
+			let rects = dirty.iter().map(|r| (r.x, r.y, r.width, r.height));
+			let copied = self
+				.shared
+				.frame
+				.lock()
+				.unwrap_or_else(|e| e.into_inner())
+				.paint(pixels, width as u32, height as u32, rects);
+			let damaged = dirty.iter().map(|r| r.width.max(0) as u64 * r.height.max(0) as u64).sum();
+			self.shared.paint_counters.add(started.elapsed(), copied, damaged);
 		}
 	}
 }

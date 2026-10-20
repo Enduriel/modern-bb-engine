@@ -36,13 +36,17 @@ mod bridge_client;
 mod bridge_server;
 mod bridge_wire;
 mod client;
+mod damage;
 mod fonts;
+mod frame;
 pub mod goldens;
 mod input;
 mod ipc;
 mod live_input;
 mod memory;
+mod page_frames;
 mod page_log;
+mod paint_stats;
 mod renderer;
 mod responder;
 mod scheme;
@@ -62,13 +66,17 @@ use cef::args::Args;
 use cef::*;
 
 use client::Shared;
-pub use client::{Event, FrameBuffer};
+pub use client::Event;
+pub use damage::PaintRect;
+pub use frame::FrameBuffer;
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
 use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton};
 pub use bridge_server::RequestKind;
 pub use responder::Responder;
+pub use page_frames::PageFrames;
 pub use page_log::{Echo, LogLine};
+pub use paint_stats::PaintStats;
 pub use session::UiSession;
 pub use session_play::ProceduralRequest;
 
@@ -125,8 +133,9 @@ pub struct HostConfig {
 	/// The view size in pixels (the game's resolution).
 	pub width: u32,
 	pub height: u32,
-	/// Offscreen paints per second.
-	pub frame_rate: i32,
+	/// When the page makes its frames (and paints what changed): on Chromium's clock by
+	/// default, in step with the game's frames for the game in a window.
+	pub frames: PageFrames,
 	/// A directory CEF may use for its profile and log (created if missing).
 	pub cache_dir: PathBuf,
 	/// Serve Chrome DevTools on `127.0.0.1:<port>` (open `chrome://inspect` in a
@@ -161,7 +170,7 @@ impl Default for HostConfig {
 			url: MAIN_PAGE.to_string(),
 			width: 1920,
 			height: 1080,
-			frame_rate: 30,
+			frames: PageFrames::Clock(30),
 			cache_dir: std::env::temp_dir().join(format!("bb-ui-{}", std::process::id())),
 			devtools_port: None,
 			exact_clock: squirrel_bb::ExactClock::Frame,
@@ -194,6 +203,8 @@ pub struct UiHost {
 	pointer: Cell<Option<(i32, i32)>>,
 	/// Mouse buttons held (`EVENTFLAG_*_MOUSE_BUTTON` bits), which moves carry.
 	held: Cell<u32>,
+	/// When the page's frames begin (see [`PageFrames`]).
+	frame_clock: page_frames::FrameClock,
 	cache_dir: PathBuf,
 	_args: Args,
 }
@@ -243,10 +254,11 @@ impl UiHost {
 		let shared = Arc::new(Shared {
 			events: Mutex::new(events_tx),
 			browser: Mutex::new(None),
-			frame: Mutex::new(None),
+			frame: Mutex::new(Default::default()),
 			size: Mutex::new((config.width as i32, config.height as i32)),
 			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
+			paint_counters: Default::default(),
 		});
 		bridge_server::start(bridge, shared.clone());
 		let mut factory = scheme::CouiFactory::new(files, shared.clone());
@@ -263,17 +275,19 @@ impl UiHost {
 			next_request: Cell::new(1),
 			pointer: Cell::new(None),
 			held: Cell::new(0),
+			frame_clock: page_frames::FrameClock::new(config.frames),
 			cache_dir: config.cache_dir,
 			_args: args,
 		};
 
-		let window_info = WindowInfo::default().set_as_windowless(Default::default());
+		let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
+		window_info.external_begin_frame_enabled = config.frames.external().into();
 		// The generic font families are the original's, Windows' defaults (probed,
 		// `probes/font_families.js`): `monospace` is Courier New there, where Linux's
 		// default is DejaVu Sans Mono (a pixel taller a line: Modern Hooks' popup, and
 		// MSU's `monospace` text). Fontconfig gives the metric-compatible fonts here.
 		let browser_settings = BrowserSettings {
-			windowless_frame_rate: config.frame_rate,
+			windowless_frame_rate: config.frames.clock_rate(),
 			background_color: 0,
 			standard_font_family: "Times New Roman".into(),
 			serif_font_family: "Times New Roman".into(),
@@ -666,8 +680,7 @@ impl UiHost {
 
 	/// A copy of the latest painted frame.
 	pub fn frame(&self) -> Option<FrameBuffer> {
-		let frame = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
-		frame.as_ref().map(|f| FrameBuffer {
+		self.with_frame(|f| FrameBuffer {
 			width: f.width,
 			height: f.height,
 			bgra: f.bgra.clone(),
@@ -677,8 +690,21 @@ impl UiHost {
 
 	/// Run `f` on the latest painted frame, without copying it; `None` before the first.
 	pub fn with_frame<R>(&self, f: impl FnOnce(&FrameBuffer) -> R) -> Option<R> {
-		let frame = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
-		frame.as_ref().map(f)
+		let painted = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+		painted.frame.as_ref().map(f)
+	}
+
+	/// Run `f` on the latest painted frame and the parts of it that changed since the
+	/// last call (none, if nothing did), which then count as taken: for the one owner
+	/// who keeps a copy of the frame up to date (the game's GPU texture of it). The
+	/// first call after the first paint, or after the view changed size, has all of it.
+	/// `None` before the first paint.
+	pub fn take_damage<R>(&self, f: impl FnOnce(&FrameBuffer, &[PaintRect]) -> R) -> Option<R> {
+		let mut painted = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+		let painted = &mut *painted;
+		let result = painted.frame.as_ref().map(|frame| f(frame, painted.damage.rects()));
+		painted.damage.clear();
+		result
 	}
 
 	/// The painted page's alpha at `(x, y)` (painted pixels: the screen's, see
@@ -698,12 +724,34 @@ impl UiHost {
 
 	/// How many frames have been painted so far.
 	pub fn paints(&self) -> u64 {
-		self.shared
-			.frame
-			.lock()
-			.unwrap_or_else(|e| e.into_inner())
-			.as_ref()
-			.map_or(0, |f| f.paints)
+		self.with_frame(|f| f.paints).unwrap_or(0)
+	}
+
+	/// The game drew a frame: with [`PageFrames::Game`], the page makes its next frame
+	/// now (and paints what changed by the next game frame). Nothing to do on Chromium's
+	/// clock.
+	pub fn begin_frame(&self) {
+		if !self.frame_clock.external() {
+			return;
+		}
+		if let Some(host) = self.browser_host() {
+			host.send_external_begin_frame();
+			self.frame_clock.began(Instant::now());
+		}
+	}
+
+	/// A session waits on the page without drawing game frames: with
+	/// [`PageFrames::Game`], begin a frame if none began for a waiting frame's time, so
+	/// the page's animations go on while it waits.
+	pub fn pace(&self) {
+		if self.frame_clock.due(Instant::now()) {
+			self.begin_frame();
+		}
+	}
+
+	/// What the page's paints have cost on our side so far.
+	pub fn paint_stats(&self) -> PaintStats {
+		self.shared.paint_counters.get()
 	}
 
 	/// The directory with CEF's profile and log.

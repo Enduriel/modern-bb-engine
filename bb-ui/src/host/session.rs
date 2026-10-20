@@ -232,6 +232,8 @@ impl UiSession {
 	/// it again.
 	fn pump_until_deadline(&self, deadline: Instant) {
 		self.unpark();
+		// No game frame is drawn while the session waits: the page's frames go on.
+		self.host().pace();
 		for event in self.host().poll() {
 			self.handle(event);
 		}

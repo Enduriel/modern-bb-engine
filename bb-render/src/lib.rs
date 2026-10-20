@@ -51,5 +51,5 @@ pub use screenshot::{save_png, write_png};
 pub use target::{RenderTarget, TARGET_FORMAT};
 pub use bb_assets::mips::mip_chain;
 pub use texture::{GpuTexture, TEXTURE_FORMAT};
-pub use ui_layer::UiLayer;
+pub use ui_layer::{Region as UiRegion, UiLayer, UploadStats};
 pub use world_renderer::{Atlases, Clock, Discard, FrameStats, WorldRenderer};
