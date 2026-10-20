@@ -5,6 +5,7 @@
 //! (`TacticalEntity::setPos`, `0x542070`, writes the scene node's local position;
 //! `getPos`, `0x4c2c30`, adds the tile's world position while the unit stands on one).
 //! Taken as a world position it put the unit at the map's corner, where nobody saw it.
+//! While it rises, the tiles in front of it hide what is still below the ground.
 //! Skips cleanly without the Steam install.
 
 use std::path::Path;
@@ -25,6 +26,27 @@ fn rising(engine: &harness::GameEngine, id: i64) -> ((f64, f64), (f64, f64)) {
 	let unit = scene.entities.iter().find(|e| e.id == id).expect("the risen unit is in the scene");
 	let tile = &scene.tiles[unit.tile.expect("on a tile")];
 	(unit.pos, (tile.pos.0, tile.pos.1 + 40.0 * tile.level as f64))
+}
+
+/// The corners of the quads unit `id` adds to a view of `tile` (what the renderer draws
+/// of it and its bars).
+fn unit_quads(engine: &harness::GameEngine, id: i64, tile: (f64, f64)) -> Vec<[[f32; 2]; 4]> {
+	let scene = engine.tactical_scene();
+	let mut without = scene.clone();
+	without.entities.retain(|e| e.id != id);
+	let view = WorldView {
+		center: [tile.0 as f32, tile.1 as f32],
+		zoom: 1.0,
+		width: 800,
+		height: 800,
+	};
+	let (all, rest) = engine.sprites().with(|registry| {
+		(tactical_quads(&scene, registry, &view).quads, tactical_quads(&without, registry, &view).quads)
+	});
+	all.iter()
+		.filter(|q| !rest.iter().any(|r| r.corners == q.corners && r.uv == q.uv))
+		.map(|q| q.corners)
+		.collect()
 }
 
 #[test]
@@ -86,36 +108,27 @@ fn a_unit_spawned_mid_battle_rises_on_its_tile() {
 	let (pos, tile) = rising(&engine, id);
 	assert_eq!(pos.0, tile.0, "rises in its tile's column: at {pos:?}, tile at {tile:?}");
 	assert!(pos.1 < tile.1 && pos.1 > tile.1 - 200.0, "still coming up: at {pos:?}, tile at {tile:?}");
+	// Its upper part shows; what is below the tile in front of it doesn't (the south
+	// hex's upper edge, 40 below the anchor, over the middle 80 units: the original's
+	// screenshots).
+	let quads = unit_quads(&engine, id, tile);
+	let (x, y) = (tile.0 as f32, tile.1 as f32);
+	assert!(quads.iter().flatten().any(|p| p[1] > y), "its upper part shows while it rises");
+	for p in quads.iter().flatten().filter(|p| (p[0] - x).abs() <= 40.0) {
+		assert!(p[1] >= y - 40.0 - 1e-3, "drawn below the tile in front: {p:?}, its tile at {tile:?}");
+	}
 
 	// Risen: on its tile, and the scripts read the same positions as the original's.
 	frames(&engine, 60);
 	let (pos, tile) = rising(&engine, id);
 	assert_eq!(pos, tile, "stands on its tile");
-	// And the renderer draws its sprites there: the quads the unit adds to a view of
-	// its tile sit on and over the tile.
-	let scene = engine.tactical_scene();
-	let mut without = scene.clone();
-	without.entities.retain(|e| e.id != id);
-	let view = WorldView {
-		center: [tile.0 as f32, tile.1 as f32],
-		zoom: 1.0,
-		width: 800,
-		height: 800,
-	};
-	let (all, rest) = engine.sprites().with(|registry| {
-		(tactical_quads(&scene, registry, &view).quads, tactical_quads(&without, registry, &view).quads)
-	});
-	let unit: Vec<[f32; 2]> = all
+	// And the renderer draws its sprites there, on and over the tile.
+	let centres: Vec<[f32; 2]> = unit_quads(&engine, id, tile)
 		.iter()
-		.filter(|q| !rest.iter().any(|r| r.corners == q.corners && r.uv == q.uv))
-		.map(|q| {
-			let c = q.corners;
-			[c.iter().map(|p| p[0]).sum::<f32>() / 4.0, c.iter().map(|p| p[1]).sum::<f32>() / 4.0]
-		})
+		.map(|c| [c.iter().map(|p| p[0]).sum::<f32>() / 4.0, c.iter().map(|p| p[1]).sum::<f32>() / 4.0])
 		.collect();
-	assert!(unit.len() >= 3, "the unit's sprites are drawn ({} quads)", unit.len());
-	let (x, y) = (tile.0 as f32, tile.1 as f32);
-	for c in &unit {
+	assert!(centres.len() >= 3, "the unit's sprites are drawn ({} quads)", centres.len());
+	for c in &centres {
 		assert!((c[0] - x).abs() < 100.0 && c[1] > y - 60.0 && c[1] < y + 200.0, "a sprite at {c:?}, its tile at {tile:?}");
 	}
 	engine

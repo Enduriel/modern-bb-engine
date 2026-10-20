@@ -30,6 +30,7 @@ use squirrel_bb::scene::tactical::{
 };
 
 use crate::sprite::Quad;
+use crate::tactical_clip::FrontEdges;
 use crate::world::{
 	AtlasList, CLOUD_REACH, CLOUD_SHADOW_ALPHA, CLOUD_SHADOW_DROP, CLOUD_SHADOW_SCALE, Look, WorldQuads, WorldView,
 	frame_quad,
@@ -75,6 +76,24 @@ const DEFAULT_SOCKET: &str = "socket_earth";
 const N: (i64, (i64, i64)) = (0, (0, 1));
 const NE: (i64, (i64, i64)) = (1, (1, 0));
 const NW: (i64, (i64, i64)) = (5, (-1, 1));
+
+/// The front neighbours.
+const SE: (i64, i64) = (1, -1);
+const S: (i64, i64) = (0, -1);
+const SW: (i64, i64) = (-1, 0);
+
+/// Which of `tile`'s front neighbours hide what sinks below their upper edges: those
+/// drawn (discovered) and not lower than it (see `tactical_clip`).
+fn front_edges(scene: &TacticalScene, tile: &SceneTacticalTile) -> FrontEdges {
+	let (q, r) = axial(tile);
+	let hides = |(dq, dr): (i64, i64)| tile_at(scene, q + dq, r + dr).is_some_and(|n| n.discovered && n.level >= tile.level);
+	FrontEdges {
+		anchor: [tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H],
+		south_west: hides(SW),
+		south: hides(S),
+		south_east: hides(SE),
+	}
+}
 
 /// The edge facing back the other way.
 fn opposite(direction: i64) -> i64 {
@@ -367,7 +386,7 @@ struct OnTile<'a> {
 /// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
 /// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
 /// desaturated. Then the path's footsteps on the tile, and the rain's splats.
-fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32) {
+fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32, front: &FrontEdges) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
 	let hidden = if tile.visible { 1.0 } else { FOGGED_SATURATION };
@@ -396,9 +415,15 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: F
 		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
 	for entity in on.standing.iter().filter(|e| tile.visible || e.visible_in_fog) {
+		let before = b.quads.len();
 		draw_entity_sprites(b, entity, Some(fade), hidden, level);
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
+		}
+		// A unit sunk into the ground (rising from it) shows only above the tiles in
+		// front of it, bars and all (see `tactical_clip`).
+		if entity.is_actor {
+			crate::tactical_clip::clip_quads(&mut b.quads, before, front);
 		}
 	}
 	// A footstep sorts after what stands on its tile: the tile's list goes by key,
@@ -631,7 +656,8 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	for tile in &order {
 		let index = (tile.row * scene.width + tile.col) as usize;
 		let fade = Fade::of(scene, tile);
-		draw_dressing(&mut b, tile, on.get(&index).unwrap_or(&nothing), fade, overlay_level);
+		let front = front_edges(scene, tile);
+		draw_dressing(&mut b, tile, on.get(&index).unwrap_or(&nothing), fade, overlay_level, &front);
 	}
 	// The marks on the tiles map objects stand on (`HighlightBlockedTiles`): sprites in
 	// the effects layer, made at the battle's setup before anything else there (so over
