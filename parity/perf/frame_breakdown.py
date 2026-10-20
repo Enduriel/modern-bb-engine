@@ -6,7 +6,7 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
 
     python3 parity/perf/frame_breakdown.py --bin BB --out DIR [--vanilla] [--save FILE]
         [--hz 180] [--size 2560x1358] [--vsync on|off] [--quota 400] [--phase-secs 8]
-        [--gpu-times] [--script-profile] [--trace] [--cdp-memory] [--only PHASE,...] [--battles N]
+        [--gpu-times] [--script-profile] [--trace] [--cdp-memory] [--only PHASE,...] [--battles N] [--day SECS]
 
 - The modded run (the default) loads a copy of `--save` (default: the newest save in
   bb's savegames folder) named `bb_probe_*`, with the install's mods; `--vanilla`
@@ -17,7 +17,9 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
 - The scenes, in order: main menu; load (or the new campaign); the world map paused at
   zoom 1, zoomed out, panned at zoom 1 and zoomed out; running at 1x and 4x; a town;
   the character screen; a full-view CSS fade injected into the page over the paused map;
-  a battle (its start, the player's turn idle, AI turns). `--battles N` then fights N
+  a battle (its start, the player's turn idle, AI turns). `--day SECS` adds a phase
+  running at 4x for SECS after the 4x one (28 s crosses a whole day: dusk and dawn).
+  `--battles N` then fights N
   battles by the AI (memory after each). Each scene logs `PHASE name` and lasts
   `--phase-secs`; the driver samples /proc in its middle.
 
@@ -151,6 +153,10 @@ def build(args, rate):
     if want("world run"):
         t.phase("world run 1x", secs, CLEAR_HOSTILES + " ::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.setSpeedMult(1.0);")
         t.phase("world run 4x", secs, "::World.setSpeedMult(4.0);")
+        day = float(opt(args, "--day", 0))
+        if day:
+            # A whole day at 4x (105 s of game time is 26 s): its dusk and dawn.
+            t.phase("world run 4x day", day)
         t.run("::World.State.setPause(true);")
         t.wait(0.5)
     if want("town"):
