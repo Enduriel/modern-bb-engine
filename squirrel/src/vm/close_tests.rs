@@ -73,3 +73,62 @@ fn class_instance_in_a_cycle_releases_its_slots_at_close() {
 
 	drop(vm);
 }
+
+/// What a native class instance made inside a coroutine holds: a strong ref captured
+/// there, from the coroutine's own VM.
+#[derive(Clone)]
+struct Held {
+	callback: SqStrongRef,
+}
+
+/// A strong ref captured inside a `::newthread` coroutine belongs to the VM, not to the
+/// coroutine: held by a VM-owned object in a cycle, it releases nothing while the VM
+/// closes, as any other ref (it released against the coroutine, which `sq_close` frees).
+#[test]
+fn a_ref_captured_in_a_coroutine_releases_nothing_at_close() {
+	let mut vm = SQVM::new(1024);
+	let held = ClassBuilder::<Held>::new("Held").build(&mut vm);
+	vm.register("hold", move |vm: &SQVM, callback: SqStrongRef| held.instantiate(vm, Held { callback }));
+	vm.run_script(
+		r#"
+		local co = ::newthread(function() {
+			local cycle = { h = ::hold(function() {}) };
+			cycle.self <- cycle;
+			return 1;
+		});
+		assert(co.call() == 1);
+		delete ::hold;
+		delete ::Held;
+		"#,
+		"close_tests",
+	)
+	.expect("the cycle is built in a coroutine");
+
+	drop(vm);
+}
+
+/// A strong ref captured inside a coroutine, kept by Rust after the coroutine is gone,
+/// releases against the VM (it used to release through the freed coroutine).
+#[test]
+fn a_ref_captured_in_a_coroutine_outlives_it() {
+	let mut vm = SQVM::new(1024);
+	let kept: Rc<std::cell::RefCell<Vec<SqStrongRef>>> = Rc::default();
+	let keep = kept.clone();
+	vm.register("keep", move |callback: SqStrongRef| keep.borrow_mut().push(callback));
+	vm.run_script(
+		r#"
+		local co = ::newthread(function() { ::keep(function() { return 7; }); });
+		co.call();
+		co = null;
+		"#,
+		"close_tests",
+	)
+	.expect("the ref is kept from a coroutine");
+	vm.collect_garbage();
+	let callback = kept.borrow_mut().pop().expect("kept");
+	callback.call(&vm, ()).expect("the kept callback runs");
+	drop(callback);
+	vm.collect_garbage();
+	drop(kept);
+	drop(vm);
+}

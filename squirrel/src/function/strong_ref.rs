@@ -43,7 +43,9 @@ use crate::{SQ_OK, SQVM, SqTable, SqValue};
 /// them, which this code does not account for. Deferred engine callbacks
 /// (scheduled events, render, UI) never yield, so this is a non-issue in practice.
 pub struct SqStrongRef {
-	// Raw handle, used only to release on Drop (and as the VM the ref belongs to).
+	// The root VM (the one `sq_open` made, never a coroutine's), used only to release on
+	// Drop and as the VM the ref belongs to. A ref captured inside a `::newthread`
+	// coroutine can outlive the coroutine, and closing guards the root (`vm::closing`).
 	vm: squirrel_sys::HSQUIRRELVM,
 	// The referenced object, kept alive by an addref taken at construction.
 	obj: squirrel_sys::HSQOBJECT,
@@ -61,19 +63,20 @@ impl SqStrongRef {
 			squirrel_sys::sq_addref(vm.as_ptr(), &mut obj);
 		}
 		SqStrongRef {
-			vm: vm.as_ptr(),
+			vm: unsafe { squirrel_sys::sq_getrootvm(vm.as_ptr()) },
 			obj,
 			payload: std::cell::Cell::new(std::ptr::null_mut()),
 		}
 	}
 
-	/// A reference belongs to the VM it was captured from; using it against
-	/// another VM would push an object that VM does not own. The whole engine runs
-	/// one VM, so this is a debug-only guard against accidental misuse.
+	/// A reference belongs to the VM it was captured from (or a coroutine of it);
+	/// using it against another VM would push an object that VM does not own. The
+	/// whole engine runs one VM, so this is a debug-only guard against accidental
+	/// misuse.
 	#[inline]
 	fn debug_check_vm(&self, vm: &SQVM) {
 		debug_assert_eq!(
-			vm.as_ptr(),
+			unsafe { squirrel_sys::sq_getrootvm(vm.as_ptr()) },
 			self.vm,
 			"SqStrongRef used with a different VM than it was created from"
 		);
