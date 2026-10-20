@@ -245,6 +245,11 @@ fn quits_from_the_in_game_menu(game: &mut Game, gpu: &Gpu, target: &RenderTarget
 		}
 	}
 	play(game, gpu, target, 2.0)?;
+	// The FPS display, left on over the world, shows on the main menu too.
+	match fps_shown(game)? {
+		Some(shown) if shown.parse::<u32>().is_ok_and(|fps| fps > 0) => {}
+		shown => return Err(format!("back on the main menu, the FPS display shows {shown:?}")),
+	}
 	if game.quit() {
 		return Err("the game ended at the main menu".into());
 	}
@@ -266,7 +271,8 @@ fn fps_shown(game: &Game) -> Result<Option<String>, String> {
 }
 
 /// The FPS display: once shown, vanilla's FPS module shows the frames the
-/// game runs a second, here about 20 (frames 50 ms apart); hidden, it's gone.
+/// game runs a second, here about 20 (frames 50 ms apart); hidden, it's gone. It's left
+/// on after.
 fn shows_the_frame_rate_when_asked(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
 	game.show_fps(true)?;
 	let start = std::time::Instant::now();
@@ -288,7 +294,8 @@ fn shows_the_frame_rate_when_asked(game: &mut Game, gpu: &Gpu, target: &RenderTa
 	if fps_shown(game)?.is_some() {
 		return Err("the FPS display stayed once hidden".into());
 	}
-	Ok(())
+	// On again, for the way back to the main menu (`quits_from_the_in_game_menu`).
+	game.show_fps(true)
 }
 
 fn check(gpu: &Gpu) -> Result<(), String> {

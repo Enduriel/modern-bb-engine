@@ -8,6 +8,10 @@
 //! state no input before its `onInit` (probed: none of a steady stream of pointer moves
 //! reaches it between `RootState.add` and its `onInit`); nor does ours.
 //!
+//! The FPS display is on from the start, as `bb --mods --fps` has it: it shows the frame
+//! rate on the main menu and over the world, though Modern Hooks replaces the page's
+//! root screen, and the game's `setFPS` never reaches a module without its label.
+//!
 //! Skips without a Steam install, without the mods this needs (Modern Hooks, MSU,
 //! Configurable Pause) or without a GPU.
 //!
@@ -29,6 +33,50 @@ use squirrel_bb::VideoMode;
 const NAME: &str = "the_pointer_moves_while_a_modded_campaign_starts";
 /// The mods' zips (name prefixes) this needs.
 const MODS: [&str; 3] = ["mod_modern_hooks", "mod_msu", "mod_configurable_pause"];
+
+/// The values the FPS displays on the page show (hidden ones as `(hidden)`).
+fn fps_shown(game: &Game) -> Result<Vec<String>, String> {
+	let shown = game.front().session().eval(
+		"(function () {
+			var all = document.querySelectorAll('.fps-container');
+			var out = [];
+			for (var i = 0; i < all.length; i++) {
+				var v = all[i].querySelector('.value');
+				out.push(all[i].closest('.root-screen') !== null && all[i].offsetParent !== null && v ? v.textContent : '(hidden)');
+			}
+			return out;
+		})()",
+	)?;
+	Ok(shown.as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect())
+}
+
+/// The FPS display shows one frame rate within a second of frames (its first value
+/// comes after a quarter second), and the page has logged no error over it.
+fn fps_shows(game: &mut Game, when: &str) -> Result<(), String> {
+	let start = Instant::now();
+	loop {
+		let errors: Vec<String> = game
+			.front()
+			.session()
+			.log()
+			.into_iter()
+			.filter(|line| (line.level == "error" || line.level == "bridge") && line.text.contains("FPS"))
+			.map(|line| line.text)
+			.collect();
+		if !errors.is_empty() {
+			return Err(format!("{when}: the FPS display: page errors: {errors:?}"));
+		}
+		match fps_shown(game)?.as_slice() {
+			[value] if value.parse::<u32>().is_ok_and(|fps| fps > 0) => return Ok(()),
+			other if start.elapsed() > Duration::from_secs(1) => {
+				return Err(format!("{when}: the FPS displays show {other:?}, not one frame rate"));
+			}
+			_ => {}
+		}
+		game.step(1000.0 / 60.0)?;
+		std::thread::sleep(Duration::from_millis(16));
+	}
+}
 
 /// A Squirrel condition, evaluated in the scripts.
 fn holds(game: &Game, expr: &str) -> Result<bool, String> {
@@ -53,6 +101,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	};
 	// The saves (and MSU's storages) stay in memory: the player's are never touched.
 	let mut game = Game::start(gpu, &boot)?;
+	// As `bb --fps` does, once the game has started.
+	game.show_fps(true)?;
 	let (width, height) = game.screen();
 	let (x, y) = (i64::from(width / 2), i64::from(height / 2));
 	let mut frame = 0i64;
@@ -63,6 +113,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		game.step(1000.0 / 60.0)?;
 		frame += 1;
 	}
+	fps_shows(&mut game, "on the main menu")?;
 	// The menu's Start, as a player's click on it (the probe harness's campaign settings).
 	game.front().session().start_campaign("bbuitest")?;
 	let mut pressed_save = false;
@@ -97,6 +148,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		game.step(1000.0 / 60.0)?;
 		frame += 1;
 	}
+	fps_shows(&mut game, "over the world")?;
 	println!("  {frame} frames, the cursor moving in each");
 	Ok(())
 }

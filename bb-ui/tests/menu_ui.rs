@@ -323,7 +323,60 @@ fn fps_module_shows_when_asked(session: &UiSession) -> Result<(), String> {
 	let inside = shown.get("inside") == Some(&Json::Bool(true));
 	ensure(text == Some("123") && height > 0 && inside, format!("the FPS module shows {}", shown.to_text()))?;
 	session.show_fps_module(false)?;
-	ensure(session.eval(MODULE)?.as_i64() == Some(0), "the FPS module stayed once hidden")
+	ensure(session.eval(MODULE)?.as_i64() == Some(0), "the FPS module stayed once hidden")?;
+	fps_module_follows_the_root_screen(session)
+}
+
+/// The FPS display stays on whatever becomes of the root screen, and the game's
+/// `setFPS` never reaches a module without its label (vanilla's throws then). Modern
+/// Hooks registers a second, never-connected `RootScreen` over the first (the first
+/// one's container stays on the page); a root screen can be shown before it has a
+/// container and get one later, or lose it again. Each time, the one display shows on
+/// the page with the last value.
+fn fps_module_follows_the_root_screen(session: &UiSession) -> Result<(), String> {
+	// The values of the FPS displays on the page.
+	const SHOWN: &str = r#"(function () {
+		var all = document.querySelectorAll('.fps-container');
+		var out = [];
+		for (var i = 0; i < all.length; i++) {
+			var v = all[i].querySelector('.value');
+			out.push(all[i].closest('.root-screen') !== null && all[i].offsetParent !== null && v ? v.textContent : '(hidden)');
+		}
+		return out.join(',');
+	})()"#;
+	let shown = |want: &str, when: &str| -> Result<(), String> {
+		let errors: Vec<String> = session
+			.log()
+			.into_iter()
+			.filter(|line| (line.level == "error" || line.level == "bridge") && line.text.contains("FPS"))
+			.map(|line| line.text)
+			.collect();
+		ensure(errors.is_empty(), format!("{when}: page errors: {errors:?}"))?;
+		let on_page = session.eval(SHOWN)?;
+		ensure(on_page.as_str() == Some(want), format!("{when}: the FPS displays show {}, not {want:?}", on_page.to_text()))
+	};
+	// Modern Hooks' second root screen, which never gets a container.
+	session.eval("window.__bbFirstRoot = Screens.RootScreen; Screens.RootScreen = new RootScreen(); 0")?;
+	session.show_fps_module(true)?;
+	session.set_fps("45");
+	shown("45", "shown with a root screen that has no container")?;
+	// That root screen gets a container: the display moves to it, with its value.
+	session.eval("Screens.RootScreen.register($('body')); 0")?;
+	ensure(
+		session.eval("Screens.RootScreen.getContainer().find('.fps-container .value').text()")?.as_str() == Some("45"),
+		"the display didn't move to the root screen's own container",
+	)?;
+	shown("45", "the root screen got a container")?;
+	// And loses it: the next value shows on the page's root screen again.
+	session.eval("Screens.RootScreen.unregister(); 0")?;
+	session.set_fps("56");
+	shown("56", "the root screen lost its container")?;
+	// The first root screen back.
+	session.eval("Screens.RootScreen = window.__bbFirstRoot; delete window.__bbFirstRoot; 0")?;
+	session.set_fps("67");
+	shown("67", "the first root screen back")?;
+	session.show_fps_module(false)?;
+	shown("", "hidden")
 }
 
 /// The page's own tasks (here a timer) run between the scripts, as the original's UI

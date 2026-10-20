@@ -4,7 +4,8 @@
 //! every mod's JS and CSS and then resumes the scripts' boot (`resumeOnInit`), and MSU's
 //! late JS connects MSU's screens (`connectBackend`). The main menu comes up, and it and
 //! MSU's mod settings screen match the original's with the same mods
-//! (`tests/goldens/modded_*.json`, `probes/modded_goldens.js`). Skips without a Steam
+//! (`tests/goldens/modded_*.json`, `probes/modded_goldens.js`). The FPS display shows
+//! on it, though Modern Hooks replaces the root screen. Skips without a Steam
 //! install or without Modern Hooks.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test mods_ui`
@@ -84,7 +85,41 @@ fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 		ensure(Instant::now() < deadline, format!("no main menu; visible buttons: {buttons:?}"))?;
 		session.run_frames(0.1)?;
 	}
-	matches_the_originals_modded_screens(&session)
+	matches_the_originals_modded_screens(&session)?;
+	fps_display_shows(&session)
+}
+
+/// The FPS display with the mods: Modern Hooks registers a second
+/// `RootScreen` over the one the game connected, which never gets a container (the
+/// first one's stays on the page). The display shows on the page all the same, with the
+/// value the game sets through `callFromSQ`, and that call never reaches a module
+/// without its label (vanilla's `setFPS` throws then).
+fn fps_display_shows(session: &UiSession) -> Result<(), String> {
+	session.show_fps_module(true)?;
+	session.set_fps("");
+	session.set_fps("123");
+	session.run_frames(0.2)?;
+	let shown = session.eval(
+		"(function () {
+			var all = document.querySelectorAll('.root-screen .fps-container .value');
+			var out = [];
+			for (var i = 0; i < all.length; i++) out.push(all[i].offsetParent !== null ? all[i].textContent : '(hidden)');
+			return out.join(',');
+		})()",
+	)?;
+	let errors: Vec<String> = session
+		.log()
+		.into_iter()
+		.filter(|line| (line.level == "error" || line.level == "bridge") && line.text.contains("FPS"))
+		.map(|line| line.text)
+		.collect();
+	ensure(errors.is_empty(), format!("the FPS display: page errors: {errors:?}"))?;
+	ensure(shown.as_str() == Some("123"), format!("the FPS displays show {}, not \"123\"", shown.to_text()))?;
+	session.show_fps_module(false)?;
+	ensure(
+		session.eval("document.querySelectorAll('.fps-container').length")?.as_i64() == Some(0),
+		"the FPS display stayed once hidden",
+	)
 }
 
 /// The original's savegames folder (in Proton's prefix), where mods keep their storages.

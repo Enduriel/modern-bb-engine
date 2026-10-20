@@ -143,7 +143,7 @@ impl UiSession {
 		self.log.borrow().lines()
 	}
 
-	fn record(&self, level: &str, text: String) {
+	pub(super) fn record(&self, level: &str, text: String) {
 		let line = LogLine {
 			level: level.to_string(),
 			text,
