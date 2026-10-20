@@ -145,6 +145,16 @@ impl SqStrongRef {
 		table
 	}
 
+	/// Like [`as_table`](Self::as_table), for an array.
+	pub fn as_array<'vm>(&self, vm: &'vm SQVM) -> Option<crate::SqArray<'vm>> {
+		self.debug_check_vm(vm);
+		let ptr = vm.as_ptr();
+		unsafe { squirrel_sys::sq_pushobject(ptr, self.obj) };
+		let array = crate::SqArray::from_stack(vm, -1);
+		unsafe { squirrel_sys::sq_pop(ptr, 1) };
+		array
+	}
+
 	/// A weak reference to the referenced object (the script's `weakref()`): it doesn't
 	/// keep the object alive; [`weak_is_gone`](Self::weak_is_gone) tells when the object
 	/// is. A value that isn't reference-counted (a number, null) is its own weak ref.

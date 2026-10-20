@@ -34,7 +34,7 @@ use crate::{SQ_OK, SQVM, SqObjectType, SqStrongRef};
 /// ```
 pub struct SqArray<'vm> {
 	vm: &'vm SQVM,
-	obj: squirrel_sys::HSQOBJECT,
+	pub(super) obj: squirrel_sys::HSQOBJECT,
 }
 
 impl<'vm> SqArray<'vm> {

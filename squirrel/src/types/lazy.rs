@@ -6,7 +6,7 @@
 //! instance's class levels this way, so the inherited methods an instance never touches
 //! cost it nothing.
 
-use super::SqTable;
+use super::{SqArray, SqTable};
 use crate::SQ_OK;
 
 impl<'vm> SqTable<'vm> {
@@ -42,9 +42,34 @@ impl<'vm> SqTable<'vm> {
 	}
 }
 
+impl<'vm> SqTable<'vm> {
+	/// For a [`lazy_clone`](Self::lazy_clone): give it the slots named by `keys`, in that
+	/// order, as if each had been added now with its value in `slots` (which holds exactly
+	/// those keys) bound to `env`
+	/// (closures and native closures; other values as they are), but bound only when
+	/// first read and kept. `slots` and `keys` can be shared by many tables. Returns
+	/// false, doing nothing, if the table isn't lazy (or no longer is) or
+	/// already has one of the keys: then add them yourself.
+	pub fn lazy_inject(&mut self, slots: &SqTable, keys: &SqArray, env: &SqTable) -> bool {
+		let ptr = self.vm.as_ptr();
+		unsafe {
+			squirrel_sys::sq_pushobject(ptr, self.obj); // [self]
+			squirrel_sys::sq_pushobject(ptr, slots.obj); // [self, slots]
+			squirrel_sys::sq_pushobject(ptr, keys.obj); // [self, slots, keys]
+			squirrel_sys::sq_pushobject(ptr, env.obj); // [self, slots, keys, env]
+			let ok = squirrel_sys::sq_lazyinject(ptr, -4) == SQ_OK; // [self]
+			if !ok {
+				squirrel_sys::sq_reseterror(ptr);
+			}
+			squirrel_sys::sq_pop(ptr, 1);
+			ok
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
-	use crate::{SQVM, SqStrongRef, SqTable};
+	use crate::{SQVM, SqArray, SqStrongRef, SqTable};
 
 	/// A VM with `lazyclone(t)`, `lazybind(t, env)` and `eagerbind(t, env)` (a plain
 	/// table's closures bound, as the class system binds a clone's).
@@ -61,6 +86,10 @@ mod tests {
 		vm.register("eagerbind", |vm: &SQVM, mut t: SqTable, env: SqTable| {
 			let _ = vm;
 			t.bind_closures_to(&env);
+		});
+		vm.register("lazyinject", |vm: &SQVM, mut t: SqTable, slots: SqTable, keys: SqArray, env: SqTable| -> bool {
+			let _ = vm;
+			t.lazy_inject(&slots, &keys, &env)
 		});
 		vm
 	}
@@ -83,7 +112,11 @@ mod tests {
 			default: return fns[rnd(fns.len())];
 		}
 	}
-	function key() { return rnd(8) == 0 ? rnd(4) : "k" + rnd(48); }
+	function key() { local r = rnd(16); return r < 2 ? rnd(4) : r < 4 ? "n" + rnd(5) : "k" + rnd(48); }
+	// Slots given to a table after its clone (as the hosts give entities their natives).
+	::injenv <- { id = "inj" };
+	::injslots <- { n0 = fns[0], n1 = fns[1], n2 = 7, n3 = fns[3], n4 = fns[4] };
+	function injected(v) { return typeof v == "function" ? v.bindenv(::injenv) : v; }
 	function describe(v) {
 		if (typeof v == "function") return "fn:" + v.call({ id = "plain" });
 		if (typeof v == "table") return v == shared ? "shared" : "table";
@@ -112,7 +145,7 @@ mod tests {
 			local pr = pairs[rnd(pairs.len())];
 			local e = pr[0], l = pr[1];
 			local k = key();
-			local op = rnd(12);
+			local op = rnd(13);
 			::trace += " " + pairs.find(pr) + ":" + op + ":" + k;
 			switch (op) {
 				case 0:
@@ -173,6 +206,20 @@ mod tests {
 					break;
 				case 11:
 					if (k in e) check("rawdelete " + k, describe(e.rawdelete(k)), describe(l.rawdelete(k)));
+					break;
+				case 12:
+					// Slots given (at most twice), lazily where the table still is lazy.
+					if (pr.len() > 3) break;
+					pr.push(true);
+					local keys = [];
+					foreach (n in ["n3", "n0", "n4", "n2", "n1"]) if (!(n in e) && rnd(4) != 0) keys.push(n);
+					local slots = {};
+					foreach (n in keys) slots[n] <- ::injslots[n];
+					local lazy = lazyinject(l, slots, keys, ::injenv);
+					foreach (n in keys) {
+						e[n] <- injected(::injslots[n]);
+						if (!lazy) l[n] <- injected(::injslots[n]);
+					}
 					break;
 			}
 		}
