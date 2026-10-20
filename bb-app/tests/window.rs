@@ -68,6 +68,8 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		// Saves (and mods' storages) stay in the run's folder unless it names another:
 		// never the user's.
 		.env("BB_SAVES_DIR", dir.join("saves"))
+		// So a run that hangs can have its stacks read (`dump_stacks`).
+		.env("BB_ALLOW_TRACE", "1")
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
 		.env("BB_TEST_STDERR", &stderr)
@@ -75,12 +77,26 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		.stderr(log)
 		.spawn()
 		.expect("run gamescope");
+	// bb's end is its status, not gamescope's: under load gamescope's own teardown (its
+	// Xwayland and the rest) has taken minutes after bb was gone. Once bb is, gamescope
+	// gets a while to go too, and is then killed.
 	let deadline = Instant::now() + Duration::from_secs(300);
+	let mut ended: Option<Instant> = None;
 	while child.try_wait().expect("gamescope's status").is_none() {
-		if Instant::now() > deadline {
-			let _ = child.kill();
-			let _ = child.wait();
-			panic!("bb didn't exit within 5 minutes");
+		let now = Instant::now();
+		if ended.is_none() && std::fs::read_to_string(&status).is_ok_and(|s| s.ends_with('\n')) {
+			ended = Some(now);
+		}
+		if ended.is_some_and(|at| now > at + Duration::from_secs(20)) {
+			eprintln!("bb ended, but gamescope didn't within 20 s: killed");
+			kill_tree(&mut child);
+			break;
+		}
+		if ended.is_none() && now > deadline {
+			let stacks = dir.join("stacks.txt");
+			dump_stacks(child.id(), &stacks);
+			kill_tree(&mut child);
+			panic!("bb didn't exit within 5 minutes; its threads' stacks in {}", stacks.display());
 		}
 		std::thread::sleep(Duration::from_millis(200));
 	}
@@ -94,6 +110,70 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		status: std::fs::read_to_string(&status).expect("bb's exit status").trim().to_string(),
 		stderr: std::fs::read_to_string(&stderr).unwrap_or_default(),
 	})
+}
+
+/// Kill gamescope and what's under it (bb, its browser processes, gamescope's Xwayland),
+/// which killing gamescope alone leaves running.
+fn kill_tree(gamescope: &mut std::process::Child) {
+	let left = descendants(gamescope.id());
+	let _ = gamescope.kill();
+	let _ = gamescope.wait();
+	for pid in left {
+		let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+	}
+}
+
+/// The processes under `root` (its children, theirs, ...), from `/proc`.
+fn descendants(root: u32) -> Vec<u32> {
+	let mut parents = Vec::new();
+	for entry in std::fs::read_dir("/proc").into_iter().flatten().flatten() {
+		let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+		let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else { continue };
+		// `pid (comm) state ppid ...`; comm may hold spaces and parentheses.
+		let Some(ppid) = stat.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().nth(1)?.parse::<u32>().ok()) else {
+			continue;
+		};
+		parents.push((pid, ppid));
+	}
+	let mut found = vec![root];
+	let mut at = 0;
+	while at < found.len() {
+		let parent = found[at];
+		found.extend(parents.iter().filter(|(_, ppid)| *ppid == parent).map(|(pid, _)| *pid));
+		at += 1;
+	}
+	found.remove(0);
+	found
+}
+
+/// For a run that hangs: every thread of gamescope and of the processes under it (bb,
+/// its browser processes), with its state and kernel wait channel, and the user-space
+/// stacks `eu-stack` reads (bb allows it, `BB_ALLOW_TRACE`; gamescope doesn't), into
+/// `out`.
+fn dump_stacks(gamescope: u32, out: &Path) {
+	use std::fmt::Write as _;
+	let mut text = String::new();
+	for pid in std::iter::once(gamescope).chain(descendants(gamescope)) {
+		let task = |file: &str| std::fs::read_to_string(format!("/proc/{pid}/{file}")).unwrap_or_default();
+		let cmdline = task("cmdline").replace('\0', " ");
+		let _ = writeln!(text, "=== {pid}: {}", cmdline.chars().take(300).collect::<String>());
+		for thread in std::fs::read_dir(format!("/proc/{pid}/task")).into_iter().flatten().flatten() {
+			let read = |file: &str| std::fs::read_to_string(thread.path().join(file)).unwrap_or_default();
+			let stat = read("stat");
+			let state = stat.rsplit_once(')').and_then(|(_, r)| r.split_whitespace().next()).unwrap_or("?").to_string();
+			let _ = writeln!(text, "  thread {} {:?} {state} wchan {}", thread.file_name().to_string_lossy(), read("comm").trim(), read("wchan"));
+		}
+		match Command::new("eu-stack").args(["-p", &pid.to_string()]).stderr(Stdio::piped()).output() {
+			Ok(output) => {
+				text.push_str(&String::from_utf8_lossy(&output.stdout));
+				text.push_str(&String::from_utf8_lossy(&output.stderr));
+			}
+			Err(e) => {
+				let _ = writeln!(text, "  (no eu-stack: {e})");
+			}
+		}
+	}
+	let _ = std::fs::write(out, text);
 }
 
 /// A PNG's width and height.

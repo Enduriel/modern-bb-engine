@@ -127,6 +127,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 }
 
 fn main() -> ExitCode {
+	bb_app::platform::allow_tracing_if_asked();
 	// The browser host re-runs this binary for its child processes.
 	#[cfg(feature = "ui")]
 	if let Some(code) = bb_ui::host::run_subprocess() {

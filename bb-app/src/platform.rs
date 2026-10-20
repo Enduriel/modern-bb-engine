@@ -15,6 +15,27 @@ pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
 	true
 }
 
+/// With `BB_ALLOW_TRACE=1`, any process of the user's may attach a debugger to this one
+/// (Linux, where Yama's `ptrace_scope` 1 otherwise lets only its ancestors): the window
+/// tests read the stacks of a run that hangs. The browser's processes, which run this
+/// binary again with the same environment, allow it too.
+#[cfg(target_os = "linux")]
+pub fn allow_tracing_if_asked() {
+	/// `prctl`'s Yama options (`linux/prctl.h`).
+	const PR_SET_PTRACER: i32 = 0x5961_6d61;
+	const PR_SET_PTRACER_ANY: u64 = u64::MAX;
+	unsafe extern "C" {
+		fn prctl(option: i32, ...) -> i32;
+	}
+	if std::env::var_os("BB_ALLOW_TRACE").is_some_and(|v| v != "0") {
+		// SAFETY: only marks this process as traceable; a kernel without Yama refuses it.
+		unsafe { prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY) };
+	}
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn allow_tracing_if_asked() {}
+
 /// The smallest buffer the allocator always takes from the system and gives back when
 /// freed: the size of the smallest atlas (2048×1024 RGBA).
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
