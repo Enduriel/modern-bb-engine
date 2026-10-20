@@ -140,6 +140,11 @@ pub struct SceneTile {
 /// A tile's detail as drawn (see `world_detail`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneDetail {
+	/// Its entity id.
+	pub id: i64,
+	/// Not `Visible` (only the whole map's details include such, see
+	/// `WorldGrid::scene_map`).
+	pub hidden: bool,
 	/// Its brush, shared with the detail.
 	pub brush: std::rc::Rc<str>,
 	/// Draw layer, a `Const.World.ZLevel`: higher is further back.
@@ -167,6 +172,8 @@ pub struct SceneDetail {
 impl Default for SceneDetail {
 	fn default() -> Self {
 		SceneDetail {
+			id: 0,
+			hidden: false,
 			brush: "".into(),
 			z_level: 0,
 			flags: 0,

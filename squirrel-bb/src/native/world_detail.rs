@@ -68,6 +68,8 @@ pub struct DetailData {
 	pub z: i32,
 	/// The sprite flag bits its brush calls left (see [`Sprites::brush_bits`]).
 	pub brush_bits: u32,
+	/// On the change log, waiting for a renderer to take it (see [`Changes`]).
+	pub(crate) logged: bool,
 }
 
 impl Default for DetailData {
@@ -94,6 +96,7 @@ impl Default for DetailData {
 			offset: (0.0, 0.0),
 			z: 0,
 			brush_bits: 0,
+			logged: false,
 		}
 	}
 }
@@ -103,6 +106,8 @@ impl DetailData {
 	pub(crate) fn scene(&self, now: f32) -> SceneDetail {
 		let shown = self.color.shown(now);
 		SceneDetail {
+			id: self.id,
+			hidden: !self.visible,
 			brush: self.brush.clone(),
 			z_level: self.z_level,
 			flags: self.flags,
@@ -122,6 +127,51 @@ impl DetailData {
 
 /// A detail as shared by its tile and its script object.
 pub(crate) type Detail = Rc<RefCell<DetailData>>;
+
+/// The details whose look changed since a renderer last took them: a script set
+/// something on one, or it turned, stepped or faded on its own (see [`turn_all`]). A
+/// renderer that keeps the map's geometry from frame to frame redraws only these
+/// (adding or removing a detail changes the map's revision instead). Each detail is on
+/// it once ([`DetailData::logged`]); one gone since is passed over.
+#[derive(Clone, Default)]
+pub(crate) struct Changes(Rc<RefCell<ChangeLog>>);
+
+#[derive(Default)]
+struct ChangeLog {
+	details: Vec<Weak<RefCell<DetailData>>>,
+	/// The length at which the details gone are dropped from the log: nothing may ever
+	/// take it (a headless engine), and a dropped detail's memory stays while it's here.
+	prune_at: usize,
+}
+
+impl Changes {
+	/// Log `detail` (`data` is it, borrowed).
+	pub(crate) fn note(&self, detail: &Detail, data: &mut DetailData) {
+		if std::mem::replace(&mut data.logged, true) {
+			return;
+		}
+		let mut log = self.0.borrow_mut();
+		if log.details.len() >= log.prune_at {
+			log.details.retain(|d| d.strong_count() > 0);
+			log.prune_at = (2 * log.details.len()).max(1024);
+		}
+		log.details.push(Rc::downgrade(detail));
+	}
+
+	/// Each detail logged and still on the map, as `look` reads it, and start over.
+	pub(crate) fn take<T>(&self, mut look: impl FnMut(&DetailData) -> T) -> Vec<T> {
+		let details = std::mem::take(&mut self.0.borrow_mut().details);
+		details
+			.iter()
+			.filter_map(Weak::upgrade)
+			.map(|d| {
+				let mut d = d.borrow_mut();
+				d.logged = false;
+				look(&d)
+			})
+			.collect()
+	}
+}
 
 /// The details that may turn (those given a torque), animate or fade, so a frame
 /// needn't visit every detail on the map.
@@ -147,13 +197,16 @@ fn moves(d: &DetailData) -> bool {
 
 /// Turn the spinning details to virtual time `now` (seconds), step the animated ones
 /// to virtual millisecond `now_ms`, draw the fading ones at real time `real` (a draw
-/// finishes a fade, see `SpriteColor`, which may hide the detail), and forget those
-/// gone or still.
-pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, now: f32, now_ms: u32, real: f32) {
-	spinning.borrow_mut().retain(|d| {
-		let Some(d) = d.upgrade() else { return false };
-		let mut d = d.borrow_mut();
+/// finishes a fade, see `SpriteColor`, which may hide the detail), log each that may
+/// look different now on `changes` (one that faded is drawn at `real` from now on), and
+/// forget those gone or still.
+pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, changes: &Changes, now: f32, now_ms: u32, real: f32) {
+	spinning.borrow_mut().retain(|detail| {
+		let Some(detail) = detail.upgrade() else { return false };
+		let mut d = detail.borrow_mut();
 		let d = &mut *d;
+		let before = (d.rotation, d.scale, d.frame, d.visible);
+		let fading = !d.color.is_fading_done();
 		d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
 		if let Some(scale) = d.anim.step_on(sprites, &d.brush, now_ms) {
 			d.scale = f64::from(scale);
@@ -161,6 +214,9 @@ pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, now: f32, now_ms:
 		d.frame = d.anim.frame();
 		if d.visible && d.color.draw(real).hide {
 			d.visible = false;
+		}
+		if fading || before != (d.rotation, d.scale, d.frame, d.visible) {
+			changes.note(&detail, d);
 		}
 		moves(d)
 	});
@@ -238,16 +294,23 @@ impl SpriteState for DetailData {
 	}
 }
 
-/// The payload of a `WorldDetail` instance.
+/// The payload of a `WorldDetail` instance: the detail, and the log a change made
+/// through it goes on.
 #[derive(Clone)]
-pub(crate) struct DetailHandle(pub(crate) Detail);
+pub(crate) struct DetailHandle {
+	pub(crate) detail: Detail,
+	pub(crate) changes: Changes,
+}
 
 impl SpriteHandle for DetailHandle {
 	fn with<R>(&self, f: impl FnOnce(&dyn SpriteState) -> R) -> R {
-		f(&*self.0.borrow())
+		f(&*self.detail.borrow())
 	}
 	fn with_mut<R>(&mut self, f: impl FnOnce(&mut dyn SpriteState) -> R) -> R {
-		f(&mut *self.0.borrow_mut())
+		let mut data = self.detail.borrow_mut();
+		let out = f(&mut *data);
+		self.changes.note(&self.detail, &mut data);
+		out
 	}
 }
 
@@ -255,7 +318,7 @@ impl SpriteHandle for DetailHandle {
 /// whose details go on `spinning` once they may change on their own.
 pub(crate) fn build_class(vm: &mut SQVM, sprites: &Sprites, spinning: &Spinning) -> SqClass<DetailHandle> {
 	let spinning = spinning.clone();
-	let moving: Rc<dyn Fn(&DetailHandle)> = Rc::new(move |d: &DetailHandle| note_spin(&spinning, &d.0));
+	let moving: Rc<dyn Fn(&DetailHandle)> = Rc::new(move |d: &DetailHandle| note_spin(&spinning, &d.detail));
 	let b = ClassBuilder::<DetailHandle>::new("WorldDetail");
 	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: false, moving: Some(moving) })
 		.method("setDirty", |_d: &mut DetailHandle, _flag: bool| {})
@@ -304,18 +367,34 @@ mod tests {
 
 	#[test]
 	fn a_fade_out_and_hide_hides_it_when_drawn_after_it_ends() {
-		let (spinning, sprites): (Spinning, Sprites) = (Rc::default(), Sprites::default());
+		let (spinning, sprites, changes): (Spinning, Sprites, Changes) = Default::default();
 		let d = detail(0);
 		d.borrow_mut().color.fade_out(100, 1.0, true);
 		note_spin(&spinning, &d);
 		assert!(d.borrow().color.is_fading(1.05));
-		turn_all(&spinning, &sprites, 0.0, 0, 1.05);
+		turn_all(&spinning, &sprites, &changes, 0.0, 0, 1.05);
 		assert!(d.borrow().visible, "still fading");
-		turn_all(&spinning, &sprites, 0.0, 0, 1.2);
+		assert_eq!(changes.take(|d| d.visible), [true], "its fade shows");
+		turn_all(&spinning, &sprites, &changes, 0.0, 0, 1.2);
+		assert_eq!(changes.take(|d| d.visible), [false], "hidden as its fade ends");
 		let done = d.borrow();
 		assert!(!done.visible && done.color.is_fading_done() && !done.color.is_fading(1.2));
 		assert!(spinning.borrow().is_empty(), "nothing left to step");
 		assert_eq!(done.scene(1.2).alpha, 0);
+	}
+
+	#[test]
+	fn a_change_is_logged_once_until_taken_and_a_detail_gone_is_passed_over() {
+		let changes = Changes::default();
+		let (a, b) = (detail(1), detail(2));
+		for d in [&a, &a, &b] {
+			changes.note(d, &mut d.borrow_mut());
+		}
+		drop(b);
+		assert_eq!(changes.take(|d| d.flags), [1]);
+		assert!(changes.take(|d| d.flags).is_empty());
+		changes.note(&a, &mut a.borrow_mut());
+		assert_eq!(changes.take(|d| d.flags), [1], "logged again once taken");
 	}
 
 	#[test]

@@ -97,6 +97,7 @@ impl super::save::SavePart for GridPart {
 		let mut g = self.0.borrow_mut();
 		let mut r = cx.reader.borrow_mut();
 		let (w, h) = (r.i64()?, r.i64()?);
+		g.redrawn();
 		g.width = w;
 		g.height = h;
 		let mut tiles = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
@@ -210,9 +211,20 @@ struct GridState {
 	fog: FogMask,
 	/// Region names (`spawnRegionText`), in spawn order.
 	region_texts: Vec<SceneRegionText>,
+	/// Counts the changes to what the map draws in its order: a terrain brush or
+	/// mirroring, details added or removed, the map sized, cleared or loaded (see
+	/// [`WorldGrid::map_revision`]). A detail's look changing goes on `changes`.
+	revision: u64,
+	/// The details whose look changed (see [`world_detail::Changes`]).
+	changes: world_detail::Changes,
 }
 
 impl GridState {
+	/// What the map draws changed in its order (see [`WorldGrid::map_revision`]).
+	fn redrawn(&mut self) {
+		self.revision += 1;
+	}
+
 	/// The flat index for square coords, or `None` if out of bounds.
 	fn idx(&self, col: i64, row: i64) -> Option<usize> {
 		(col >= 0 && col < self.width && row >= 0 && row < self.height)
@@ -234,6 +246,13 @@ impl TileHandle {
 	}
 	fn with_mut<R>(&self, f: impl FnOnce(&mut TileData) -> R) -> R {
 		f(&mut self.grid.borrow_mut().tiles[self.id])
+	}
+	/// [`with_mut`](Self::with_mut) for a change to what the tile draws: its terrain or
+	/// its details (see [`GridState::redrawn`]).
+	fn with_drawn_mut<R>(&self, f: impl FnOnce(&mut TileData) -> R) -> R {
+		let mut g = self.grid.borrow_mut();
+		g.redrawn();
+		f(&mut g.tiles[self.id])
 	}
 	/// The flat id of the neighbour in `dir` (0..6), or `None` (off-grid / bad dir).
 	fn neighbour_id(&self, dir: i64) -> Option<usize> {
@@ -298,6 +317,8 @@ impl WorldGrid {
 				fog_on: true,
 				fog: FogMask::default(),
 				region_texts: Vec::new(),
+				revision: 0,
+				changes: Default::default(),
 			})),
 		}
 	}
@@ -346,6 +367,7 @@ impl WorldGrid {
 			let g = self.grid.clone();
 			vm.make_closure(move |w: i64, h: i64| {
 				let mut g = g.borrow_mut();
+				g.redrawn();
 				g.width = w;
 				g.height = h;
 				g.tiles = if w > 0 && h > 0 {
@@ -365,6 +387,7 @@ impl WorldGrid {
 			let g = self.grid.clone();
 			vm.make_closure(move || {
 				let mut g = g.borrow_mut();
+				g.redrawn();
 				for t in &mut g.tiles {
 					*t = TileData::new(t.id, t.col, t.row); // reset gameplay, keep coords
 				}
@@ -856,6 +879,46 @@ impl WorldGrid {
 			.collect()
 	}
 
+	/// Counts the changes to what the map draws in its order: a renderer that keeps the
+	/// map's geometry from frame to frame builds it again ([`scene_map`](Self::scene_map))
+	/// when this changes, and otherwise redraws the details
+	/// [`take_detail_changes`](Self::take_detail_changes) gives.
+	pub fn map_revision(&self) -> u64 {
+		self.grid.borrow().revision
+	}
+
+	/// The whole map as a renderer keeps it: every tile, each with all its details, those
+	/// not `Visible` included ([`SceneDetail::hidden`](crate::scene::SceneDetail)), so that a
+	/// detail shown again later keeps its place.
+	pub fn scene_map(&self) -> Vec<crate::scene::SceneTile> {
+		let g = self.grid.borrow();
+		g.tiles
+			.iter()
+			.map(|t| crate::scene::SceneTile {
+				col: t.col,
+				row: t.row,
+				pos: world_layout::tile_pos(t.col, t.row),
+				terrain: t.type_,
+				discovered: t.is_discovered,
+				brush: t.brush.clone(),
+				flipped: t.is_flipped,
+				details: t.details.iter().map(|d| d.borrow().scene(g.drawn_at)).collect(),
+			})
+			.collect()
+	}
+
+	/// The details whose look changed since the last call (a script set something on
+	/// one, or it turned, stepped or faded on its own), as drawn now, hidden ones
+	/// included. Adding or removing details changes the [`map_revision`](Self::map_revision)
+	/// instead.
+	pub fn take_detail_changes(&self) -> Vec<crate::scene::SceneDetail> {
+		let (changes, now) = {
+			let g = self.grid.borrow();
+			(g.changes.clone(), g.drawn_at)
+		};
+		changes.take(|d| d.scene(now))
+	}
+
 	/// The brush that uncovering stamps into the fog mask (`fog_of_war_mask`).
 	pub fn set_fog_stamp(&self, stamp: FogStamp) {
 		self.grid.borrow_mut().fog.set_stamp(stamp);
@@ -894,6 +957,7 @@ impl WorldGrid {
 	/// them.
 	pub(crate) fn clear_scene(&self) {
 		let mut g = self.grid.borrow_mut();
+		g.redrawn();
 		for t in &mut g.tiles {
 			t.details.clear();
 		}
@@ -905,12 +969,12 @@ impl WorldGrid {
 	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
 	/// and step the animated ones to virtual millisecond `now_ms` (see `sprite_anim`).
 	pub(crate) fn turn(&self, now: f32, now_ms: u32, real: f32) {
-		let (spinning, sprites) = {
+		let (spinning, sprites, changes) = {
 			let mut g = self.grid.borrow_mut();
 			g.drawn_at = real;
-			(g.spinning.clone(), g.sprites.clone())
+			(g.spinning.clone(), g.sprites.clone(), g.changes.clone())
 		};
-		world_detail::turn_all(&spinning, &sprites, now, now_ms, real);
+		world_detail::turn_all(&spinning, &sprites, &changes, now, now_ms, real);
 	}
 }
 
@@ -1007,8 +1071,9 @@ fn make_detail(t: &TileHandle, vm: &SQVM, mut data: DetailData, random_flip: boo
 	hint_brush(t, &data.brush);
 	let detail: Detail = Rc::new(RefCell::new(data));
 	world_detail::note_spin(&spinning, &detail);
-	t.with_mut(|d| d.details.push(detail.clone()));
-	Some(class.instantiate(vm, DetailHandle(detail)))
+	t.with_drawn_mut(|d| d.details.push(detail.clone()));
+	let changes = t.grid.borrow().changes.clone();
+	Some(class.instantiate(vm, DetailHandle { detail, changes }))
 }
 
 /// `World.tileToWorld(coords)` / `tileToWorld(x, y)`: an axial tile's centre in world
@@ -1173,7 +1238,12 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = scalar!(b, "HeatFromSettlements", heat, i64);
 	b = scalar!(b, "ZOffset", z_offset, f64);
 	b = scalar!(b, "IsOccupied", is_occupied, bool);
-	b = scalar!(b, "IsFlipped", is_flipped, bool);
+	// Mirroring changes what the tile draws.
+	b = b.property(
+		"IsFlipped",
+		|t: &TileHandle| t.with(|d| d.is_flipped),
+		|t: &mut TileHandle, v: bool| t.with_drawn_mut(|d| d.is_flipped = v),
+	);
 	b = scalar!(b, "IsDiscovered", is_discovered, bool);
 	b = scalar!(b, "HasRiver", has_river, bool);
 	// ro scalar fields
@@ -1361,12 +1431,12 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.method("setBrush", |t: &mut TileHandle, brush: &str| {
 			let name = t.grid.borrow().sprites.name(brush);
-			t.with_mut(|d| d.brush = name);
+			t.with_drawn_mut(|d| d.brush = name);
 			hint_brush(t, brush);
 		})
 		.method("resetBrush", |t: &mut TileHandle| {
 			let empty = t.grid.borrow().sprites.name("");
-			t.with_mut(|d| d.brush = empty);
+			t.with_drawn_mut(|d| d.brush = empty);
 		})
 		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.to_string()) });
 
@@ -1438,7 +1508,7 @@ fn clear_details(t: &TileHandle, vm: &SQVM, args: &[Retained], all_but: bool) {
 		(Some(mask), false) => Clear::Matching(mask),
 		(Some(mask), true) => Clear::AllBut(mask),
 	};
-	t.with_mut(|d| world_detail::clear(&mut d.details, which));
+	t.with_drawn_mut(|d| world_detail::clear(&mut d.details, which));
 }
 
 /// Count the 6 hex neighbours whose tile data satisfies `pred`.

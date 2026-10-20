@@ -63,6 +63,7 @@ impl WorldGrid {
 			return Err("the saved world has no map".to_string());
 		};
 		let (w, h) = (i64::from(grid.width), i64::from(grid.height));
+		g.redrawn();
 		let drawn = scene.layer("tiles").and_then(|l| match &l.body {
 			Some(LayerBody::Tiles(t)) => t.tiles.as_ref().map(|(d, _)| d),
 			_ => None,

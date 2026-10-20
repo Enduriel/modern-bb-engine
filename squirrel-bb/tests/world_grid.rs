@@ -200,6 +200,45 @@ fn details_stay_on_their_tile_for_the_renderer() {
 	grid.clear();
 }
 
+/// What a renderer that keeps the map learns: the map's revision moves when what it
+/// draws changes in its order (terrain, details added or removed, the map sized), not
+/// for gameplay fields; a detail's look changing is logged once until taken; and the
+/// whole map keeps a hidden detail, marked.
+#[test]
+fn a_renderer_learns_what_changed_on_the_map() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let grid = WorldGrid::new();
+	grid.set_engine_rng(squirrel_bb::EngineRng::seeded(1));
+	grid.install(&mut vm);
+	let run = |code: &str| vm.run_script(code, "map").expect("script");
+	run("World.resizeScene(4, 4); ::t <- World.getTileSquare(1, 2); ::tree <- t.spawnDetail(\"tree\", -10, 32);");
+	let mut revision = grid.map_revision();
+	let mut moved = |code: &str| {
+		run(code);
+		let now = grid.map_revision();
+		std::mem::replace(&mut revision, now) != now
+	};
+	assert!(!moved("t.Type = 3; t.IsDiscovered = true; t.HeatFromSettlements = 2;"), "gameplay fields");
+	assert!(moved("t.setBrush(\"plains\");"), "terrain");
+	assert!(moved("t.IsFlipped = true;"), "mirroring");
+	assert!(moved("t.spawnDetail(\"hill\", 30, 8, true);"), "a detail added");
+	assert!(moved("t.clear(8);"), "a detail removed");
+
+	grid.take_detail_changes();
+	assert!(!moved("tree.Alpha = 50; tree.Scale = 0.5; tree.Visible = false;"), "a detail's look keeps the order");
+	let changed = grid.take_detail_changes();
+	assert_eq!(changed.len(), 1, "logged once");
+	assert_eq!((&*changed[0].brush, changed[0].alpha, changed[0].scale, changed[0].hidden), ("tree", 50, 0.5, true));
+	assert!(grid.take_detail_changes().is_empty(), "taken");
+
+	let map = grid.scene_map();
+	let tile = map.iter().find(|t| t.col == 1 && t.row == 2).expect("tile");
+	assert_eq!((tile.details.len(), tile.details[0].hidden, tile.details[0].id), (1, true, changed[0].id), "kept, hidden");
+	assert!(details(&grid, 1, 2).is_empty(), "the frame's scene leaves it out");
+	grid.clear();
+}
+
 #[test]
 fn tile_brush_is_state_like_the_original() {
 	let mut vm = squirrel::SQVM::new(1024);
