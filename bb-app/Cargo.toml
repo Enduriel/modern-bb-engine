@@ -40,6 +40,10 @@ required-features = ["ui"]
 name = "load_times"
 required-features = ["ui"]
 
+[[example]]
+name = "page_paint"
+required-features = ["ui"]
+
 [[test]]
 name = "ui_window"
 harness = false
