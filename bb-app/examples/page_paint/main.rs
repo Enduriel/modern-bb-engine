@@ -21,6 +21,10 @@
 //! Then what "is the cursor over the UI" costs (`alpha_at`, read back from the GPU a
 //! tile at a time): a mouse sweeping a still page, and one moving every frame over the
 //! whole view fading (every call reads back).
+//!
+//! `PP_SCENES` picks the scenes (and `alpha`), `PP_TRACE=DIR` writes Chromium's trace of
+//! the scenes in `PP_TRACE_SCENES` ([`trace_dir`]); `BB_UI_SWITCHES` adds Chromium
+//! switches to compare.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -147,6 +151,10 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, procs: &[(u32, St
 	}
 	let host = run.game.front().session().host();
 	let (paints, copies, ticks) = (host.paint_stats(), run.game.front().copy_stats(), run.eval("window.__ppTicks || 0")?);
+	let trace = trace_dir().filter(|_| traced(name));
+	if trace.is_some() {
+		bb_ui::host::tracing::begin(&trace_categories())?;
+	}
 	let before = Sample::take(procs);
 	bb_render::frame_timing::take();
 	run.cadence = [0; 4];
@@ -163,6 +171,11 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, procs: &[(u32, St
 	let copies = run.game.front().copy_stats().since(&copies);
 	let ticks = run.eval("window.__ppTicks || 0")?.as_i64().unwrap_or(0) as f64 - ticks.as_i64().unwrap_or(0) as f64;
 	let after = Sample::take(procs);
+	if let Some(dir) = &trace {
+		let path = dir.join(format!("{}.json", name.replace(' ', "_")));
+		bb_ui::host::tracing::end(&path)?;
+		println!("  traced to {}", path.display());
+	}
 	let per_frame = |v: f64| v / frames as f64;
 	let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
 	println!("== {name}: {frames} frames in {wall:.2} s = {:.1} fps", frames as f64 / wall);
@@ -230,6 +243,32 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, procs: &[(u32, St
 		.collect();
 	println!("  GPU (DRM clients): {}", gpu.join("; "));
 	Ok(())
+}
+
+/// `PP_TRACE=DIR`: Chromium's trace of each traced scene's measured seconds, to
+/// `DIR/<scene>.json` (the scene's numbers then include tracing's own cost).
+fn trace_dir() -> Option<std::path::PathBuf> {
+	std::env::var_os("PP_TRACE").map(Into::into)
+}
+
+/// The scenes traced: `PP_TRACE_SCENES` (comma-separated names), by default `css small`.
+fn traced(name: &str) -> bool {
+	std::env::var("PP_TRACE_SCENES").unwrap_or_else(|_| "css small".into()).split(',').any(|s| s.trim() == name)
+}
+
+/// Chromium's categories traced (`PP_TRACE_CATEGORIES`): by default what a frame passes
+/// through, from its begin frame to the paint handed to CEF.
+fn trace_categories() -> String {
+	std::env::var("PP_TRACE_CATEGORIES").unwrap_or_else(|_| {
+		"toplevel,toplevel.flow,benchmark,viz,cc,gpu,gpu.capture,ipc,mojom,skia,gpu.angle,blink,\
+		 disabled-by-default-viz.surface_id_flow,disabled-by-default-cc.debug.scheduler.frames"
+			.into()
+	})
+}
+
+/// The scenes run: `PP_SCENES` (comma-separated names), by default all.
+fn runs(name: &str) -> bool {
+	std::env::var("PP_SCENES").map_or(true, |list| list.split(',').any(|s| s.trim() == name))
 }
 
 /// What `alpha_at` (is the cursor over the UI) costs: a mouse sweeping the still page
@@ -317,7 +356,12 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 		bb_app::stats::tree_memory().unwrap_or_default().into_iter().map(|p| (p.pid, p.role)).collect();
 	println!("{w}x{h} at {hz} Hz, {seconds} s a scene");
 	for (name, setup) in [("idle", ""), ("css small", CSS_SMALL), ("velocity", VELOCITY), ("css full", CSS_FULL), ("idle again", "")] {
-		scene(&mut run, name, setup, seconds, &procs)?;
+		if runs(name) {
+			scene(&mut run, name, setup, seconds, &procs)?;
+		}
+	}
+	if !runs("alpha") {
+		return Ok(());
 	}
 	alpha_cost(&mut run)?;
 	run.eval(CLEAR)?;

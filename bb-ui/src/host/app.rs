@@ -160,6 +160,22 @@ wrap_app! {
 			if std::env::var_os("BB_UI_GPU_RASTER").is_none_or(|v| v == "0") {
 				command_line.append_switch(Some(&"disable-gpu-rasterization".into()));
 			}
+			// More switches, to compare Chromium's settings: `BB_UI_SWITCHES="name=value name2"`
+			// (features join the lists above).
+			for switch in std::env::var("BB_UI_SWITCHES").unwrap_or_default().split_whitespace() {
+				let switch = switch.trim_start_matches('-');
+				match switch.split_once('=') {
+					Some((name, value)) => {
+						let old = CefString::from(&command_line.switch_value(Some(&name.into()))).to_string();
+						let value = match name {
+							"enable-features" | "disable-features" if !old.is_empty() => format!("{old},{value}"),
+							_ => value.to_string(),
+						};
+						command_line.append_switch_with_value(Some(&name.into()), Some(&value.as_str().into()));
+					}
+					None => command_line.append_switch(Some(&switch.into())),
+				}
+			}
 			if let Some(port) = self.devtools_port {
 				let origins = devtools_origins(port);
 				command_line.append_switch_with_value(Some(&"remote-allow-origins".into()), Some(&origins.as_str().into()));

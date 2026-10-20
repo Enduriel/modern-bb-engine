@@ -66,6 +66,7 @@ mod session_input;
 mod session_fps;
 mod session_play;
 mod targets;
+pub mod tracing;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
