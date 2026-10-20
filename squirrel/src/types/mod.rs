@@ -13,10 +13,12 @@ mod consts;
 mod deep;
 mod dynamic;
 mod table;
+mod text;
 mod value;
 
 pub use array::SqArray;
 pub use bytes::SqBytes;
 pub use dynamic::SqRef;
 pub use table::SqTable;
+pub use text::SqText;
 pub use value::SqValue;

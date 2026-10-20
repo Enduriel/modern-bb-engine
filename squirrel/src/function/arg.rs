@@ -1,7 +1,7 @@
 //! [`SqArg`]: how each closure parameter type is read off the Squirrel stack and
 //! what it contributes to the function's type mask.
 
-use crate::{SQVM, SqArray, SqBytes, SqObjectType, SqRef, SqTable, SqValue};
+use crate::{SQVM, SqArray, SqBytes, SqObjectType, SqRef, SqTable, SqText, SqValue};
 
 /// A Rust type that can be read from a Squirrel call argument.
 ///
@@ -128,6 +128,17 @@ impl SqArg for SqRef<'_> {
 	}
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<SqRef<'a>, String> {
 		SqRef::read(vm, idx).ok_or_else(|| "could not read argument".to_string())
+	}
+}
+
+/// Any argument as `tostring` writes it (see [`SqText`]; type mask `.`).
+impl SqArg for SqText {
+	type Item<'a> = SqText;
+	fn push_typemask(mask: &mut String) {
+		mask.push('.');
+	}
+	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<SqText, String> {
+		Ok(SqText::of(vm, idx))
 	}
 }
 

@@ -321,7 +321,11 @@ fn bb_writes_its_log_and_keeps_the_last() {
 	assert_eq!(entry.name(), "log.html");
 	let mut bytes = Vec::new();
 	std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
-	assert_eq!(bytes, first, "the first log, intact");
+	if bytes != first {
+		let at = bytes.iter().zip(&first).position(|(a, b)| a != b).unwrap_or(bytes.len().min(first.len()));
+		let around = |b: &[u8]| String::from_utf8_lossy(&b[at.saturating_sub(200)..(at + 200).min(b.len())]).into_owned();
+		panic!("the first log, not intact: {} vs {} bytes, from {at}:\n{}\n---\n{}", bytes.len(), first.len(), around(&bytes), around(&first));
+	}
 	eprintln!("the first log: {} bytes, zipped {}", first.len(), std::fs::metadata(zip).unwrap().len());
 	if cfg!(feature = "ui") {
 		assert!(kept.iter().any(|p| p.file_name().unwrap().to_string_lossy().starts_with("cef-")), "{kept:?}");

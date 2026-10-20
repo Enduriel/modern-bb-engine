@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use squirrel::{SQVM, SqObjectType, SqRef, SqTable};
+use squirrel::{SQVM, SqTable, SqText};
 
 use crate::html_log::{self, Class};
 
@@ -43,39 +43,12 @@ impl From<LogLevel> for Class {
 }
 
 /// What the original logs for a value given to `logInfo` and kin (probed 2026-10-20): a
-/// string as is (its bytes, whatever they are), a number or bool as `tostring` writes
-/// it, `null` as `(null : 0x00000000)`, anything else as `(<type> : 0x<address>)`.
-/// Addresses are the original's own; ours writes zeros there.
-fn message_bytes(value: &SqRef) -> Vec<u8> {
-	let text = match value {
-		SqRef::String(s) => return s.clone().into_bytes(),
-		SqRef::Bytes(b) => return b.clone(),
-		SqRef::Integer(i) => i.to_string(),
-		SqRef::Float(f) => crate::html_log::value::float_g6(*f),
-		SqRef::Bool(b) => b.to_string(),
-		SqRef::Null => "(null : 0x00000000)".into(),
-		SqRef::Array(_) => "(array : 0x00000000)".into(),
-		SqRef::Table(_) => "(table : 0x00000000)".into(),
-		SqRef::Other(kind) => format!("({} : 0x00000000)", type_name(*kind)),
-		_ => "(object : 0x00000000)".into(),
-	};
-	text.into_bytes()
-}
-
-/// Squirrel's name for a type, as `typeof` gives it.
-fn type_name(kind: SqObjectType) -> &'static str {
-	match kind {
-		SqObjectType::Closure | SqObjectType::NativeClosure => "function",
-		SqObjectType::Class => "class",
-		SqObjectType::Instance => "instance",
-		SqObjectType::Generator => "generator",
-		SqObjectType::UserData => "userdata",
-		SqObjectType::UserPointer => "userpointer",
-		SqObjectType::Thread => "thread",
-		SqObjectType::WeakRef => "weakref",
-		SqObjectType::FuncProto => "funcproto",
-		_ => "object",
-	}
+/// string as is (its bytes, whatever they are), `null` as `(null : 0x00000000)`, and
+/// anything else as `tostring` writes it (a table `(table : 0x…)`, its address; ours
+/// has 16 hex digits, see squirrel-sys), so `logInfo(t)` and `logInfo(t.tostring())`
+/// agree.
+fn message_bytes(value: SqText) -> Vec<u8> {
+	value.0.unwrap_or_else(|| b"(null : 0x00000000)".to_vec())
 }
 
 /// Register the logging functions into the root table, routing each to `handler`.
@@ -88,8 +61,8 @@ pub fn install_logging(vm: &mut SQVM, handler: impl Fn(LogLevel, &str) + 'static
 	// Each goes to log.html (when one is open) under the original's tag, and to `handler`.
 	let at = |level: LogLevel, tag: &'static str, handler: &Rc<dyn Fn(LogLevel, &str)>, vm: &mut SQVM| {
 		let handler = handler.clone();
-		vm.make_closure(move |message: SqRef| {
-			let bytes = message_bytes(&message);
+		vm.make_closure(move |message: SqText| {
+			let bytes = message_bytes(message);
 			html_log::line(level.into(), tag, &bytes);
 			handler(level, &String::from_utf8_lossy(&bytes));
 		})
@@ -140,10 +113,20 @@ mod tests {
 		.unwrap();
 		let seen = seen.take();
 		let texts: Vec<_> = seen.iter().map(|(_, t)| t.as_str()).collect();
-		// The original's text for each (probe 2026-10-20), but the table's address.
-		assert_eq!(texts, ["5", "1.5", "(null : 0x00000000)", "true", "(table : 0x00000000)", "a\nb", "\u{FFFD}"]);
+		// The original's text for each (probe 2026-10-20); a table as `tostring` has it.
+		assert_eq!(texts[..4], ["5", "1.5", "(null : 0x00000000)", "true"]);
+		assert!(texts[4].starts_with("(table : 0x") && texts[4].len() == "(table : 0x)".len() + 16, "{}", texts[4]);
+		assert_eq!(texts[5..], ["a\nb", "\u{FFFD}"]);
 		assert_eq!(seen[3].0, LogLevel::Debug);
 		assert_eq!(seen[6].0, LogLevel::Error);
+		// The same text as the object's own `tostring`.
+		let seen2: Rc<RefCell<Vec<String>>> = Rc::default();
+		let sink = seen2.clone();
+		install_logging(&mut vm, move |_, text| sink.borrow_mut().push(text.to_string()));
+		vm.run_script("local t = {}; logInfo(t); logInfo(t.tostring()); logInfo([]);", "test").unwrap();
+		let same = seen2.take();
+		assert_eq!(same[0], same[1]);
+		assert_ne!(same[0], same[2]);
 		// Still one argument, as the original's.
 		assert!(vm.run_script("logInfo();", "test").is_err());
 	}
