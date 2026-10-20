@@ -140,6 +140,7 @@ impl CloudCover {
 
 	/// `buildCloudCover`: replace the clouds with a new cover over `span`.
 	pub fn build(&mut self, settings: CloudSettings, span: MapSpan) {
+		super::world_scene_changes::note();
 		self.clouds.clear();
 		let count = self.rng.range(settings.min_clouds, settings.max_clouds);
 		self.settings = settings;
@@ -163,6 +164,7 @@ impl CloudCover {
 
 	/// No clouds (a cover built without a map).
 	pub fn clear(&mut self) {
+		super::world_scene_changes::note();
 		self.clouds.clear();
 		self.span = None;
 	}
@@ -172,6 +174,9 @@ impl CloudCover {
 	pub fn advance(&mut self, delta: f32, virtual_speed: f32) {
 		let Some(span) = self.span else { return };
 		let delta = if virtual_speed != 0.0 { delta } else { 0.0 };
+		if delta != 0.0 && !self.clouds.is_empty() {
+			super::world_scene_changes::note();
+		}
 		let (wx, wy) = self.wind;
 		let bounds = (
 			span.min.0 - MARGIN,

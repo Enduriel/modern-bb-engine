@@ -161,6 +161,7 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 				let mut machine = m.borrow_mut();
 				machine.footprints.expire(now);
 				let ids = machine.ids.clone();
+				crate::native::world_scene_changes::note();
 				machine.footprints.spawn(
 					Footprint {
 						pos: (x as f32, y as f32),

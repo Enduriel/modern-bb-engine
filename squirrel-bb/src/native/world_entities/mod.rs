@@ -379,6 +379,7 @@ fn create_entity(
 			Some(i) => m.entities[i] = record,
 			None => m.entities.push(record),
 		}
+		crate::native::world_scene_changes::note();
 		idx
 	};
 	inject_levels(machine, vm, &entity, record_idx);
@@ -466,6 +467,7 @@ fn kill(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize) -> Result<(), Str
 			return Ok(());
 		}
 		rec.alive = false;
+		crate::native::world_scene_changes::note();
 		rec.entity.clone()
 	};
 	let Some(entity) = entity else { return Ok(()) };
@@ -641,6 +643,8 @@ impl SpriteHandle for SpriteData {
 		f(self)
 	}
 	fn with_mut<R>(&mut self, f: impl FnOnce(&mut dyn SpriteState) -> R) -> R {
+		// Every member that sets something on the sprite (see `world_scene_changes`).
+		crate::native::world_scene_changes::note();
 		f(self)
 	}
 }
@@ -658,26 +662,44 @@ fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, moving: &Moving<Owner>) 
 	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: false, moving: Some(note) }).build(vm)
 }
 
+/// `set` on a label, noted as a change to the world scene (see `world_scene_changes`).
+fn noted<V>(set: impl Fn(&mut LabelData, V)) -> impl Fn(&mut LabelData, V) {
+	move |l, v| {
+		crate::native::world_scene_changes::note();
+		set(l, v)
+	}
+}
+
+/// [`noted`] for a setter that may fail.
+fn noted_obj(
+	set: impl Fn(&mut LabelData, &SQVM, SqStrongRef) -> Result<(), String>,
+) -> impl Fn(&mut LabelData, &SQVM, SqStrongRef) -> Result<(), String> {
+	move |l, vm, v| {
+		crate::native::world_scene_changes::note();
+		set(l, vm, v)
+	}
+}
+
 /// Build the inert label stub class returned by `addLabel`.
 fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 	ClassBuilder::<LabelData>::new("WorldEntityLabel")
 		.property(
 			"Text",
 			|l: &LabelData| SqBytes(l.text.to_vec()),
-			|l: &mut LabelData, v: SqBytes| l.text = v.0.into(),
+			noted(|l: &mut LabelData, v: SqBytes| l.text = v.0.into()),
 		)
 		.property(
 			"Visible",
 			|l: &LabelData| l.visible,
-			|l: &mut LabelData, v: bool| l.visible = v,
+			noted(|l: &mut LabelData, v: bool| l.visible = v),
 		)
 		.property_obj_rw(
 			"Color",
 			|l: &LabelData, vm: &SQVM| super::color::color_object(vm, l.color),
-			|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
+			noted_obj(|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
 				l.color = super::color::color_argb(vm, &v).ok_or("Color: not a color")?;
 				Ok(())
-			},
+			}),
 		)
 		.property_obj_rw(
 			"Offset",
@@ -685,26 +707,26 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 				let create = SqTable::root(vm).get::<SqStrongRef>("createVec")?;
 				create.call_ret::<SqStrongRef, _>(vm, l.offset).ok().flatten()
 			},
-			|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
+			noted_obj(|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
 				l.offset = vec_xy(vm, &v);
 				Ok(())
-			},
+			}),
 		)
 		.property_obj_rw(
 			"BackgroundColor",
 			|l: &LabelData, vm: &SQVM| super::color::color_object(vm, l.background_color),
-			|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
+			noted_obj(|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
 				l.background_color = super::color::color_argb(vm, &v).ok_or("BackgroundColor: not a color")?;
 				Ok(())
-			},
+			}),
 		)
-		.property("BackgroundVisible", |l: &LabelData| l.background_visible, |l: &mut LabelData, v: bool| {
+		.property("BackgroundVisible", |l: &LabelData| l.background_visible, noted(|l: &mut LabelData, v: bool| {
 			l.background_visible = v
-		})
-		.property("HAlign", |l: &LabelData| l.h_align, |l: &mut LabelData, v: f64| l.h_align = v)
-		.property("VAlign", |l: &LabelData| l.v_align, |l: &mut LabelData, v: f64| l.v_align = v)
-		.property("Size", |l: &LabelData| l.size, |l: &mut LabelData, v: f64| l.size = v)
-		.property("Z", |l: &LabelData| l.z, |l: &mut LabelData, v: f64| l.z = v)
+		}))
+		.property("HAlign", |l: &LabelData| l.h_align, noted(|l: &mut LabelData, v: f64| l.h_align = v))
+		.property("VAlign", |l: &LabelData| l.v_align, noted(|l: &mut LabelData, v: f64| l.v_align = v))
+		.property("Size", |l: &LabelData| l.size, noted(|l: &mut LabelData, v: f64| l.size = v))
+		.property("Z", |l: &LabelData| l.z, noted(|l: &mut LabelData, v: f64| l.z = v))
 		.build(vm)
 }
 
@@ -796,7 +818,9 @@ impl WorldEntities {
 				let xy = crate::native::vec::xy(vm, &pos.0);
 				let (q, r) = world.grid.world_to_tile(xy.0, xy.1);
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.pos = xy;
+					if std::mem::replace(&mut rec.pos, xy) != xy {
+						crate::native::world_scene_changes::note();
+					}
 					(rec.q, rec.r) = (q, r);
 				}
 				Ok(())
@@ -857,6 +881,7 @@ impl WorldEntities {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.labels.insert(name.into(), label.clone());
 				}
+				crate::native::world_scene_changes::note();
 				Some(label)
 			})
 		};
@@ -898,6 +923,7 @@ impl WorldEntities {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.labels.remove(name);
 				}
+				crate::native::world_scene_changes::note();
 			})
 		};
 		let remove_all_labels = {
@@ -906,6 +932,7 @@ impl WorldEntities {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.labels.clear();
 				}
+				crate::native::world_scene_changes::note();
 			})
 		};
 
@@ -1183,12 +1210,7 @@ impl WorldEntities {
 
 	/// The footprints drawn now: none unless `ShowTracking` is on (`0x4e49a0`).
 	pub(crate) fn scene_footprints(&self, vm: &SQVM) -> Vec<crate::scene::SceneFootprint> {
-		let tracking = SqTable::root(vm)
-			.get::<SqStrongRef>("Settings")
-			.and_then(|s| s.call_method_ret::<SqStrongRef, _>(vm, "getTempGameplaySettings", ()).ok().flatten())
-			.and_then(|t| t.get_member::<bool>(vm, "ShowTracking"))
-			.unwrap_or(true);
-		if !tracking {
+		if !Self::tracking(vm) {
 			return Vec::new();
 		}
 		let now = footprints::virtual_time(vm);
@@ -1208,6 +1230,15 @@ impl WorldEntities {
 			.collect()
 	}
 
+	/// Whether footprints show: the gameplay setting `ShowTracking`.
+	pub(crate) fn tracking(vm: &SQVM) -> bool {
+		SqTable::root(vm)
+			.get::<SqStrongRef>("Settings")
+			.and_then(|s| s.call_method_ret::<SqStrongRef, _>(vm, "getTempGameplaySettings", ()).ok().flatten())
+			.and_then(|t| t.get_member::<bool>(vm, "ShowTracking"))
+			.unwrap_or(true)
+	}
+
 	/// Turn the live entities' sprites that have a torque to virtual time `now`, in
 	/// seconds (see `spin`), and step their animations to virtual millisecond `now_ms`
 	/// (see `sprite_anim`): those of the entities noted as moving (see
@@ -1222,9 +1253,14 @@ impl WorldEntities {
 			for (_, handle) in rec.sprites.iter() {
 				class.with_payload(vm, handle, |s| {
 					if s.turns() {
+						let before = (s.rotation, s.scale, s.anim.frame());
 						s.rotation = s.spin.turn(s.rotation, now);
 						if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
 							s.scale = f64::from(scale);
+						}
+						// Turned or stepped (on virtual time: nothing while it stands).
+						if (s.rotation, s.scale, s.anim.frame()) != before {
+							crate::native::world_scene_changes::note();
 						}
 					}
 					moves |= s.moves_in(rec);

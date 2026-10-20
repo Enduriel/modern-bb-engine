@@ -416,28 +416,27 @@ impl Game {
 				height,
 			};
 			// The map's terrain and details are kept by the renderer (built again when
-			// the map's revision changes, the details changed redrawn); the scene is the
-			// rest, without its tiles.
-			let scene_span = bb_render::frame_timing::span("world scene");
-			let scene = engine.world_scene_where(|_| false);
+			// the map's generation changes, edited as details are spawned and removed,
+			// the details changed redrawn); the scene is the rest, without its tiles,
+			// built only to be drawn: its key tells whether it changed.
+			let key = engine.world_scene_key();
 			let grid = engine.world_grid();
 			let changes = grid.take_detail_changes();
 			let edits = grid.take_map_edits();
-			drop(scene_span);
 			// A detail spawned, removed or whose look changed draws (the renderer takes
 			// them once).
 			comparable &= changes.is_empty() && edits.is_empty();
 			// Without a map (the main menu before a campaign) the water and the fog draw
 			// nothing, and so don't drift.
-			let map = scene.extent.0 > 0.0 && scene.extent.1 > 0.0;
-			if map && scene.fog_of_war {
+			let map = key.extent.0 > 0.0 && key.extent.1 > 0.0;
+			if map && key.fog_of_war {
 				let rect = shown::view_rect(view.center, view.zoom, width, height);
 				comparable &= grid.fog_clear_within(rect);
 			}
 			detail_changes = changes;
 			map_edits = edits;
 			Under::World {
-				scene: Box::new(scene),
+				scene: key,
 				view: (view.center, view.zoom),
 				virtual_time: if map { virtual_time } else { 0.0 },
 				map_revision: grid.map_revision(),
@@ -484,7 +483,11 @@ impl Game {
 					failed: battle.failed + overlays.failed,
 				}
 			})
-		} else if let Under::World { scene, view: (center, zoom), .. } = &look.under {
+		} else if let Under::World { view: (center, zoom), .. } = &look.under {
+			let scene = {
+				let _span = bb_render::frame_timing::span("world scene");
+				engine.world_scene_where(|_| false)
+			};
 			let view = WorldView {
 				center: *center,
 				zoom: *zoom,
@@ -501,7 +504,7 @@ impl Game {
 			};
 			let _span = bb_render::frame_timing::span("world draw");
 			engine.sprites().with(|registry| {
-				self.renderer.draw_kept(gpu, target, scene, &map, registry, &view, Atlases::DrawReady)
+				self.renderer.draw_kept(gpu, target, &scene, &map, registry, &view, Atlases::DrawReady)
 			})
 		} else {
 			// Neither shows (the main menu, after `World.setVisible(false)`): the UI is

@@ -235,6 +235,22 @@ fn unchanged_frames_are_left_undrawn(game: &mut Game, gpu: &Gpu, target: &Render
 		save_png(out.to_string_lossy().as_ref(), &left)?;
 		return Err(format!("the frame left up differs from the one drawn in {differ} pixels ({})", out.display()));
 	}
+	// The scene isn't built to tell (`Engine::world_scene_key`): a script setting
+	// something on an entity draws again.
+	let settled = (0..600).any(|_| {
+		game.step(1000.0 / 60.0).is_ok() && game.draw_if_changed(gpu, target).is_none()
+	});
+	if !settled {
+		return Err("idling in a town, frames were no longer left undrawn".into());
+	}
+	game.front().engine().run_script(
+		"::World.State.getPlayer().getSprite(\"body\").Color = ::createColor(\"#ff000080\");",
+		"tint the player",
+	)?;
+	game.step(1000.0 / 60.0)?;
+	if game.draw_if_changed(gpu, target).is_none() {
+		return Err("a sprite was tinted, but the frame was left undrawn".into());
+	}
 	game.mouse_moved(10, 10)?;
 	game.step(1000.0 / 60.0)?;
 	if game.draw_if_changed(gpu, target).is_none() {

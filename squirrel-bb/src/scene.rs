@@ -43,6 +43,25 @@ pub struct WorldScene {
 	pub particles: Vec<SceneParticle>,
 }
 
+/// What a [`WorldScene`] without its tiles is made from, to tell whether it would
+/// differ from another without building it (see
+/// [`Engine::world_scene_key`](crate::Engine::world_scene_key)): equal keys, equal
+/// scenes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldSceneKey {
+	/// The changes noted to the entities, clouds, birds, waves, particles, footprints and
+	/// region names (see `world_scene_changes`).
+	pub changes: u64,
+	pub extent: (f32, f32),
+	pub fog_of_war: bool,
+	pub light: SceneLight,
+	pub camera: SceneWorldCamera,
+	/// Footprints show (the gameplay setting `ShowTracking`).
+	pub tracking: bool,
+	/// The virtual clock, which the footprints fade on.
+	pub virtual_time: f32,
+}
+
 /// What an entity's portrait draws (the UI's `coui://procedural/tacticalentity(...)`
 /// and `worldentity(...)` images): its sprites, back to front.
 #[derive(Clone, Debug, Default, PartialEq)]

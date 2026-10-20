@@ -49,10 +49,12 @@ pub type Waves = Rc<RefCell<WaveField>>;
 impl WaveField {
 	/// No waves (`World.clearScene()` clears the effects layer).
 	pub fn clear(&mut self) {
+		super::world_scene_changes::note();
 		self.waves.clear();
 	}
 
 	pub fn spawn(&mut self, brush: &str, pos: (f32, f32), drift: (f32, f32), lifetime: f32) {
+		super::world_scene_changes::note();
 		self.waves.push(Wave {
 			brush: brush.into(),
 			pos,
@@ -70,6 +72,12 @@ impl WaveField {
 		self.virtual_time += delta * speed;
 		let dt = if speed != 0.0 { delta } else { 0.0 };
 		let (real, virtual_time) = (self.real, self.virtual_time);
+		// They drift, and fade in and out on real time.
+		if !self.waves.is_empty()
+			&& (dt != 0.0 || self.waves.iter().any(|w| w.fading_since.is_some() || real - w.born_real < FADE + delta))
+		{
+			super::world_scene_changes::note();
+		}
 		self.waves.retain_mut(|w| {
 			if let Some(since) = w.fading_since {
 				return real - since < FADE;

@@ -58,6 +58,7 @@ pub(super) fn fade_sprites(m: &Machine, vm: &SQVM, idx: usize, fade: Fade, now: 
 		(machine.sprite_class.clone(), handles)
 	};
 	let Some(class) = class else { return };
+	crate::native::world_scene_changes::note();
 	for handle in handles {
 		class.with_payload(vm, &handle, |s| {
 			if !s.colorization {
@@ -158,11 +159,13 @@ fn sight_pass(m: &Machine, vm: &SQVM, order: Vec<usize>, fog: bool, now: i64) ->
 			}
 			match (seen, rec.render.hidden) {
 				(false, false) => {
+					crate::native::world_scene_changes::note();
 					rec.render.hidden = true;
 					rec.render.next_change = now + FADE_MS;
 					None
 				}
 				(true, true) => {
+					crate::native::world_scene_changes::note();
 					let first = !rec.discovered;
 					rec.discovered = true;
 					rec.render.hidden = false;
@@ -201,6 +204,11 @@ fn draw_sprites(m: &Machine, vm: &SQVM, now: f32) {
 		let Some(rec) = machine.owner_record(owner).filter(|r| r.visible) else { return };
 		for (_, handle) in rec.sprites.iter() {
 			class.with_payload(vm, handle, |s| {
+				// A fade shows on real time until a draw after its end ends it (see
+				// `world_scene_changes`).
+				if s.visible && !s.color.is_fading_done() {
+					crate::native::world_scene_changes::note();
+				}
 				if s.visible && s.color.draw(now).hide {
 					s.visible = false;
 				}

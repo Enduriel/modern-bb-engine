@@ -344,6 +344,25 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		}
 	}
 
+	/// What [`world_scene_where`](Self::world_scene_where) builds the scene from besides
+	/// its tiles, without building it: two frames with equal keys have equal scenes. Its
+	/// count of changes moves whenever something the scene shows was set or moved on its
+	/// own (see `world_scene_changes`); the rest is compared as it is.
+	pub fn world_scene_key(&self) -> crate::scene::WorldSceneKey {
+		crate::scene::WorldSceneKey {
+			changes: crate::native::world_scene_changes::count(),
+			extent: self.world_grid.extent(),
+			fog_of_war: self.world_grid.fog_of_war(),
+			light: {
+				let (color, saturation) = self.world_clock.borrow().ambient();
+				crate::scene::SceneLight { color, saturation }
+			},
+			camera: self.world_camera(),
+			tracking: crate::native::WorldEntities::tracking(&self.vm),
+			virtual_time: self.time.virtual_seconds() as f32,
+		}
+	}
+
 	/// The world camera (`World.getCamera()`): where the screen's centre is and its zoom.
 	pub fn world_camera(&self) -> crate::scene::SceneWorldCamera {
 		crate::native::world_camera::view(&self.world_camera)

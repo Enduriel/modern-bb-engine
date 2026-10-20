@@ -196,6 +196,7 @@ impl Particles {
 	/// Start an effect at real time `now_ms`; its id, for [`stop`](Self::stop). An
 	/// effect without brushes or stages does nothing (the original returns null).
 	pub fn spawn(&mut self, spec: EffectSpec, now_ms: i64) -> Option<u64> {
+		super::world_scene_changes::note();
 		if spec.brushes.is_empty() || spec.stages.is_empty() {
 			return None;
 		}
@@ -223,6 +224,7 @@ impl Particles {
 
 	/// Stop effect `id` spawning (`die()`); its particles live out their stages.
 	pub fn stop(&mut self, id: u64) {
+		super::world_scene_changes::note();
 		if let Some(e) = self.emitters.iter_mut().find(|e| e.id == id) {
 			e.running = false;
 			e.limit = 1;
@@ -253,6 +255,10 @@ impl Particles {
 
 	/// One frame at real time `now_ms` (and `now` seconds), `dt` seconds after the last.
 	pub fn advance(&mut self, now_ms: i64, now: f32, dt: f32) {
+		// They move and fade on real time.
+		if !self.emitters.is_empty() {
+			super::world_scene_changes::note();
+		}
 		let mut emitters = std::mem::take(&mut self.emitters);
 		for e in &mut emitters {
 			let over = e.duration != 0 && now_ms > e.start && now_ms - e.start >= e.duration;
@@ -335,6 +341,7 @@ impl Particles {
 
 	/// Remove every effect (a new scene).
 	pub fn clear(&mut self) {
+		super::world_scene_changes::note();
 		self.emitters.clear();
 	}
 }

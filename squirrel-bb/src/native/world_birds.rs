@@ -82,7 +82,11 @@ impl Flock {
 	/// Step their wings to virtual millisecond `now` (sprites play on virtual time).
 	pub fn flap(&mut self, now: u32) {
 		for b in &mut self.birds {
+			let frame = b.anim.frame();
 			b.anim.step_on(&self.sprites, b.look.brush, now);
+			if b.anim.frame() != frame {
+				super::world_scene_changes::note();
+			}
 		}
 	}
 
@@ -116,6 +120,7 @@ impl Flock {
 
 	/// `buildBirds`: replace the birds with a new flock over `span`.
 	pub fn build(&mut self, settings: BirdSettings, span: MapSpan) {
+		super::world_scene_changes::note();
 		self.settings = settings;
 		self.span = Some(span);
 		self.birds.clear();
@@ -129,6 +134,7 @@ impl Flock {
 
 	/// No birds (`World.clearScene()`, or a flock built without a map).
 	pub fn clear(&mut self) {
+		super::world_scene_changes::note();
 		self.birds.clear();
 		self.span = None;
 	}
@@ -138,6 +144,9 @@ impl Flock {
 	pub fn advance(&mut self, delta: f32, virtual_speed: f32) {
 		let Some(span) = self.span else { return };
 		let delta = if virtual_speed != 0.0 { delta } else { 0.0 };
+		if delta != 0.0 && !self.birds.is_empty() {
+			super::world_scene_changes::note();
+		}
 		let (dx, dy) = self.dir;
 		let bounds = (span.min.0 - MARGIN, span.min.1 - MARGIN, span.max.0 + MARGIN, span.max.1 + MARGIN);
 		let mut gone = 0;

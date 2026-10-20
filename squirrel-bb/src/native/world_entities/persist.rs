@@ -221,6 +221,7 @@ impl SavePart for EntitiesPart {
 		}
 		let next_id = cx.reader.borrow_mut().i64()?;
 		self.0.borrow().ids.restore(next_id);
+		crate::native::world_scene_changes::note();
 		Ok(())
 	}
 }

@@ -231,7 +231,11 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 	let set_player_pos = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, pos: Retained| {
-			m.borrow_mut().player_view.pos = vec_xy(vm, &pos.0);
+			let pos = vec_xy(vm, &pos.0);
+			// Which footprints show follows it (see `world_scene_changes`).
+			if std::mem::replace(&mut m.borrow_mut().player_view.pos, pos) != pos {
+				crate::native::world_scene_changes::note();
+			}
 		})
 	};
 	// getPlayerPos(): what setPlayerPos stored, an f32 vector (disassembled: World+0x120).
@@ -246,7 +250,12 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 	};
 	let set_player_vision_radius = {
 		let m = m.clone();
-		vm.make_closure(move |r: Number| m.borrow_mut().player_view.vision_radius = r.0 as f32)
+		vm.make_closure(move |r: Number| {
+			let r = r.0 as f32;
+			if std::mem::replace(&mut m.borrow_mut().player_view.vision_radius, r) != r {
+				crate::native::world_scene_changes::note();
+			}
+		})
 	};
 	let get_player_vision_radius = {
 		let m = m.clone();

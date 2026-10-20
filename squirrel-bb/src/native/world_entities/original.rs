@@ -88,6 +88,7 @@ impl WorldEntities {
 		m.dead.clear();
 		m.thinkers = super::think::Thinkers::default();
 		m.footprints = super::footprints::Footprints::default();
+		crate::native::world_scene_changes::note();
 	}
 
 	/// `World.clearScene()`'s share: every entity, the thinker list and the footprints
@@ -142,6 +143,7 @@ impl WorldEntities {
 		// Its look is the save's now; the turn forgets it if nothing moves.
 		let m = self.machine.borrow();
 		m.moving.note(m.owner(idx));
+		crate::native::world_scene_changes::note();
 		Ok(())
 	}
 
@@ -162,6 +164,7 @@ impl WorldEntities {
 		if m.ids.peek() <= i64::from(head.id) {
 			m.ids.restore(i64::from(head.id) + 1);
 		}
+		crate::native::world_scene_changes::note();
 	}
 
 	/// Every living entity as the original saves it in the scene: those drawn on top

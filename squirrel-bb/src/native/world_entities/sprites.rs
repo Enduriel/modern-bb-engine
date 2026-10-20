@@ -30,6 +30,7 @@ fn with_sprite(m: &Machine, vm: &SQVM, name: &str, f: impl FnOnce(&mut SpriteDat
 	};
 	if let Some((class, handle)) = target {
 		class.with_payload(vm, &handle, f);
+		crate::native::world_scene_changes::note();
 	}
 }
 
@@ -56,6 +57,7 @@ pub(super) fn add(m: &Machine, vm: &SQVM, name: String, first: bool) -> Option<S
 	if let Some(owner) = owner {
 		machine.moving.note(owner);
 	}
+	crate::native::world_scene_changes::note();
 	Some(sprite)
 }
 
@@ -70,6 +72,7 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 			if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 				rec.sprites.remove(&name);
 			}
+			crate::native::world_scene_changes::note();
 		})
 	};
 	let get_offset = {

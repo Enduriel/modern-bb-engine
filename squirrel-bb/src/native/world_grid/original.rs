@@ -80,6 +80,7 @@ impl WorldGrid {
 		g.width = w;
 		g.height = h;
 		g.fog.reset(fog_extent(w, h));
+		crate::native::world_scene_changes::note();
 		g.region_texts = region_texts(scene);
 		let decal = type_id("WorldDecal");
 		for e in scene.layers.iter().flat_map(|l| l.entities()).filter(|e| e.type_ == decal) {

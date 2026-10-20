@@ -9,7 +9,7 @@
 //! battle, which isn't compared ([`Look`] is `None` for both). The scripts still run
 //! every frame: only the drawing is left out.
 
-use squirrel_bb::scene::WorldScene;
+use squirrel_bb::scene::WorldSceneKey;
 
 /// What one frame shows, as far as telling two frames apart goes.
 #[derive(Debug, PartialEq)]
@@ -40,12 +40,13 @@ pub struct CursorLook {
 pub enum Under {
 	/// Nothing: the main menu (no map shows).
 	Nothing,
-	/// The world map: its scene (without the tiles, which the renderer keeps), the
-	/// view (centre, zoom), the virtual clock the water drifts with (0 without a map,
-	/// where no water is drawn), and the map's revision (its terrain and details; a
-	/// detail whose look changed draws anyway, see `Game::draw_if_changed`).
+	/// The world map: what its scene (without the tiles, which the renderer keeps) is
+	/// made from, compared without building it (`Engine::world_scene_key`), the view
+	/// (centre, zoom), the virtual clock the water drifts with (0 without a map, where
+	/// no water is drawn), and the map's revision (its terrain and details; a detail
+	/// spawned, removed or whose look changed draws anyway, see `Game::draw_if_changed`).
 	World {
-		scene: Box<WorldScene>,
+		scene: WorldSceneKey,
 		view: ([f32; 2], f32),
 		virtual_time: f32,
 		map_revision: u64,

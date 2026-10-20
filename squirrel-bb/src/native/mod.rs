@@ -71,6 +71,7 @@ pub(crate) mod world_clouds;
 pub(crate) mod world_waves;
 pub(crate) mod world_birds;
 pub(crate) mod world_clear_scene;
+pub(crate) mod world_scene_changes;
 pub(crate) mod tactical_rain;
 pub(crate) mod tactical_unveil;
 pub mod stubs;

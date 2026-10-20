@@ -124,6 +124,7 @@ impl super::save::SavePart for GridPart {
 		g.fog.load(&mut r)?;
 		bound_camera(&g);
 		let count = r.u32()?;
+		crate::native::world_scene_changes::note();
 		g.region_texts = (0..count)
 			.map(|_| {
 				Ok(SceneRegionText {
@@ -417,6 +418,7 @@ impl WorldGrid {
 				};
 				// The original clears its fog mask here too (`0x4efba9`).
 				g.fog.reset(fog_extent(w, h));
+				crate::native::world_scene_changes::note();
 				g.region_texts.clear();
 				bound_camera(&g);
 			})
@@ -742,6 +744,7 @@ impl WorldGrid {
 				let mut g = g.borrow_mut();
 				// It's a scene entity in the original, so it takes an id.
 				let id = g.ids.next();
+				crate::native::world_scene_changes::note();
 				g.region_texts.push(SceneRegionText {
 					id,
 					text: name.0.into(),
@@ -1043,6 +1046,7 @@ impl WorldGrid {
 			t.details.clear();
 		}
 		g.spinning.borrow_mut().clear();
+		crate::native::world_scene_changes::note();
 		g.region_texts.clear();
 		g.fog_on = true;
 	}
