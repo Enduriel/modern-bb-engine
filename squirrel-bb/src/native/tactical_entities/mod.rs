@@ -230,6 +230,19 @@ impl TacticalMachine {
 		let i = *self.by_identity.get(&identity)?;
 		Some(&mut self.units[i])
 	}
+
+	/// What a unit's script-side position is relative to: its tile's world position
+	/// while it stands on one, else the world's origin. The original keeps the scene
+	/// node's local position, which `setPos` writes (`0x542070`) and `getRelativePos`
+	/// reads, and `getPos` (`0x4c2c30`) adds the tile's world position to it unless the
+	/// unit is unplaced or in the flight layer (flag `0x800000`). Ours keeps the world
+	/// position (`UnitRecord::pos`, what the renderer draws).
+	fn pos_origin(&self, rec: &UnitRecord) -> (f64, f64) {
+		match (rec.tile, &self.grid) {
+			(Some(t), Some(grid)) if !rec.flying => grid.borrow().tiles.get(t).map_or((0.0, 0.0), |t| t.world_pos()),
+			_ => (0.0, 0.0),
+		}
+	}
 }
 
 /// Ignore a "no method" error (optional hook the class didn't define); propagate real ones.
@@ -798,7 +811,13 @@ impl TacticalEntities {
 		let get_relative_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
-				let (x, y) = m.borrow().record(vm.this_identity()).map_or((0.0, 0.0), |r| r.pos);
+				let (x, y) = {
+					let m = m.borrow();
+					m.record(vm.this_identity()).map_or((0.0, 0.0), |r| {
+						let origin = m.pos_origin(r);
+						(r.pos.0 - origin.0, r.pos.1 - origin.1)
+					})
+				};
 				let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("createVec missing")?;
 				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
 			})
@@ -961,9 +980,12 @@ impl TacticalEntities {
 			vm.make_closure(move |vm: &SQVM, pos: Retained| {
 				let x = pos.0.get_member::<squirrel::Number>(vm, "X").map_or(0.0, |n| n.0);
 				let y = pos.0.get_member::<squirrel::Number>(vm, "Y").map_or(0.0, |n| n.0);
-				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.pos = (x, y);
-				}
+				// Relative to the unit's tile, as the original's (see `pos_origin`): undead
+				// rise from (0, -200) to (0, 0) under their tile.
+				let mut m = m.borrow_mut();
+				let Some(&idx) = m.by_identity.get(&vm.this_identity()) else { return };
+				let origin = m.pos_origin(&m.units[idx]);
+				m.units[idx].pos = (origin.0 + x, origin.1 + y);
 			})
 		};
 
