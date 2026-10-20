@@ -7,10 +7,14 @@
 //! cargo run --release -p bb-engine --example script_profile -- \
 //!     [--vanilla] [--only PREFIXES] [--save NAME | --new-campaign] [--saves DIR]
 //!     [--frames N] [--hz HZ] [--phases paused,town,running] [--top N] [--out REPORT.md]
-//!     [--script FILE.nut]
+//!     [--script FILE.nut] [--live-clock]
 //! ```
 //!
 //! - `--script` runs a script once the world is up (e.g. to log what a phase does).
+//! - `--live-clock` puts a live clock behind `Time.getExactTime`, as `bb` and the
+//!   original have it (the AI's background work then spreads over frames, and a script
+//!   can time itself); the frame's time otherwise.
+//! - `--phases` takes any of the three, or `none`.
 //!
 //! - `--save NAME` copies `NAME.sav` from `--saves` (default: bb's savegames folder) into
 //!   a scratch folder as `bb_probe_NAME.sav` and loads that; the original is only read.
@@ -46,6 +50,7 @@ struct Options {
 	top: usize,
 	out: Option<PathBuf>,
 	script: Option<PathBuf>,
+	live_clock: bool,
 }
 
 fn options() -> Options {
@@ -60,6 +65,7 @@ fn options() -> Options {
 		top: 30,
 		out: None,
 		script: None,
+		live_clock: false,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -72,10 +78,11 @@ fn options() -> Options {
 			"--saves" => o.saves = PathBuf::from(value()),
 			"--frames" => o.frames = value().parse().expect("--frames N"),
 			"--hz" => o.hz = value().parse().expect("--hz HZ"),
-			"--phases" => o.phases = value().split(',').map(str::to_string).collect(),
+			"--phases" => o.phases = value().split(',').filter(|p| *p != "none").map(str::to_string).collect(),
 			"--top" => o.top = value().parse().expect("--top N"),
 			"--out" => o.out = Some(PathBuf::from(value())),
 			"--script" => o.script = Some(PathBuf::from(value())),
+			"--live-clock" => o.live_clock = true,
 			other => panic!("unknown argument {other}"),
 		}
 	}
@@ -97,7 +104,13 @@ fn main() {
 		archives.extend(mods);
 	}
 	let owners = Owners::of(&archives);
-	let mut engine = harness::open_mounted(&dir, archives, |_| {}).expect("open the install");
+	let live = o.live_clock;
+	let mut engine = harness::open_mounted(&dir, archives, |c| {
+		if live {
+			c.exact_clock = squirrel_bb::ExactClock::Live;
+		}
+	})
+	.expect("open the install");
 	engine.vm_mut().install_standard_error_handlers();
 
 	// A scratch folder of our own for the saves (the game writes some, e.g. MSU's).
