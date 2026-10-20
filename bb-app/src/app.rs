@@ -87,12 +87,19 @@ struct Running {
 	/// presented (see `bb_app::shown`), and what paces such frames.
 	unchanged: bool,
 	pacer: Pacer,
+	/// The refresh interval of the monitor the window is on, as the system last
+	/// reported it, if it did.
+	reported_refresh: Option<Duration>,
 	/// When the redraw now awaited was asked for (see `App::about_to_wait`).
 	redraw_asked: Option<Instant>,
 	/// With `BB_TEST_UNPRESENTED=N`, frame N is drawn but never presented, as a present
 	/// that came back out of date: the window tests' check that the game draws on
 	/// without the compositor's answer (see `REDRAW_STALLED`).
 	unpresented: Option<u64>,
+	/// With `BB_TEST_PRESENT_EVERY=N`, two frames in a row of every N are drawn and
+	/// presented, changed or not, as a mouse moved now and then does with the game's
+	/// cursor: the window tests' check that undrawn frames keep the display's pace.
+	present_every: Option<u64>,
 	/// With `BB_STATS`, when the renderer's memory is logged next, and the frames since
 	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
@@ -292,7 +299,7 @@ impl App {
 		let presenter = Presenter::new(&gpu, format);
 		let frame_rect = display::frame_rect((config.width, config.height), game.screen());
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
-		let pacer = Pacer::new(display::refresh_interval(&window));
+		let pacer = Pacer::new(None, config.present_mode == wgpu::PresentMode::Fifo);
 		let mut running = Running {
 			window,
 			surface,
@@ -310,8 +317,10 @@ impl App {
 			frames: 0,
 			unchanged: false,
 			pacer,
+			reported_refresh: None,
 			redraw_asked: None,
 			unpresented: std::env::var("BB_TEST_UNPRESENTED").ok().and_then(|v| v.parse().ok()),
+			present_every: std::env::var("BB_TEST_PRESENT_EVERY").ok().and_then(|v| v.parse().ok()).filter(|&n| n > 0),
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
@@ -324,6 +333,7 @@ impl App {
 			frame_times: FrameTimes::from_env(),
 		};
 		running.resize(size);
+		running.follow_monitor_refresh();
 		Ok(running)
 	}
 
@@ -358,6 +368,18 @@ impl Running {
 		drop(game);
 		std::mem::forget(surface);
 		std::mem::forget(window);
+	}
+
+	/// Pace undrawn frames no faster than the refresh of the monitor the window is on,
+	/// where the system reports it (on Wayland, not before the window has shown on one).
+	fn follow_monitor_refresh(&mut self) {
+		let reported = display::refresh_interval(&self.window);
+		if reported != self.reported_refresh {
+			let ms = |r: Duration| format!("{:.2} ms", r.as_secs_f64() * 1000.0);
+			eprintln!("display: the monitor's refresh {}", reported.map_or("not reported".into(), ms));
+			self.reported_refresh = reported;
+			self.pacer.set_reported(reported);
+		}
 	}
 
 	/// Window pixels to the game's screen pixels.
@@ -414,21 +436,17 @@ impl Running {
 			self.config.present_mode = present_mode;
 			self.surface.configure(&self.gpu.device, &self.config);
 			self.game.forget_shown();
+			self.pacer.set_display_paced(present_mode == wgpu::PresentMode::Fifo);
 		}
 	}
 
 	/// When the next frame may start: with the frame rate limited (VSync off), a frame
 	/// cap's interval after the last; after a frame left undrawn, which nothing paced,
-	/// the presented frames' pace after it (see `bb_app::pacing`; or the cap's, if
-	/// longer).
+	/// the display's refresh or the cap's interval after it (see `bb_app::pacing`).
 	fn next_frame_at(&self) -> Option<Instant> {
 		let mode = self.game.video().mode();
 		let cap = (mode.limit_frame_rate && mode.frame_cap > 0).then(|| Duration::from_secs_f64(1.0 / mode.frame_cap as f64));
-		let interval = match (cap, self.unchanged) {
-			(Some(cap), true) => Some(cap.max(self.pacer.interval())),
-			(None, true) => Some(self.pacer.interval()),
-			(cap, false) => cap,
-		};
+		let interval = if self.unchanged { Some(self.pacer.interval(cap)) } else { cap };
 		interval.map(|i| self.last_frame + i)
 	}
 
@@ -483,7 +501,11 @@ impl Running {
 			self.target = RenderTarget::new(&self.gpu, width, height);
 		}
 		// A frame that would show just what the last did is neither drawn nor presented:
-		// the last stays up, and the next frame comes at the pace presenting kept (`pacing`).
+		// the last stays up, and the next frame comes a refresh of the display after it
+		// (`pacing`), which is measured from presented frames: until it is, all are.
+		if self.pacer.measuring() || self.present_every.is_some_and(|n| self.frames % n < 2) {
+			self.game.forget_shown();
+		}
 		let drawn = self.game.draw_if_changed(&self.gpu, &self.target);
 		let after_presented = !self.unchanged;
 		self.unchanged = drawn.is_none();
@@ -529,6 +551,10 @@ impl Running {
 			self.gpu.queue.present(texture);
 		}
 		drop(present_span);
+		if !after_presented {
+			// The window may have moved to another monitor while nothing was presented.
+			self.follow_monitor_refresh();
+		}
 		self.pacer.presented(now, after_presented);
 		if let Some(times) = &mut self.frame_times {
 			if times.wait_gpu {
@@ -675,9 +701,11 @@ impl ApplicationHandler for App {
 				running.resize(*size);
 				Ok(false)
 			}
-			// What the system shows of the window may be gone: draw it again.
+			// What the system shows of the window may be gone: draw it again. It may be on
+			// another monitor, with another refresh.
 			WindowEvent::Occluded(false) | WindowEvent::ScaleFactorChanged { .. } => {
 				running.game.forget_shown();
+				running.follow_monitor_refresh();
 				Ok(false)
 			}
 			WindowEvent::RedrawRequested => return self.redraw(event_loop),

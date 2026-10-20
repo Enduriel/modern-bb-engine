@@ -35,7 +35,13 @@ fn run_bb(dir: &Path, size: (u32, u32), args: &[&str]) -> Option<Run> {
 }
 
 /// [`run_bb`] with `env` set for `bb` too.
-fn run_bb_with(dir: &Path, (width, height): (u32, u32), args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
+fn run_bb_with(dir: &Path, size: (u32, u32), args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
+	run_bb_at(dir, size, None, args, env)
+}
+
+/// [`run_bb_with`] on a display refreshing `refresh` times a second (gamescope's own
+/// default otherwise).
+fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
 	if !Path::new(STEAM_DATA_DIR).exists() {
 		eprintln!("skipping: {STEAM_DATA_DIR} not present");
 		return None;
@@ -56,7 +62,9 @@ fn run_bb_with(dir: &Path, (width, height): (u32, u32), args: &[&str], env: &[(&
 	// desktop's, so the window opens there.
 	let mut child = Command::new("gamescope")
 		.args(["--backend", "headless", "--expose-wayland"])
-		.args(["-W", &width.to_string(), "-H", &height.to_string(), "--"])
+		.args(["-W", &width.to_string(), "-H", &height.to_string()])
+		.args(refresh.map(|r| ["-r".to_string(), r.to_string()]).into_iter().flatten())
+		.arg("--")
 		.args([
 			"sh",
 			"-c",
@@ -430,5 +438,49 @@ fn bb_writes_its_log_and_keeps_the_last() {
 	eprintln!("the first log: {} bytes, zipped {}", first.len(), std::fs::metadata(zip).unwrap().len());
 	if cfg!(feature = "ui") {
 		assert!(kept.iter().any(|p| p.file_name().unwrap().to_string_lossy().starts_with("cef-")), "{kept:?}");
+	}
+}
+
+/// Frames left undrawn, because they'd show what the last did, step the scripts at the
+/// display's rate, as drawn ones do: on a 180 Hz and a 60 Hz display, at the main menu
+/// with the page (nothing there changes while idle), with two frames in a row of every
+/// seven presented, as a mouse moved now and then presents them with the game's cursor.
+/// Paced from the shortest recent interval between presented frames, the first frames
+/// after a pause (presented as fast as the swapchain had images free) set the pace:
+/// here 330-350 undrawn frames a second at 180 Hz, 220-390 at 60 Hz.
+#[test]
+fn undrawn_frames_step_at_the_displays_rate() {
+	if !cfg!(feature = "ui") {
+		eprintln!("skipping: without the page, the game starts a campaign, whose world map draws every frame");
+		return;
+	}
+	for refresh in [180u32, 60] {
+		let dir = run_dir(&format!("pace_{refresh}"));
+		let (settings, times) = (dir.join("settings.cfg"), dir.join("frame_times.txt"));
+		let quit = r#"local menu = ::RootState.get("MainMenuState"); if (menu != null) menu.main_menu_module_onQuitPressed();"#;
+		// About ten seconds at the display's rate.
+		let end = (refresh * 10).to_string();
+		let args = ["--settings", settings.to_str().unwrap(), "--at", &end, quit];
+		let env = [("BB_FRAME_TIMES", times.to_str().unwrap()), ("BB_TEST_PRESENT_EVERY", "7")];
+		let Some(run) = run_bb_at(&dir, (1280, 720), Some(refresh), &args, &env) else { return };
+		assert_eq!(run.status, "0", "{}", run.stderr);
+		// Each frame's interval since the last and whether it drew (quads > 0); the
+		// first few seconds (the page loading, the menu showing) left out.
+		let frames: Vec<(f64, bool)> = std::fs::read_to_string(&times)
+			.expect("the frame times")
+			.lines()
+			.filter_map(|line| {
+				let field = |name: &str| line.split(' ').find_map(|f| f.strip_prefix(name)).and_then(|v| v.parse::<f64>().ok());
+				Some((field("interval=")?, field("quads=")? > 0.0))
+			})
+			.collect();
+		let settled = &frames[frames.len() / 2..];
+		let undrawn: Vec<f64> = settled.windows(2).filter(|w| !w[0].1 && !w[1].1).map(|w| w[1].0).collect();
+		assert!(undrawn.len() > settled.len() / 3, "{} of {} frames undrawn after an undrawn one", undrawn.len(), settled.len());
+		let rate = 1000.0 * undrawn.len() as f64 / undrawn.iter().sum::<f64>();
+		let drawn = settled.iter().filter(|f| f.1).count();
+		eprintln!("{refresh} Hz: undrawn frames {rate:.1} a second ({} of them, {drawn} drawn)", undrawn.len());
+		let expected = f64::from(refresh);
+		assert!((rate - expected).abs() < expected * 0.08, "undrawn frames at {rate:.1} a second on a {refresh} Hz display");
 	}
 }
