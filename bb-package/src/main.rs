@@ -11,13 +11,15 @@
 //!    checks its SHA-256 and that of the target's Steam library inside it against the
 //!    pins in `bb_steam::pinned`, and refuses anything else ([`steam_library`]).
 //! 3. Lays out `<out>/bb-<target>/`: `bb`, the CEF files it runs with (stripped on
-//!    Linux, English locale only), Steam's library, and the licences ([`layout`]).
+//!    Linux, English locale only), Steam's library, and the licences ([`layout`]); on
+//!    macOS `bb.app` with all of that inside but the licences ([`mac_app`]).
 //! 4. Packs it as `<out>/bb-<target>.tar.gz` (`.zip` for Windows) and prints the sizes.
 //!
 //! Needs `curl` and `tar` on the path (both ship with Windows 10+, macOS and Linux
 //! distributions), and `strip` on Linux. See `docs/packaging.md`.
 
 mod layout;
+mod mac_app;
 mod steam_library;
 
 use std::path::{Path, PathBuf};

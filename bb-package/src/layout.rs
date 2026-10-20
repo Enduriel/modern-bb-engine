@@ -9,8 +9,10 @@
 //! check that nothing loads them).
 //!
 //! Windows (not yet built or run): every DLL and resource at the top of CEF's folder,
-//! the same locale. macOS needs an app bundle with CEF's framework and helper apps
-//! and is refused for now.
+//! the same locale.
+//!
+//! macOS (built and laid out on an M4, not yet run from the package): an app bundle
+//! with CEF's framework and a helper app ([`crate::mac_app`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,7 @@ use crate::steam_library::SteamLibrary;
 pub enum Platform {
 	Linux,
 	Windows,
+	MacOs,
 }
 
 impl Platform {
@@ -30,8 +33,8 @@ impl Platform {
 			Ok(Platform::Linux)
 		} else if target.contains("-windows-") {
 			Ok(Platform::Windows)
-		} else if target.contains("-apple-") {
-			Err("macOS packages need an app bundle with CEF's framework and helpers, not built yet".into())
+		} else if target.contains("-apple-darwin") {
+			Ok(Platform::MacOs)
 		} else {
 			Err(format!("no package layout for {target}"))
 		}
@@ -42,6 +45,7 @@ impl Platform {
 		match self {
 			Platform::Linux => "linux",
 			Platform::Windows => "windows",
+			Platform::MacOs => "macos",
 		}
 	}
 }
@@ -88,10 +92,11 @@ fn cef_files(cef_dir: &Path, platform: Platform) -> Result<Vec<(PathBuf, bool)>,
 			files.push((PathBuf::from("locales/en-US.pak"), false));
 			Ok(files)
 		}
+		Platform::MacOs => Err("macOS packages are app bundles (mac_app)".into()),
 	}
 }
 
-fn copy(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy(from: &Path, to: &Path) -> Result<(), String> {
 	if let Some(dir) = to.parent() {
 		fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
 	}
@@ -146,6 +151,10 @@ fn steam_notice(steam: &SteamLibrary) -> String {
 
 /// Lay the package out in `dir` (emptied first).
 pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam: &SteamLibrary) -> Result<(), String> {
+	if platform == Platform::MacOs {
+		crate::mac_app::lay_out(dir, bb, cef_dir, steam)?;
+		return notices(dir, cef_dir, steam);
+	}
 	let _ = fs::remove_dir_all(dir);
 	fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
 	let exe = dir.join(bb.file_name().ok_or("bb has no file name")?);
@@ -162,6 +171,11 @@ pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam:
 	}
 	copy(&steam.path, &dir.join(steam.pin.file_name))?;
 	crate::steam_library::check_file(&dir.join(steam.pin.file_name), steam.pin.sha256)?;
+	notices(dir, cef_dir, steam)
+}
+
+/// The notices, in `<dir>/licenses`.
+fn notices(dir: &Path, cef_dir: &Path, steam: &SteamLibrary) -> Result<(), String> {
 	let notices = dir.join("licenses");
 	copy(&cef_dir.join("CREDITS.html"), &notices.join("CEF-CREDITS.html"))?;
 	fs::write(notices.join("CEF-LICENSE.txt"), cef_license(cef_dir)?).map_err(|e| e.to_string())?;
@@ -173,7 +187,7 @@ pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam:
 /// writes zips: Windows' own and macOS's do).
 pub fn archive(out: &Path, name: &str, platform: Platform) -> Result<PathBuf, String> {
 	let (archive, flags) = match platform {
-		Platform::Linux => (out.join(format!("{name}.tar.gz")), "-czf"),
+		Platform::Linux | Platform::MacOs => (out.join(format!("{name}.tar.gz")), "-czf"),
 		Platform::Windows => (out.join(format!("{name}.zip")), "-acf"),
 	};
 	let _ = fs::remove_file(&archive);
@@ -189,7 +203,8 @@ mod tests {
 	fn platforms_by_target() {
 		assert_eq!(Platform::of("x86_64-unknown-linux-gnu"), Ok(Platform::Linux));
 		assert_eq!(Platform::of("x86_64-pc-windows-msvc"), Ok(Platform::Windows));
-		assert!(Platform::of("aarch64-apple-darwin").is_err());
+		assert_eq!(Platform::of("aarch64-apple-darwin"), Ok(Platform::MacOs));
+		assert!(Platform::of("aarch64-apple-ios").is_err());
 		assert_eq!(exe_name("x86_64-pc-windows-msvc"), "bb.exe");
 		assert_eq!(exe_name("x86_64-unknown-linux-gnu"), "bb");
 	}
