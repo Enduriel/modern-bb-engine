@@ -30,7 +30,7 @@ def chunk32(n):
 
 
 class Table:
-    __slots__ = ("id", "bytes", "nodes", "used", "delegate", "weak", "slots", "flags", "gets", "writes", "lazy")
+    __slots__ = ("id", "bytes", "nodes", "used", "delegate", "weak", "slots", "flags", "gets", "writes", "lazy", "iterated_at", "cloned_at")
 
     def __init__(self, f):
         self.id, b, n, u, self.delegate, w = f
@@ -40,6 +40,8 @@ class Table:
         self.lazy = None
         self.gets = None
         self.writes = None
+        self.iterated_at = None
+        self.cloned_at = None
 
 
 def read(path):
@@ -68,6 +70,12 @@ def read(path):
                 continue
             if kind == "x":
                 cur.flags = int(line[2:])
+                continue
+            if kind == "r":
+                cur.iterated_at = line[2:].rstrip("\n")
+                continue
+            if kind == "q":
+                cur.cloned_at = line[2:].rstrip("\n")
                 continue
             p = line.split()
             if kind == "T":
@@ -326,6 +334,14 @@ def main():
           f"native closures {mb(n32).strip()} (64-bit {mb(n_chunk).strip()}), arrays {mb(a32).strip()} (64-bit {mb(a_chunk).strip()})\n")
 
 
+def sites(tables, ids, what):
+    """Where the tables `ids` were first iterated and cloned (top sites)."""
+    for attr, verb in (("iterated_at", "iterated"), ("cloned_at", "cloned")):
+        c = Counter(getattr(tables[i], attr) for i in ids if getattr(tables[i], attr))
+        if c:
+            print(f"  - {what} first {verb} at: " + "; ".join(f"{k} {n:,}" for k, n in c.most_common(8)))
+
+
 def observed(tables, closures, natives, level_of, m_of, bound, bound_n, slot):
     """What the scripts touched while tracking was on (the census's g/w/x lines)."""
     print("## What scripts touched while tracked\n")
@@ -367,6 +383,34 @@ def observed(tables, closures, natives, level_of, m_of, bound, bound_n, slot):
         per_depth[d][1] += tables[i].used
         per_depth[d][2] += len(tables[i].writes or ())
     print("  - by depth (0 = leaf): " + "; ".join(f"{d}: {n:,} tables, {u:,} fields, {w:,} written" for d, (n, u, w) in sorted(per_depth.items())))
+    print(f"  - slots added {count(ms, lambda t: t.flags & 4):,}, removed {count(ms, lambda t: t.flags & 8):,}; "
+          f"iterated after that {count(ms, lambda t: t.flags & 16):,}, cloned after that {count(ms, lambda t: t.flags & 32):,}")
+    sites(tables, ms, "`m` tables")
+    lazy_ms = [i for i in ms if tables[i].lazy]
+    if lazy_ms:
+        # Lazy members: which `m` tables were made plain, and why.
+        plain = [i for i in ms if not tables[i].lazy and tables[i].used]
+        def mbytes(ids):
+            return sum(chunk(88) + chunk(tables[i].bytes - 88) for i in ids)
+        print(f"  - lazy {len(lazy_ms):,} ({mb(mbytes(lazy_ms)).strip()} MB); plain and not empty {len(plain):,} ({mb(mbytes(plain)).strip()} MB), of which:")
+        groups = [
+            ("iterated, no slot added or removed before", lambda t: t.flags & 1 and not t.flags & 16),
+            ("iterated after a slot was added or removed", lambda t: t.flags & 16),
+            ("a slot removed, not iterated", lambda t: t.flags & 8 and not t.flags & 1),
+            ("untracked (made plain during the load, or never lazy)", lambda t: not t.flags & 9),
+        ]
+        for label, pred in groups:
+            ids = [i for i in plain if pred(tables[i])]
+            # What each would hold lazy: its written fields and nested containers.
+            def own(t):
+                cont = sum(1 for k, v in t.slots if v[:1] in "TA")
+                n = len(t.writes or ()) + cont
+                size = 4
+                while size * 3 < n * 4:
+                    size *= 2
+                return chunk(88) + chunk(size * 32) + 96
+            est = sum(own(tables[i]) for i in ids)
+            print(f"    - {label}: {len(ids):,}, {mb(mbytes(ids)).strip()} MB (lazy they'd hold ~{mb(est).strip()} MB)")
     # Fetched per instance.
     per_inst = Counter()
     for i in bound:
