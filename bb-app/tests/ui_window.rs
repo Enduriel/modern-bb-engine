@@ -5,7 +5,8 @@
 //! renderer. Idle in a town, frames that would show the same are left undrawn.
 //! Quitting from the in-game menu (Escape, then Quit) leads back to the main menu, and
 //! Escape there ends the game, as in the original. The FPS display is off until
-//! asked for, then shows the frame rate.
+//! asked for, then shows the frame rate. Keys typed into a page text field reach the
+//! states too.
 //!
 //! Skips if there is no Steam install or no GPU.
 //!
@@ -311,6 +312,74 @@ fn quits_from_the_in_game_menu(game: &mut Game, gpu: &Gpu, target: &RenderTarget
 	Ok(())
 }
 
+/// Whether the world's character screen is up, done animating in (`true`), or gone,
+/// done animating out (`false`); `None` while it moves.
+fn character_screen_shown(game: &Game) -> Result<Option<bool>, String> {
+	let engine = game.front().engine();
+	engine.run_script(
+		"local s = ::World.State.m.CharacterScreen;
+		::__characterScreen <- s.isAnimating() ? null : s.isVisible();",
+		"character screen",
+	)?;
+	Ok(SqTable::root(engine.vm()).get::<bool>("__characterScreen"))
+}
+
+/// Keys typed into a text field of the page reach the states too, as in the original,
+/// whose UI never keeps a key from them (MSU's `blockSQInput` setting describes it:
+/// "writing a 'c' would open the stash screen"): a `c` typed into a focused field goes
+/// into it and toggles the character screen, and again closes it. The field is a
+/// stand-in for vanilla's name fields, focused as a click into one focuses it.
+fn keys_reach_the_states_while_typing(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	let session = game.front().session();
+	session.eval(
+		"(function () {
+			var field = document.createElement('input');
+			field.id = 'bbTypingTest';
+			field.type = 'text';
+			field.setAttribute('style', 'position:fixed;left:-500px;top:0;');
+			document.body.appendChild(field);
+			field.focus();
+			return document.activeElement === field;
+		})()",
+	)?;
+	let typed = |game: &Game| -> Result<String, String> {
+		let value = game.front().session().eval("document.getElementById('bbTypingTest').value")?;
+		Ok(value.as_str().unwrap_or_default().to_string())
+	};
+	for (round, shown) in [(1, true), (2, false)] {
+		for down in [true, false] {
+			let key = Key {
+				engine: Some(13),
+				windows: Some(0x43),
+				text: down.then(|| "c".to_string()),
+				down,
+				repeat: false,
+			};
+			game.key(&key)?;
+			play(game, gpu, target, 0.1)?;
+		}
+		let deadline = std::time::Instant::now() + Duration::from_secs(20);
+		while character_screen_shown(game)? != Some(shown) {
+			if std::time::Instant::now() > deadline {
+				return Err(format!(
+					"a `c` typed into a text field didn't {} the character screen (the field has {:?})",
+					if shown { "open" } else { "close" },
+					typed(game)?
+				));
+			}
+			play(game, gpu, target, 0.2)?;
+		}
+		let expected = "c".repeat(round);
+		if typed(game)? != expected {
+			return Err(format!("the text field has {:?}, not {expected:?}", typed(game)?));
+		}
+	}
+	game.front()
+		.session()
+		.eval("document.body.removeChild(document.getElementById('bbTypingTest')); true")?;
+	Ok(())
+}
+
 /// What vanilla's FPS module shows, if it's on the page.
 fn fps_shown(game: &Game) -> Result<Option<String>, String> {
 	let value = game
@@ -438,6 +507,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	if !clicked(&game)? {
 		return Err(format!("the map's click didn't reach the states ({release:?})"));
 	}
+	keys_reach_the_states_while_typing(&mut game, gpu, &target)?;
 	game.mouse_moved(0, 0)?;
 	unchanged_frames_are_left_undrawn(&mut game, gpu, &target)?;
 	shows_the_frame_rate_when_asked(&mut game, gpu, &target)?;

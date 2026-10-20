@@ -440,11 +440,6 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		(self.ui_cursor.look(), self.ui.cursor())
 	}
 
-	/// The window lost the keyboard: every held key comes up.
-	pub fn release_keys(&self) {
-		self.keys.release_all();
-	}
-
 	/// Run a script string in the root scope.
 	pub fn run_script(&self, code: &str, name: &str) -> Result<(), String> {
 		self.vm.run_script(code, name)

@@ -12,7 +12,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::keyboard::{ModifiersState, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use bb_app::display::{self, Placement};
@@ -131,6 +131,9 @@ struct Running {
 	wheel: Notches,
 	/// The modifier keys held.
 	modifiers: ModifiersState,
+	/// The engine's code each key held down was pressed as: its release comes as the
+	/// same, whatever the layout or NumLock make of it by then.
+	keys_down: HashMap<KeyCode, Option<i64>>,
 	/// Steam's API, whose callbacks run once a frame.
 	steam: Option<Rc<SteamStats>>,
 	/// With `BB_FRAME_TIMES=PATH`, each frame's time by span goes to that file (see
@@ -351,6 +354,7 @@ impl App {
 			data_dir: self.options.data_dir.clone(),
 			wheel: Notches::default(),
 			modifiers: ModifiersState::empty(),
+			keys_down: HashMap::new(),
 			steam: self.options.steam.clone(),
 			frame_times: FrameTimes::from_env(),
 		};
@@ -662,19 +666,32 @@ impl Running {
 				}
 				Ok(())
 			}
-			// A key held as the window loses the keyboard would never see its release.
-			WindowEvent::Focused(false) => {
-				self.game.keyboard_lost();
-				Ok(())
-			}
+			// The original does nothing as the pointer leaves the window (SFML's
+			// MouseLeft, ignored by its event loop at `0x5b5780`, disassembled):
+			// the page keeps the pointer where it last was, and its hover.
+			WindowEvent::CursorLeft { .. } => Ok(()),
 			WindowEvent::ModifiersChanged(m) => {
 				self.modifiers = m.state();
 				self.game.set_modifier(keys::modifier(m.state()));
 				Ok(())
 			}
+			// The keys winit makes up as the window gains or loses the keyboard (on X11
+			// and Windows) are left out. The original gets none (SFML on Windows), and
+			// does nothing as the window loses the keyboard (`0x5b57bd` only notes it):
+			// a key held then stays held for the states until it's next released here.
+			WindowEvent::KeyboardInput { is_synthetic: true, .. } => Ok(()),
 			WindowEvent::KeyboardInput { event, .. } => {
 				let PhysicalKey::Code(code) = event.physical_key else { return Ok(()) };
 				let down = event.state == ElementState::Pressed;
+				let engine = if down {
+					let engine = keys::code_for(code, &event.logical_key);
+					self.keys_down.insert(code, engine);
+					engine
+				} else {
+					self.keys_down
+						.remove(&code)
+						.unwrap_or_else(|| keys::code_for(code, &event.logical_key))
+				};
 				// The FPS display's key; the game gets it too, as any other (nothing in
 				// vanilla or the mods surveyed binds it).
 				if down && !event.repeat && keys::toggles_fps(code, self.modifiers) {
@@ -682,8 +699,8 @@ impl Running {
 					self.game.show_fps(shown)?;
 				}
 				self.game.key(&Key {
-					engine: keys::code(code),
-					windows: keys::windows_code(code),
+					engine,
+					windows: engine.and_then(keys::windows_code),
 					text: if down { event.text.as_ref().map(|t| t.to_string()) } else { None },
 					down,
 					repeat: event.repeat,

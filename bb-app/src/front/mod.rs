@@ -12,8 +12,8 @@
 //! - A button press or the wheel goes to the page where the page isn't transparent,
 //!   and to the states elsewhere. The states' click handlers don't check for the UI.
 //!   A release follows its press.
-//! - Keys reach the page (its dialogs listen on the document), and the states too,
-//!   unless the page has a text field focused.
+//! - Keys reach the page (its dialogs listen on the document) and the states, whatever
+//!   has the page's focus, as the original's do.
 
 use std::path::Path;
 use std::sync::Arc;

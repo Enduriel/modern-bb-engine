@@ -8,6 +8,9 @@
 //!
 //! A key event's `getState()` and `getFire()` are both whether the key is down (the
 //! original fills both fields with it).
+//!
+//! Nothing comes up when the window loses the keyboard: the original only notes it
+//! (`0x5b57bd`), so a key held then stays held until its next release.
 
 use std::cell::RefCell;
 
@@ -35,14 +38,6 @@ impl KeyQueue {
 		}
 		let state = i64::from(down);
 		queue.push(KeyInput { key, state, modifier, fire: state });
-	}
-
-	/// Every held key comes up (the window lost the keyboard).
-	pub fn release_all(&self) {
-		let held: Vec<(i64, i64)> = self.0.borrow().iter().filter(|e| e.state == 1).map(|e| (e.key, e.modifier)).collect();
-		for (key, modifier) in held {
-			self.push(key, false, modifier);
-		}
 	}
 
 	/// This frame's events, in order, keeping the held keys for the next frame.
@@ -82,15 +77,5 @@ mod tests {
 		q.push(14, true, 0);
 		assert_eq!(keys(&q.take_frame()), [(37, 1), (14, 1)]);
 		assert_eq!(keys(&q.take_frame()), [(14, 1)]);
-	}
-
-	#[test]
-	fn losing_the_keyboard_releases_held_keys() {
-		let q = KeyQueue::default();
-		q.push(11, true, 0);
-		q.take_frame();
-		q.release_all();
-		assert_eq!(keys(&q.take_frame()), [(11, 0)]);
-		assert!(q.take_frame().is_empty());
 	}
 }

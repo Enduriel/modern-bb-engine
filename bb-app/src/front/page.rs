@@ -208,15 +208,20 @@ impl Front {
 		true
 	}
 
-	/// Give `key` to the page with `modifier` (the `KeyModifier` mask) held; whether the
-	/// states get it too (not while the page has a text field focused).
-	pub fn key(&mut self, key: &Key, modifier: i64) -> bool {
+	/// The modifier keys held now (the `KeyModifier` mask): the page's mouse events
+	/// carry them.
+	pub fn set_modifier(&mut self, modifier: i64) {
+		self.session.host().set_modifiers(modifiers(modifier));
+	}
+
+	/// Give `key` to the page with `modifier` (the `KeyModifier` mask) held. The states
+	/// get it too, whatever has the page's focus: the original's UI hands every key to
+	/// Coherent and never keeps one from the states (its key listener `0x56cb40` always
+	/// answers "not handled"; disassembled 2026-10-20), so typing a `c` in a text field
+	/// toggles the character screen, as MSU's `blockSQInput` setting describes.
+	pub fn key(&mut self, key: &Key, modifier: i64) {
 		let host = self.session.host();
-		let modifiers = Modifiers {
-			shift: modifier & 1 != 0,
-			control: modifier & 2 != 0,
-			alt: modifier & 4 != 0,
-		};
+		let modifiers = modifiers(modifier);
 		if let Some(code) = key.windows {
 			host.key(code, key.down, modifiers);
 		}
@@ -225,7 +230,6 @@ impl Front {
 				host.character(c, modifiers);
 			}
 		}
-		!self.session.text_field_focused()
 	}
 
 	/// Answer the procedural images (portraits) the page asked for with `compose`, given
@@ -270,5 +274,14 @@ impl Front {
 		// `PageFrames::Game`).
 		self.session.host().begin_frame();
 		self.drawn = true;
+	}
+}
+
+/// The page's modifier keys for the `KeyModifier` mask `modifier`.
+fn modifiers(modifier: i64) -> Modifiers {
+	Modifiers {
+		shift: modifier & 1 != 0,
+		control: modifier & 2 != 0,
+		alt: modifier & 4 != 0,
 	}
 }

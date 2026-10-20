@@ -118,16 +118,4 @@ impl UiSession {
 			.map(std::mem::take)
 			.unwrap_or_default()
 	}
-
-	/// Whether a text field in the page has the keyboard (keys typed there aren't the
-	/// game's hotkeys).
-	pub fn text_field_focused(&self) -> bool {
-		let focused = self.eval(
-			"(function () {
-	var e = document.activeElement;
-	return !!e && (e.tagName === 'INPUT' || e.tagName === 'TEXTAREA' || e.isContentEditable);
-})()",
-		);
-		matches!(focused, Ok(Json::Bool(true)))
-	}
 }

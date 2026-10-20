@@ -327,24 +327,18 @@ impl Game {
 	/// The modifier keys held now (see `keys::modifier`).
 	pub fn set_modifier(&mut self, modifier: i64) {
 		self.modifier = modifier;
+		self.front.set_modifier(modifier);
 	}
 
-	/// A key went down or up: to the UI, and to the states unless the UI keeps it.
-	/// The states get it in the next frame, and a held key every frame until it comes
-	/// up (the engine's key queue, as the original's), so held-key scrolling runs at
-	/// the frame rate rather than the system's key repeat.
+	/// A key went down or up: to the UI, and to the states. The states get it in the
+	/// next frame, and a held key every frame until it comes up (the engine's key
+	/// queue, as the original's), so held-key scrolling runs at the frame rate rather
+	/// than the system's key repeat.
 	pub fn key(&mut self, key: &Key) -> Result<(), String> {
-		if !self.front.key(key, self.modifier) {
-			return Ok(());
-		}
+		self.front.key(key, self.modifier);
 		let Some(code) = key.engine else { return Ok(()) };
 		self.engine().queue_key(code, key.down, self.modifier);
 		Ok(())
-	}
-
-	/// The window lost the keyboard: the keys held come up.
-	pub fn keyboard_lost(&mut self) {
-		self.engine().release_keys();
 	}
 
 	fn mouse(&mut self, input: MouseInput) -> Result<(), String> {
