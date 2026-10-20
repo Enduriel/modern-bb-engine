@@ -18,6 +18,8 @@ pub struct Front {
 	captured: u32,
 	/// Whether the last game frame was drawn, and so began the page's frame.
 	drawn: bool,
+	/// The frame rate for the FPS display, shown at the next step (see [`Front::set_fps`]).
+	fps: Option<u32>,
 }
 
 impl Front {
@@ -75,6 +77,7 @@ impl Front {
 			layer: UiLayer::new(gpu),
 			captured: 0,
 			drawn: false,
+			fps: None,
 		})
 	}
 
@@ -90,6 +93,11 @@ impl Front {
 	/// Advance the game by `ms` of real time, answering the page. The page then runs
 	/// on while the frame is drawn, until the scripts next run.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
+		// The FPS display's new value, with the page parked, as the scripts' calls are.
+		if let Some(fps) = self.fps.take() {
+			self.session.park();
+			self.session.set_fps(&fps.to_string());
+		}
 		self.session.step_unparked(ms)?;
 		// A page frame for each game frame: after its draw (`draw`), or now for a frame
 		// that wasn't drawn (a loop that only steps), so the page never stands still.
@@ -104,6 +112,23 @@ impl Front {
 	/// game's scripts.
 	pub fn park(&mut self) {
 		self.session.park();
+	}
+
+	/// Show the FPS display (vanilla's FPS module on the root screen), or hide it. Its
+	/// value starts empty until the first [`set_fps`](Self::set_fps).
+	pub fn show_fps(&mut self, shown: bool) -> Result<(), String> {
+		self.fps = None;
+		self.session.park();
+		self.session.show_fps_module(shown)?;
+		if shown {
+			self.session.set_fps("");
+		}
+		Ok(())
+	}
+
+	/// Show `fps` on the FPS display, at the next step (with the page's other changes).
+	pub fn set_fps(&mut self, fps: u32) {
+		self.fps = Some(fps);
 	}
 
 	/// The game discarded a scene: the page gives back what it kept for it.

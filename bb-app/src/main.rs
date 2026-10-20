@@ -4,7 +4,7 @@
 //! cargo run --release -p bb-app --features ui -- [--mods] [--new-campaign] [--seed SEED]
 //!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
-//!     [--logs DIR] [--no-steam] [--steam-api PATH]
+//!     [--logs DIR] [--no-steam] [--steam-api PATH] [--fps]
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) and plays them: the
@@ -34,6 +34,9 @@
 //!   the earlier sessions' logs are kept there in `logs/`, zipped. The terminal gets
 //!   the lines too.
 //! - The sound plays on the default output device, unless `--mute`.
+//! - `--fps` shows the frame rate in the top-left corner (vanilla's own FPS module,
+//!   which the original never shows), as `ui.show_fps = true` in the settings does;
+//!   Ctrl+Shift+F shows or hides it while playing. It's off by default.
 //! - On a Steam install (see `bb_steam::install` for the rule), achievements and stats
 //!   go to the player's Steam account through Steam's library beside `bb`
 //!   (`libsteam_api.so`, `steam_api64.dll` or `libsteam_api.dylib`), or the one
@@ -75,6 +78,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 		steam_build: false,
 		steam: None,
 		cef_log: None,
+		fps: false,
 	};
 	let mut logs = squirrel_bb::platform::logs_dir();
 	let mut args = std::env::args().skip(1);
@@ -90,6 +94,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 			}
 			"--mods" => options.mods = true,
 			"--mute" => options.mute = true,
+			"--fps" => options.fps = true,
 			"--no-steam" => steam.off = true,
 			"--steam-api" => steam.library = Some(PathBuf::from(value()?)),
 			"--world-size" => {

@@ -66,6 +66,14 @@ pub fn code(key: KeyCode) -> Option<i64> {
 	})
 }
 
+/// Whether `key` pressed with `modifiers` held shows or hides the FPS display:
+/// Ctrl+Shift+F. Neither vanilla nor the mods surveyed bind it (vanilla's keys are
+/// plain letters, digits and F2 to F11; the mods' MSU keybinds take F1 to F11 and a few
+/// other Ctrl+Shift letters).
+pub fn toggles_fps(key: KeyCode, modifiers: ModifiersState) -> bool {
+	key == KeyCode::KeyF && modifiers == ModifiersState::CONTROL | ModifiersState::SHIFT
+}
+
 /// The modifier mask for `getModifier()`.
 pub fn modifier(state: ModifiersState) -> i64 {
 	i64::from(state.shift_key()) | i64::from(state.control_key()) << 1 | i64::from(state.alt_key()) << 2

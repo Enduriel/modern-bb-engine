@@ -5,6 +5,7 @@
 pub mod display;
 #[cfg(feature = "ui")]
 pub mod frame_scenes;
+pub mod fps;
 pub mod front;
 pub mod game;
 pub mod keys;

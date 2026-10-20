@@ -15,6 +15,7 @@ use bb_render::{Atlases, Clock, Discard, FrameStats, Gpu, RenderTarget, WorldMap
 use squirrel::{SqStrongRef, SqTable};
 use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
+use crate::fps::FpsMeter;
 use crate::front::{Front, Key};
 use crate::shown::{self, CursorLook, Look, Shown, Under};
 
@@ -35,6 +36,8 @@ pub struct Game {
 	modifier: i64,
 	/// What the last frame drawn showed (see [`Game::draw_if_changed`]).
 	shown: Shown,
+	/// While the FPS display shows, what measures the frame rate for it.
+	fps: Option<FpsMeter>,
 }
 
 /// Where the game starts.
@@ -166,6 +169,7 @@ impl Game {
 			cursor: (0, 0),
 			modifier: 0,
 			shown: Shown::default(),
+			fps: None,
 		};
 		// What the boot hinted (worldgen's brushes) starts decoding before the first frame.
 		game.follow_scenes();
@@ -243,10 +247,26 @@ impl Game {
 		self.front.engine().world_camera().zoom
 	}
 
-	/// Advance the game by `ms` of real time.
+	/// Advance the game by `ms` of real time: a frame, as the FPS display counts them.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
 		let _span = bb_render::frame_timing::span("step");
+		if let Some(fps) = self.fps.as_mut().and_then(|meter| meter.frame(std::time::Instant::now())) {
+			self.front.set_fps(fps);
+		}
 		self.front.step(ms.clamp(0.0, MAX_FRAME_MS))
+	}
+
+	/// Show the FPS display (vanilla's FPS module, which the original never shows), or
+	/// hide it. It is off until shown, and the page vanilla's.
+	pub fn show_fps(&mut self, shown: bool) -> Result<(), String> {
+		self.front.show_fps(shown)?;
+		self.fps = shown.then(FpsMeter::default);
+		Ok(())
+	}
+
+	/// Whether the FPS display shows.
+	pub fn fps_shown(&self) -> bool {
+		self.fps.is_some()
 	}
 
 	/// The cursor moved to `(x, y)` in the game's screen pixels. The states see every

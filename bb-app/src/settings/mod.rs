@@ -53,6 +53,12 @@ impl Settings {
 		self.text.get("render.texture_budget_mib")?.parse().ok().filter(|&mib| mib > 0)
 	}
 
+	/// Whether the FPS display shows from the start (`ui.show_fps = true`); it doesn't
+	/// by default, as in the original.
+	pub fn show_fps(&self) -> bool {
+		self.text.get("ui.show_fps").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
+	}
+
 	/// Keep `mode`, in the file at once.
 	pub fn save_video_mode(&mut self, mode: &VideoMode) -> Result<(), String> {
 		video::write(&mut self.text, mode);
@@ -90,7 +96,11 @@ mod tests {
 		assert_eq!(Settings::load(Some(path.clone())).texture_budget_mib(), None, "the GPU's by default");
 		let text = std::fs::read_to_string(&path).expect("the file") + "render.texture_budget_mib = 256\n";
 		std::fs::write(&path, text).expect("write");
-		assert_eq!(Settings::load(Some(path)).texture_budget_mib(), Some(256));
+		assert_eq!(Settings::load(Some(path.clone())).texture_budget_mib(), Some(256));
+		assert!(!Settings::load(Some(path.clone())).show_fps(), "no FPS display by default");
+		let text = std::fs::read_to_string(&path).expect("the file") + "ui.show_fps = true\n";
+		std::fs::write(&path, text).expect("write");
+		assert!(Settings::load(Some(path)).show_fps());
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }

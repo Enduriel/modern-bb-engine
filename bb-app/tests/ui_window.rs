@@ -4,7 +4,8 @@
 //! them to the states. A brother's portrait the page asks for is composed by the
 //! renderer. Idle in a town, frames that would show the same are left undrawn.
 //! Quitting from the in-game menu (Escape, then Quit) leads back to the main menu, and
-//! Escape there ends the game, as in the original.
+//! Escape there ends the game, as in the original. The FPS display is off until
+//! asked for, then shows the frame rate.
 //!
 //! Skips if there is no Steam install or no GPU.
 //!
@@ -255,6 +256,41 @@ fn quits_from_the_in_game_menu(game: &mut Game, gpu: &Gpu, target: &RenderTarget
 	Ok(())
 }
 
+/// What vanilla's FPS module shows, if it's on the page.
+fn fps_shown(game: &Game) -> Result<Option<String>, String> {
+	let value = game
+		.front()
+		.session()
+		.eval("(function () { var v = document.querySelector('.fps-container .value'); return v && v.textContent; })()")?;
+	Ok(value.as_str().map(str::to_string))
+}
+
+/// The FPS display: once shown, vanilla's FPS module shows the frames the
+/// game runs a second, here about 20 (frames 50 ms apart); hidden, it's gone.
+fn shows_the_frame_rate_when_asked(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	game.show_fps(true)?;
+	let start = std::time::Instant::now();
+	let mut frames = 0u32;
+	while start.elapsed() < Duration::from_secs(2) {
+		game.step(50.0)?;
+		game.draw(gpu, target);
+		frames += 1;
+		std::thread::sleep(Duration::from_millis(50));
+	}
+	let rate = f64::from(frames) / start.elapsed().as_secs_f64();
+	let shown = fps_shown(game)?.ok_or("no FPS display once shown")?;
+	let value: f64 = shown.parse().map_err(|_| format!("the FPS display shows {shown:?}"))?;
+	if (value - rate).abs() > rate * 0.3 {
+		return Err(format!("the FPS display shows {value}, the frames ran at {rate:.1} a second"));
+	}
+	println!("  the FPS display showed {value} (frames at {rate:.1} a second)");
+	game.show_fps(false)?;
+	if fps_shown(game)?.is_some() {
+		return Err("the FPS display stayed once hidden".into());
+	}
+	Ok(())
+}
+
 fn check(gpu: &Gpu) -> Result<(), String> {
 	// Silent: tests never play on the device.
 	let mut game = Game::boot(gpu, Path::new(STEAM_DATA_DIR), SEED, false, None, VideoMode::DEFAULT, None)?;
@@ -263,6 +299,9 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	// the screen's.
 	let (bx, by) = session.locate_when_ready("Huzzah!", Duration::from_secs(180))?;
 	session.run_frames(1.0)?;
+	if fps_shown(&game)?.is_some() {
+		return Err("the FPS display shows by default".into());
+	}
 
 	// Drawn over the world: the event's opaque button shows the page; its dimmed
 	// backdrop lets the world show through.
@@ -344,6 +383,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	}
 	game.mouse_moved(0, 0)?;
 	unchanged_frames_are_left_undrawn(&mut game, gpu, &target)?;
+	shows_the_frame_rate_when_asked(&mut game, gpu, &target)?;
 	quits_from_the_in_game_menu(&mut game, gpu, &target)
 }
 

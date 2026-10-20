@@ -8,8 +8,8 @@
 //! is, text advances by whole pixels, and right clicks open no menu, as in Coherent;
 //! scripts inserted at runtime run in Coherent's order. The page's links reach the URL
 //! opener the game installs.
-//! Where the game discards a scene, the page gives its memory back. Skips if there is
-//! no Steam install.
+//! Where the game discards a scene, the page gives its memory back. Vanilla's FPS
+//! module shows only when the game asks for it. Skips if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -251,6 +251,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	right_clicks_reach_the_page(&session)?;
 	page_tasks_run_between_scripts(&session)?;
 	inserted_scripts_run_in_coherents_order(&session)?;
+	fps_module_shows_when_asked(&session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -298,6 +299,31 @@ fn links_reach_the_url_opener(session: &UiSession) -> Result<(), String> {
 		.iter()
 		.any(|line| line.text == r#"ui: openURL "file:///etc/passwd" (refused: not an http(s) URL)"#);
 	ensure(refused, "the file URL wasn't logged as refused")
+}
+
+/// Vanilla's FPS module: not on the page until the game shows it, then on
+/// the root screen with the value the game sets, a three-digit one inside its box, and
+/// gone again, with its style, once hidden.
+fn fps_module_shows_when_asked(session: &UiSession) -> Result<(), String> {
+	const MODULE: &str = r#"(function () {
+		var box = document.querySelector('.root-screen > .fps-container');
+		var style = document.querySelectorAll('style[data-bb-compat=fps]').length;
+		if (box === null) return document.querySelectorAll('.fps-container').length + style;
+		var b = box.getBoundingClientRect(), v = box.querySelector('.value').getBoundingClientRect();
+		return { text: box.querySelector('.value').textContent, height: Math.ceil(v.height),
+		         inside: v.right <= b.right && v.bottom <= b.bottom };
+	})()"#;
+	ensure(session.eval(MODULE)?.as_i64() == Some(0), "an FPS module is on the page before it's shown")?;
+	session.show_fps_module(true)?;
+	session.set_fps("123");
+	session.run_frames(0.1)?;
+	let shown = session.eval(MODULE)?;
+	let text = shown.get("text").and_then(Json::as_str);
+	let height = shown.get("height").and_then(Json::as_i64).unwrap_or(0);
+	let inside = shown.get("inside") == Some(&Json::Bool(true));
+	ensure(text == Some("123") && height > 0 && inside, format!("the FPS module shows {}", shown.to_text()))?;
+	session.show_fps_module(false)?;
+	ensure(session.eval(MODULE)?.as_i64() == Some(0), "the FPS module stayed once hidden")
 }
 
 /// The page's own tasks (here a timer) run between the scripts, as the original's UI

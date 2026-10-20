@@ -12,7 +12,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{CustomCursor, Window, WindowId};
 
 use bb_app::display::{self, Placement};
@@ -58,6 +58,8 @@ pub struct Options {
 	/// Where CEF writes its log (beside log.html, see `main`); without one, in its
 	/// temporary profile.
 	pub cef_log: Option<PathBuf>,
+	/// The FPS display shown from the start (`--fps`); otherwise as the settings say.
+	pub fps: bool,
 }
 
 /// Everything that exists once the window does.
@@ -101,6 +103,8 @@ struct Running {
 	cursors: HashMap<String, CustomCursor>,
 	/// The wheel's turn short of a whole notch (see `wheel`).
 	wheel: Notches,
+	/// The modifier keys held.
+	modifiers: ModifiersState,
 	/// Steam's API, whose callbacks run once a frame.
 	steam: Option<Rc<SteamStats>>,
 	/// With `BB_FRAME_TIMES=PATH`, each frame's time by span goes to that file (see
@@ -245,6 +249,9 @@ impl App {
 		if let Some(mib) = self.settings.texture_budget_mib() {
 			game.set_texture_budget(mib << 20);
 		}
+		if options.fps || self.settings.show_fps() {
+			game.show_fps(true)?;
+		}
 		let size = window.inner_size();
 		eprintln!(
 			"video: {}x{} {placement:?} on a {}x{} monitor, the window {}x{} (scale {})",
@@ -304,6 +311,7 @@ impl App {
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
 			wheel: Notches::default(),
+			modifiers: ModifiersState::empty(),
 			steam: self.options.steam.clone(),
 			frame_times: FrameTimes::from_env(),
 		};
@@ -556,12 +564,19 @@ impl Running {
 				Ok(())
 			}
 			WindowEvent::ModifiersChanged(m) => {
+				self.modifiers = m.state();
 				self.game.set_modifier(keys::modifier(m.state()));
 				Ok(())
 			}
 			WindowEvent::KeyboardInput { event, .. } => {
 				let PhysicalKey::Code(code) = event.physical_key else { return Ok(()) };
 				let down = event.state == ElementState::Pressed;
+				// The FPS display's key; the game gets it too, as any other (nothing in
+				// vanilla or the mods surveyed binds it).
+				if down && !event.repeat && keys::toggles_fps(code, self.modifiers) {
+					let shown = !self.game.fps_shown();
+					self.game.show_fps(shown)?;
+				}
 				self.game.key(&Key {
 					engine: keys::code(code),
 					windows: keys::windows_code(code),

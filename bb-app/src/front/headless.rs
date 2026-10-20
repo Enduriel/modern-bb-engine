@@ -66,6 +66,14 @@ impl Front {
 	/// Before the scripts run outside a step: no page to hold.
 	pub fn park(&mut self) {}
 
+	/// Show the FPS display, or hide it: there is no page to show it on.
+	pub fn show_fps(&mut self, _shown: bool) -> Result<(), String> {
+		Ok(())
+	}
+
+	/// Show the frame rate on the FPS display: there is none.
+	pub fn set_fps(&mut self, _fps: u32) {}
+
 	/// The game discarded a scene: no page to give anything back.
 	pub fn discarded(&mut self) {}
 

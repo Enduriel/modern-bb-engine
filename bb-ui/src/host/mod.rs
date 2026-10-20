@@ -52,6 +52,7 @@ mod responder;
 mod scheme;
 mod session;
 mod session_input;
+mod session_fps;
 mod session_play;
 mod targets;
 
