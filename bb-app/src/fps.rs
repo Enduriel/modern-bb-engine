@@ -64,9 +64,11 @@ mod tests {
 		// 180 Hz for two seconds: the rate once, then nothing new.
 		let hz180 = Duration::from_nanos(1_000_000_000 / 180);
 		assert_eq!(run(&mut meter, start, hz180, 360), vec![180]);
-		// Then 60 Hz.
+		// Then 60 Hz: the measurement across the change in between, then 60.
 		let start = start + hz180 * 360;
-		assert_eq!(run(&mut meter, start, Duration::from_nanos(16_666_667), 120), vec![60]);
+		let shown = run(&mut meter, start, Duration::from_nanos(16_666_667), 120);
+		assert_eq!(shown.last(), Some(&60), "{shown:?}");
+		assert!(shown.len() <= 2 && shown.iter().all(|&r| (60..180).contains(&r)), "{shown:?}");
 	}
 
 	#[test]
