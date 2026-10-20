@@ -10,6 +10,8 @@ mod bytecode;
 mod print;
 mod script;
 mod stack;
+#[cfg(test)]
+mod stdlib_parity_tests;
 
 pub use print::CompileError;
 

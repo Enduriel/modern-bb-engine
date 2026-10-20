@@ -126,3 +126,58 @@ fn the_installed_mods_boot_and_start_a_campaign() {
 		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
 	}
 }
+
+/// Plan your Perks (mod_plan_perks) keeps each brother's planned perks in a flag,
+/// "perk.a#2°perk.b#2°", and reads it back on load with `split(s, "°")`. "°" is two
+/// UTF-8 bytes, each a separator to the stdlib's `split`, and Squirrel 3.0's `split`
+/// (the original's) skips the empty token between them: with 3.1's, which keeps it,
+/// loading such a save failed ("the index '0' does not exist"). The flag must also
+/// come back byte for byte.
+#[test]
+fn plan_your_perks_survives_save_and_load() {
+	let Some(engine) = open_with(&["mod_hooks.zip", "mod_modern_hooks", "mod_msu", "mod_plan_perks"]) else { return };
+	harness::boot_menu(&engine).expect("boot the menu");
+	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare the campaign");
+	harness::start_new_campaign(&engine).expect("startNewCampaign");
+	engine
+		.run_script(
+			r#"
+			foreach (bro in ::World.getPlayerRoster().getAll()) {
+				::PlanYourPerks.PerkManager.updatePlannedPerk(bro, "perk.brawny", 2);
+				::PlanYourPerks.PerkManager.updatePlannedPerk(bro, "perk.battle_forged", 2);
+			}
+			::World.State.saveCampaign("bb_probe_plan_perks");
+			::__planFlags <- {};
+			foreach (bro in ::World.getPlayerRoster().getAll())
+			{
+				::__planFlags[bro.getID()] <- bro.getFlags().get("PlannedPerks");
+				::PlanYourPerks.PerkManager.clearPlannedPerks(bro);
+			}
+			// The world state ignores a load within 4 s of the campaign's start.
+			::World.State.m.CampaignLoadTime = -100.0;
+			::World.State.loadCampaign("bb_probe_plan_perks");
+			"#,
+			"plan, save and load",
+		)
+		.expect("plan, save and load");
+	check(&engine, "the saved flags use the two-byte separator", r#"(function() {
+		foreach (id, f in ::__planFlags)
+			if (f.len() != 37 || f.find("perk.brawny#2\xC2\xB0") == null || f.find("perk.battle_forged#2\xC2\xB0") == null) return false;
+		return ::__planFlags.len() > 0;
+	})()"#);
+	check(&engine, "every brother's flag came back byte for byte", r#"(function() {
+		local n = 0;
+		foreach (bro in ::World.getPlayerRoster().getAll()) {
+			if (!(bro.getID() in ::__planFlags) || bro.getFlags().get("PlannedPerks") != ::__planFlags[bro.getID()]) return false;
+			n++;
+		}
+		return n == ::__planFlags.len();
+	})()"#);
+	check(&engine, "the mod read its planned perks back", r#"(function() {
+		foreach (bro in ::World.getPlayerRoster().getAll()) {
+			local p = ::PlanYourPerks.PerkManager.getPlannedPerks(bro);
+			if (p.len() != 2 || p["perk.brawny"] != "2" || p["perk.battle_forged"] != "2") return false;
+		}
+		return true;
+	})()"#);
+}
