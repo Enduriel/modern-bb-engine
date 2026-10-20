@@ -478,7 +478,7 @@ impl FramePages {
 				);
 			}
 		}
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu page moves", encoder.finish());
 		for (key, to) in keys.iter().zip(moves) {
 			let r = self.resident.get_mut(key).expect("a resident frame");
 			mips.remake_region(gpu, &fresh.texture(to.page).texture, (to.x, to.y, r.region.w, r.region.h), LEVELS as u32);

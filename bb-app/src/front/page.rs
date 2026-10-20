@@ -129,6 +129,7 @@ impl Front {
 		// A page frame for each game frame: after its draw (`draw`), or now for a frame
 		// that wasn't drawn (a loop that only steps), so the page never stands still.
 		if !std::mem::replace(&mut self.drawn, false) {
+			let _begin = bb_render::frame_timing::span("page begin frame");
 			self.session.host().begin_frame();
 		}
 		Ok(())
@@ -242,10 +243,15 @@ impl Front {
 
 	/// Draw the page's latest paint over `target`.
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
+		use bb_render::frame_timing::span;
 		// Only what the page repainted since the last frame.
+		let upload = span("ui upload");
 		let layer = &mut self.layer;
 		self.session.host().take_damage(|frame, damage| {
 			if !damage.is_empty() {
+				let pixels: u64 = damage.iter().map(|r| u64::from(r.width) * u64::from(r.height)).sum();
+				bb_render::frame_timing::count("ui upload kpixels", pixels / 1000);
+				bb_render::frame_timing::count("ui uploads", 1);
 				let regions: Vec<UiRegion> = damage
 					.iter()
 					.map(|r| UiRegion { x: r.x, y: r.y, width: r.width, height: r.height })
@@ -253,9 +259,13 @@ impl Front {
 				layer.upload_regions(gpu, frame.width, frame.height, &frame.bgra, &regions);
 			}
 		});
+		drop(upload);
+		let draw = span("ui layer draw");
 		self.layer.draw(gpu, target);
+		drop(draw);
 		// The page's next frame, painted by the next game frame's draw (bb-ui's
 		// `PageFrames::Game`).
+		let _begin = span("page begin frame");
 		self.session.host().begin_frame();
 		self.drawn = true;
 	}

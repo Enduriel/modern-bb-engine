@@ -260,6 +260,11 @@ impl Game {
 		self.front.engine().world_camera().zoom
 	}
 
+	/// The engine's real time, in seconds: the clock scripts read (`Time.getRealTimeF`).
+	pub fn real_seconds(&self) -> f64 {
+		self.front.engine().time().real_seconds()
+	}
+
 	/// Advance the game by `ms` of real time: a frame, as the FPS display counts them.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
 		let _span = bb_render::frame_timing::span("step");
@@ -377,11 +382,15 @@ impl Game {
 	}
 
 	fn draw_unless_shown(&mut self, gpu: &Gpu, target: &RenderTarget, compare: bool) -> Option<FrameStats> {
+		let follow = bb_render::frame_timing::span("follow scenes");
 		self.follow_scenes();
+		drop(follow);
 		// The portraits the UI asked for, drawn or not: the page paints them.
+		let procedural = bb_render::frame_timing::span("portraits");
 		let renderer = &mut self.renderer;
 		self.front
 			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
+		drop(procedural);
 		let drawn_cursor = self.cursor_show() == CursorShow::Drawn;
 		let engine = self.front.engine();
 		let (width, height) = (target.width, target.height);
@@ -450,7 +459,10 @@ impl Game {
 		});
 		self.renderer.set_depth_of_field(engine.video().mode().depth_of_field);
 		let stats = if tactical {
+			let scene_span = bb_render::frame_timing::span("battle scene");
 			let scene = engine.tactical_scene();
+			drop(scene_span);
+			let _span = bb_render::frame_timing::span("battle draw");
 			let view = WorldView {
 				center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
 				zoom: fit / scene.camera.zoom as f32,
@@ -496,7 +508,9 @@ impl Game {
 		let front_span = bb_render::frame_timing::span("ui page");
 		self.front.draw(gpu, target);
 		drop(front_span);
+		let cursor_span = bb_render::frame_timing::span("cursor draw");
 		let cursor = if drawn_cursor { self.draw_cursor(gpu, target, fit) } else { FrameStats::default() };
+		drop(cursor_span);
 		let stats = FrameStats {
 			quads: stats.quads + cursor.quads,
 			waiting: stats.waiting + cursor.waiting,

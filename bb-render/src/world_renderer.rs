@@ -887,7 +887,7 @@ impl WorldRenderer {
 			self.sprites.record(&mut pass, &prepared, &parts, 4..5);
 		}
 		self.sprites.finish(&encoder);
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu world pass", encoder.finish());
 		drop(sprites_span);
 		drop(ready);
 		drop(moving_calls);

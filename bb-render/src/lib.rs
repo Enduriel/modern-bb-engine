@@ -21,8 +21,10 @@ mod fast_hash;
 mod fog;
 pub mod fonts;
 pub mod frame_diff;
-pub mod frame_timing;
+/// The frame's spans (moved to `squirrel_bb`, which the engine's frame times too).
+pub use squirrel_bb::frame_timing;
 mod gpu;
+mod gpu_timing;
 mod kept_map;
 mod kept_sprites;
 pub mod labels;

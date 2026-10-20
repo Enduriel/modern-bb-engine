@@ -509,6 +509,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// 2026-10-21), a held key's press each frame, and what keys type (which the states
 	/// never get).
 	pub fn begin_frame(&self, real_delta_ms: f64) -> Vec<crate::key_queue::QueuedInput> {
+		let _clock = crate::frame_timing::span("engine clock+keys");
 		self.time.tick(&self.vm, real_delta_ms);
 		self.keys.take_frame()
 	}
@@ -516,19 +517,35 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// The rest of a frame begun with [`begin_frame`](Self::begin_frame): `keys` to the
 	/// states, then the scene.
 	pub fn finish_frame(&self, real_delta_ms: f64, keys: &[crate::key_queue::QueuedInput]) -> Result<(), String> {
+		use crate::frame_timing::span;
+		let clock = span("engine clock+keys");
 		for input in keys {
 			if let crate::key_queue::QueuedInput::Key(key) = input {
 				self.root_state.key_input(&self.vm, *key)?;
 			}
 		}
+		drop(clock);
+		let update = span("scripts update");
 		self.root_state.update(&self.vm)?;
+		drop(update);
+		let cameras = span("cameras");
 		self.move_cameras(real_delta_ms);
+		drop(cameras);
+		let turn = span("sprites turn");
 		self.turn_sprites();
+		drop(turn);
+		let audio = span("audio update");
 		self.audio.update();
+		drop(audio);
 		self.tactical_grid.begin_frame();
+		let render = span("scripts render");
 		self.root_state.render(&self.vm)?;
+		drop(render);
+		let background = span("scripts background");
 		self.root_state.run_background(&self.vm)?;
+		drop(background);
 		// What a battle's end, leaving a campaign or a load discarded this frame.
+		let _collect = span("collect");
 		if self.collector.collect_if_requested(&self.vm) {
 			self.audio.discard_unused();
 		}

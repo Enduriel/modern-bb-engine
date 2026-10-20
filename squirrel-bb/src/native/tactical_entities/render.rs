@@ -82,6 +82,7 @@ pub(super) fn tactical_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str,
 
 /// One frame's `onRender` calls, in creation order.
 fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
+	let _span = crate::frame_timing::span("battle render pass");
 	let drawn: Vec<SqStrongRef> = {
 		let machine = m.borrow();
 		let Some(grid) = machine.grid.clone() else { return Ok(()) };

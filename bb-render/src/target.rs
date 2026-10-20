@@ -70,7 +70,7 @@ impl RenderTarget {
 			occlusion_query_set: None,
 			multiview_mask: None,
 		});
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu clear", encoder.finish());
 	}
 
 	/// Copy the target's pixels back (rows top to bottom).

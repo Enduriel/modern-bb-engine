@@ -354,7 +354,7 @@ impl SpriteRenderer {
 			self.record(&mut pass, &prepared, parts, 0..parts.len());
 		}
 		self.finish(&encoder);
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu sprites pass", encoder.finish());
 	}
 
 	/// Get `parts` ready to be recorded in a pass of `encoder` (see

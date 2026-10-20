@@ -7,6 +7,9 @@ use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
+
+use crate::gpu_timing::{self, PassTimer};
 
 /// The device and queue every renderer object is created on.
 pub struct Gpu {
@@ -18,6 +21,9 @@ pub struct Gpu {
 	pub device_type: wgpu::DeviceType,
 	/// The adapter, kept when opened for a window (to query its surface).
 	surface_adapter: Option<wgpu::Adapter>,
+	/// With `BB_GPU_TIMES=1` (and timestamps on the adapter), the named submissions'
+	/// GPU times (see [`Gpu::submit`]).
+	pass_timer: Option<PassTimer>,
 }
 
 impl Gpu {
@@ -34,17 +40,21 @@ impl Gpu {
 		let adapter = block_on(instance.request_adapter(&options))
 			.map_err(|e| format!("no GPU adapter: {e}"))?;
 		let info = adapter.get_info();
+		let timed = gpu_timing::wanted() && adapter.features().contains(gpu_timing::FEATURES);
 		let descriptor = wgpu::DeviceDescriptor {
 			label: Some("bb-render"),
 			memory_hints: memory_hints(),
+			required_features: if timed { gpu_timing::FEATURES } else { wgpu::Features::empty() },
 			..Default::default()
 		};
 		let (device, queue) = block_on(adapter.request_device(&descriptor))
 			.map_err(|e| format!("no GPU device: {e}"))?;
+		let pass_timer = timed.then(|| PassTimer::new(&device, &queue));
 		Ok(Gpu {
 			device,
 			queue,
 			adapter: format!("{} ({:?})", info.name, info.backend),
+			pass_timer,
 			device_type: info.device_type,
 			surface_adapter: None,
 		})
@@ -61,17 +71,21 @@ impl Gpu {
 		let adapter = block_on(instance.request_adapter(&options))
 			.map_err(|e| format!("no GPU adapter for the window: {e}"))?;
 		let info = adapter.get_info();
+		let timed = gpu_timing::wanted() && adapter.features().contains(gpu_timing::FEATURES);
 		let descriptor = wgpu::DeviceDescriptor {
 			label: Some("bb-render"),
 			memory_hints: memory_hints(),
+			required_features: if timed { gpu_timing::FEATURES } else { wgpu::Features::empty() },
 			..Default::default()
 		};
 		let (device, queue) = block_on(adapter.request_device(&descriptor))
 			.map_err(|e| format!("no GPU device: {e}"))?;
+		let pass_timer = timed.then(|| PassTimer::new(&device, &queue));
 		Ok(Gpu {
 			device,
 			queue,
 			adapter: format!("{} ({:?})", info.name, info.backend),
+			pass_timer,
 			device_type: info.device_type,
 			surface_adapter: Some(adapter),
 		})
@@ -100,6 +114,25 @@ impl Gpu {
 		match self.device_type {
 			wgpu::DeviceType::DiscreteGpu => 1 << 30,
 			_ => 384 << 20,
+		}
+	}
+
+	/// Submit `commands`, named for the passes' GPU times (`BB_GPU_TIMES`, see
+	/// `gpu_timing`); without them, a plain submission.
+	pub fn submit(&self, name: &'static str, commands: wgpu::CommandBuffer) {
+		match &self.pass_timer {
+			Some(timer) => timer.submit(&self.device, &self.queue, name, commands),
+			None => {
+				self.queue.submit([commands]);
+			}
+		}
+	}
+
+	/// With the passes' GPU times on, wait for the GPU and give `each` the time of every
+	/// named submission since the last take; nothing otherwise.
+	pub fn take_pass_times(&self, each: impl FnMut(&'static str, Duration)) {
+		if let Some(timer) = &self.pass_timer {
+			timer.take(&self.device, &self.queue, each);
 		}
 	}
 

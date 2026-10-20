@@ -161,12 +161,18 @@ impl FrameTimes {
 
 	/// One line: the frame's number, the time since the last frame's start, its own work,
 	/// the camera's zoom, the quads drawn, then each span, all in milliseconds.
-	fn write(&mut self, frame: u64, interval: f64, work: Duration, zoom: f32, quads: usize) {
+	/// `t` is the engine's real time at the frame, the clock scripts read
+	/// (`Time.getRealTimeF`), so a script's log lines can mark phases in the file. Then
+	/// the counters, as `name#=N`.
+	fn write(&mut self, frame: u64, interval: f64, work: Duration, zoom: f32, quads: usize, t: f64) {
 		use std::io::Write;
 		let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-		let mut line = format!("{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads}", ms(work));
+		let mut line = format!("{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads} t={t:.4}", ms(work));
 		for (name, time) in bb_render::frame_timing::take() {
 			line.push_str(&format!(" {}={:.3}", name.replace(' ', "_"), ms(time)));
+		}
+		for (name, n) in bb_render::frame_timing::take_counts() {
+			line.push_str(&format!(" {}#={n}", name.replace(' ', "_")));
 		}
 		let _ = writeln!(self.out, "{line}");
 	}
@@ -535,6 +541,7 @@ impl Running {
 		let ms = now.duration_since(self.last_frame).as_secs_f64() * 1000.0;
 		self.last_frame = now;
 		if let Some(steam) = &self.steam {
+			let _span = bb_render::frame_timing::span("steam");
 			steam.run_callbacks();
 		}
 		self.game.step(ms)?;
@@ -558,7 +565,9 @@ impl Running {
 			}
 			self.next_stats = Some(now + Duration::from_secs(5));
 		}
+		let cursor_span = bb_render::frame_timing::span("follow cursor");
 		self.follow_cursor(event_loop);
+		drop(cursor_span);
 		// The frame at the size it shows at in the window.
 		self.frame_rect = display::frame_rect((self.config.width, self.config.height), self.game.screen());
 		let (_, _, width, height) = self.frame_rect;
@@ -581,7 +590,8 @@ impl Running {
 		self.unchanged = drawn.is_none();
 		let Some(drawn) = drawn else {
 			if let Some(times) = &mut self.frame_times {
-				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0);
+				let t = self.game.real_seconds();
+				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t);
 			}
 			if self.next_stats.is_some() {
 				self.stats_frames.0 += 1;
@@ -612,7 +622,9 @@ impl Running {
 		};
 		let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
 		let present_span = bb_render::frame_timing::span("present");
+		let blit_span = bb_render::frame_timing::span("present blit");
 		self.presenter.draw(&self.gpu, &self.target, &view, self.frame_rect);
+		drop(blit_span);
 		self.window.pre_present_notify();
 		if self.unpresented == Some(self.frames) {
 			eprintln!("frame {} not presented (BB_TEST_UNPRESENTED)", self.frames);
@@ -631,8 +643,11 @@ impl Running {
 				let _span = bb_render::frame_timing::span("gpu");
 				let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
 			}
+			// Each pass's GPU time (`BB_GPU_TIMES`), waiting for the frame's work.
+			self.gpu.take_pass_times(|name, time| bb_render::frame_timing::add(name, time));
 			let zoom = self.game.world_zoom();
-			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads);
+			let t = self.game.real_seconds();
+			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads, t);
 		}
 		if self.next_stats.is_some() {
 			self.stats_frames.0 += 1;

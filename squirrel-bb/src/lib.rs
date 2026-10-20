@@ -19,6 +19,7 @@ pub use collect::Discard;
 mod compile_context;
 mod engine;
 mod font_file;
+pub mod frame_timing;
 pub mod modern_engine;
 mod error;
 mod error_report;

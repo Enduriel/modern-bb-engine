@@ -130,7 +130,7 @@ impl MipMaker {
 			let y1 = ((y + h).div_ceil(1 << level)).clamp(y0 + 1, lh);
 			self.pass(gpu, &mut encoder, texture, level, Some((x0, y0, x1 - x0, y1 - y0)));
 		}
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu mips", encoder.finish());
 	}
 
 	/// Level `level` of `texture` made from the one above, over `scissor` (all of it if
@@ -206,7 +206,7 @@ impl MipMaker {
 		for level in 1..levels {
 			self.pass(gpu, &mut encoder, &mipped, level, None);
 		}
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu mips", encoder.finish());
 		let view = mipped.create_view(&wgpu::TextureViewDescriptor::default());
 		GpuTexture {
 			texture: mipped,

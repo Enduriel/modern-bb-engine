@@ -152,6 +152,6 @@ impl Presenter {
 			pass.set_bind_group(0, &group, &[]);
 			pass.draw(0..3, 0..1);
 		}
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu present blit", encoder.finish());
 	}
 }

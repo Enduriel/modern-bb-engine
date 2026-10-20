@@ -114,6 +114,7 @@ pub(super) fn real_time_ms(vm: &SQVM) -> Result<i64, String> {
 /// One render pass over the live entities, in id order. No machine borrow is held
 /// while scripts run.
 pub(super) fn run_pass(m: &Machine, vm: &SQVM) -> Result<(), String> {
+	let _span = crate::frame_timing::span("world render pass");
 	if !super::scene_shown(vm)? {
 		return Ok(());
 	}

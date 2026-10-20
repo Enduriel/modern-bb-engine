@@ -190,7 +190,10 @@ impl<T: Transport> UiProtocol<T> {
 		let entry = Json::Array(entry);
 		let mut serve = |message: &Json| self.handle_message(vm, bridge, message);
 		let start = Instant::now();
+		let span = squirrel_bb::frame_timing::span("bridge game->page");
+		squirrel_bb::frame_timing::count("bridge game->page", 1);
 		let result = self.transport.run(&entry, &mut serve);
+		drop(span);
 		let mut stats = self.stats.get();
 		stats.calls += 1;
 		stats.time += start.elapsed();
@@ -207,6 +210,8 @@ impl<T: Transport> UiProtocol<T> {
 	/// Handle one `engine.call` from the page: `[name, requestId, args...]`.
 	pub fn handle_message(&self, vm: &SQVM, bridge: &UiBridge, message: &Json) -> Reply {
 		let start = Instant::now();
+		let _span = squirrel_bb::frame_timing::span("bridge page->game");
+		squirrel_bb::frame_timing::count("bridge page->game", 1);
 		let reply = self.dispatch(vm, bridge, message);
 		self.note_time("page → game", start, || describe_message(message));
 		reply

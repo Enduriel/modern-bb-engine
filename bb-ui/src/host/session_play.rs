@@ -56,10 +56,18 @@ impl UiSession {
 	/// while it waits), before that frame's scripts, as the original's UI runs between
 	/// the game's frames.
 	pub fn step_unparked(&self, ms: f64) -> Result<(), String> {
+		use squirrel_bb::frame_timing::span;
+		let park = span("page park");
 		self.park();
+		drop(park);
+		let frame = span("engine frame");
 		self.game_frame(ms)?;
+		drop(frame);
+		let follow = span("ui scale+fonts");
 		self.follow_ui_scale();
 		self.follow_fonts();
+		drop(follow);
+		let _events = span("page unpark+events");
 		self.unpark();
 		for event in self.host().poll() {
 			self.handle(event);

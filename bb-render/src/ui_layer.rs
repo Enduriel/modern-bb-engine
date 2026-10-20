@@ -331,7 +331,7 @@ impl UiLayer {
 		if copied {
 			self.belt.finish();
 		}
-		gpu.queue.submit([encoder.finish()]);
+		gpu.submit("gpu ui layer", encoder.finish());
 		if copied {
 			self.belt.recall();
 		}
