@@ -181,3 +181,14 @@ mod tests {
 		assert_eq!(present_mode(false, &[Fifo]), Fifo);
 	}
 }
+
+/// The time between the refreshes of the monitor the window is on (60 Hz where the
+/// system doesn't say).
+pub fn refresh_interval(window: &winit::window::Window) -> std::time::Duration {
+	let millihertz = window
+		.current_monitor()
+		.and_then(|m| m.refresh_rate_millihertz())
+		.filter(|&mhz| mhz > 0)
+		.unwrap_or(60_000);
+	std::time::Duration::from_secs_f64(1000.0 / f64::from(millihertz))
+}

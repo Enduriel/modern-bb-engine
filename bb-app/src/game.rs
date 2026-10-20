@@ -16,6 +16,7 @@ use squirrel::{SqStrongRef, SqTable};
 use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
 use crate::front::{Front, Key};
+use crate::shown::{self, CursorLook, Look, Shown, Under};
 
 /// The longest real time one frame advances the game by.
 const MAX_FRAME_MS: f64 = 250.0;
@@ -32,6 +33,8 @@ pub struct Game {
 	cursor: (i64, i64),
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
+	/// What the last frame drawn showed (see [`Game::draw_if_changed`]).
+	shown: Shown,
 }
 
 /// Where the game starts.
@@ -162,6 +165,7 @@ impl Game {
 			battle_map: false,
 			cursor: (0, 0),
 			modifier: 0,
+			shown: Shown::default(),
 		};
 		// What the boot hinted (worldgen's brushes) starts decoding before the first frame.
 		game.follow_scenes();
@@ -323,32 +327,36 @@ impl Game {
 	/// Returns what the map drew (and the cursor): how many sprites, and how many waited
 	/// for their atlas.
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) -> FrameStats {
-		self.renderer.begin_frame();
+		self.draw_unless_shown(gpu, target, false).unwrap_or_default()
+	}
+
+	/// As [`draw`](Self::draw), but when the frame would show just what the last one
+	/// drawn showed (see [`crate::shown`]), draw nothing and return `None`: `target`
+	/// still holds that frame, and the window can leave it up.
+	pub fn draw_if_changed(&mut self, gpu: &Gpu, target: &RenderTarget) -> Option<FrameStats> {
+		self.draw_unless_shown(gpu, target, true)
+	}
+
+	fn draw_unless_shown(&mut self, gpu: &Gpu, target: &RenderTarget, compare: bool) -> Option<FrameStats> {
 		self.follow_scenes();
+		// The portraits the UI asked for, drawn or not: the page paints them.
+		let renderer = &mut self.renderer;
+		self.front
+			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
 		let engine = self.front.engine();
-		self.renderer.set_clock(Clock {
-			real: engine.time().real_seconds() as f32,
-			virtual_time: engine.time().virtual_seconds() as f32,
-		});
-		self.renderer.set_depth_of_field(engine.video().mode().depth_of_field);
 		let (width, height) = (target.width, target.height);
 		// The screen the scripts think in maps onto the frame.
 		let fit = width as f32 / self.screen().0 as f32;
 		let (tactical, world) = (tactical_visible(engine), world_visible(engine));
-		let stats = if tactical {
-			let scene = engine.tactical_scene();
-			let view = WorldView {
-				center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
-				zoom: fit / scene.camera.zoom as f32,
-				width,
-				height,
-			};
-			engine.sprites().with(|registry| {
-				self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady)
-			})
-		} else if world {
+		let virtual_time = engine.time().virtual_seconds() as f32;
+		// A battle, and a world map whose fog of war shows (it drifts with real time) or
+		// just changed, look different every frame.
+		let mut comparable = !tactical;
+		let mut detail_changes = Vec::new();
+		let under = if !tactical && world {
 			if let Some(patch) = engine.world_grid().take_fog_patch() {
 				self.renderer.update_fog(gpu, &patch);
+				comparable = false;
 			}
 			let camera = engine.world_camera();
 			let view = WorldView {
@@ -365,15 +373,70 @@ impl Game {
 			let grid = engine.world_grid();
 			let changes = grid.take_detail_changes();
 			drop(scene_span);
+			// A detail whose look changed draws (the renderer takes the changes once).
+			comparable &= changes.is_empty();
+			// Without a map (the main menu before a campaign) the water and the fog draw
+			// nothing, and so don't drift.
+			let map = scene.extent.0 > 0.0 && scene.extent.1 > 0.0;
+			if map && scene.fog_of_war {
+				let rect = shown::view_rect(view.center, view.zoom, width, height);
+				comparable &= grid.fog_clear_within(rect);
+			}
+			detail_changes = changes;
+			Under::World {
+				scene: Box::new(scene),
+				view: (view.center, view.zoom),
+				virtual_time: if map { virtual_time } else { 0.0 },
+				map_revision: grid.map_revision(),
+			}
+		} else {
+			Under::Nothing
+		};
+		let look = Look {
+			size: (width, height),
+			page_paints: self.front.paints(),
+			cursor: self.cursor_look(target, fit),
+			fonts: self.fonts,
+			under,
+		};
+		if compare && comparable && self.shown.same(Some(&look)) {
+			return None;
+		}
+		self.renderer.begin_frame();
+		let engine = self.front.engine();
+		self.renderer.set_clock(Clock {
+			real: engine.time().real_seconds() as f32,
+			virtual_time,
+		});
+		self.renderer.set_depth_of_field(engine.video().mode().depth_of_field);
+		let stats = if tactical {
+			let scene = engine.tactical_scene();
+			let view = WorldView {
+				center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
+				zoom: fit / scene.camera.zoom as f32,
+				width,
+				height,
+			};
+			engine.sprites().with(|registry| {
+				self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady)
+			})
+		} else if let Under::World { scene, view: (center, zoom), map_revision, .. } = &look.under {
+			let view = WorldView {
+				center: *center,
+				zoom: *zoom,
+				width,
+				height,
+			};
+			let grid = engine.world_grid();
 			let tiles = || grid.scene_map();
 			let map = WorldMap {
-				revision: grid.map_revision(),
+				revision: *map_revision,
 				tiles: &tiles,
-				changes: &changes,
+				changes: &detail_changes,
 			};
 			let _span = bb_render::frame_timing::span("world draw");
 			engine.sprites().with(|registry| {
-				self.renderer.draw_kept(gpu, target, &scene, &map, registry, &view, Atlases::DrawReady)
+				self.renderer.draw_kept(gpu, target, scene, &map, registry, &view, Atlases::DrawReady)
 			})
 		} else {
 			// Neither shows (the main menu, after `World.setVisible(false)`): the UI is
@@ -381,19 +444,42 @@ impl Game {
 			target.clear(gpu);
 			FrameStats::default()
 		};
-		// The UI over everything, with the portraits it asked for.
-		let renderer = &mut self.renderer;
-		self.front
-			.serve_procedural(|engine, path| procedural_png(renderer, gpu, engine, path));
+		// The UI over everything.
 		let front_span = bb_render::frame_timing::span("ui page");
 		self.front.draw(gpu, target);
 		drop(front_span);
 		let cursor = self.draw_cursor(gpu, target, fit);
-		FrameStats {
+		let stats = FrameStats {
 			quads: stats.quads + cursor.quads,
 			waiting: stats.waiting + cursor.waiting,
 			failed: stats.failed + cursor.failed,
-		}
+		};
+		// A frame drawn without what was still loading is drawn again.
+		self.shown.drawn((comparable && stats.waiting == 0).then_some(look));
+		Some(stats)
+	}
+
+	/// The next frame is drawn, whatever it shows (the window's surface was replaced).
+	pub fn forget_shown(&mut self) {
+		self.shown.forget();
+	}
+
+	/// The cursor as [`draw_cursor`](Self::draw_cursor) draws it, for telling frames
+	/// apart.
+	fn cursor_look(&self, target: &RenderTarget, fit: f32) -> Option<CursorLook> {
+		let engine = self.front.engine();
+		let (look, (x, y)) = engine.cursor();
+		let brush = look.brush.filter(|_| !look.hardware)?;
+		let since = engine.time().virtual_seconds() as f32 - look.since;
+		let frame = engine.sprites().with(|registry| {
+			let (_, sprite) = registry.get(&brush)?;
+			bb_render::cursor_frame_at(sprite, since).map(|f| (f.uv, f.rect))
+		});
+		Some(CursorLook {
+			brush,
+			at: cursor_at(target, fit, x, y),
+			frame,
+		})
 	}
 
 	/// What the scenes ask of the renderer and the page this frame: the textures of
@@ -449,8 +535,7 @@ impl Game {
 		let (look, (x, y)) = engine.cursor();
 		let Some(brush) = look.brush.filter(|_| !look.hardware) else { return FrameStats::default() };
 		let since = engine.time().virtual_seconds() as f32 - look.since;
-		// Screen pixels from the window's centre, y up.
-		let at = [x as f32 * fit - target.width as f32 * 0.5, target.height as f32 * 0.5 - y as f32 * fit];
+		let at = cursor_at(target, fit, x, y);
 		engine.sprites().with(|registry| self.renderer.draw_cursor(gpu, target, registry, &brush, since, at))
 	}
 
@@ -482,6 +567,12 @@ fn procedural_png(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, 
 	let mut png = Vec::new();
 	write_png(&mut png, &image).ok()?;
 	Some(png)
+}
+
+/// Where the cursor at the screen pixel `(x, y)` is drawn: frame pixels from the frame's
+/// centre, y up.
+fn cursor_at(target: &RenderTarget, fit: f32, x: i64, y: i64) -> [f32; 2] {
+	[x as f32 * fit - target.width as f32 * 0.5, target.height as f32 * 0.5 - y as f32 * fit]
 }
 
 /// `World.isVisible()`: the world map is showing (it isn't at the main menu).

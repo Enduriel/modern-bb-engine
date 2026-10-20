@@ -45,6 +45,7 @@ pub mod world;
 mod world_pass;
 mod world_renderer;
 
+pub use cursor::frame_at as cursor_frame_at;
 pub use gpu::Gpu;
 pub use memory::{RendererMemory, TextureMemory};
 pub use usage::AtlasUse;

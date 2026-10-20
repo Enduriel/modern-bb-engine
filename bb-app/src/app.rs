@@ -21,6 +21,7 @@ use bb_app::game::{Boot, Game, Start, Store};
 use bb_app::steam::SteamStats;
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
+use bb_app::pacing::Pacer;
 use bb_app::{keys, platform};
 use squirrel_bb::VideoMode;
 
@@ -80,10 +81,16 @@ struct Running {
 	game: Game,
 	last_frame: Instant,
 	frames: u64,
+	/// The last frame showed what the one before it did, so nothing was drawn or
+	/// presented (see `bb_app::shown`), and what paces such frames.
+	unchanged: bool,
+	pacer: Pacer,
 	/// With `BB_STATS`, when the renderer's memory is logged next, and the frames since
 	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
 	stats_frames: (u32, Duration),
+	/// Since the last log, the frames left undrawn because they showed what the last did.
+	stats_unchanged: u32,
 	/// Since the last log, the frames that drew sprites without their atlas (still
 	/// loading), and those sprites.
 	stats_waiting: (u32, usize),
@@ -272,6 +279,7 @@ impl App {
 		let presenter = Presenter::new(&gpu, format);
 		let frame_rect = display::frame_rect((config.width, config.height), game.screen());
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
+		let pacer = Pacer::new(display::refresh_interval(&window));
 		let mut running = Running {
 			window,
 			surface,
@@ -287,8 +295,11 @@ impl App {
 			game,
 			last_frame: Instant::now(),
 			frames: 0,
+			unchanged: false,
+			pacer,
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
+			stats_unchanged: 0,
 			stats_waiting: (0, 0),
 			system_cursor: None,
 			cursors: load_cursors(event_loop, &self.options.data_dir),
@@ -350,6 +361,8 @@ impl Running {
 		self.config.width = size.width;
 		self.config.height = size.height;
 		self.surface.configure(&self.gpu.device, &self.config);
+		// The new surface shows nothing yet.
+		self.game.forget_shown();
 		if self.placement.follows_window() {
 			self.game.video().set_screen_size(i64::from(size.width), i64::from(size.height));
 		}
@@ -384,15 +397,23 @@ impl Running {
 		if present_mode != self.config.present_mode {
 			self.config.present_mode = present_mode;
 			self.surface.configure(&self.gpu.device, &self.config);
+			self.game.forget_shown();
 		}
 	}
 
 	/// When the next frame may start: with the frame rate limited (VSync off), a frame
-	/// cap's interval after the last.
+	/// cap's interval after the last; after a frame left undrawn, which nothing paced,
+	/// the presented frames' pace after it (see `bb_app::pacing`; or the cap's, if
+	/// longer).
 	fn next_frame_at(&self) -> Option<Instant> {
 		let mode = self.game.video().mode();
-		(mode.limit_frame_rate && mode.frame_cap > 0)
-			.then(|| self.last_frame + Duration::from_secs_f64(1.0 / mode.frame_cap as f64))
+		let cap = (mode.limit_frame_rate && mode.frame_cap > 0).then(|| Duration::from_secs_f64(1.0 / mode.frame_cap as f64));
+		let interval = match (cap, self.unchanged) {
+			(Some(cap), true) => Some(cap.max(self.pacer.interval())),
+			(None, true) => Some(self.pacer.interval()),
+			(cap, false) => cap,
+		};
+		interval.map(|i| self.last_frame + i)
 	}
 
 	/// One frame: step the game by the real time since the last, draw, present.
@@ -416,8 +437,10 @@ impl Running {
 			if frames > 0 {
 				let ms = work.as_secs_f64() * 1000.0 / f64::from(frames);
 				let (waited, sprites) = std::mem::take(&mut self.stats_waiting);
+				let unchanged = std::mem::take(&mut self.stats_unchanged);
 				eprintln!(
 					"frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting); \
+					{unchanged} showed what the last did (not drawn); \
 					{waited} drew without {sprites} sprites whose frame or atlas was still loading"
 				);
 			}
@@ -443,7 +466,23 @@ impl Running {
 		if (self.target.width, self.target.height) != (width, height) {
 			self.target = RenderTarget::new(&self.gpu, width, height);
 		}
-		let drawn = self.game.draw(&self.gpu, &self.target);
+		// A frame that would show just what the last did is neither drawn nor presented:
+		// the last stays up, and the next frame comes at the pace presenting kept (`pacing`).
+		let drawn = self.game.draw_if_changed(&self.gpu, &self.target);
+		let after_presented = !self.unchanged;
+		self.unchanged = drawn.is_none();
+		let Some(drawn) = drawn else {
+			if let Some(times) = &mut self.frame_times {
+				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0);
+			}
+			if self.next_stats.is_some() {
+				self.stats_frames.0 += 1;
+				self.stats_frames.1 += now.elapsed();
+				self.stats_unchanged += 1;
+			}
+			self.frames += 1;
+			return Ok(self.frames);
+		};
 		if drawn.waiting > 0 {
 			self.stats_waiting.0 += 1;
 			self.stats_waiting.1 += drawn.waiting;
@@ -455,9 +494,13 @@ impl Running {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
 			wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
 				self.surface.configure(&self.gpu.device, &self.config);
+				self.game.forget_shown();
 				return Ok(self.frames);
 			}
-			_ => return Ok(self.frames),
+			_ => {
+				self.game.forget_shown();
+				return Ok(self.frames);
+			}
 		};
 		let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
 		let present_span = bb_render::frame_timing::span("present");
@@ -465,6 +508,7 @@ impl Running {
 		self.window.pre_present_notify();
 		self.gpu.queue.present(texture);
 		drop(present_span);
+		self.pacer.presented(now, after_presented);
 		if let Some(times) = &mut self.frame_times {
 			if times.wait_gpu {
 				let _span = bb_render::frame_timing::span("gpu");
@@ -553,6 +597,11 @@ impl ApplicationHandler for App {
 			WindowEvent::CloseRequested => Ok(true),
 			WindowEvent::Resized(size) => {
 				running.resize(*size);
+				Ok(false)
+			}
+			// What the system shows of the window may be gone: draw it again.
+			WindowEvent::Occluded(false) | WindowEvent::ScaleFactorChanged { .. } => {
+				running.game.forget_shown();
 				Ok(false)
 			}
 			WindowEvent::RedrawRequested => running.frame().and_then(|frames| {

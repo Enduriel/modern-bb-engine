@@ -2,8 +2,9 @@
 //! offscreen (no window): the campaign starts from the menu, and its opening event is
 //! drawn over the world and takes the clicks it's under, while the open map passes
 //! them to the states. A brother's portrait the page asks for is composed by the
-//! renderer. Quitting from the in-game menu (Escape, then Quit) leads back to the main
-//! menu, and Escape there ends the game, as in the original.
+//! renderer. Idle in a town, frames that would show the same are left undrawn.
+//! Quitting from the in-game menu (Escape, then Quit) leads back to the main menu, and
+//! Escape there ends the game, as in the original.
 //!
 //! Skips if there is no Steam install or no GPU.
 //!
@@ -143,6 +144,57 @@ fn cursor_is_drawn_at_the_mouse(game: &mut Game, gpu: &Gpu, target: &RenderTarge
 	}
 	println!("  cursor: {cursor} pixels at the mouse, {elsewhere} elsewhere");
 	Ok(())
+}
+
+/// Idling in a town (the world paused behind the town's dialog), frames come to show
+/// what the last did, and are left undrawn: the frame left up is pixel for pixel what
+/// drawing it would draw. A move of the mouse draws again (the cursor moved).
+fn unchanged_frames_are_left_undrawn(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	game.front().engine().run_script(
+		r#"::World.State.m.IsAutosaving = false;
+		local state = ::World.State;
+		local tile = state.getPlayer().getTile();
+		local nearest = null;
+		foreach (s in ::World.EntityManager.getSettlements())
+			if (s.isEnterable() && (nearest == null || s.getTile().getDistanceTo(tile) < nearest.getTile().getDistanceTo(tile)))
+				nearest = s;
+		state.enterLocation(nearest);"#,
+		"enter a town",
+	)?;
+	let mut undrawn = 0;
+	for _ in 0..600 {
+		game.step(1000.0 / 60.0)?;
+		if game.draw_if_changed(gpu, target).is_none() {
+			undrawn += 1;
+			if undrawn == 10 {
+				break;
+			}
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	if undrawn < 10 {
+		return Err(format!("idling in a town, only {undrawn} of 600 frames were left undrawn"));
+	}
+	let left = target.read(gpu)?;
+	game.draw(gpu, target);
+	let drawn = target.read(gpu)?;
+	let differ = left.rgba.chunks(4).zip(drawn.rgba.chunks(4)).filter(|(a, b)| a != b).count();
+	if differ > 0 {
+		let out = std::env::temp_dir().join("bb-app-ui_window-undrawn.png");
+		save_png(out.to_string_lossy().as_ref(), &left)?;
+		return Err(format!("the frame left up differs from the one drawn in {differ} pixels ({})", out.display()));
+	}
+	game.mouse_moved(10, 10)?;
+	game.step(1000.0 / 60.0)?;
+	if game.draw_if_changed(gpu, target).is_none() {
+		return Err("the cursor moved, but the frame was left undrawn".into());
+	}
+	println!("  idle in a town: frames left undrawn, the same as drawn");
+	game.front().engine().run_script(
+		"::World.State.town_screen_main_dialog_module_onLeaveButtonClicked();",
+		"leave the town",
+	)?;
+	play(game, gpu, target, 1.0)
 }
 
 /// `seconds` of 60th-of-a-second frames, stepped and drawn.
@@ -291,6 +343,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		return Err(format!("the map's click didn't reach the states ({release:?})"));
 	}
 	game.mouse_moved(0, 0)?;
+	unchanged_frames_are_left_undrawn(&mut game, gpu, &target)?;
 	quits_from_the_in_game_menu(&mut game, gpu, &target)
 }
 

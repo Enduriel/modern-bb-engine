@@ -92,6 +92,11 @@ impl Front {
 	/// Answer the page's procedural images: there is no page.
 	pub fn serve_procedural(&self, _compose: impl FnMut(&GameEngine, &str) -> Option<Vec<u8>>) {}
 
+	/// The page's paints: there is no page.
+	pub fn paints(&self) -> u64 {
+		0
+	}
+
 	/// Draw the UI over `target`: nothing to draw.
 	pub fn draw(&mut self, _gpu: &Gpu, _target: &RenderTarget) {}
 

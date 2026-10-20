@@ -197,6 +197,11 @@ impl Front {
 		self.layer.bytes()
 	}
 
+	/// How many times the page has painted: each paint is a new picture of it.
+	pub fn paints(&self) -> u64 {
+		self.session.host().paints()
+	}
+
 	/// Draw the page's latest paint over `target`.
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
 		// Only what the page repainted since the last frame.
