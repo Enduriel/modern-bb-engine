@@ -21,6 +21,9 @@ use std::time::Duration;
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{Echo, HostConfig, UiSession};
 
+#[path = "support/gpu_page.rs"]
+mod gpu_page;
+
 /// How long a step may take: a new campaign generates its world first.
 const STEP: Duration = Duration::from_secs(120);
 
@@ -44,7 +47,7 @@ fn during<T>(what: &str, result: Result<T, String>) -> Result<T, String> {
 }
 
 fn starts_a_campaign_and_reaches_the_world_screen(data_dir: &Path) -> Result<(), String> {
-	let session = UiSession::start(data_dir, HostConfig::default(), Echo::Off)?;
+	let session = UiSession::start(data_dir, HostConfig { sink: Some(gpu_page::sink()?), ..HostConfig::default() }, Echo::Off)?;
 	during("booting the menu", session.boot_menu())?;
 	play(&session).map_err(|error| {
 		// Enough to tell what happened: the scripts' states and the last frame.
@@ -260,6 +263,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let name = "starts_a_campaign_and_reaches_the_world_screen";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if !data_dir.exists() {

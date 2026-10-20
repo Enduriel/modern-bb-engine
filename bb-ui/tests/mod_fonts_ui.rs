@@ -19,6 +19,9 @@ use bb_engine::harness::{self, STEAM_DATA_DIR};
 use bb_ui::host::{Echo, HostConfig, UiSession};
 use bb_ui::json::Json;
 
+#[path = "support/gpu_page.rs"]
+mod gpu_page;
+
 /// Characters the test font has (bb-render's `tests/fixtures/README.md`).
 const CHINESE: &str = "白石镇黑森林";
 /// The test font's file in the test mod, and its family.
@@ -62,7 +65,7 @@ const MOD_FACE: &str = r#"(function () {
 })()"#;
 
 fn a_mods_font_draws_chinese_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
-	let config = HostConfig { extra_mods: vec![test_mod()], ..HostConfig::default() };
+	let config = HostConfig { extra_mods: vec![test_mod()], sink: Some(gpu_page::sink()?), ..HostConfig::default() };
 	let session = UiSession::start(data_dir, config, Echo::Off)?;
 	session.boot_menu()?;
 	session.run_frames(0.5)?;
@@ -119,6 +122,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let name = "a_mods_font_draws_chinese_on_the_real_ui";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if harness::data_archives(data_dir).map_or(true, |a| a.is_empty()) {

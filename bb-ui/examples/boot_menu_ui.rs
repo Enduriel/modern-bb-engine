@@ -29,6 +29,9 @@ use std::time::{Duration, Instant};
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{Echo, HostConfig, Key, UiSession};
 
+#[path = "../tests/support/gpu_page.rs"]
+mod gpu_page;
+
 /// The new-campaign map seed's text field (the company name's takes 32 characters).
 const SEED_FIELD: &str = ".new-campaign-menu-module input[maxlength=\"10\"]";
 
@@ -153,6 +156,7 @@ fn run(options: Options) -> Result<(), String> {
 		width: options.width,
 		height: options.height,
 		devtools_port: options.devtools,
+		sink: Some(gpu_page::sink()?),
 		..HostConfig::default()
 	};
 	if let Some(port) = options.devtools {
@@ -230,6 +234,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	match parse_options().and_then(run) {
 		Ok(()) => ExitCode::SUCCESS,
 		Err(error) => {

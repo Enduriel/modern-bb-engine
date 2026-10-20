@@ -1,6 +1,5 @@
-//! The parts of the page's frame that changed since its owner last took them: the dirty
-//! rectangles of every paint since, coalesced, so the owner copies only what changed
-//! (to the GPU, in `bb-app`).
+//! The parts of the page's frame a paint changed: its dirty rectangles clipped to the
+//! frame and coalesced, so the owner copies only what changed, in few copies.
 
 /// A rectangle of the page's frame, in its pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,8 +58,8 @@ impl PaintRect {
 	}
 }
 
-/// More separate rectangles than this become one around them all: each is a copy (and an
-/// upload) of its own, and by then the page is changing all over.
+/// More separate rectangles than this become one around them all: each is a copy of its
+/// own, and by then the page is changing all over.
 const MOST_RECTS: usize = 16;
 
 /// The changed parts of a frame, as few rectangles as cover them without copying much
@@ -89,10 +88,6 @@ impl Damage {
 
 	pub fn rects(&self) -> &[PaintRect] {
 		&self.rects
-	}
-
-	pub fn clear(&mut self) {
-		self.rects.clear();
 	}
 }
 
@@ -129,8 +124,7 @@ mod tests {
 		// Bridges both: one around all.
 		damage.add(rect(10, 10, 45, 45));
 		assert_eq!(damage.rects(), [rect(0, 0, 65, 60)]);
-		damage.clear();
-		assert!(damage.rects().is_empty());
+		damage = Damage::default();
 		damage.add(rect(3, 3, 0, 9));
 		assert!(damage.rects().is_empty(), "an empty rectangle changes nothing");
 	}

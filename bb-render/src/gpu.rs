@@ -30,6 +30,12 @@ impl Gpu {
 	/// Open the best available adapter with no surface. Honours wgpu's environment
 	/// variables (e.g. `WGPU_BACKEND=vulkan`, `WGPU_ADAPTER_NAME=llvmpipe`).
 	pub fn headless() -> Result<Gpu, String> {
+		Gpu::headless_with(wgpu::Features::empty())
+	}
+
+	/// [`Gpu::headless`] with the device `features` on (e.g.
+	/// [`UiPage::FEATURES`](crate::UiPage::FEATURES)); fails if the adapter lacks them.
+	pub fn headless_with(features: wgpu::Features) -> Result<Gpu, String> {
 		let instance =
 			wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
 		let options = wgpu::RequestAdapterOptions {
@@ -39,29 +45,17 @@ impl Gpu {
 		};
 		let adapter = block_on(instance.request_adapter(&options))
 			.map_err(|e| format!("no GPU adapter: {e}"))?;
-		let info = adapter.get_info();
-		let timed = gpu_timing::wanted() && adapter.features().contains(gpu_timing::FEATURES);
-		let descriptor = wgpu::DeviceDescriptor {
-			label: Some("bb-render"),
-			memory_hints: memory_hints(),
-			required_features: if timed { gpu_timing::FEATURES } else { wgpu::Features::empty() },
-			..Default::default()
-		};
-		let (device, queue) = block_on(adapter.request_device(&descriptor))
-			.map_err(|e| format!("no GPU device: {e}"))?;
-		let pass_timer = timed.then(|| PassTimer::new(&device, &queue));
-		Ok(Gpu {
-			device,
-			queue,
-			adapter: format!("{} ({:?})", info.name, info.backend),
-			pass_timer,
-			device_type: info.device_type,
-			surface_adapter: None,
-		})
+		Gpu::open(adapter, features, false)
 	}
 
 	/// Open an adapter that can present to `surface` (made from `instance`).
 	pub fn for_surface(instance: &wgpu::Instance, surface: &wgpu::Surface) -> Result<Gpu, String> {
+		Gpu::for_surface_with(instance, surface, wgpu::Features::empty())
+	}
+
+	/// [`Gpu::for_surface`] with the device `features` on; fails if the adapter lacks
+	/// them.
+	pub fn for_surface_with(instance: &wgpu::Instance, surface: &wgpu::Surface, features: wgpu::Features) -> Result<Gpu, String> {
 		let options = wgpu::RequestAdapterOptions {
 			power_preference: wgpu::PowerPreference::from_env()
 				.unwrap_or(wgpu::PowerPreference::HighPerformance),
@@ -70,12 +64,21 @@ impl Gpu {
 		};
 		let adapter = block_on(instance.request_adapter(&options))
 			.map_err(|e| format!("no GPU adapter for the window: {e}"))?;
+		Gpu::open(adapter, features, true)
+	}
+
+	fn open(adapter: wgpu::Adapter, features: wgpu::Features, for_surface: bool) -> Result<Gpu, String> {
 		let info = adapter.get_info();
+		let name = format!("{} ({:?})", info.name, info.backend);
+		let missing = features - adapter.features();
+		if !missing.is_empty() {
+			return Err(format!("the GPU {name} lacks features the game needs: {missing:?}"));
+		}
 		let timed = gpu_timing::wanted() && adapter.features().contains(gpu_timing::FEATURES);
 		let descriptor = wgpu::DeviceDescriptor {
 			label: Some("bb-render"),
+			required_features: if timed { features | gpu_timing::FEATURES } else { features },
 			memory_hints: memory_hints(),
-			required_features: if timed { gpu_timing::FEATURES } else { wgpu::Features::empty() },
 			..Default::default()
 		};
 		let (device, queue) = block_on(adapter.request_device(&descriptor))
@@ -84,10 +87,10 @@ impl Gpu {
 		Ok(Gpu {
 			device,
 			queue,
-			adapter: format!("{} ({:?})", info.name, info.backend),
+			adapter: name,
 			pass_timer,
 			device_type: info.device_type,
-			surface_adapter: Some(adapter),
+			surface_adapter: for_surface.then_some(adapter),
 		})
 	}
 

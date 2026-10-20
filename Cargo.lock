@@ -344,6 +344,7 @@ version = "0.1.0"
 dependencies = [
  "bb-assets",
  "bb-engine",
+ "bb-render",
  "cef",
  "cef-dll-sys",
  "objc2 0.6.5",

@@ -96,6 +96,15 @@ impl UiSession {
 		if !session.pump_until(Duration::from_secs(30), |s| s.protocol.is_registered()) {
 			return Err("the page never finished registering its screens".into());
 		}
+		// The page is painted on the GPU only: without paints nothing of it would ever
+		// show, and Chromium fails that silently ("Unable to allocate frame" in its log).
+		if !session.pump_until(Duration::from_secs(10), |s| s.host().paints() > 0) {
+			let why = session.host().paint_error().map_or_else(|| "none arrived".to_string(), |e| format!("the last couldn't be taken: {e}"));
+			return Err(format!(
+				"the page never painted ({why}): Chromium's GPU process didn't hand over its paints; \
+				its log is CEF's (cef.log, or the game's log folder)"
+			));
+		}
 		Ok(session)
 	}
 

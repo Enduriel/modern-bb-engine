@@ -35,6 +35,9 @@ use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
 use bb_ui::parity::{Snapshot, compare};
 
+#[path = "support/gpu_page.rs"]
+mod gpu_page;
+
 const LAYOUT_PROBE: &str = include_str!("../probes/layout_rules.js");
 const TEXT_PROBE: &str = include_str!("../probes/text_rules.js");
 const BORDER_PROBE: &str = include_str!("../probes/border_rules.js");
@@ -81,6 +84,7 @@ fn start(data_dir: &Path) -> Result<UiSession, String> {
 	let config = HostConfig {
 		width: width as u32,
 		height: height as u32,
+		sink: Some(gpu_page::sink()?),
 		..HostConfig::default()
 	};
 	let session = UiSession::start(data_dir, config, Echo::Off)?;
@@ -391,6 +395,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let checks: [(&str, Check); 9] = [
 		(
 			"draws_tiled_backgrounds_as_the_original",

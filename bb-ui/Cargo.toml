@@ -24,6 +24,10 @@ cef-dll-sys = { version = "=154.5.0", optional = true }
 objc2 = { version = "0.6.3", optional = true }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSEvent"], optional = true }
 
+[dev-dependencies]
+# The tests' and tools' copy of the page's frame, on the GPU (the game's is bb-app's).
+bb-render = { path = "../bb-render" }
+
 [[example]]
 name = "boot_menu_ui"
 required-features = ["cef"]

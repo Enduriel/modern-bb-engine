@@ -9,6 +9,7 @@
 //! - [`sprite`]: the original's sprite program and the quad batcher.
 //! - [`world`]: the world map, from the game's [`WorldScene`](squirrel_bb::scene::WorldScene).
 //! - [`WorldRenderer`]: draws it frame by frame, loading atlases on demand.
+//! - [`UiPage`]: the UI page's frame on the GPU, copied from the browser's paints.
 //! - [`UiLayer`]: the UI page blended over a frame.
 //! - [`Presenter`]: copies a finished frame onto a window's surface.
 //! - [`portrait`]: an entity drawn on its own, for the UI's procedural images.
@@ -46,6 +47,7 @@ mod test_sprites;
 mod text;
 mod texture;
 mod ui_layer;
+mod ui_page;
 mod usage;
 mod water;
 pub mod world;
@@ -62,5 +64,8 @@ pub use screenshot::{save_png, write_png};
 pub use target::{RenderTarget, TARGET_FORMAT};
 pub use bb_assets::mips::mip_chain;
 pub use texture::{GpuTexture, TEXTURE_FORMAT};
-pub use ui_layer::{Region as UiRegion, UiLayer, UploadStats};
+pub use ui_layer::UiLayer;
+#[cfg(target_os = "linux")]
+pub use ui_page::DmaBuf;
+pub use ui_page::{CopyStats as UiCopyStats, Region as UiRegion, UiPage};
 pub use world_renderer::{Atlases, Clock, Discard, FrameStats, WorldMap, WorldRenderer};

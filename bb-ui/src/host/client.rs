@@ -1,5 +1,5 @@
-//! The browser-process handlers of the page: painting into an offscreen buffer,
-//! console and load reporting, the browser's lifetime, and messages from the page.
+//! The browser-process handlers of the page: its paints (GPU buffers, handed to the
+//! owner's [`PageSink`]), console and load reporting, the browser's lifetime, and messages from the page.
 //!
 //! They run on CEF's own threads and only hand events to the game thread through
 //! [`Shared`]; nothing here touches the Squirrel VM.
@@ -9,8 +9,10 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use cef::*;
 
+use super::damage::{Damage, PaintRect};
+use super::frame::PaintState;
 use super::ipc;
-use super::frame::Painted;
+use super::paint_sink::{PageSink, PaintBuffer, SharedPaint};
 use super::paint_stats::PaintCounters;
 use super::bridge_server::RequestKind;
 use super::responder::Responder;
@@ -58,8 +60,12 @@ pub enum Event {
 pub(super) struct Shared {
 	pub events: Mutex<mpsc::Sender<Event>>,
 	pub browser: Mutex<Option<Browser>>,
-	/// The latest frame, and what changed in it since the owner last took that.
-	pub frame: Mutex<Painted>,
+	/// Where the page's paints go (the owner's copy of the frame, on the GPU).
+	pub sink: Arc<dyn PageSink>,
+	/// The latest frame's size and paint count, and the alpha read back from it.
+	pub frame: Mutex<PaintState>,
+	/// Why the last paint that couldn't be taken couldn't.
+	pub paint_error: Mutex<Option<String>>,
 	/// The view's width and height (CSS pixels); see [`UiHost::resize`](super::UiHost::resize).
 	pub size: Mutex<(i32, i32)>,
 	/// Screen pixels per CSS pixel: the UI scale, which the page is drawn at (see
@@ -118,37 +124,105 @@ wrap_render_handler! {
 			1
 		}
 
-		fn on_paint(
+		fn on_accelerated_paint(
 			&self,
 			_browser: Option<&mut Browser>,
 			type_: PaintElementType,
 			dirty_rects: Option<&[Rect]>,
-			buffer: *const u8,
-			width: ::std::os::raw::c_int,
-			height: ::std::os::raw::c_int,
+			info: Option<&AcceleratedPaintInfo>,
 		) {
-			if type_ != PaintElementType::VIEW || buffer.is_null() || width <= 0 || height <= 0 {
+			if type_ != PaintElementType::VIEW {
+				return;
+			}
+			let Some(info) = info else { return };
+			let (width, height) = (info.extra.coded_size.width, info.extra.coded_size.height);
+			let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else { return };
+			if width == 0 || height == 0 {
 				return;
 			}
 			let started = std::time::Instant::now();
-			let len = width as usize * height as usize * 4;
-			// SAFETY: CEF passes a BGRA buffer of `width * height` pixels.
-			let pixels = unsafe { std::slice::from_raw_parts(buffer, len) };
-			let dirty = dirty_rects.unwrap_or_default();
-			let whole = [Rect { x: 0, y: 0, width, height }];
-			// None said: all of it.
-			let dirty = if dirty.is_empty() { &whole[..] } else { dirty };
-			let rects = dirty.iter().map(|r| (r.x, r.y, r.width, r.height));
-			let copied = self
-				.shared
-				.frame
-				.lock()
-				.unwrap_or_else(|e| e.into_inner())
-				.paint(pixels, width as u32, height as u32, rects);
-			let damaged = dirty.iter().map(|r| r.width.max(0) as u64 * r.height.max(0) as u64).sum();
-			self.shared.paint_counters.add(started.elapsed(), copied, damaged);
+			// The changed parts inside the frame, merged where they meet; none said: all.
+			let mut damage = Damage::default();
+			for r in dirty_rects.unwrap_or_default() {
+				if let Some(rect) = PaintRect::clipped(r.x, r.y, r.width, r.height, width, height) {
+					damage.add(rect);
+				}
+			}
+			if damage.rects().is_empty() {
+				damage.add(PaintRect::whole(width, height));
+			}
+			let dirty = damage.rects();
+			let taken = take_paint(&*self.shared.sink, info, width, height, dirty);
+			let damaged = dirty.iter().map(PaintRect::area).sum();
+			match taken {
+				Ok(()) => {
+					self.shared.frame.lock().unwrap_or_else(|e| e.into_inner()).painted(width, height, dirty);
+					self.shared.paint_counters.add(started.elapsed(), damaged);
+				}
+				Err(e) => {
+					if self.shared.paint_counters.failed() <= 3 {
+						eprintln!("bb-ui: a paint of the page couldn't be taken: {e}");
+					}
+					*self.shared.paint_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
+				}
+			}
+		}
+
+		fn on_paint(
+			&self,
+			_browser: Option<&mut Browser>,
+			_type_: PaintElementType,
+			_dirty_rects: Option<&[Rect]>,
+			_buffer: *const u8,
+			_width: ::std::os::raw::c_int,
+			_height: ::std::os::raw::c_int,
+		) {
+			// Only if Chromium fell back to compositing in software (its GPU process
+			// failed): there is no software path to take this, so say why nothing shows.
+			let e = "Chromium painted the page in memory, not on the GPU (its GPU process failed?); \
+				the page can't be shown"
+				.to_string();
+			if self.shared.paint_counters.failed() <= 3 {
+				eprintln!("bb-ui: {e}");
+			}
+			*self.shared.paint_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
 		}
 	}
+}
+
+/// Hand the paint `info` (its buffer valid only during this call) to `sink`.
+#[cfg(target_os = "linux")]
+fn take_paint(sink: &dyn PageSink, info: &AcceleratedPaintInfo, width: u32, height: u32, dirty: &[PaintRect]) -> Result<(), String> {
+	use super::paint_sink::DmaBufPlane;
+	use std::os::fd::BorrowedFd;
+
+	let count = usize::try_from(info.plane_count).unwrap_or(0).min(info.planes.len());
+	let mut planes = Vec::with_capacity(count);
+	for plane in &info.planes[..count] {
+		if plane.fd < 0 {
+			return Err(format!("the paint's plane has no buffer (fd {})", plane.fd));
+		}
+		planes.push(DmaBufPlane {
+			// SAFETY: CEF's fd, open for the duration of this callback (its contract);
+			// the borrow doesn't outlive `planes`, which is dropped before returning.
+			fd: unsafe { BorrowedFd::borrow_raw(plane.fd) },
+			stride: plane.stride,
+			offset: plane.offset,
+			size: plane.size,
+		});
+	}
+	sink.paint(&SharedPaint {
+		width,
+		height,
+		bgra: info.format == ColorType::BGRA_8888,
+		buffer: PaintBuffer::DmaBuf { planes: &planes, modifier: info.modifier },
+		dirty,
+	})
+}
+
+#[cfg(not(target_os = "linux"))]
+fn take_paint(_sink: &dyn PageSink, _info: &AcceleratedPaintInfo, _width: u32, _height: u32, _dirty: &[PaintRect]) -> Result<(), String> {
+	Err("the UI page's shared GPU textures aren't implemented on this operating system yet".into())
 }
 
 wrap_display_handler! {

@@ -1,4 +1,6 @@
-//! The Chromium host: the game's UI page in CEF, rendered offscreen.
+//! The Chromium host: the game's UI page in CEF, rendered offscreen on the GPU. Its
+//! paints are handed to the owner's [`PageSink`] as GPU buffers ([`paint_sink`]),
+//! through a display connection ([`display`]).
 //!
 //! Threads:
 //! - the **game thread** (the one that calls [`UiHost::start`]) owns the Squirrel VM
@@ -38,6 +40,7 @@ mod bridge_wire;
 mod click_count;
 mod client;
 mod damage;
+mod display;
 #[cfg(target_os = "linux")]
 mod fonts;
 mod frame;
@@ -52,6 +55,7 @@ mod mac_keys;
 mod memory;
 mod page_frames;
 mod page_log;
+mod paint_sink;
 mod paint_stats;
 mod pump_schedule;
 mod renderer;
@@ -76,6 +80,7 @@ use cef::*;
 use client::Shared;
 pub use client::Event;
 pub use damage::PaintRect;
+pub use display::{Display, with_display};
 pub use frame::FrameBuffer;
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
 use ipc::Arg;
@@ -84,6 +89,9 @@ pub use bridge_server::RequestKind;
 pub use responder::Responder;
 pub use page_frames::PageFrames;
 pub use page_log::{Echo, LogLine};
+#[cfg(target_os = "linux")]
+pub use paint_sink::DmaBufPlane;
+pub use paint_sink::{PageSink, PaintBuffer, SharedPaint};
 pub use paint_stats::PaintStats;
 pub use pump_schedule::Waker;
 pub use session::UiSession;
@@ -163,7 +171,7 @@ pub fn run_subprocess() -> Option<i32> {
 		}
 		return None;
 	}
-	let mut app = app::host_app(None, None, None);
+	let mut app = app::host_app(None, None, None, None);
 	Some(execute_process(
 		Some(args.as_main_args()),
 		Some(&mut app),
@@ -214,6 +222,12 @@ pub struct HostConfig {
 	/// What the page copies to and pastes from: a clipboard of the page's own by
 	/// default; the windowed game passes the system's (see [`crate::clipboard`]).
 	pub clipboard: Arc<dyn Clipboard>,
+	/// Where the page's paints go: the owner's copy of the page's frame, on the GPU
+	/// (bb-render's `UiPage`). Required: the page is painted on the GPU only.
+	pub sink: Option<Arc<dyn PageSink>>,
+	/// The display connection Chromium paints through; `None`: this process's
+	/// ([`Display::from_env`]).
+	pub display: Option<Display>,
 }
 
 impl Default for HostConfig {
@@ -233,6 +247,8 @@ impl Default for HostConfig {
 			extra_mods: Vec::new(),
 			steam_build: true,
 			clipboard: Arc::new(MemoryClipboard::default()),
+			sink: None,
+			display: None,
 		}
 	}
 }
@@ -272,12 +288,25 @@ impl UiHost {
 	/// browser exists; the page itself is still loading.
 	pub fn start(files: Arc<UiFiles>, config: HostConfig) -> Result<UiHost, String> {
 		let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
+		let sink = config
+			.sink
+			.clone()
+			.ok_or("no paint sink: the page is painted on the GPU, and its owner keeps the frame (HostConfig::sink)")?;
+		let display = match config.display {
+			Some(display) => display,
+			None => Display::from_env()?,
+		};
 		std::fs::create_dir_all(&config.cache_dir).map_err(|e| format!("cache dir: {e}"))?;
 		let args = Args::new();
 		let (ready_tx, ready_rx) = mpsc::channel();
 		// Bound before CEF starts: the renderer is told where it is as it launches.
 		let bridge = bridge_wire::Listener::bind().map_err(|e| format!("the bridge's socket: {e}"))?;
-		let mut app = app::host_app(Some(ready_tx), config.devtools_port, Some(bridge.endpoint().to_switch()));
+		let mut app = app::host_app(
+			Some(ready_tx),
+			config.devtools_port,
+			Some(bridge.endpoint().to_switch()),
+			Some(display.ozone()),
+		);
 
 		let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
 		let cef_dir = cef_dir();
@@ -325,7 +354,9 @@ impl UiHost {
 		let shared = Arc::new(Shared {
 			events: Mutex::new(events_tx),
 			browser: Mutex::new(None),
+			sink,
 			frame: Mutex::new(Default::default()),
+			paint_error: Mutex::new(None),
 			size: Mutex::new((config.width as i32, config.height as i32)),
 			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
@@ -358,6 +389,8 @@ impl UiHost {
 
 		let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
 		window_info.external_begin_frame_enabled = config.frames.external().into();
+		// Paints arrive as GPU buffers (`OnAcceleratedPaint`), never as pixels in memory.
+		window_info.shared_texture_enabled = 1;
 		// The generic font families are the original's, Windows' defaults (probed,
 		// `probes/font_families.js`): `monospace` is Courier New there, where Linux's
 		// default is DejaVu Sans Mono (a pixel taller a line: Modern Hooks' popup, and
@@ -841,53 +874,69 @@ impl UiHost {
 		}
 	}
 
-	/// A copy of the latest painted frame.
+	/// A copy of the latest painted frame, read back from the GPU (a whole page's worth:
+	/// for screenshots and checks, not every frame). `None` before the first paint.
 	pub fn frame(&self) -> Option<FrameBuffer> {
-		self.with_frame(|f| FrameBuffer {
-			width: f.width,
-			height: f.height,
-			bgra: f.bgra.clone(),
-			paints: f.paints,
-		})
+		let paints = self.paints();
+		let (width, height) = self.painted_size()?;
+		match self.shared.sink.read(PaintRect::whole(width, height)) {
+			Ok(Some((region, bgra))) => Some(FrameBuffer { width: region.width, height: region.height, bgra, paints }),
+			Ok(None) => None,
+			Err(e) => {
+				eprintln!("bb-ui: could not read the page's frame back: {e}");
+				None
+			}
+		}
 	}
 
-	/// Run `f` on the latest painted frame, without copying it; `None` before the first.
-	pub fn with_frame<R>(&self, f: impl FnOnce(&FrameBuffer) -> R) -> Option<R> {
-		let painted = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
-		painted.frame.as_ref().map(f)
-	}
-
-	/// Run `f` on the latest painted frame and the parts of it that changed since the
-	/// last call (none, if nothing did), which then count as taken: for the one owner
-	/// who keeps a copy of the frame up to date (the game's GPU texture of it). The
-	/// first call after the first paint, or after the view changed size, has all of it.
-	/// `None` before the first paint.
-	pub fn take_damage<R>(&self, f: impl FnOnce(&FrameBuffer, &[PaintRect]) -> R) -> Option<R> {
-		let mut painted = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
-		let painted = &mut *painted;
-		let result = painted.frame.as_ref().map(|frame| f(frame, painted.damage.rects()));
-		painted.damage.clear();
-		result
+	/// The latest paint's size, if there was one.
+	fn painted_size(&self) -> Option<(u32, u32)> {
+		let state = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+		(state.paints > 0).then_some((state.width, state.height))
 	}
 
 	/// The painted page's alpha at `(x, y)` (painted pixels: the screen's, see
-	/// [`UiHost::resize`]): 0 outside it, or before the first paint.
+	/// [`UiHost::resize`]): 0 outside it, or before the first paint. Read back from the
+	/// GPU a tile at a time, kept until a paint changes the tile ([`frame`]).
 	pub fn alpha_at(&self, x: i32, y: i32) -> u8 {
-		self.with_frame(|f| {
-			let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {
-				return 0;
-			};
-			if x >= f.width || y >= f.height {
+		let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {
+			return 0;
+		};
+		let (tile, paints) = {
+			let state = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+			if state.paints == 0 || x >= state.width || y >= state.height {
 				return 0;
 			}
-			f.bgra[((y * f.width + x) * 4 + 3) as usize]
-		})
-		.unwrap_or(0)
+			if let Some(alpha) = state.alpha(x, y) {
+				return alpha;
+			}
+			(state.tile_at(x, y), state.paints)
+		};
+		let bgra = match self.shared.sink.read(tile) {
+			Ok(Some((region, bgra))) if region == tile => bgra,
+			Ok(_) => return 0,
+			Err(e) => {
+				eprintln!("bb-ui: could not read the page's alpha back: {e}");
+				return 0;
+			}
+		};
+		let alpha = bgra[(((y - tile.y) * tile.width + (x - tile.x)) * 4 + 3) as usize];
+		let mut state = self.shared.frame.lock().unwrap_or_else(|e| e.into_inner());
+		// A paint landed while the tile was read: it may have read either side of it.
+		if state.paints == paints {
+			state.keep(tile, &bgra);
+		}
+		alpha
 	}
 
 	/// How many frames have been painted so far.
 	pub fn paints(&self) -> u64 {
-		self.with_frame(|f| f.paints).unwrap_or(0)
+		self.shared.frame.lock().unwrap_or_else(|e| e.into_inner()).paints
+	}
+
+	/// Why the last paint the page's sink couldn't take couldn't, if one couldn't.
+	pub fn paint_error(&self) -> Option<String> {
+		self.shared.paint_error.lock().unwrap_or_else(|e| e.into_inner()).clone()
 	}
 
 	/// The game drew a frame: with [`PageFrames::Game`], the page makes its next frame

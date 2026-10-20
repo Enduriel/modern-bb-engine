@@ -153,8 +153,10 @@ fn report(what: &str, s: &Shown) {
 }
 
 fn menu(start: Instant) -> Result<(), String> {
+	let gpu = Gpu::headless_with(bb_app::front::GPU_FEATURES)?;
 	let config = bb_ui::host::HostConfig {
 		exact_clock: squirrel_bb::ExactClock::Live,
+		sink: Some(bb_app::front::gpu_page::sink(bb_render::UiPage::new(&gpu)?)),
 		..bb_ui::host::HostConfig::default()
 	};
 	let session = bb_ui::host::UiSession::start(Path::new(STEAM_DATA_DIR), config, bb_ui::host::Echo::Off)?;
@@ -173,7 +175,7 @@ fn menu(start: Instant) -> Result<(), String> {
 }
 
 fn game(start: Instant) -> Result<(), String> {
-	let gpu = Gpu::headless()?;
+	let gpu = Gpu::headless_with(bb_app::front::GPU_FEATURES)?;
 	let game = Game::boot(&gpu, Path::new(STEAM_DATA_DIR), "rust-engine-test", false, None, VideoMode::DEFAULT, None)?;
 	let (width, height) = game.screen();
 	let target = RenderTarget::new(&gpu, width, height);
@@ -256,6 +258,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let start = Instant::now();
 	bb_app::platform::tune_allocator();
 	let phase = std::env::args().nth(1).unwrap_or_default();

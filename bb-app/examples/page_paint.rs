@@ -14,9 +14,12 @@
 //!   every page frame: the worst case).
 //!
 //! Per scene: the game's frame rate, the page's paints a second, the time our paint
-//! handler takes and the bytes it copies, the bytes uploaded to the GPU and the time
-//! handing them over, the game's draw of the page ("ui page" span), each process's CPU
-//! (the game's, by its busiest threads, and the page's renderer), and memory (PSS).
+//! handler takes (importing the paint's GPU buffer, copying what changed and waiting for
+//! it), the pixels copied, the game's draw of the page ("ui page" span), each process's
+//! CPU (the game's, by its busiest threads, and the page's renderer), and memory (PSS).
+//! Then what "is the cursor over the UI" costs (`alpha_at`, read back from the GPU a
+//! tile at a time): a mouse sweeping a still page, and one moving every frame over the
+//! whole view fading (every call reads back).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -167,7 +170,7 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 		run.frame()?;
 	}
 	let host = run.game.front().session().host();
-	let (paints, uploads, ticks) = (host.paint_stats(), run.game.front().upload_stats(), run.eval("window.__ppTicks || 0")?);
+	let (paints, copies, ticks) = (host.paint_stats(), run.game.front().copy_stats(), run.eval("window.__ppTicks || 0")?);
 	let cpu = cpu_now(children);
 	bb_render::frame_timing::take();
 	run.cadence = [0; 4];
@@ -181,19 +184,19 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 	let spans = bb_render::frame_timing::take();
 	let host = run.game.front().session().host();
 	let paints = host.paint_stats().since(&paints);
-	let uploads = run.game.front().upload_stats().since(&uploads);
+	let copies = run.game.front().copy_stats().since(&copies);
 	let ticks = run.eval("window.__ppTicks || 0")?.as_i64().unwrap_or(0) as f64 - ticks.as_i64().unwrap_or(0) as f64;
 	let cpu_after = cpu_now(children);
 	let per_frame = |v: f64| v / frames as f64;
 	let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
 	println!("== {name}: {frames} frames in {wall:.2} s = {:.1} fps", frames as f64 / wall);
+	let per_paint = |t: Duration| if paints.paints > 0 { t.as_secs_f64() * 1000.0 / paints.paints as f64 } else { 0.0 };
 	println!(
-		"  page: {} paints = {:.1}/s; handler {:.3} ms a paint, copied {:.2} MiB a paint ({:.2} MiB a frame); damage {:.0} px a paint",
+		"  page: {} paints = {:.1}/s ({} failed); handler {:.3} ms a paint; damage {:.0} px a paint",
 		paints.paints,
 		paints.paints as f64 / wall,
-		if paints.paints > 0 { paints.handler.as_secs_f64() * 1000.0 / paints.paints as f64 } else { 0.0 },
-		if paints.paints > 0 { mib(paints.copied_bytes) / paints.paints as f64 } else { 0.0 },
-		per_frame(mib(paints.copied_bytes)),
+		paints.failures,
+		per_paint(paints.handler),
 		if paints.paints > 0 { paints.damaged_pixels as f64 / paints.paints as f64 } else { 0.0 },
 	);
 	let [none, one, two, more] = run.cadence;
@@ -202,12 +205,12 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 		println!("  page script ticks (Velocity progress): {:.1}/s", ticks / wall);
 	}
 	println!(
-		"  upload: {} paints in {} regions, {:.3} MiB a frame, {:.3} ms a frame handing over ({:.3} ms an upload)",
-		uploads.uploads,
-		uploads.regions,
-		per_frame(mib(uploads.bytes)),
-		per_frame(uploads.time.as_secs_f64() * 1000.0),
-		if uploads.uploads > 0 { uploads.time.as_secs_f64() * 1000.0 / uploads.uploads as f64 } else { 0.0 },
+		"  copy (GPU to GPU): {} paints in {} rects, {:.3} MiB a frame; import {:.3} ms, copy + wait {:.3} ms a paint",
+		copies.paints,
+		copies.rects,
+		per_frame(mib(copies.pixels * 4)),
+		if copies.paints > 0 { copies.import.as_secs_f64() * 1000.0 / copies.paints as f64 } else { 0.0 },
+		if copies.paints > 0 { copies.copy.as_secs_f64() * 1000.0 / copies.paints as f64 } else { 0.0 },
 	);
 	let span = |n: &str| spans.iter().find(|(s, _)| *s == n).map_or(0.0, |(_, t)| per_frame(t.as_secs_f64() * 1000.0));
 	println!("  frame: step {:.3} ms, ui page draw {:.3} ms", span("step"), span("ui page"));
@@ -234,8 +237,57 @@ fn scene(run: &mut Run, name: &str, setup: &str, seconds: f64, children: &[(u32,
 	Ok(())
 }
 
+/// What `alpha_at` (is the cursor over the UI) costs: a mouse sweeping the still page
+/// (tiles read once, then kept), and a mouse moving every frame over the whole view
+/// fading (each paint changes every tile: every call reads back).
+fn alpha_cost(run: &mut Run) -> Result<(), String> {
+	let (w, h) = run.game.screen();
+	// Moves `from..from + calls` of a diagonal sweep, 7 px a move: the time in
+	// `alpha_at`, the tiles read back, and the moves over the UI.
+	let sweep = |run: &Run, from: u32, calls: u32| -> (Duration, u64, u32) {
+		let host = run.game.front().session().host();
+		let reads = run.game.front().copy_stats().reads;
+		let mut time = Duration::ZERO;
+		let mut over = 0;
+		for i in from..from + calls {
+			let (x, y) = ((i * 7) % w, (i * 7 * h / w.max(1)) % h);
+			let started = Instant::now();
+			over += u32::from(host.alpha_at(x as i32, y as i32) > 0);
+			time += started.elapsed();
+		}
+		(time, run.game.front().copy_stats().reads - reads, over)
+	};
+	run.eval(CLEAR)?;
+	for _ in 0..30 {
+		run.frame()?;
+	}
+	let (time, reads, over) = sweep(run, 0, 2000);
+	println!(
+		"== alpha_at, still page: {:.1} µs a call over 2000 moves ({reads} tiles read back, {over} over the UI)",
+		time.as_secs_f64() * 1e6 / 2000.0
+	);
+	run.eval(CSS_FULL)?;
+	for _ in 0..30 {
+		run.frame()?;
+	}
+	let (mut time, mut reads, mut calls) = (Duration::ZERO, 0, 0u32);
+	let started = Instant::now();
+	while started.elapsed() < Duration::from_secs(2) {
+		run.frame()?;
+		let (t, r, _) = sweep(run, calls, 1);
+		time += t;
+		reads += r;
+		calls += 1;
+	}
+	println!(
+		"== alpha_at, whole view fading, a move a frame: {:.1} µs a call ({calls} calls, {reads} tiles read back)",
+		time.as_secs_f64() * 1e6 / f64::from(calls.max(1))
+	);
+	Ok(())
+}
+
 fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
-	let gpu = Gpu::headless()?;
+	let gpu = Gpu::headless_with(bb_app::front::GPU_FEATURES)?;
 	let boot = Boot {
 		data_dir: Path::new(STEAM_DATA_DIR),
 		start: Start::Menu,
@@ -276,6 +328,7 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 	for (name, setup) in [("idle", ""), ("css small", CSS_SMALL), ("velocity", VELOCITY), ("css full", CSS_FULL), ("idle again", "")] {
 		scene(&mut run, name, setup, seconds, &children)?;
 	}
+	alpha_cost(&mut run)?;
 	run.eval(CLEAR)?;
 	run.eval(TIMED)?;
 	let timed = Instant::now();
@@ -300,6 +353,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	bb_app::platform::tune_allocator();
 	let args: Vec<String> = std::env::args().skip(1).collect();
 	let num = |i: usize, default: f64| args.get(i).and_then(|a| a.parse().ok()).unwrap_or(default);

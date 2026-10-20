@@ -41,13 +41,21 @@ impl PageFrames {
 		matches!(self, PageFrames::Game { .. })
 	}
 
-	/// The rate CEF's own clock runs at (unused with external frames, but CEF wants one).
+	/// The rate CEF's own clock runs at. With external frames there is no clock, but the
+	/// rate still caps how often a paint is handed over: CEF captures the GPU-painted page
+	/// at most this often (its capturer's minimum period), so a game at 180 Hz got 60
+	/// paints a second at 60. So the game's frames alone set the pace there.
 	pub(super) fn clock_rate(self) -> i32 {
 		match self {
-			PageFrames::Clock(rate) | PageFrames::Game { waiting_rate: rate } => rate.max(1),
+			PageFrames::Clock(rate) => rate.max(1),
+			PageFrames::Game { .. } => GAME_PAINT_CAP,
 		}
 	}
 }
+
+/// The most paints a second handed over with the game's frames ([`PageFrames::clock_rate`]):
+/// above any display's refresh rate (CEF 154 takes any rate).
+const GAME_PAINT_CAP: i32 = 1000;
 
 /// When the host last began a page frame, for pacing them while a session waits.
 pub(super) struct FrameClock {
@@ -99,6 +107,7 @@ mod tests {
 	#[test]
 	fn the_clock_rate_is_at_least_one() {
 		assert_eq!(PageFrames::Clock(180).clock_rate(), 180);
-		assert_eq!(PageFrames::Game { waiting_rate: 0 }.clock_rate(), 1);
+		assert_eq!(PageFrames::Clock(0).clock_rate(), 1);
+		assert_eq!(PageFrames::Game { waiting_rate: 60 }.clock_rate(), GAME_PAINT_CAP, "the game's frames set the pace");
 	}
 }

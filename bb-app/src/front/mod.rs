@@ -23,6 +23,8 @@ use bb_engine::harness::GameEngine;
 
 #[cfg(feature = "ui")]
 mod devtools;
+#[cfg(feature = "ui")]
+pub mod gpu_page;
 #[cfg(not(feature = "ui"))]
 mod headless;
 #[cfg(feature = "ui")]
@@ -35,6 +37,13 @@ pub use page::Front;
 
 /// Wakes the window's loop, from any thread (see [`Front::set_pump_waker`]).
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// The GPU device features the front needs: with the page, taking its paints (bb-render's
+/// [`UiPage::FEATURES`](bb_render::UiPage::FEATURES)); none headless.
+#[cfg(feature = "ui")]
+pub const GPU_FEATURES: wgpu::Features = bb_render::UiPage::FEATURES;
+#[cfg(not(feature = "ui"))]
+pub const GPU_FEATURES: wgpu::Features = wgpu::Features::empty();
 
 /// A key as the window reports it.
 #[derive(Clone, Debug, Default)]

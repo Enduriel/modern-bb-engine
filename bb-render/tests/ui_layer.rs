@@ -1,9 +1,11 @@
 //! The UI page over a frame: premultiplied colours blend over what the game drew, a
 //! texel a pixel from the frame's top-left (the page is painted at the screen's
-//! resolution at any UI scale), and the game shows past its edge. Skips without a GPU.
+//! resolution at any UI scale), and the game shows past its edge; a paint changes only
+//! the parts it says changed; the page reads back. Skips without a GPU that can take
+//! the browser's paints.
 
 use bb_assets::Image;
-use bb_render::{Gpu, RenderTarget, UiLayer, UiRegion};
+use bb_render::{Gpu, RenderTarget, UiLayer, UiPage, UiRegion};
 
 const BLUE: [u8; 4] = [0, 0, 255, 255];
 
@@ -42,23 +44,30 @@ fn blue_target(gpu: &Gpu, width: u32, height: u32) -> RenderTarget {
 	target
 }
 
+/// A GPU and a page on it, or `None` (skip) without one that can take the browser's
+/// paints.
+fn page_gpu() -> Option<(Gpu, UiPage)> {
+	let gpu = Gpu::headless_with(UiPage::FEATURES).map_err(|e| eprintln!("skipping: {e}")).ok()?;
+	let page = UiPage::new(&gpu).map_err(|e| eprintln!("skipping: {e}")).ok()?;
+	Some((gpu, page))
+}
+
+/// All of a `width` × `height` page.
+fn whole(width: u32, height: u32) -> [UiRegion; 1] {
+	[UiRegion { x: 0, y: 0, width, height }]
+}
+
 #[test]
 fn the_page_blends_over_the_frame() {
-	let gpu = match Gpu::headless() {
-		Ok(gpu) => gpu,
-		Err(e) => {
-			eprintln!("skipping: {e}");
-			return;
-		}
-	};
+	let Some((gpu, page)) = page_gpu() else { return };
 	let target = blue_target(&gpu, 3, 1);
-	let mut layer = UiLayer::new(&gpu);
+	let mut layer = UiLayer::new(&gpu, page.clone());
 	layer.draw(&gpu, &target);
 	assert_eq!(pixel(&target.read(&gpu).unwrap(), 0, 0), BLUE, "nothing before a frame");
 
 	// BGRA, premultiplied: opaque red, transparent, half-covering green.
-	let page = [[0, 0, 255, 255], [0, 0, 0, 0], [0, 128, 0, 128]].concat();
-	layer.upload(&gpu, 3, 1, &page);
+	let pixels = [[0, 0, 255, 255], [0, 0, 0, 0], [0, 128, 0, 128]].concat();
+	page.write_for_tests(3, 1, &pixels, &whole(3, 1));
 	layer.draw(&gpu, &target);
 	let image = target.read(&gpu).unwrap();
 	assert_eq!(pixel(&image, 0, 0), [255, 0, 0, 255]);
@@ -68,18 +77,12 @@ fn the_page_blends_over_the_frame() {
 
 #[test]
 fn the_page_is_drawn_a_texel_a_pixel() {
-	let gpu = match Gpu::headless() {
-		Ok(gpu) => gpu,
-		Err(e) => {
-			eprintln!("skipping: {e}");
-			return;
-		}
-	};
+	let Some((gpu, page)) = page_gpu() else { return };
 	// A page a pixel short of the frame both ways (UI scale 1.5 on a 2560 screen paints
 	// 1706 × 1.5 = 2559): it isn't stretched, and the game shows past it.
 	let target = blue_target(&gpu, 3, 2);
-	let mut layer = UiLayer::new(&gpu);
-	layer.upload(&gpu, 2, 1, &[[0, 0, 255, 255], [0, 255, 0, 255]].concat());
+	let mut layer = UiLayer::new(&gpu, page.clone());
+	page.write_for_tests(2, 1, &[[0, 0, 255, 255], [0, 255, 0, 255]].concat(), &whole(2, 1));
 	layer.draw(&gpu, &target);
 	let image = target.read(&gpu).unwrap();
 	assert_eq!(pixel(&image, 0, 0), [255, 0, 0, 255]);
@@ -91,28 +94,22 @@ fn the_page_is_drawn_a_texel_a_pixel() {
 }
 
 #[test]
-fn only_the_changed_regions_are_uploaded() {
-	let gpu = match Gpu::headless() {
-		Ok(gpu) => gpu,
-		Err(e) => {
-			eprintln!("skipping: {e}");
-			return;
-		}
-	};
+fn a_paint_changes_only_what_it_says_changed() {
+	let Some((gpu, page)) = page_gpu() else { return };
 	let (red, green) = ([0, 0, 255, 255], [0, 255, 0, 255]);
 	let target = blue_target(&gpu, 4, 3);
-	let mut layer = UiLayer::new(&gpu);
-	// The first upload takes the whole frame, whatever regions it names.
+	let mut layer = UiLayer::new(&gpu, page.clone());
+	// The first paint takes the whole frame, whatever regions it names.
 	let whole_red: Vec<u8> = red.repeat(12);
-	layer.upload_regions(&gpu, 4, 3, &whole_red, &[UiRegion { x: 0, y: 0, width: 1, height: 1 }]);
-	assert_eq!(layer.upload_stats().bytes, 4 * 3 * 4);
+	page.write_for_tests(4, 3, &whole_red, &[UiRegion { x: 0, y: 0, width: 1, height: 1 }]);
+	assert_eq!(page.copy_stats().pixels, 4 * 3);
 	// Now all green, but only a 2x2 square at (1, 1) said to have changed (and a region
 	// reaching past the frame, clipped to it): the rest stays red.
 	let whole_green: Vec<u8> = green.repeat(12);
 	let regions = [UiRegion { x: 1, y: 1, width: 2, height: 2 }, UiRegion { x: 3, y: 2, width: 9, height: 9 }];
-	layer.upload_regions(&gpu, 4, 3, &whole_green, &regions);
-	let stats = layer.upload_stats();
-	assert_eq!((stats.uploads, stats.regions, stats.bytes), (2, 3, 4 * 3 * 4 + 2 * 2 * 4 + 4));
+	page.write_for_tests(4, 3, &whole_green, &regions);
+	let stats = page.copy_stats();
+	assert_eq!((stats.paints, stats.rects, stats.pixels), (2, 3, 4 * 3 + 2 * 2 + 1));
 	layer.draw(&gpu, &target);
 	let image = target.read(&gpu).unwrap();
 	for y in 0..3 {
@@ -122,4 +119,14 @@ fn only_the_changed_regions_are_uploaded() {
 			assert_eq!(pixel(&image, x, y), want, "({x}, {y})");
 		}
 	}
+	// Read back: the page's own BGRA, any region, clipped to the page.
+	let (region, bgra) = page.read(UiRegion { x: 2, y: 1, width: 5, height: 1 }).unwrap().unwrap();
+	assert_eq!(region, UiRegion { x: 2, y: 1, width: 2, height: 1 });
+	assert_eq!(bgra, [green, red].concat());
+	assert!(page.read(UiRegion { x: 4, y: 0, width: 1, height: 1 }).unwrap().is_none(), "off the page");
+	// Another size: the whole new frame.
+	page.write_for_tests(2, 2, &red.repeat(4), &[UiRegion { x: 0, y: 0, width: 1, height: 1 }]);
+	assert_eq!(page.size(), Some((2, 2)));
+	let (_, bgra) = page.read(UiRegion { x: 0, y: 0, width: 2, height: 2 }).unwrap().unwrap();
+	assert_eq!(bgra, red.repeat(4));
 }

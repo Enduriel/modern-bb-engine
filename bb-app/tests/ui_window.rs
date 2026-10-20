@@ -319,6 +319,16 @@ fn quits_from_the_in_game_menu(game: &mut Game, gpu: &Gpu, target: &RenderTarget
 	if game.quit() {
 		return Err("the game ended at the main menu".into());
 	}
+	// As a player waits: until the menu takes keys (the loading screen has faded out;
+	// it fades by the page's clock, so how many frames that takes depends on how fast
+	// they come).
+	let deadline = std::time::Instant::now() + Duration::from_secs(30);
+	while bb_engine::tactical_player::eval_i64(game.front().engine(), "::RootState.get(\"MainMenuState\").isKeyInputPermitted() ? 1 : 0")? != Some(1) {
+		if std::time::Instant::now() > deadline {
+			return Err("the main menu never took keys again".into());
+		}
+		play(game, gpu, target, 0.2)?;
+	}
 	escape(game, gpu, target)?;
 	play(game, gpu, target, 1.0)?;
 	if !game.quit() {
@@ -458,7 +468,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		.front()
 		.session()
 		.host()
-		.with_frame(|f| (f.width, f.bgra.clone()))
+		.frame()
+		.map(|f| (f.width, f.bgra))
 		.ok_or("the page never painted")?;
 	let at_button = pixel(&page, page_width, bx as u32, by as u32);
 	if at_button[3] != 255 {
@@ -499,7 +510,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		.flat_map(|i| (0..20).map(move |j| (width as i32 * (2 + i) / 24, height as i32 * (4 + j) / 28)))
 		.find(|&(x, y)| host.alpha_at(x, y) == 0)
 		.ok_or_else(|| {
-			let corner = host.with_frame(|f| pixel(&f.bgra, f.width, 10, 10));
+			let corner = host.frame().map(|f| pixel(&f.bgra, f.width, 10, 10));
 			format!("no transparent spot on the page (its corner is {corner:?})")
 		})?;
 	// The world shows there (the renderer's own alpha isn't always opaque).
@@ -532,12 +543,17 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let name = "the_ui_draws_over_the_game_and_takes_its_input";
 	if !Path::new(STEAM_DATA_DIR).exists() {
 		println!("test {name} ... skipped ({STEAM_DATA_DIR} not present)");
 		return ExitCode::SUCCESS;
 	}
-	let gpu = match Gpu::headless() {
+	let gpu = match Gpu::headless_with(bb_app::front::GPU_FEATURES) {
 		Ok(gpu) => gpu,
 		Err(e) => {
 			println!("test {name} ... skipped (no GPU: {e})");

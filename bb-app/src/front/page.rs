@@ -1,7 +1,7 @@
 //! The scripts with their real UI page, in the browser host (see [`super`]).
 
 use bb_engine::harness::GameEngine;
-use bb_render::{Gpu, RenderTarget, UiLayer, UiRegion};
+use bb_render::{Gpu, RenderTarget, UiLayer, UiPage};
 use bb_ui::host::{Echo, HostConfig, MouseButton, PageFrames, UiSession};
 
 use crate::game::{Boot, Start};
@@ -28,6 +28,8 @@ impl Front {
 	/// the world is up.
 	pub fn boot(gpu: &Gpu, boot: &Boot) -> Result<Front, String> {
 		let (mode, devtools) = (boot.mode, boot.devtools);
+		// The page is painted on the GPU, and its paints copied into this texture.
+		let page = UiPage::new(gpu)?;
 		let config = HostConfig {
 			width: mode.width.max(1) as u32,
 			height: mode.height.max(1) as u32,
@@ -46,6 +48,7 @@ impl Front {
 			cef_log: boot.cef_log.clone(),
 			// Copy and paste reach the player's other programs, as the original's do.
 			clipboard: std::sync::Arc::new(crate::clipboard::SystemClipboard::new()),
+			sink: Some(super::gpu_page::sink(page.clone())),
 			..HostConfig::default()
 		};
 		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;
@@ -80,7 +83,7 @@ impl Front {
 		let archives = crate::game::archives(boot.data_dir, boot.mods).map_err(|e| e.to_string())?;
 		Ok(Front {
 			session,
-			layer: UiLayer::new(gpu),
+			layer: UiLayer::new(gpu, page),
 			captured: 0,
 			drawn: false,
 			fps: None,
@@ -226,9 +229,9 @@ impl Front {
 		}
 	}
 
-	/// What uploading the page's paints has cost so far.
-	pub fn upload_stats(&self) -> bb_render::UploadStats {
-		self.layer.upload_stats()
+	/// What copying the page's paints (and reading them back) has cost so far.
+	pub fn copy_stats(&self) -> bb_render::UiCopyStats {
+		self.layer.page().copy_stats()
 	}
 
 	/// The bytes the page's texture takes on the GPU.
@@ -241,25 +244,10 @@ impl Front {
 		self.session.host().paints()
 	}
 
-	/// Draw the page's latest paint over `target`.
+	/// Draw the page's latest paint over `target` (each paint is copied into the layer's
+	/// texture as it lands).
 	pub fn draw(&mut self, gpu: &Gpu, target: &RenderTarget) {
 		use bb_render::frame_timing::span;
-		// Only what the page repainted since the last frame.
-		let upload = span("ui upload");
-		let layer = &mut self.layer;
-		self.session.host().take_damage(|frame, damage| {
-			if !damage.is_empty() {
-				let pixels: u64 = damage.iter().map(|r| u64::from(r.width) * u64::from(r.height)).sum();
-				bb_render::frame_timing::count("ui upload kpixels", pixels / 1000);
-				bb_render::frame_timing::count("ui uploads", 1);
-				let regions: Vec<UiRegion> = damage
-					.iter()
-					.map(|r| UiRegion { x: r.x, y: r.y, width: r.width, height: r.height })
-					.collect();
-				layer.upload_regions(gpu, frame.width, frame.height, &frame.bgra, &regions);
-			}
-		});
-		drop(upload);
 		let draw = span("ui layer draw");
 		self.layer.draw(gpu, target);
 		drop(draw);

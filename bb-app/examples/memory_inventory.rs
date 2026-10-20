@@ -881,6 +881,14 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	#[cfg(feature = "ui")]
+	return bb_ui::host::with_display(run_main);
+	#[cfg(not(feature = "ui"))]
+	run_main()
+}
+
+fn run_main() -> ExitCode {
 	// As bb sets up the C allocator, for itself and the browser's processes.
 	bb_app::platform::tune_allocator();
 	let result = (|| -> Result<(), String> {
@@ -895,7 +903,7 @@ fn main() -> ExitCode {
 				None => Ok(print!("{report}")),
 			};
 		}
-		let gpu = Gpu::headless()?;
+		let gpu = Gpu::headless_with(bb_app::front::GPU_FEATURES)?;
 		let (samples, battles, stopped) = run(&gpu, &o)?;
 		if let Some(e) = &stopped {
 			eprintln!("the session stopped early: {e}");

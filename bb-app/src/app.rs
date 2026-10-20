@@ -254,7 +254,7 @@ impl App {
 			.instance
 			.create_surface(window.clone())
 			.map_err(|e| format!("no surface for the window: {e}"))?;
-		let gpu = Gpu::for_surface(&self.instance, &surface)?;
+		let gpu = Gpu::for_surface_with(&self.instance, &surface, bb_app::front::GPU_FEATURES)?;
 		eprintln!("GPU: {}", gpu.adapter);
 		squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Info, "Renderer", format!("Device: {}", gpu.adapter));
 		let options = &self.options;

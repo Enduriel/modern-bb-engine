@@ -19,6 +19,9 @@ use bb_engine::harness::STEAM_DATA_DIR;
 use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::parity::{Difference, compare};
 
+#[path = "../tests/support/gpu_page.rs"]
+mod gpu_page;
+
 struct Options {
 	data_dir: PathBuf,
 	goldens: PathBuf,
@@ -87,6 +90,7 @@ fn run(options: Options) -> Result<(), String> {
 	let config = HostConfig {
 		width: width as u32,
 		height: height as u32,
+		sink: Some(gpu_page::sink()?),
 		..HostConfig::default()
 	};
 	let session = UiSession::start(&options.data_dir, config, Echo::Off)?;
@@ -133,6 +137,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	match parse_options().and_then(run) {
 		Ok(()) => ExitCode::SUCCESS,
 		Err(error) => {

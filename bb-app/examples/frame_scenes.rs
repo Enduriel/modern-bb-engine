@@ -45,7 +45,7 @@ fn run() -> Result<(), String> {
 	}
 	let out = out.ok_or("usage: frame_scenes OUT_DIR [--screen WxH] [--scenes FILE]")?;
 	std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-	let gpu = Gpu::headless()?;
+	let gpu = Gpu::headless_with(bb_app::front::GPU_FEATURES)?;
 	bb_app::frame_scenes::shoot_scenes(&gpu, screen, &scenes, |name, image| {
 		let path = out.join(format!("{name}.png"));
 		save_png(&path, &image)?;
@@ -58,6 +58,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	match run() {
 		Ok(()) => ExitCode::SUCCESS,
 		Err(e) => {

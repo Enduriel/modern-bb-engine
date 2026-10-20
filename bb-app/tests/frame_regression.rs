@@ -89,7 +89,7 @@ fn masked(image: &Image, masks: &[(u32, u32, u32, u32)]) -> Vec<bool> {
 }
 
 fn run(goldens: &Path, update: bool) -> Result<Vec<String>, String> {
-	let gpu = Gpu::headless()?;
+	let gpu = Gpu::headless_with(bb_app::front::GPU_FEATURES)?;
 	let all = allowances()?;
 	let report = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("frame_regression");
 	std::fs::create_dir_all(&report).map_err(|e| e.to_string())?;
@@ -143,6 +143,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	if !Path::new(STEAM_DATA_DIR).exists() {
 		println!("test {NAME} ... skipped ({STEAM_DATA_DIR} not present)");
 		return ExitCode::SUCCESS;

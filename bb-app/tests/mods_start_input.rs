@@ -158,6 +158,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let data = Path::new(STEAM_DATA_DIR);
 	if !data.exists() {
 		println!("test {NAME} ... skipped ({STEAM_DATA_DIR} not present)");
@@ -173,7 +178,7 @@ fn main() -> ExitCode {
 		println!("test {NAME} ... skipped (mods not installed: {missing:?})");
 		return ExitCode::SUCCESS;
 	}
-	let gpu = match Gpu::headless() {
+	let gpu = match Gpu::headless_with(bb_app::front::GPU_FEATURES) {
 		Ok(gpu) => gpu,
 		Err(e) => {
 			println!("test {NAME} ... skipped (no GPU: {e})");

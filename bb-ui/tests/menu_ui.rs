@@ -31,6 +31,9 @@ use bb_ui::host::{Echo, HostConfig, Modifiers, MouseButton, UiSession};
 use bb_ui::json::Json;
 use squirrel::SqTable;
 
+#[path = "support/gpu_page.rs"]
+mod gpu_page;
+
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition {
 		Ok(())
@@ -68,7 +71,7 @@ fn wait_for_button(session: &UiSession, label: &str, timeout: Duration) -> Resul
 
 fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), String> {
 	let clipboard = Arc::new(MemoryClipboard::default());
-	let config = HostConfig { clipboard: clipboard.clone(), ..HostConfig::default() };
+	let config = HostConfig { clipboard: clipboard.clone(), sink: Some(gpu_page::sink()?), ..HostConfig::default() };
 	let session = UiSession::start(data_dir, config, Echo::Off)?;
 	let screens = session.protocol().screens();
 	ensure(
@@ -1184,6 +1187,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let name = "boots_to_the_main_menu_and_opens_new_campaign";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if !data_dir.exists() {

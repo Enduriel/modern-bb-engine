@@ -11,25 +11,32 @@ use super::renderer::PageHandler;
 use super::scheme::scheme_options;
 use crate::coui::SCHEME;
 
-/// Switches for the browser process (children inherit what they need).
+/// Switches for the browser process (children inherit what they need), besides the
+/// display connection's platform ([`Display`](super::Display), `--ozone-platform`).
 ///
-/// Offscreen and headless: no display connection, software compositing (frames
-/// arrive in `on_paint`), no audio output, and none of Chrome's background services.
-/// The on-device AI model's performance class is given as "GPU blocked" (8, what
-/// Chrome for Testing assumes): otherwise, three minutes in, Chrome probes the GPU for
-/// it from a utility process and logs "Unable to get gpu adapter".
+/// Offscreen, composited on the GPU: Chromium's GPU process composites the page and
+/// hands each paint over as a GPU buffer (`shared_texture_enabled`,
+/// `OnAcceleratedPaint`), never as pixels in memory. ANGLE runs on the system's EGL
+/// (`gl-egl`, what CEF picks for offscreen GPU paints on Linux). The page's content is
+/// still rasterized on the CPU (`--disable-gpu-rasterization`, added with these): GPU
+/// raster changes pixels against the original's, e.g. the battle results' name
+/// separators (`line_metal.png` as a bottom `border-image`) came out a light 3 px bar
+/// where the original and CPU raster draw dark, light, dark rows; CPU raster keeps the
+/// frame goldens exact for ~3% of a core more in animations. `BB_UI_GPU_RASTER=1` rasterizes on the GPU instead, to compare. No audio output, and
+/// none of Chrome's background services. The on-device AI model's performance class is
+/// given as "GPU blocked" (8, what Chrome for Testing assumes): otherwise, three minutes
+/// in, Chrome probes the GPU for it from a utility process and logs "Unable to get gpu
+/// adapter".
 ///
 /// As few processes as the page allows, so the game shows as one program: the GPU
-/// process and the network service run inside the game's (frames are composited in
-/// software anyway), there is no zygote (there is no sandbox for it to prepare) and no
-/// spare renderer. Left beside the game: the page's renderer and the storage service.
-/// Measured on the idle world map: 8 processes and 772 MB (PSS) before, 3 and 742 MB
-/// after. The renderer stays out of the game's process: `--single-process` isn't
-/// supported upstream, and our page's handlers assume their own process.
+/// process and the network service run inside the game's, there is no zygote (there is
+/// no sandbox for it to prepare) and no spare renderer. Left beside the game: the page's
+/// renderer and the storage service. Measured on the idle world map: 8 processes and
+/// 772 MB (PSS) before, 3 and 742 MB after. The renderer stays out of the game's
+/// process: `--single-process` isn't supported upstream, and our page's handlers assume
+/// their own process.
 const SWITCHES: &[(&str, Option<&str>)] = &[
-	("ozone-platform", Some("headless")),
-	("disable-gpu", None),
-	("disable-gpu-compositing", None),
+	("use-angle", Some("gl-egl")),
 	("mute-audio", None),
 	("no-first-run", None),
 	("disable-extensions", None),
@@ -120,6 +127,8 @@ wrap_app! {
 		// The DevTools port, if served.
 		devtools_port: Option<u16>,
 		bridge: Option<String>,
+		// `--ozone-platform` (the browser process's display connection).
+		ozone: Option<&'static str>,
 	}
 
 	impl App {
@@ -133,6 +142,9 @@ wrap_app! {
 			if !browser_process {
 				return;
 			}
+			if let Some(ozone) = self.ozone {
+				command_line.append_switch_with_value(Some(&"ozone-platform".into()), Some(&ozone.into()));
+			}
 			for (name, value) in SWITCHES {
 				match value {
 					Some(value) => command_line.append_switch_with_value(Some(&(*name).into()), Some(&(*value).into())),
@@ -143,6 +155,11 @@ wrap_app! {
 			// secrets, so it stays out of it.
 			#[cfg(target_os = "macos")]
 			command_line.append_switch(Some(&"use-mock-keychain".into()));
+			// The page's pixels rasterized on the CPU, as before (see `SWITCHES`), unless
+			// asked to compare with Chromium's GPU raster.
+			if std::env::var_os("BB_UI_GPU_RASTER").is_none_or(|v| v == "0") {
+				command_line.append_switch(Some(&"disable-gpu-rasterization".into()));
+			}
 			if let Some(port) = self.devtools_port {
 				let origins = devtools_origins(port);
 				command_line.append_switch_with_value(Some(&"remote-allow-origins".into()), Some(&origins.as_str().into()));
@@ -166,12 +183,16 @@ wrap_app! {
 }
 
 /// The application object; `ready` (browser process only) is signalled once CEF's
-/// context is initialized.
-/// The application object; `devtools_port` for the browser process when DevTools is
-/// served (its children don't take switches from it).
-/// `bridge` is the bridge's endpoint, which it hands the renderer.
-pub(super) fn host_app(ready: Option<mpsc::Sender<()>>, devtools_port: Option<u16>, bridge: Option<String>) -> App {
-	HostApp::new(Arc::new(Mutex::new(ready)), devtools_port, bridge)
+/// context is initialized. `devtools_port` for the browser process when DevTools is
+/// served, `ozone` its display connection's platform (its children don't take switches
+/// from it). `bridge` is the bridge's endpoint, which it hands the renderer.
+pub(super) fn host_app(
+	ready: Option<mpsc::Sender<()>>,
+	devtools_port: Option<u16>,
+	bridge: Option<String>,
+	ozone: Option<&'static str>,
+) -> App {
+	HostApp::new(Arc::new(Mutex::new(ready)), devtools_port, bridge, ozone)
 }
 
 #[cfg(test)]

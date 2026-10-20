@@ -23,6 +23,9 @@ use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
 use bb_ui::parity::compare;
 
+#[path = "support/gpu_page.rs"]
+mod gpu_page;
+
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition { Ok(()) } else { Err(what.to_string()) }
 }
@@ -34,7 +37,7 @@ fn holds(session: &UiSession, expr: &str) -> Result<bool, String> {
 
 fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 	// The goldens' screen.
-	let config = HostConfig { mods: true, width: 2560, height: 1440, ..HostConfig::default() };
+	let config = HostConfig { mods: true, width: 2560, height: 1440, sink: Some(gpu_page::sink()?), ..HostConfig::default() };
 	let session = UiSession::start(data_dir, config, Echo::Off)?;
 	// The mods' own storages as the original keeps them for this install (MSU's settings,
 	// say), so the mods start from the same data (copies: never written back).
@@ -226,6 +229,11 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// Chromium paints the page through a display connection: a headless gamescope's.
+	bb_ui::host::with_display(run_main)
+}
+
+fn run_main() -> ExitCode {
 	let name = "mods_js_runs_on_the_real_ui";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	let has_mh = harness::mod_archives(data_dir).is_ok_and(|mods| {
