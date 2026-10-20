@@ -606,6 +606,11 @@ fn lazy_levels_look_like_plain_ones() {
 	::player_class.actor.added <- 1;
 	::player_class.actor.entity.whoAmI = function() { return "patched class"; };
 	local r = ::new("scripts/entity/tactical/player");
+	// The class's members patched after p, q and r exist; a copy of q's untouched ones.
+	::player_class.actor.m.Hitpoints = 99;
+	::player_class.actor.m.NewField <- 3;
+	out.push("members " + q.m.Hitpoints + " " + ("NewField" in q.actor.m) + " " + ("NewField" in ::new("scripts/entity/tactical/player").actor.m) + " " + ::new("scripts/entity/tactical/player").m.Hitpoints);
+	show("mclone", clone q.actor.m);
 	out.push("patched " + p.getHitpoints() + " " + ("added" in p.actor) + " " + r.getHitpoints() + " " + ("added" in r.actor) + " " + (p.actor.entity.whoAmI() == p) + " " + r.actor.entity.whoAmI());
 	out.push("names " + p.getName() + " " + q.getName() + " " + p.actor.extra() + " " + p.m.ID + " " + q.m.ID);
 	foreach (i, t in [p, p.actor, p.actor.entity, q.actor, r.actor, r.actor.entity, ::player_class.actor, ::player_class.actor.entity, ::actor_class, p.m, p.actor.m, p.actor.entity.m])
@@ -627,6 +632,7 @@ fn lazy_levels_look_like_plain_ones() {
 			("scripts/entity/tactical/player", &format!("{L_PLAYER} ::player_class <- this.player;")),
 		]);
 		modules.set_lazy_levels(lazy);
+		modules.set_lazy_members(lazy);
 		vm.run_script(SCRIPT, "compare").expect("the script runs");
 		let out = squirrel::SqTable::root(&vm).get::<String>("__out").expect("its output");
 		vm.collect_garbage();
@@ -636,4 +642,5 @@ fn lazy_levels_look_like_plain_ones() {
 	let lazy = run(true);
 	assert_eq!(lazy, plain, "lazy levels:\n{lazy}\n\nplain levels:\n{plain}");
 	assert!(plain.contains("patched 10 false -1 true true patched class"), "{plain}");
+	assert!(plain.contains("members 10 false true 99"), "{plain}");
 }

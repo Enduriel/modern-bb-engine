@@ -126,6 +126,12 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 		self.state.borrow_mut().lazy_levels = lazy;
 	}
 
+	/// Whether new instances' member tables `m` are lazy deep copies (the default; see
+	/// `class.rs`), or plain ones.
+	pub fn set_lazy_members(&self, lazy: bool) {
+		self.state.borrow_mut().lazy_members = lazy;
+	}
+
 	/// Install the native module-system functions into `vm`'s root table:
 	/// `include`, `inherit`, `new`, `isKindOf`, and the `IO` hash registry
 	/// (`scriptFilenameByHash` / `scriptHashByFilename`). Call once, before any

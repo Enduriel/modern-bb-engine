@@ -50,6 +50,14 @@
 //! corpus and a day-5 save this took the VM from ~466 to ~240 MB; `BB_LAZY_LEVELS=0` builds
 //! plain clones, to compare.
 //!
+//! **Lazy members.** An instance's `m` tables are lazy deep copies of their
+//! class's (`SqTable::lazy_deep_clone`): each behaves exactly as the deep copy would (the
+//! same slots, laid out the same, so `foreach` order is the same), with its nested tables
+//! and arrays copied at once, but a field holds memory only once it is written; the rest
+//! is read from the class's `m` as it was when the instance was made. Iterating one or
+//! deleting a field first turns it into the plain copy; cloning one leaves it lazy.
+//! `BB_LAZY_MEMBERS=0` makes plain copies, to compare.
+//!
 //! Re-entrancy: running a script (or a constructor) re-enters these functions, so
 //! every [`SharedState`] borrow is taken in a short scope and never held across a
 //! VM call.
@@ -180,11 +188,15 @@ pub(crate) fn new_instance<S: ScriptSource>(
 	// prototype (its own methods + metadata), with its own deep-cloned `m` whose
 	// delegate is the parent level's `m`, and the parent level as both delegate and
 	// super-slot.
-	let lazy = state.borrow().lazy_levels;
+	let (lazy, lazy_members) = {
+		let st = state.borrow();
+		(st.lazy_levels, st.lazy_members)
+	};
 	let mut levels: Vec<SqTable> = Vec::with_capacity(chain.len());
 	for proto in chain.iter().rev() {
 		let mut table = if lazy { proto.lazy_clone() } else { proto.shallow_clone() };
 		let mut m = match proto.get_owned::<SqTable>("m") {
+			Some(own) if lazy_members => own.lazy_deep_clone(),
 			Some(own) => own.deep_clone(),
 			None => SqTable::new(vm),
 		};
