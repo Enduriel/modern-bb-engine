@@ -15,6 +15,7 @@ use squirrel_bb::FogPatch;
 use squirrel_bb::scene::WorldScene;
 use squirrel_bb::scene::tactical::TacticalScene;
 
+use crate::fast_hash::FastMap;
 use crate::fog::FogPass;
 use crate::gpu::Gpu;
 use crate::fonts::shaper::{GLYPH_PAGE, TextShaper, glyph_page};
@@ -28,7 +29,7 @@ use crate::tactical::tactical_quads;
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::water::WaterPass;
-use crate::world::{WorldFonts, WorldView, world_quads};
+use crate::world::{QuadScratch, WorldFonts, WorldView, world_quads_with};
 
 /// Whether a frame waits for atlases that are still loading.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +88,19 @@ pub struct WorldRenderer {
 	text: std::cell::RefCell<TextShaper>,
 	/// The glyph pages' textures (see `fonts::shaper`).
 	glyph_pages: Vec<GpuTexture>,
+	/// A frame's quads as they're built and located, kept from frame to frame: zoomed
+	/// out, the map is tens of thousands of sprites, megabytes a frame to allocate.
+	quad_scratch: QuadScratch,
+	frame: FrameQuads,
+}
+
+/// A draw's quads located (see [`WorldRenderer::resolve`]) and bound (see
+/// [`WorldRenderer::bind`]: the map's, then the labels').
+#[derive(Default)]
+struct FrameQuads {
+	resolved: Vec<Option<(From, Quad)>>,
+	first: Vec<Quad>,
+	second: Vec<Quad>,
 }
 
 /// The game's own outline fonts, the bitmap fonts' sources.
@@ -107,6 +121,26 @@ enum From {
 	Page(usize),
 	/// One of the glyph pages.
 	Glyph(usize),
+}
+
+/// What an atlas of a frame's list is drawn as.
+#[derive(Clone, Copy)]
+enum Kind {
+	White,
+	Glyph(usize),
+	/// From our pages (unless they give it up as whole).
+	Paged,
+	Whole,
+}
+
+/// A quad's texture coordinates as bits, for keying.
+fn uv_bits(uv: &[[f32; 2]; 4]) -> [u32; 8] {
+	let mut out = [0; 8];
+	for (i, [u, v]) in uv.iter().enumerate() {
+		out[2 * i] = u.to_bits();
+		out[2 * i + 1] = v.to_bits();
+	}
+	out
 }
 
 /// The game's clocks, in seconds.
@@ -176,6 +210,8 @@ impl WorldRenderer {
 				true,
 			))),
 			glyph_pages: Vec::new(),
+			quad_scratch: QuadScratch::default(),
+			frame: FrameQuads::default(),
 		}
 	}
 
@@ -319,37 +355,66 @@ impl WorldRenderer {
 		atlases: Atlases,
 		drawer: Drawer,
 		view: (f32, Option<u32>),
-	) -> Vec<Option<(From, Quad)>> {
+		out: &mut Vec<Option<(From, Quad)>>,
+	) {
 		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
 		self.textures.pump(upload);
 		let wait = atlases == Atlases::WaitForAll;
 		let mut whole = vec![false; map.atlases.paths.len()];
-		let mut out = Vec::with_capacity(map.quads.len());
+		out.clear();
+		out.reserve(map.quads.len());
 		{
 			let (pages, mips) = (&mut self.pages, &self.mips);
 			if let Some(pages) = pages.as_mut() {
 				pages.pump(gpu, mips);
 			}
-			let locate = |pages: &mut Option<FramePages>, quad: &Quad, whole: &mut [bool]| -> Option<(From, Quad)> {
-				let path = &map.atlases.paths[quad.texture];
-				if path == WHITE {
-					return Some((From::White, *quad));
-				}
-				if let Some(page) = glyph_page(path) {
-					return Some((From::Glyph(page), *quad));
-				}
-				if let Some(pages) = pages.as_mut().filter(|_| !path.starts_with(FONT_DIR)) {
-					match pages.locate(path, quad, drawer, wait) {
-						Located::Page { page, uv } => return Some((From::Page(page), Quad { uv, ..*quad })),
-						Located::Waiting => return None,
-						Located::Whole => {}
+			// What each atlas is drawn as, worked out once a frame, not once a quad.
+			let kinds: Vec<Kind> = map
+				.atlases
+				.paths
+				.iter()
+				.map(|path| {
+					if path == WHITE {
+						Kind::White
+					} else if let Some(page) = glyph_page(path) {
+						Kind::Glyph(page)
+					} else if pages.is_some() && !path.starts_with(FONT_DIR) {
+						Kind::Paged
+					} else {
+						Kind::Whole
 					}
+				})
+				.collect();
+			// Where each distinct frame is, asked of the pages once a frame: quads of one
+			// frame are located alike (asking again changes nothing).
+			let mut located: FastMap<(usize, [u32; 8]), Located> = FastMap::default();
+			let locate = |pages: &mut Option<FramePages>,
+			              located: &mut FastMap<(usize, [u32; 8]), Located>,
+			              quad: &Quad,
+			              whole: &mut [bool]|
+			 -> Option<(From, Quad)> {
+				match kinds[quad.texture] {
+					Kind::White => return Some((From::White, *quad)),
+					Kind::Glyph(page) => return Some((From::Glyph(page), *quad)),
+					Kind::Paged => {
+						let pages = pages.as_mut().expect("paged");
+						let path = &map.atlases.paths[quad.texture];
+						let uv = quad.uv;
+						let key = (quad.texture, uv_bits(&uv));
+						let at = *located.entry(key).or_insert_with(|| pages.locate(path, quad, drawer, wait));
+						match at {
+							Located::Page { page, map } => return Some((From::Page(page), Quad { uv: map.uv(uv), ..*quad })),
+							Located::Waiting => return None,
+							Located::Whole => {}
+						}
+					}
+					Kind::Whole => {}
 				}
 				whole[quad.texture] = true;
 				Some((From::Whole(quad.texture), *quad))
 			};
 			for quad in &map.quads {
-				out.push(locate(pages, quad, &mut whole));
+				out.push(locate(pages, &mut located, quad, &mut whole));
 			}
 			// What this frame lacks is loaded now (a draw that waits for all), or given
 			// the pages' wait budget.
@@ -368,9 +433,11 @@ impl WorldRenderer {
 				None => false,
 			};
 			if asked {
+				// Frames that came in since are asked about again.
+				located.retain(|_, at| !matches!(at, Located::Waiting));
 				for (slot, quad) in out.iter_mut().zip(&map.quads) {
 					if slot.is_none() {
-						*slot = locate(pages, quad, &mut whole);
+						*slot = locate(pages, &mut located, quad, &mut whole);
 					}
 				}
 			}
@@ -387,53 +454,51 @@ impl WorldRenderer {
 			self.residency.drawn(path, drawer);
 		}
 		self.add_mips(gpu, map, view.0, view.1);
-		out
 	}
 
-	/// The textures `resolved` draws from, and its quads pointing at them in order
-	/// (`None`: not drawn: waiting, or its atlas failed with no stand-in).
+	/// The textures `resolved` draws from, and its quads pointing at them in order, those
+	/// before `split` into `first` and the rest into `second` (a quad not drawn, waiting
+	/// or its atlas failed with no stand-in, is left out).
 	fn bind<'a>(
 		&'a self,
 		map: &crate::world::WorldQuads,
 		resolved: &[Option<(From, Quad)>],
-	) -> (Vec<&'a GpuTexture>, Vec<Option<Quad>>, FrameStats) {
+		split: usize,
+		(first, second): (&mut Vec<Quad>, &mut Vec<Quad>),
+	) -> (Vec<&'a GpuTexture>, FrameStats) {
 		let mut stats = FrameStats::default();
 		let mut ready: Vec<&'a GpuTexture> = Vec::new();
-		let mut slots: std::collections::HashMap<From, Option<usize>> = std::collections::HashMap::new();
+		let mut slots: FastMap<From, Option<usize>> = FastMap::default();
 		let mut counted = std::collections::HashSet::new();
-		let quads = resolved
-			.iter()
-			.map(|entry| {
-				let Some((from, quad)) = entry else {
-					stats.waiting += 1;
-					return None;
-				};
-				let slot = *slots.entry(*from).or_insert_with(|| {
-					let texture = match from {
-						From::White => Some(&self.white),
-						From::Glyph(page) => self.glyph_pages.get(*page),
-						From::Page(page) => self.pages.as_ref().map(|p| p.texture(*page)),
-						From::Whole(i) => {
-							let path = &map.atlases.paths[*i];
-							if matches!(self.textures.slot(path), Some(Slot::Missing(..) | Slot::Failed(_))) && counted.insert(*i) {
-								stats.failed += 1;
-							}
-							self.textures.slot(path).and_then(Slot::texture)
+		first.clear();
+		second.clear();
+		for (i, entry) in resolved.iter().enumerate() {
+			let Some((from, quad)) = entry else {
+				stats.waiting += 1;
+				continue;
+			};
+			let slot = *slots.entry(*from).or_insert_with(|| {
+				let texture = match from {
+					From::White => Some(&self.white),
+					From::Glyph(page) => self.glyph_pages.get(*page),
+					From::Page(page) => self.pages.as_ref().map(|p| p.texture(*page)),
+					From::Whole(i) => {
+						let path = &map.atlases.paths[*i];
+						if matches!(self.textures.slot(path), Some(Slot::Missing(..) | Slot::Failed(_))) && counted.insert(*i) {
+							stats.failed += 1;
 						}
-					}?;
-					ready.push(texture);
-					Some(ready.len() - 1)
-				});
-				match slot {
-					Some(texture) => Some(Quad { texture, ..*quad }),
-					None => {
-						stats.waiting += 1;
-						None
+						self.textures.slot(path).and_then(Slot::texture)
 					}
-				}
-			})
-			.collect();
-		(ready, quads, stats)
+				}?;
+				ready.push(texture);
+				Some(ready.len() - 1)
+			});
+			match slot {
+				Some(texture) => (if i < split { &mut *first } else { &mut *second }).push(Quad { texture, ..*quad }),
+				None => stats.waiting += 1,
+			}
+		}
+		(ready, stats)
 	}
 
 
@@ -478,18 +543,28 @@ impl WorldRenderer {
 	/// field blurring below `dof_below`) their mips, before they're drawn.
 	fn add_mips(&mut self, gpu: &Gpu, map: &crate::world::WorldQuads, zoom: f32, dof_below: Option<u32>) {
 		let mut need = vec![false; map.atlases.paths.len()];
+		// Each atlas's whole texture, if it has one without mips yet, looked up once. A font
+		// never has mips: drawn smaller, it samples its full size, as the original's do
+		// (see `crate::texture`).
+		let sizes: Vec<Option<(u32, u32)>> = map
+			.atlases
+			.paths
+			.iter()
+			.map(|path| {
+				if path.starts_with(FONT_DIR) {
+					return None;
+				}
+				let texture = self.textures.slot(path).and_then(Slot::texture)?;
+				(texture.texture.mip_level_count() == 1).then_some((texture.width, texture.height))
+			})
+			.collect();
 		for quad in &map.quads {
 			if need[quad.texture] {
 				continue;
 			}
-			let path = &map.atlases.paths[quad.texture];
-			// A font never has mips: drawn smaller, it samples its full size, as the
-			// original's do (see `crate::texture`).
-			if path.starts_with(FONT_DIR) {
-				continue;
-			}
-			let Some(texture) = self.textures.slot(path).and_then(Slot::texture) else { continue };
-			if texture.texture.mip_level_count() == 1 && samples_mips(quad, zoom, (texture.width, texture.height), dof_below) {
+			if let Some(size) = sizes[quad.texture]
+				&& samples_mips(quad, zoom, size, dof_below)
+			{
 				need[quad.texture] = true;
 			}
 		}
@@ -544,7 +619,7 @@ impl WorldRenderer {
 		};
 		let world = {
 			let _span = crate::frame_timing::span("world quads");
-			world_quads(scene, registry, view, fonts)
+			world_quads_with(scene, registry, view, fonts, &mut self.quad_scratch)
 		};
 		self.upload_glyphs(gpu);
 		self.record_usage(&world, view.zoom, None);
@@ -561,11 +636,11 @@ impl WorldRenderer {
 			self.residency.drawn(path, Drawer::World);
 		}
 		let resolve_span = crate::frame_timing::span("resolve+bind");
-		let resolved = self.resolve(gpu, &world, atlases, Drawer::World, (view.zoom, None));
-		let (ready, quads, mut stats) = self.bind(&world, &resolved);
+		let mut frame = std::mem::take(&mut self.frame);
+		self.resolve(gpu, &world, atlases, Drawer::World, (view.zoom, None), &mut frame.resolved);
+		let (ready, mut stats) = self.bind(&world, &frame.resolved, world.labels_from, (&mut frame.first, &mut frame.second));
 		drop(resolve_span);
-		let map: Vec<Quad> = quads[..world.labels_from].iter().flatten().copied().collect();
-		let labels: Vec<Quad> = quads[world.labels_from..].iter().flatten().copied().collect();
+		let (map, labels) = (&frame.first, &frame.second);
 		stats.quads = map.len() + labels.len();
 		// The day's light: on lit sprites, the water and the fog.
 		let ambient = argb_floats(scene.light.color);
@@ -590,7 +665,7 @@ impl WorldRenderer {
 		let clear = (!water).then_some(CLEAR);
 		let sprites_span = crate::frame_timing::span("sprites draw");
 		self.sprites
-			.draw(gpu, target, &uniforms, clear, &map, &ready);
+			.draw(gpu, target, &uniforms, clear, map, &ready);
 		drop(sprites_span);
 
 		if scene.fog_of_war {
@@ -609,6 +684,9 @@ impl WorldRenderer {
 
 		self.sprites
 			.draw(gpu, target, &uniforms, None, &labels, &ready);
+		drop(ready);
+		self.frame = frame;
+		self.quad_scratch.recycle(world);
 		let _span = crate::frame_timing::span("fit budget");
 		self.fit_budget();
 		stats
@@ -701,11 +779,13 @@ impl WorldRenderer {
 		drawer: Drawer,
 		(zoom, dof_below): (f32, Option<u32>),
 	) -> FrameStats {
-		let resolved = self.resolve(gpu, map, atlases, drawer, (zoom, dof_below));
-		let (ready, quads, mut stats) = self.bind(map, &resolved);
-		let quads: Vec<Quad> = quads.into_iter().flatten().collect();
-		stats.quads = quads.len();
-		self.sprites.draw(gpu, target, uniforms, clear, &quads, &ready);
+		let mut frame = std::mem::take(&mut self.frame);
+		self.resolve(gpu, map, atlases, drawer, (zoom, dof_below), &mut frame.resolved);
+		let (ready, mut stats) = self.bind(map, &frame.resolved, map.quads.len(), (&mut frame.first, &mut frame.second));
+		stats.quads = frame.first.len();
+		self.sprites.draw(gpu, target, uniforms, clear, &frame.first, &ready);
+		drop(ready);
+		self.frame = frame;
 		stats
 	}
 }

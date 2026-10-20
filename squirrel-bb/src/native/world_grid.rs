@@ -849,7 +849,7 @@ impl WorldGrid {
 				pos,
 				terrain: t.type_,
 				discovered: t.is_discovered,
-				brush: t.brush.to_string(),
+				brush: t.brush.clone(),
 				flipped: t.is_flipped,
 				details: t.details.iter().filter(|d| d.borrow().visible).map(|d| d.borrow().scene(g.drawn_at)).collect(),
 			})

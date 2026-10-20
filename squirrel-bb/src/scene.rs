@@ -128,8 +128,9 @@ pub struct SceneTile {
 	pub terrain: i64,
 	/// Uncovered from the fog of war (every tile is when fog of war is off).
 	pub discovered: bool,
-	/// The terrain brush (`""` if unset).
-	pub brush: String,
+	/// The terrain brush (`""` if unset), shared with the tile (a frame's scene copies
+	/// tens of thousands of them when zoomed out).
+	pub brush: std::rc::Rc<str>,
 	/// `IsFlipped`: the terrain's picture mirrored in place (badlands set it at random).
 	pub flipped: bool,
 	/// Its decorations, in spawn order.
@@ -139,7 +140,8 @@ pub struct SceneTile {
 /// A tile's detail as drawn (see `world_detail`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneDetail {
-	pub brush: String,
+	/// Its brush, shared with the detail.
+	pub brush: std::rc::Rc<str>,
 	/// Draw layer, a `Const.World.ZLevel`: higher is further back.
 	pub z_level: i64,
 	/// `Const.World.DetailType` bits.
@@ -165,7 +167,7 @@ pub struct SceneDetail {
 impl Default for SceneDetail {
 	fn default() -> Self {
 		SceneDetail {
-			brush: String::new(),
+			brush: "".into(),
 			z_level: 0,
 			flags: 0,
 			flipped: false,

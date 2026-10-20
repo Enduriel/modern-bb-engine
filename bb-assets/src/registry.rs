@@ -13,9 +13,34 @@
 //! the name's [`name_hash`] (`0x505820` → `0x504a10`).
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::brush::{BrushSheet, BrushSprite};
 use crate::hash::name_hash;
+
+/// Hashes a [`name_hash`] key for the registry's map: the key is a hash already, so it
+/// is only spread over the bits (a renderer looks up every sprite it draws each frame,
+/// tens of thousands zoomed out, and SipHash cost more than the rest of a lookup).
+#[derive(Default)]
+struct NameHashHasher(u64);
+
+impl Hasher for NameHashHasher {
+	fn write(&mut self, bytes: &[u8]) {
+		for &b in bytes {
+			self.0 = (self.0 << 8 | self.0 >> 56) ^ u64::from(b);
+		}
+	}
+
+	fn write_u64(&mut self, n: u64) {
+		// A folded multiply: every output bit depends on every input bit.
+		let m = u128::from(n) * 0x9e37_79b9_7f4a_7c15;
+		self.0 = (m >> 64) as u64 ^ m as u64;
+	}
+
+	fn finish(&self) -> u64 {
+		self.0
+	}
+}
 
 /// Where a registered sprite lives: its sheet's load index and its index in the sheet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -36,7 +61,7 @@ pub struct LoadedSheet {
 #[derive(Clone, Debug, Default)]
 pub struct SpriteRegistry {
 	sheets: Vec<LoadedSheet>,
-	by_hash: HashMap<u64, SpriteId>,
+	by_hash: HashMap<u64, SpriteId, BuildHasherDefault<NameHashHasher>>,
 	shadowed: usize,
 }
 

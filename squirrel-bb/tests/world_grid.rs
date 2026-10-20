@@ -148,9 +148,9 @@ fn details_without_a_mirroring_argument_are_mirrored_at_random() {
 	)
 	.expect("spawn");
 	let d = details(&grid, 1, 1);
-	let flipped = d.iter().filter(|d| d.brush == "stone" && d.flipped).count();
+	let flipped = d.iter().filter(|d| &*d.brush == "stone" && d.flipped).count();
 	assert!(flipped > 5 && flipped < 35, "{flipped} of 40 mirrored");
-	assert!(d.iter().filter(|d| d.brush == "kept").all(|d| !d.flipped));
+	assert!(d.iter().filter(|d| &*d.brush == "kept").all(|d| !d.flipped));
 	grid.clear();
 }
 
@@ -161,7 +161,7 @@ fn details(grid: &WorldGrid, col: i64, row: i64) -> Vec<squirrel_bb::scene::Scen
 }
 
 fn brushes(details: &[squirrel_bb::scene::SceneDetail]) -> Vec<&str> {
-	details.iter().map(|d| d.brush.as_str()).collect()
+	details.iter().map(|d| &*d.brush).collect()
 }
 
 #[test]

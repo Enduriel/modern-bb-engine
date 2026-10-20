@@ -143,13 +143,32 @@ struct Resident {
 }
 
 /// Where a quad is drawn from.
+#[derive(Clone, Copy)]
 pub(crate) enum Located {
-	/// A page, at these texture coordinates.
-	Page { page: usize, uv: [[f32; 2]; 4] },
+	/// A page; its texture coordinates are the atlas's mapped by `map`.
+	Page { page: usize, map: PageMap },
 	/// Its frame is on its way.
 	Waiting,
 	/// Not the pages' to draw: its atlas stays a whole texture.
 	Whole,
+}
+
+/// How an atlas's texture coordinates map into the page holding its frame.
+#[derive(Clone, Copy)]
+pub(crate) struct PageMap {
+	/// The atlas's size, the frame's shift from its place in the atlas to its place in the
+	/// page, and the page's size, in texels.
+	atlas: (f32, f32),
+	shift: (f32, f32),
+	page: (u32, u32),
+}
+
+impl PageMap {
+	/// `uv` (the atlas's) in the page.
+	pub(crate) fn uv(&self, uv: [[f32; 2]; 4]) -> [[f32; 2]; 4] {
+		let ((aw, ah), (dx, dy), (pw, ph)) = (self.atlas, self.shift, self.page);
+		uv.map(|[u, v]| [(u * aw + dx) / pw as f32, (v * ah + dy) / ph as f32])
+	}
 }
 
 /// Our pages, the frames in them, and the loads on their way.
@@ -320,13 +339,15 @@ impl FramePages {
 		resident.frame = now;
 		resident.drawers |= bit(drawer);
 		self.pages.used[resident.place.page] = now;
-		let (pw, ph) = self.pages.alloc.page_size(resident.place.page).expect("a page in use");
-		let (aw, ah) = (size.0 as f32, size.1 as f32);
-		let (dx, dy) = (resident.place.x as f32 - resident.region.x as f32, resident.place.y as f32 - resident.region.y as f32);
-		let uv = quad.uv.map(|[u, v]| [(u * aw + dx) / pw as f32, (v * ah + dy) / ph as f32]);
+		let page = self.pages.alloc.page_size(resident.place.page).expect("a page in use");
+		let map = PageMap {
+			atlas: (size.0 as f32, size.1 as f32),
+			shift: (resident.place.x as f32 - resident.region.x as f32, resident.place.y as f32 - resident.region.y as f32),
+			page,
+		};
 		Located::Page {
 			page: resident.place.page,
-			uv,
+			map,
 		}
 	}
 

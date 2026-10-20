@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use bb_assets::{BrushFrame, SpriteRegistry};
 use squirrel_bb::scene::WorldScene;
 
+use crate::fast_hash::FastMap;
 use crate::labels::{LabelFont, label_quads};
 use crate::sprite::{Quad, SceneUniforms};
 use crate::text::{TextRun, glyph_quads, text_scale};
@@ -99,16 +100,51 @@ impl WorldView {
 	}
 }
 
-/// One sprite to draw, before sorting.
-struct Drawable<'a> {
+/// One sprite to draw, before sorting. Its quad's `texture` is its atlas's id in the
+/// frame's [`AtlasIds`].
+struct Drawable {
 	/// Scene layer, drawn in turn: tile terrain, details, entities.
 	layer: Layer,
-	/// Within a layer, a higher key draws first (further back).
+	/// Within a layer, a higher key draws first (further back); ties in push order.
 	key: i64,
-	/// Spawn order, to keep ties stable.
-	order: usize,
-	texture: &'a str,
 	quad: Quad,
+}
+
+/// The atlases sprites name while a frame's quads are built, by an id each: an atlas's
+/// path is mostly the same string (its sheet's), so it's found by where the string is,
+/// without hashing its text for every sprite.
+#[derive(Default)]
+struct AtlasIds<'a> {
+	paths: Vec<&'a str>,
+	by_address: FastMap<(usize, usize), usize>,
+}
+
+impl<'a> AtlasIds<'a> {
+	fn id(&mut self, path: &'a str) -> usize {
+		let paths = &mut self.paths;
+		*self.by_address.entry((path.as_ptr() as usize, path.len())).or_insert_with(|| {
+			paths.push(path);
+			paths.len() - 1
+		})
+	}
+}
+
+/// A frame's quads in the making, kept from frame to frame so that drawing tens of
+/// thousands of sprites (the map zoomed out) allocates nothing per frame (see
+/// [`world_quads_with`]).
+#[derive(Default)]
+pub struct QuadScratch {
+	drawables: Vec<Drawable>,
+	order: Vec<u32>,
+	keys: Vec<u64>,
+	quads: Vec<Quad>,
+}
+
+impl QuadScratch {
+	/// Take a frame's quads back once drawn, for the next frame to fill.
+	pub fn recycle(&mut self, quads: WorldQuads) {
+		self.quads = quads.quads;
+	}
 }
 
 /// The atlases a frame uses, by texture path, in first-use order.
@@ -166,10 +202,25 @@ pub fn world_quads<'a>(
 	view: &WorldView,
 	fonts: WorldFonts<'a>,
 ) -> WorldQuads {
+	world_quads_with(scene, sprites, view, fonts, &mut QuadScratch::default())
+}
+
+/// [`world_quads`], building in `scratch`'s memory (give the quads back with
+/// [`QuadScratch::recycle`]).
+pub fn world_quads_with<'a>(
+	scene: &'a WorldScene,
+	sprites: &'a SpriteRegistry,
+	view: &WorldView,
+	fonts: WorldFonts<'a>,
+	scratch: &mut QuadScratch,
+) -> WorldQuads {
 	let on_screen = |pos: (f64, f64)| view.shows(pos);
-	let mut drawables: Vec<Drawable> = Vec::new();
+	let QuadScratch { drawables, order, keys, quads } = scratch;
+	drawables.clear();
+	let mut ids = AtlasIds::default();
 	// `key`: the sort key without the brush's depth bias, which is added here.
-	let push = |drawables: &mut Vec<Drawable<'a>>,
+	let push = |drawables: &mut Vec<Drawable>,
+	            ids: &mut AtlasIds<'a>,
 	            layer: Layer,
 	            key: i64,
 	            brush: &str,
@@ -190,13 +241,13 @@ pub fn world_quads<'a>(
 			anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
 			anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
 		];
-		let order = drawables.len();
 		drawables.push(Drawable {
 			layer,
 			key: key + i64::from(sprite.depth_bias),
-			order,
-			texture: &sheet.sheet.texture,
-			quad: frame_quad(frame, anchor, look),
+			quad: Quad {
+				texture: ids.id(&sheet.sheet.texture),
+				..frame_quad(frame, anchor, look)
+			},
 		});
 	};
 
@@ -206,7 +257,8 @@ pub fn world_quads<'a>(
 			let key = anchor[1] as i64;
 			let pushed = drawables.len();
 			push(
-				&mut drawables,
+				drawables,
+				&mut ids,
 				Layer::Terrain,
 				key,
 				&tile.brush,
@@ -234,7 +286,8 @@ pub fn world_quads<'a>(
 			let pushed = drawables.len();
 			// At its place (the tile's centre plus the spawn's offset).
 			push(
-				&mut drawables,
+				drawables,
+				&mut ids,
 				Layer::Details,
 				0,
 				&detail.brush,
@@ -281,7 +334,8 @@ pub fn world_quads<'a>(
 			};
 			let pushed = drawables.len();
 			push(
-				&mut drawables,
+				drawables,
+				&mut ids,
 				Layer::Entities,
 				anchor[1] as i64,
 				&sprite.brush,
@@ -313,7 +367,8 @@ pub fn world_quads<'a>(
 		};
 		let below = [anchor[0], anchor[1] + CLOUD_SHADOW_DROP * cloud.scale];
 		push(
-			&mut drawables,
+			drawables,
+				&mut ids,
 			Layer::Effects,
 			cloud.key + 2000,
 			cloud.brush,
@@ -329,7 +384,8 @@ pub fn world_quads<'a>(
 			..Look::PLAIN
 		};
 		push(
-			&mut drawables,
+			drawables,
+				&mut ids,
 			Layer::Effects,
 			cloud.key,
 			cloud.brush,
@@ -377,13 +433,13 @@ pub fn world_quads<'a>(
 				None => glyph_quads(&run).into_iter().map(|(_, quad)| (font.texture, quad)).collect(),
 			};
 			for (texture, quad) in quads {
-				let order = drawables.len();
 				drawables.push(Drawable {
 					layer: Layer::Details,
 					key: 0,
-					order,
-					texture,
-					quad,
+					quad: Quad {
+						texture: ids.id(texture),
+						..quad
+					},
 				});
 			}
 		}
@@ -402,7 +458,8 @@ pub fn world_quads<'a>(
 		};
 		let anchor = [footprint.pos.0, footprint.pos.1];
 		push(
-			&mut drawables,
+			drawables,
+				&mut ids,
 			Layer::Details,
 			0,
 			&footprint.brush,
@@ -423,7 +480,8 @@ pub fn world_quads<'a>(
 			..Look::PLAIN
 		};
 		push(
-			&mut drawables,
+			drawables,
+				&mut ids,
 			Layer::Effects,
 			0,
 			&wave.brush,
@@ -445,7 +503,8 @@ pub fn world_quads<'a>(
 			..Look::PLAIN
 		};
 		push(
-			&mut drawables,
+			drawables,
+				&mut ids,
 			Layer::Effects,
 			0,
 			&particle.brush,
@@ -468,7 +527,8 @@ pub fn world_quads<'a>(
 			..Look::PLAIN
 		};
 		push(
-			&mut drawables,
+			drawables,
+				&mut ids,
 			Layer::Effects,
 			bird.key,
 			bird.brush,
@@ -481,7 +541,7 @@ pub fn world_quads<'a>(
 			alpha: f32::from(BIRD_ALPHA),
 			..Look::PLAIN
 		};
-		push(&mut drawables, Layer::Effects, bird.key, bird.brush, bird.frame, anchor, [0.0; 2], look);
+		push(drawables, &mut ids, Layer::Effects, bird.key, bird.brush, bird.frame, anchor, [0.0; 2], look);
 	}
 
 	if let Some(font) = fonts.label {
@@ -497,41 +557,71 @@ pub fn world_quads<'a>(
 				.filter(|l| l.visible && !l.text.is_empty())
 			{
 				for (texture, quad) in label_quads(label, anchor, 1.0 / view.zoom, font, fonts.shaper) {
-					let order = drawables.len();
 					drawables.push(Drawable {
 						layer: Layer::Labels,
 						key: anchor[1] as i64,
-						order,
-						texture,
-						quad,
+						quad: Quad {
+							texture: ids.id(texture),
+							..quad
+						},
 					});
 				}
 			}
 		}
 	}
 
-	drawables.sort_by(|a, b| {
-		a.layer
-			.cmp(&b.layer)
-			.then(b.key.cmp(&a.key))
-			.then(a.order.cmp(&b.order))
-	});
-	let mut atlases = AtlasList::default();
-	let labels_from = drawables
+	// Back to front: by layer, then the higher key first, ties in push order. The order
+	// is unique, so sorting compact keys (and gathering after) gives the same order as
+	// sorting the drawables themselves, at a fraction of the moves.
+	sort_back_to_front(drawables, keys, order);
+	let labels_from = order
 		.iter()
-		.position(|d| d.layer == Layer::Labels)
-		.unwrap_or(drawables.len());
-	let quads = drawables
-		.into_iter()
-		.map(|d| Quad {
-			texture: atlases.index_of(d.texture),
-			..d.quad
-		})
-		.collect();
+		.position(|&i| drawables[i as usize].layer == Layer::Labels)
+		.unwrap_or(order.len());
+	// The atlases in first-use order.
+	let mut atlases = AtlasList::default();
+	let mut index = vec![usize::MAX; ids.paths.len()];
+	let mut quads = std::mem::take(quads);
+	quads.clear();
+	quads.extend(order.iter().map(|&i| {
+		let d = &drawables[i as usize];
+		let at = &mut index[d.quad.texture];
+		if *at == usize::MAX {
+			*at = atlases.index_of(ids.paths[d.quad.texture]);
+		}
+		Quad { texture: *at, ..d.quad }
+	}));
 	WorldQuads {
 		quads,
 		atlases,
 		labels_from,
+	}
+}
+
+/// Put in `order` the drawables' indices back to front: by layer, then the higher key
+/// first, ties in push order (`order` is a drawable's index). That order is unique, so
+/// sorting compact keys and gathering after gives the same as sorting the drawables
+/// themselves, at a fraction of the moves; the keys pack into one `u64` when they fit
+/// (they always do on vanilla's maps), which sorts fastest.
+fn sort_back_to_front(drawables: &[Drawable], keys: &mut Vec<u64>, order: &mut Vec<u32>) {
+	order.clear();
+	keys.clear();
+	// Layer: 3 bits; key: 32, reversed; index: 29.
+	const INDEX_BITS: u32 = 29;
+	let fits = drawables.len() < 1 << INDEX_BITS && drawables.iter().all(|d| i32::try_from(d.key).is_ok());
+	if fits {
+		keys.extend(drawables.iter().enumerate().map(|(i, d)| {
+			let reversed = u64::from(!((d.key as i32 as u32) ^ 0x8000_0000));
+			(d.layer as u64) << 61 | reversed << INDEX_BITS | i as u64
+		}));
+		keys.sort_unstable();
+		order.extend(keys.iter().map(|k| (k & ((1 << INDEX_BITS) - 1)) as u32));
+	} else {
+		order.extend(0..drawables.len() as u32);
+		order.sort_unstable_by_key(|&i| {
+			let d = &drawables[i as usize];
+			(d.layer, std::cmp::Reverse(d.key), i)
+		});
 	}
 }
 
@@ -581,7 +671,8 @@ pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
 	// The rect is y up from the anchor, and its `top` is the edge at the atlas's first
 	// rows (`v0`): with the picture packed upside down, that is the picture's bottom.
 	let (y_top, y_bottom) = (bottom * scale, top * scale);
-	let (sin, cos) = look.rotation.to_radians().sin_cos();
+	// Upright, the turn is the identity (`x·1 − y·0` is `x`): most sprites skip the trig.
+	let (sin, cos) = if look.rotation == 0.0 { (0.0, 1.0) } else { look.rotation.to_radians().sin_cos() };
 	let place = |x: f32, y: f32| [anchor[0] + x * cos - y * sin, anchor[1] + x * sin + y * cos];
 	Quad {
 		texture: 0,
@@ -671,7 +762,7 @@ mod tests {
 				pos: (0.0, 0.0),
 				terrain: 2,
 				discovered: true,
-				brush: String::new(),
+				brush: "".into(),
 				flipped: false,
 				details: vec![detail("rock", 29, (0.0, 0.0)), detail("mark", 30, (10.0, -5.0))],
 			}],
@@ -711,7 +802,7 @@ mod tests {
 				pos: (0.0, 0.0),
 				terrain: 2,
 				discovered: true,
-				brush: String::new(),
+				brush: "".into(),
 				flipped: false,
 				details: vec![detail("rock", false), detail("mark", true)],
 			}],

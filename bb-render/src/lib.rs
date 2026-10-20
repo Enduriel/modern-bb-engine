@@ -15,6 +15,7 @@
 //! - [`frame_diff`]: where a frame of ours differs from a screenshot of the original.
 
 mod cursor;
+mod fast_hash;
 mod fog;
 pub mod fonts;
 pub mod frame_diff;

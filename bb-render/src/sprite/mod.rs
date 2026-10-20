@@ -116,6 +116,7 @@ pub struct SpriteRenderer {
 	sampler: wgpu::Sampler,
 	/// Bound to slots a draw call doesn't use.
 	blank: GpuTexture,
+	streams: std::cell::RefCell<Streams>,
 }
 
 impl SpriteRenderer {
@@ -266,6 +267,7 @@ impl SpriteRenderer {
 			textures_layout,
 			sampler,
 			blank,
+			streams: std::cell::RefCell::new(Streams::new(gpu)),
 		}
 	}
 
@@ -282,8 +284,14 @@ impl SpriteRenderer {
 	) {
 		gpu.queue.write_buffer(&self.uniforms, 0, &scene.bytes());
 		let calls = batch(quads);
-		let mut vertices = Vec::with_capacity(quads.len() * 4 * VERTEX_SIZE as usize);
-		let mut indices: Vec<u32> = Vec::with_capacity(quads.len() * 6);
+		let mut streams = self.streams.borrow_mut();
+		let streams = &mut *streams;
+		// The quads' vertices in order (quad `i`'s four at `4i`), each with its call's slot
+		// for its atlas, built in memory of ours and copied for the upload in one go (the
+		// upload's mapped memory is slow to write piecemeal).
+		let vertices = &mut streams.scratch;
+		vertices.clear();
+		vertices.reserve(quads.len() * 4 * VERTEX_SIZE as usize);
 		for call in &calls {
 			for quad in &quads[call.quads.clone()] {
 				let slot = call
@@ -291,34 +299,22 @@ impl SpriteRenderer {
 					.iter()
 					.position(|&t| t == quad.texture)
 					.expect("batched") as u32;
-				let base = (vertices.len() as u64 / VERTEX_SIZE) as u32;
 				for corner in 0..4 {
-					push_vertex(&mut vertices, quad, corner, slot);
+					vertices.extend_from_slice(&vertex(quad, corner, slot));
 				}
-				indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 			}
 		}
-		let vertex_buffer = buffer(
-			gpu,
-			"sprite vertices",
-			&vertices,
-			wgpu::BufferUsages::VERTEX,
-		);
-		let index_bytes: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-		let index_buffer = buffer(
-			gpu,
-			"sprite indices",
-			&index_bytes,
-			wgpu::BufferUsages::INDEX,
-		);
+		let bytes = vertices.len();
+		let mut encoder = gpu
+			.device
+			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+		let vertex_buffer = streams.vertices.write(gpu, &mut encoder, vertices);
+		let index_buffer = streams.indices.quads(gpu, quads.len());
 		let groups: Vec<wgpu::BindGroup> = calls
 			.iter()
 			.map(|call| self.texture_group(gpu, &call.slots, textures))
 			.collect();
 
-		let mut encoder = gpu
-			.device
-			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 		{
 			let load = match clear {
 				Some([r, g, b, a]) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
@@ -343,7 +339,7 @@ impl SpriteRenderer {
 			if !quads.is_empty() {
 				pass.set_pipeline(&self.pipeline);
 				pass.set_bind_group(0, &self.uniform_group, &[]);
-				pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+				pass.set_vertex_buffer(0, vertex_buffer.slice(..bytes as u64));
 				pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 				for (call, group) in calls.iter().zip(&groups) {
 					pass.set_bind_group(1, group, &[]);
@@ -352,6 +348,7 @@ impl SpriteRenderer {
 				}
 			}
 		}
+		streams.vertices.belt.finish_and_recall_on_submit(&encoder);
 		gpu.queue.submit([encoder.finish()]);
 	}
 
@@ -419,44 +416,120 @@ fn batch(quads: &[Quad]) -> Vec<Call> {
 	calls
 }
 
-fn push_vertex(out: &mut Vec<u8>, quad: &Quad, corner: usize, slot: u32) {
+/// Quad `quad`'s vertex at `corner`, sampling atlas `slot`, as the shader reads it.
+fn vertex(quad: &Quad, corner: usize, slot: u32) -> [u8; VERTEX_SIZE as usize] {
+	let mut out = [0u8; VERTEX_SIZE as usize];
+	let mut at = 0;
+	let mut put = |bytes: &[u8]| {
+		out[at..at + bytes.len()].copy_from_slice(bytes);
+		at += bytes.len();
+	};
 	let [x, y] = quad.corners[corner];
 	for value in [x, y, 0.0, 1.0] {
-		out.extend_from_slice(&value.to_le_bytes());
+		put(&value.to_le_bytes());
 	}
 	let color = quad.corner_colors.map_or(quad.color, |colors| colors[corner]);
-	out.extend_from_slice(&color);
-	out.extend_from_slice(&quad.overlay);
+	put(&color);
+	put(&quad.overlay);
 	for value in quad.uv[corner] {
-		out.extend_from_slice(&value.to_le_bytes());
+		put(&value.to_le_bytes());
 	}
-	out.extend_from_slice(&slot.to_le_bytes());
-	out.extend_from_slice(&quad.saturation.to_le_bytes());
-	out.extend_from_slice(&quad.factor.to_le_bytes());
-	out.extend_from_slice(&quad.flags.to_le_bytes());
-	out.extend_from_slice(&quad.level.to_le_bytes());
+	put(&slot.to_le_bytes());
+	put(&quad.saturation.to_le_bytes());
+	put(&quad.factor.to_le_bytes());
+	put(&quad.flags.to_le_bytes());
+	put(&quad.level.to_le_bytes());
+	out
 }
 
-fn buffer(gpu: &Gpu, label: &str, bytes: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
-	let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-		label: Some(label),
-		size: (bytes.len() as u64)
-			.max(4)
-			.next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT),
-		usage: usage | wgpu::BufferUsages::COPY_DST,
-		mapped_at_creation: false,
-	});
-	gpu.queue.write_buffer(
-		&buffer,
-		0,
-		&bytes
-			.iter()
-			.copied()
-			.chain(std::iter::repeat(0))
-			.take(buffer.size() as usize)
-			.collect::<Vec<u8>>(),
-	);
-	buffer
+/// The buffers the draws stream their quads through, kept from draw to draw (a buffer
+/// made and filled per draw cost more than drawing a zoomed-out world map).
+struct Streams {
+	vertices: Stream,
+	indices: QuadIndices,
+	/// The vertices' bytes as they're built.
+	scratch: Vec<u8>,
+}
+
+impl Streams {
+	fn new(gpu: &Gpu) -> Streams {
+		Streams {
+			vertices: Stream {
+				buffer: None,
+				belt: wgpu::util::StagingBelt::new(gpu.device.clone(), STAGING_CHUNK),
+			},
+			indices: QuadIndices::default(),
+			scratch: Vec::new(),
+		}
+	}
+}
+
+/// The staging memory's unit: a zoomed-out world map's quads are about 7 MB.
+const STAGING_CHUNK: u64 = 8 << 20;
+
+/// A vertex buffer rewritten by each draw, grown as needed, and filled through a staging
+/// belt whose mapped chunks are reused from draw to draw (`Queue::write_buffer` makes new
+/// staging memory for every write, and touching megabytes of fresh pages each frame cost
+/// several milliseconds). Reusing the buffer between the draws of a frame is safe: each
+/// draw's copy is recorded in its own submission, after the previous draw's.
+struct Stream {
+	buffer: Option<wgpu::Buffer>,
+	belt: wgpu::util::StagingBelt,
+}
+
+impl Stream {
+	/// The buffer holding `bytes` (a multiple of four) from its start, once `encoder`'s
+	/// copy runs; the belt must then be finished with `encoder` before it's submitted.
+	fn write(&mut self, gpu: &Gpu, encoder: &mut wgpu::CommandEncoder, bytes: &[u8]) -> &wgpu::Buffer {
+		let size = (bytes.len() as u64).max(4).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT);
+		if self.buffer.as_ref().is_none_or(|b| b.size() < size) {
+			self.buffer = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+				label: Some("sprite vertices"),
+				size: size.next_power_of_two(),
+				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+				mapped_at_creation: false,
+			}));
+		}
+		let buffer = self.buffer.as_ref().expect("made above");
+		if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {
+			self.belt.write_buffer(encoder, buffer, 0, size).copy_from_slice(bytes);
+		}
+		buffer
+	}
+}
+
+/// The index buffer for drawing quads: quad `i` is the triangles `4i, 4i+1, 4i+2` and
+/// `4i, 4i+2, 4i+3`. The same for every draw, so it's only written when it grows.
+#[derive(Default)]
+struct QuadIndices {
+	buffer: Option<wgpu::Buffer>,
+	quads: usize,
+}
+
+impl QuadIndices {
+	/// A buffer indexing at least `quads` quads.
+	fn quads(&mut self, gpu: &Gpu, quads: usize) -> &wgpu::Buffer {
+		if self.buffer.is_none() || self.quads < quads {
+			let quads = quads.max(1024).next_power_of_two();
+			let bytes: Vec<u8> = (0..quads as u32)
+				.flat_map(|q| {
+					let base = q * 4;
+					[base, base + 1, base + 2, base, base + 2, base + 3]
+				})
+				.flat_map(u32::to_le_bytes)
+				.collect();
+			let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+				label: Some("sprite indices"),
+				size: bytes.len() as u64,
+				usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+				mapped_at_creation: false,
+			});
+			gpu.queue.write_buffer(&buffer, 0, &bytes);
+			self.buffer = Some(buffer);
+			self.quads = quads;
+		}
+		self.buffer.as_ref().expect("made above")
+	}
 }
 
 #[cfg(test)]

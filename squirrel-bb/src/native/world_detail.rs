@@ -103,7 +103,7 @@ impl DetailData {
 	pub(crate) fn scene(&self, now: f32) -> SceneDetail {
 		let shown = self.color.shown(now);
 		SceneDetail {
-			brush: self.brush.to_string(),
+			brush: self.brush.clone(),
 			z_level: self.z_level,
 			flags: self.flags,
 			flipped: self.flipped,

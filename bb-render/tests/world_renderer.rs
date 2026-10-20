@@ -341,7 +341,7 @@ fn details_draw_with_their_colour_and_saturation() {
 				pos: (0.0, 0.0),
 				terrain: 2,
 				discovered: true,
-				brush: String::new(),
+				brush: "".into(),
 				flipped: false,
 				details: vec![detail],
 			}],

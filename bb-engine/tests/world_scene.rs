@@ -236,7 +236,7 @@ fn a_new_campaign_world_is_ready_to_draw() {
 					.tiles
 					.iter()
 					.flat_map(|t| t.details.clone())
-					.filter(|d| d.brush == "world_swamp_fog_05")
+					.filter(|d| &*d.brush == "world_swamp_fog_05")
 					.map(|d| (d.scale, d.rotation))
 					.collect();
 				panic!("the fog: {fogs:?}")
