@@ -321,12 +321,12 @@ fn settled(p: &Play, ready: impl Fn(&Play) -> bool) -> Result<(), String> {
 	ok.then_some(()).ok_or_else(|| "the page didn't settle".to_string())
 }
 
-/// Right-click at `(x, y)`, as a player buys or sells with.
+/// Right-click at `(x, y)`, as a player buys or sells with (the callers wait for the
+/// crowns to move).
 fn right_click(p: &Play, x: i32, y: i32) -> Result<(), String> {
 	p.session.move_to(x, y)?;
 	p.session.host().mouse_button(x, y, MouseButton::Right, true);
 	p.session.host().mouse_button(x, y, MouseButton::Right, false);
-	p.session.pump_until(Duration::from_millis(500), |_| false);
 	Ok(())
 }
 
@@ -398,14 +398,14 @@ fn tavern(p: &Play) -> Result<(), String> {
 	let (x, y) = nth(p, ".l-tavern-button .ui-control", 0)?;
 	p.session.click_at(x, y)?;
 	paid(p, before, rumour, "a rumour")?;
-	p.session.pump_until(Duration::from_secs(1), |_| false);
+	during("the rumour", settled(p, |_| true))?;
 	p.shot("rumour");
 	let round = p.int(&format!("{tavern}.getDrinkPrice()"))?;
 	let before = money()?;
 	let (x, y) = nth(p, ".l-tavern-button .ui-control", 1)?;
 	p.session.click_at(x, y)?;
 	paid(p, before, round, "a round")?;
-	p.session.pump_until(Duration::from_secs(1), |_| false);
+	during("the round", settled(p, |_| true))?;
 	p.shot("round");
 	during("leaving the tavern", p.session.click_when_ready("Leave", STEP))?;
 	Ok(())
