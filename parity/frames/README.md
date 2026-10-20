@@ -17,7 +17,9 @@ ground at 40 and 80 %, units hidden by what is drawn in front of them (a unit be
 higher tiles, one sunk, one beside a tree, a boulder between two, then the camera cut
 down to level 0), the units' orientation overlays (over a tile above the camera's
 level, behind a tile two levels higher, and off screen with the scene scale doubled
-and the camera zoomed to 0.5), and the results screen and its loot. A step can poll a scene until it returns true (`until`) before its
+and the camera zoomed to 0.5), what the night's light doesn't reach (a skill's icon
+beside the same brush as an attack effect, the blocked-tile marks) with a brother on
+a tile raised under him, and the results screen and its loot. A step can poll a scene until it returns true (`until`) before its
 shot, and click a page button after it. Ours (bb-app's `frame_scenes`) walks the same
 list.
 
