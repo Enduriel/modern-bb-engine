@@ -15,7 +15,9 @@ map, a battle (the UI goldens' pinned ambush) on the player's first turn, a shor
 long path, a skill aimed, effects (blood, a pool, a cloud), a zombie rising from the
 ground at 40 and 80 %, units hidden by what is drawn in front of them (a unit behind
 higher tiles, one sunk, one beside a tree, a boulder between two, then the camera cut
-down to level 0), and the results screen and its loot. A step can poll a scene until it returns true (`until`) before its
+down to level 0), the units' orientation overlays (over a tile above the camera's
+level, behind a tile two levels higher, and off screen with the scene scale doubled
+and the camera zoomed to 0.5), and the results screen and its loot. A step can poll a scene until it returns true (`until`) before its
 shot, and click a page button after it. Ours (bb-app's `frame_scenes`) walks the same
 list.
 
