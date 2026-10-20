@@ -3,7 +3,11 @@
 //! addresses go out: `http://` or `https://`, a host, and nothing but the characters a
 //! URL may hold (RFC 3986; anything else is percent-encoded). That leaves no spaces,
 //! quotes or control characters for a launcher to split or read, and no other scheme
-//! (`file:`, `steam:`, a program's own) for the system to hand to some program.
+//! (`file:`, a program's own) for the system to hand to some program.
+//!
+//! The one exception is Steam's store page for an app, `steam://advertise/<app id>`,
+//! which vanilla's DLC links on the main menu open on a Steam build. Only that exact
+//! form passes: Steam's other `steam://` commands run, install or uninstall things.
 //!
 //! An address without a scheme that starts `www.` opens as `http://` (vanilla's version
 //! label passes `www.battlebrothersgame.com`), as Windows' shell guesses for the
@@ -18,6 +22,9 @@ const SCHEMES: [&str; 2] = ["http://", "https://"];
 /// What an address without a scheme starts with to be taken as `http://` one.
 const GUESSED_WEB: &str = "www.";
 
+/// The Steam command opened, followed by nothing but an app id.
+const STEAM_STORE_PAGE: &str = "steam://advertise/";
+
 /// The characters RFC 3986 allows in a URL besides letters and digits (unreserved,
 /// reserved, and `%` for the encoded rest).
 const URL_PUNCTUATION: &str = "-._~:/?#[]@!$&'()*+,;=%";
@@ -28,8 +35,19 @@ pub fn to_open(url: &str) -> Result<String, &'static str> {
 		.get(..GUESSED_WEB.len())
 		.is_some_and(|head| head.eq_ignore_ascii_case(GUESSED_WEB));
 	let url = if guessed { format!("http://{url}") } else { url.to_string() };
-	check(&url)?;
+	if !is_steam_store_page(&url) {
+		check(&url)?;
+	}
 	Ok(url)
+}
+
+/// Whether `url` is `steam://advertise/` and an app id (one to ten digits).
+fn is_steam_store_page(url: &str) -> bool {
+	url.get(..STEAM_STORE_PAGE.len())
+		.is_some_and(|head| head.eq_ignore_ascii_case(STEAM_STORE_PAGE))
+		&& url
+			.get(STEAM_STORE_PAGE.len()..)
+			.is_some_and(|id| (1..=10).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Whether `url` may be opened as it is; if not, why not.
@@ -88,7 +106,6 @@ mod tests {
 	fn other_schemes_are_refused() {
 		for url in [
 			"file:///etc/passwd",
-			"steam://run/365360",
 			"javascript:alert(1)",
 			"ftp://example.com",
 			"mailto:a@b.c",
@@ -151,6 +168,26 @@ mod tests {
 		assert_eq!(to_open("example.com"), Err("not an http(s) URL"));
 		assert_eq!(to_open("www. x"), Err("a character a URL can't hold"));
 		assert_eq!(to_open("www./x"), Ok("http://www./x".to_string()));
+	}
+
+	#[test]
+	fn steam_store_pages_open_and_nothing_else_of_steam() {
+		for url in ["steam://advertise/1361280", "steam://advertise/732460", "STEAM://Advertise/1"] {
+			assert_eq!(to_open(url).as_deref(), Ok(url), "{url}");
+		}
+		for url in [
+			"steam://run/365360",
+			"steam://rungameid/365360",
+			"steam://uninstall/365360",
+			"steam://advertise/",
+			"steam://advertise/12345678901",
+			"steam://advertise/1361280/x",
+			"steam://advertise/1361280 -x",
+			"steam://advertise/-1",
+			"steam://advertise/../run/1",
+		] {
+			assert!(to_open(url).is_err(), "{url}");
+		}
 	}
 
 	#[test]
