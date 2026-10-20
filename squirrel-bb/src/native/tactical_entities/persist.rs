@@ -129,8 +129,8 @@ impl SavePart for RostersPart {
 					w.i64(rec.faction);
 					w.bool(rec.discovered);
 					w.bool(rec.blocks_sight);
-					w.f64(rec.pos.0);
-					w.f64(rec.pos.1);
+					w.f64(rec.local.0);
+					w.f64(rec.local.1);
 					// In layering order.
 					let sprites: Vec<(&std::rc::Rc<str>, &SqStrongRef)> = rec.sprites.iter().collect();
 					w.u32(sprites.len() as u32);
@@ -188,7 +188,7 @@ fn load_unit(m: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, roster_id: i64, cx: &L
 		rec.faction = faction;
 		rec.discovered = discovered;
 		rec.blocks_sight = blocks_sight;
-		rec.pos = pos;
+		rec.local = pos;
 	}
 	let sprite_class = m.borrow().sprite_class.clone().ok_or("load: sprite class missing")?;
 	// Loaded off the map: placing it notes its sprites (see `moving_sprites`).

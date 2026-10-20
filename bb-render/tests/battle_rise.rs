@@ -157,4 +157,26 @@ fn a_unit_spawned_mid_battle_rises_on_its_tile() {
 			"positions",
 		)
 		.expect("positions");
+
+	// A script raises its tile a level (the frame scenes' `orient` does a brother's):
+	// the unit rises with it, drawn and read where the tile is now, as in the
+	// original's screenshot (its bars and all 40 px up), since its position is kept
+	// relative to its tile.
+	engine
+		.run_script(&format!("::Tactical.getEntityByID({id}).getTile().Level += 1;"), "raise")
+		.expect("raise its tile");
+	let (pos, raised) = rising(&engine, id);
+	assert_eq!(raised, (tile.0, tile.1 + 40.0), "the tile is a level up");
+	assert_eq!(pos, raised, "the unit stands on its raised tile");
+	engine
+		.run_script(
+			&format!(
+				"local e = ::Tactical.getEntityByID({id}); \
+				 local p = e.getPos(), t = e.getTile().Pos, r = e.getRelativePos(); \
+				 if (p.X != t.X || p.Y != t.Y) throw \"getPos \" + p.X + \",\" + p.Y + \" is not the raised tile's \" + t.X + \",\" + t.Y; \
+				 if (r.X != 0 || r.Y != 0) throw \"getRelativePos \" + r.X + \",\" + r.Y;"
+			),
+			"raised positions",
+		)
+		.expect("raised positions");
 }

@@ -181,8 +181,12 @@ struct UnitRecord {
 	portrait_offsets: bool,
 	/// The bars over a unit and its status icons (`createOverlay`; see `overlay`).
 	overlay: Option<overlay::Overlay>,
-	/// `getPos`/`setPos` world position (0,0 while off any map, like the original).
-	pos: (f64, f64),
+	/// Its position relative to [`TacticalMachine::pos_origin`] (its tile's world
+	/// position while it stands on one): the original's scene node's local position,
+	/// which `setPos` writes and `getRelativePos` reads. Where it is drawn and `getPos`
+	/// follow its tile, so a unit rises and sinks with a tile a script raises or lowers
+	/// under it (see [`TacticalMachine::world_pos`]).
+	local: (f64, f64),
 	/// The battle tile it stands on, if placed.
 	tile: Option<usize>,
 	/// `isActor()`: a unit (its class derives from `actor`) rather than a map object.
@@ -264,12 +268,19 @@ impl TacticalMachine {
 	/// node's local position, which `setPos` writes (`0x542070`) and `getRelativePos`
 	/// reads, and `getPos` (`0x4c2c30`) adds the tile's world position to it unless the
 	/// unit is unplaced or in the flight layer (flag `0x800000`). Ours keeps the world
-	/// position (`UnitRecord::pos`, what the renderer draws).
+	/// position, so ours keeps the local one (`UnitRecord::local`).
 	fn pos_origin(&self, rec: &UnitRecord) -> (f64, f64) {
 		match (rec.tile, &self.grid) {
 			(Some(t), Some(grid)) if !rec.flying => grid.borrow().tiles.get(t).map_or((0.0, 0.0), |t| t.world_pos()),
 			_ => (0.0, 0.0),
 		}
+	}
+
+	/// Where the unit is in the world (`getPos`, and where it is drawn): its local
+	/// position from its tile's world position as the tile is now, its level included.
+	fn world_pos(&self, rec: &UnitRecord) -> (f64, f64) {
+		let origin = self.pos_origin(rec);
+		(origin.0 + rec.local.0, origin.1 + rec.local.1)
 	}
 }
 
@@ -327,7 +338,7 @@ fn create_unit(
 			portrait_offsets: false,
 			discovered: false,
 			blocks_sight: false,
-			pos: (0.0, 0.0),
+			local: (0.0, 0.0),
 			tile: None,
 			is_actor,
 			dead: false,
@@ -612,16 +623,21 @@ impl Units {
 
 	/// Show the unit at `pos` (world units, y up), where a move has it now.
 	pub fn set_pos(&self, identity: i64, pos: (f64, f64)) {
-		if let Some(r) = self.0.borrow_mut().record_mut(identity) {
-			r.pos = pos;
-		}
+		let mut m = self.0.borrow_mut();
+		let Some(&idx) = m.by_identity.get(&identity) else { return };
+		let origin = m.pos_origin(&m.units[idx]);
+		m.units[idx].local = (pos.0 - origin.0, pos.1 - origin.1);
 	}
 
-	/// The unit is in the air between two tiles, or back on one.
+	/// The unit is in the air between two tiles, or back on one; it stays where it is
+	/// in the world.
 	pub fn set_flying(&self, identity: i64, flying: bool) {
-		if let Some(r) = self.0.borrow_mut().record_mut(identity) {
-			r.flying = flying;
-		}
+		let mut m = self.0.borrow_mut();
+		let Some(&idx) = m.by_identity.get(&identity) else { return };
+		let at = m.world_pos(&m.units[idx]);
+		m.units[idx].flying = flying;
+		let origin = m.pos_origin(&m.units[idx]);
+		m.units[idx].local = (at.0 - origin.0, at.1 - origin.1);
 	}
 
 	/// End the unit's shake (`Tactical.getShaker().cancel(unit)`).
@@ -845,10 +861,7 @@ impl TacticalEntities {
 			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
 				let (x, y) = {
 					let m = m.borrow();
-					m.record(vm.this_identity()).map_or((0.0, 0.0), |r| {
-						let origin = m.pos_origin(r);
-						(r.pos.0 - origin.0, r.pos.1 - origin.1)
-					})
+					m.record(vm.this_identity()).map_or((0.0, 0.0), |r| r.local)
 				};
 				let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("createVec missing")?;
 				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
@@ -1000,7 +1013,10 @@ impl TacticalEntities {
 		let get_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
-				let (x, y) = m.borrow().record(vm.this_identity()).map_or((0.0, 0.0), |r| r.pos);
+				let (x, y) = {
+					let m = m.borrow();
+					m.record(vm.this_identity()).map_or((0.0, 0.0), |r| m.world_pos(r))
+				};
 				let create_vec = SqTable::root(vm)
 					.get::<SqStrongRef>("createVec")
 					.ok_or("getPos: createVec missing")?;
@@ -1016,8 +1032,7 @@ impl TacticalEntities {
 				// rise from (0, -200) to (0, 0) under their tile.
 				let mut m = m.borrow_mut();
 				let Some(&idx) = m.by_identity.get(&vm.this_identity()) else { return };
-				let origin = m.pos_origin(&m.units[idx]);
-				m.units[idx].pos = (origin.0 + x, origin.1 + y);
+				m.units[idx].local = (x, y);
 			})
 		};
 
@@ -1325,7 +1340,7 @@ impl TacticalEntities {
 			.filter(|u| !u.dead && u.tile.is_some())
 			.map(|u| crate::scene::tactical::SceneTacticalEntity {
 				id: u.id,
-				pos: u.pos,
+				pos: m.world_pos(u),
 				tile: u.tile,
 				flying: u.flying,
 				visible_in_fog: u.visible_in_fog,

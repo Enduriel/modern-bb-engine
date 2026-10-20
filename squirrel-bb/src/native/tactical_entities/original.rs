@@ -103,7 +103,7 @@ impl TacticalEntities {
 			if m.ids.peek() <= id {
 				m.ids.restore(id + 1);
 			}
-			m.units[idx].pos = (head.pos.0.into(), head.pos.1.into());
+			m.units[idx].local = (head.pos.0.into(), head.pos.1.into());
 		}
 		unit.call_method(vm, "onInit", ())?;
 		ignore_missing(unit.call_method(vm, "onAfterInit", ()))?;
@@ -145,7 +145,7 @@ impl TacticalEntities {
 				out.push(SavedUnit {
 					head: Head {
 						id: rec.id as u32,
-						pos: (rec.pos.0 as f32, rec.pos.1 as f32),
+						pos: { let p = m.world_pos(rec); (p.0 as f32, p.1 as f32) },
 						z: 0,
 						i14: 0,
 						rotation: 0.0,

@@ -19,5 +19,6 @@ battle_occlusion 0.1
 battle_occlusion_cut 0.1
 battle_orientation 0.1
 battle_orientation_hidden 0.1
+battle_icons 0.1
 # Zoomed in to 0.5: the idle animation moves four times the pixels.
 battle_orientation_offscreen 0.3

@@ -3,7 +3,9 @@
 //! - icons (`spawnIconEffect`, what a skill or a status shows over a tile): they queue
 //!   per tile, so a tile's icons show one after another; each shows at its tile plus
 //!   the offset, fades in, stays and fades out over the given milliseconds of virtual
-//!   time, moving by its movement each second (`0x4d0ea0`, `0x4bbec0`);
+//!   time, moving by its movement each second (`0x4d0ea0`, `0x4bbec0`). Unlike every
+//!   other effect, an icon's sprite ignores the battle's light (`0x4bbe20` sets its
+//!   `IgnoreAmbientColor` bit), so it shows at full brightness at night;
 //! - attacks (`spawnAttackEffect`, the slash over a target): the same phases at once,
 //!   moving by one movement until a switch time and by another after (`0x4d1010`,
 //!   `0x4b8af0`);
@@ -46,6 +48,8 @@ struct Floating {
 	/// Units per second: the first until `switch` seconds in, the second after.
 	moves: [(f32, f32); 2],
 	switch: f32,
+	/// Drawn without the battle's light (icons, not attacks).
+	unlit: bool,
 }
 
 impl Floating {
@@ -117,6 +121,7 @@ impl BattleEffects {
 			phases,
 			moves: [movement, (0.0, 0.0)],
 			switch: f32::INFINITY,
+			unlit: true,
 		});
 	}
 
@@ -131,6 +136,7 @@ impl BattleEffects {
 			phases,
 			moves,
 			switch: switch_ms * 0.001,
+			unlit: false,
 		});
 	}
 
@@ -209,6 +215,7 @@ impl BattleEffects {
 				saturation: 1.0,
 				mirrored: false,
 				brush_offset: false,
+				unlit: f.unlit,
 			});
 		}
 		for s in &self.sprites {
@@ -222,6 +229,7 @@ impl BattleEffects {
 				saturation: 1.0,
 				mirrored: false,
 				brush_offset: false,
+				unlit: false,
 			});
 		}
 		for p in &self.projectiles {
@@ -234,6 +242,7 @@ impl BattleEffects {
 				saturation: 1.0,
 				mirrored: p.flipped,
 				brush_offset: true,
+				unlit: false,
 			});
 		}
 		// Heads in flight over the battle; landed ones on the ground, below.
@@ -257,6 +266,7 @@ impl BattleEffects {
 					saturation: l.saturation,
 					mirrored: l.flipped,
 					brush_offset: true,
+					unlit: false,
 				});
 			}
 		}
@@ -337,6 +347,16 @@ mod tests {
 		let (shown, _) = e.scene(10.9, |_| None, |_| None);
 		let names: Vec<_> = shown.iter().map(|s| s.brush.as_str()).collect();
 		assert_eq!(names, ["b"], "a and c are over");
+	}
+
+	#[test]
+	fn icons_ignore_the_battles_light_and_attacks_take_it() {
+		let mut e = effects();
+		e.spawn_icon("icon".into(), 7, (0.0, 0.0), 1.0, ICON, (0.0, 0.0), 0.0);
+		e.spawn_attack("attack".into(), (0.0, 0.0), ICON, [(0.0, 0.0); 2], 100.0, 0.0);
+		let (shown, _) = e.scene(0.2, |_| None, |_| None);
+		let unlit: Vec<_> = shown.iter().map(|s| (s.brush.as_str(), s.unlit)).collect();
+		assert_eq!(unlit, [("icon", true), ("attack", false)], "0x4bbe20 flags only the icon's sprite");
 	}
 
 	#[test]

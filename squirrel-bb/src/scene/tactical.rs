@@ -41,7 +41,8 @@ pub struct TacticalScene {
 	pub path: Vec<ScenePathStep>,
 	/// The marks on the tiles map objects stand on, shown with the
 	/// `HighlightBlockedTiles` setting, in the effects layer (`zone_target_overlay` at
-	/// alpha 0xa8).
+	/// alpha 0xa8, without the battle's light: `0x4cfedd` sets their
+	/// `IgnoreAmbientColor` bit).
 	pub blocked_tiles: Vec<SceneOverlayIcon>,
 	/// The rain's drops (or snow's, or leaves'), in the effects layer: white sprites
 	/// falling through the camera's view.
@@ -136,6 +137,10 @@ pub struct SceneEffect {
 	/// Placed by its brush's offset (projectiles), or without it (icons, attacks and
 	/// sprite effects, which the original flags so).
 	pub brush_offset: bool,
+	/// Drawn without the battle's light (`IgnoreAmbientColor`): the icons, which the
+	/// original flags so (`0x4bbe20`); attacks, sprite effects, projectiles and heads
+	/// take the light.
+	pub unlit: bool,
 }
 
 /// A pool on the ground, as drawn now.

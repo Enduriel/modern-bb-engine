@@ -35,7 +35,7 @@ pub(super) struct Shake {
 	unit: usize,
 	/// Virtual seconds when it started.
 	start: f32,
-	/// Where the unit stood then.
+	/// Where the unit stood then (its local position, see `UnitRecord::local`).
 	orig: (f32, f32),
 	dir: (f32, f32),
 	amp: (f32, f32),
@@ -176,7 +176,7 @@ fn shake(m: &Machine, vm: &SQVM, entity: &SqStrongRef, tile: &SqStrongRef, a: Ar
 		let g = grid.borrow();
 		let src = tactical_grid::tile_id_of(&grid, vm, tile).and_then(|id| g.tiles.get(id)).map(|t| t.world_pos());
 		let rec = &machine.units[unit];
-		let own = rec.tile.and_then(|id| g.tiles.get(id)).map_or(rec.pos, |t| t.world_pos());
+		let own = rec.tile.and_then(|id| g.tiles.get(id)).map_or(rec.local, |t| t.world_pos());
 		(src.ok_or("shake: not a tile")?, own)
 	};
 	let (src, own) = ((src.0 as f32, src.1 as f32), (own.0 as f32, own.1 as f32));
@@ -222,7 +222,7 @@ fn shake(m: &Machine, vm: &SQVM, entity: &SqStrongRef, tile: &SqStrongRef, a: Ar
 	let mut s = Shake {
 		unit,
 		start,
-		orig: (rec.pos.0 as f32, rec.pos.1 as f32),
+		orig: (rec.local.0 as f32, rec.local.1 as f32),
 		dir,
 		amp,
 		out,
@@ -328,7 +328,7 @@ fn lerp_color(from: u32, to: u32, t: f32) -> u32 {
 
 /// The unit `t` of the way out.
 fn apply(m: &mut TacticalMachine, vm: &SQVM, s: &Shake, t: f32) {
-	m.units[s.unit].pos = (f64::from(s.orig.0 + s.dir.0 * s.amp.0 * t), f64::from(s.orig.1 + s.dir.1 * s.amp.1 * t));
+	m.units[s.unit].local = (f64::from(s.orig.0 + s.dir.0 * s.amp.0 * t), f64::from(s.orig.1 + s.dir.1 * s.amp.1 * t));
 	if s.color.is_none() && s.factor.is_none() && s.saturation.is_none() {
 		return;
 	}
@@ -354,7 +354,7 @@ fn end(m: &mut TacticalMachine, vm: &SQVM, s: &Shake) {
 	if s.color.is_some() || s.factor.is_some() || s.saturation.is_some() {
 		restore_colors(m, vm, s.unit, Layers::Mask(s.mask));
 	}
-	m.units[s.unit].pos = (f64::from(s.orig.0), f64::from(s.orig.1));
+	m.units[s.unit].local = (f64::from(s.orig.0), f64::from(s.orig.1));
 }
 
 /// Set `Tactical.getShaker()`, and move the shakes in `Tactical.update()` (after what it

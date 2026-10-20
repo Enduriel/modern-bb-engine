@@ -41,6 +41,8 @@ local mode = ::Settings.getVideoMode();
 	{ scene = "orientZoom", shot = null, until = null, click = null },
 	{ scene = "orientOff", shot = "battle_orientation_offscreen", until = null, click = null },
 	{ scene = "occlClear", shot = null, until = null, click = null },
+	{ scene = "icons", shot = "battle_icons", until = null, click = null },
+	{ scene = "iconsClear", shot = null, until = null, click = null },
 	{ scene = "winBattle", shot = "battle_results", until = "resultsShown", click = "Continue" },
 	{ scene = null, shot = "battle_loot", until = null, click = null }
 ];
@@ -594,6 +596,37 @@ local function overlayNote()
 		foreach( e in ::probeOccl )
 			if (e.isAlive()) e.die();
 		::Tactical.getCamera().setPos(::probeEffectsCamera.tile.Pos);
+		::Tactical.getCamera().Level = ::probeEffectsCamera.level;
+	}
+	else if (_scene == "icons")
+	{
+		// What the night's light doesn't reach, and a unit on a tile a script raises.
+		// Virtual time is still frozen. Over the effects' middle ground: a skill's icon
+		// (which the original draws unlit) and the same brush as an attack effect (lit),
+		// side by side; the marks on the tiles map objects stand on (the topbar's
+		// toggle, unlit too). The second brother's tile raised a level: he and his bars
+		// stand on it, his getPos with it.
+		local tile = ::probeEffectsCamera.tile;
+		local s = ::Const.Tactical.Settings;
+		::Tactical.spawnIconEffect("status_effect_00", tile.getNextTile(5), s.SkillIconOffsetX, s.SkillIconOffsetY, s.SkillIconScale, s.SkillIconFadeInDuration, s.SkillIconStayDuration, s.SkillIconFadeOutDuration, s.SkillIconMovement);
+		::Tactical.spawnAttackEffect("status_effect_00", tile.getNextTile(1), s.SkillIconOffsetX, s.SkillIconOffsetY, 100, 500, 100, ::createVec(0, 0), 1000, ::createVec(0, 0), false);
+		::Tactical.setBlockedTileHighlightsVisibility(true);
+		local bros = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player).slice(0);
+		bros.sort(function ( _a, _b ) { return _a.getID() <=> _b.getID(); });
+		local bro = bros[1];
+		local t = bro.getTile();
+		local before = bro.getPos();
+		t.Level += 1;
+		local after = bro.getPos(), rel = bro.getRelativePos();
+		::probeRaised <- t;
+		::Tactical.getCamera().Level = 3;
+		note = "brother " + t.SquareCoords.X + "," + t.SquareCoords.Y + " level " + t.Level + " getPos " + before.X + "," + before.Y
+			+ " -> " + after.X + "," + after.Y + " rel " + rel.X + "," + rel.Y + " tile Pos " + t.Pos.X + "," + t.Pos.Y;
+	}
+	else if (_scene == "iconsClear")
+	{
+		::Tactical.setBlockedTileHighlightsVisibility(::Settings.getTempGameplaySettings().HighlightBlockedTiles);
+		::probeRaised.Level -= 1;
 		::Tactical.getCamera().Level = ::probeEffectsCamera.level;
 	}
 	else if (_scene == "winBattle")

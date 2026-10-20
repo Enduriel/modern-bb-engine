@@ -526,7 +526,8 @@ fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, overlay: &SceneOv
 }
 
 /// One of the battle's effects (see `battle_effects`). Icons, attacks and sprite effects
-/// sit where they are without their brush's offset, as the original flags them.
+/// sit where they are without their brush's offset, as the original flags them; icons
+/// ignore the battle's light.
 fn draw_effect(b: &mut Builder, effect: &SceneEffect, level: u32) {
 	let [a, r, g, b_] = effect.color.to_be_bytes();
 	let look = Look {
@@ -541,7 +542,11 @@ fn draw_effect(b: &mut Builder, effect: &SceneEffect, level: u32) {
 		let offset = b.brush_offset(&effect.brush);
 		at = [at[0] - offset[0] * effect.scale, at[1] - offset[1] * effect.scale];
 	}
+	let before = b.quads.len();
 	b.placed(&effect.brush, at, look, effect.saturation, level);
+	for quad in &mut b.quads[before..] {
+		quad.flags = crate::world::unlit(effect.unlit);
+	}
 }
 
 /// The battle's clouds or fog over everything, each with its shadow, as the world's
@@ -644,8 +649,9 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	}
 	// The marks on the tiles map objects stand on (`HighlightBlockedTiles`): sprites in
 	// the effects layer, made at the battle's setup before anything else there (so over
-	// the map, its highlights, footsteps and trees), sharp, and desaturated while the
-	// player can't see their tile (`0x4cfe9b`, `0x4b94bf`).
+	// the map, its highlights, footsteps and trees), sharp, desaturated while the
+	// player can't see their tile, and without the battle's light (`0x4cfe9b`,
+	// `0x4b94bf`; `0x4cfedd` sets their `IgnoreAmbientColor` bit).
 	for mark in &scene.blocked_tiles {
 		let seen = mark.tile.and_then(|t| scene.tiles.get(t)).is_none_or(|t| t.visible);
 		let saturation = if seen { 1.0 } else { FOGGED_SATURATION };
@@ -655,7 +661,11 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 			tint: [r, g, b_],
 			..Look::PLAIN
 		};
+		let before = b.quads.len();
 		b.placed(&mark.brush, [mark.pos.0, mark.pos.1], look, saturation, overlay_level);
+		for quad in &mut b.quads[before..] {
+			quad.flags = crate::world::unlit(true);
+		}
 	}
 	// A unit in the air is in the original's effects layer, drawn after the tiles and
 	// first in that layer (its box always stays in the layer's root): over everything
@@ -974,7 +984,34 @@ mod tests {
 			let seen = quads[m].corners[0][0] > 60.0;
 			assert_eq!(quads[m].color[3], 0xa8);
 			assert_eq!(quads[m].saturation, if seen { 1.0 } else { FOGGED_SATURATION }, "seen: {seen}");
+			assert_eq!(quads[m].flags, crate::world::unlit(true), "without the battle's light (0x4cfedd)");
 		}
+	}
+
+	#[test]
+	fn icon_effects_ignore_the_battles_light_and_other_effects_take_it() {
+		let effect = |brush: &str, unlit: bool| SceneEffect {
+			brush: brush.into(),
+			pos: (120.0, 0.0),
+			scale: 1.0,
+			rotation: 0.0,
+			color: 0xffff_ffff,
+			saturation: 1.0,
+			mirrored: false,
+			brush_offset: false,
+			unlit,
+		};
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![tile(0, true), tile(1, true)],
+			effects: vec![effect("icon", true), effect("mark", false)],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let flags = |name: &str| quads.iter().find(|q| name_of(q) == name).map(|q| q.flags);
+		assert_eq!(flags("icon"), Some(crate::world::unlit(true)), "an icon (0x4bbe20)");
+		assert_eq!(flags("mark"), Some(crate::world::unlit(false)), "an attack, a sprite effect, a projectile");
 	}
 
 	#[test]

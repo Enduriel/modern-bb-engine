@@ -13,7 +13,8 @@ type Machine = Rc<RefCell<TacticalMachine>>;
 
 /// Put unit `idx` on tile `tile` (an actor or an object) as the original's set-tile does:
 /// leave the old tile (if it was ours), claim the new one only if it's free (a second
-/// entity on a tile doesn't displace the first), and stand at the tile's centre.
+/// entity on a tile doesn't displace the first), and stand at the tile's centre (local
+/// position 0, which follows the tile's level).
 pub(super) fn place(m: &Machine, idx: usize, tile: usize, is_actor: bool) -> Result<(), String> {
 	let mut machine = m.borrow_mut();
 	let grid = machine.grid.clone().ok_or("no battle map")?;
@@ -22,7 +23,7 @@ pub(super) fn place(m: &Machine, idx: usize, tile: usize, is_actor: bool) -> Res
 	if old == Some(tile) {
 		return Ok(());
 	}
-	let pos = {
+	{
 		let mut g = grid.borrow_mut();
 		if let Some(o) = old {
 			release(&mut g.tiles[o], &entity);
@@ -31,11 +32,10 @@ pub(super) fn place(m: &Machine, idx: usize, tile: usize, is_actor: bool) -> Res
 		if t.occupant.is_none() {
 			t.occupant = Some((entity, is_actor));
 		}
-		t.world_pos()
-	};
+	}
 	let rec = &mut machine.units[idx];
 	rec.tile = Some(tile);
-	rec.pos = pos;
+	rec.local = (0.0, 0.0);
 	// Its sprites turn again (see `moving_sprites`).
 	machine.moving.note(machine.owner(idx));
 	Ok(())
@@ -55,7 +55,7 @@ pub(super) fn unplace(m: &Machine, idx: usize) {
 	let Some(tile) = machine.units[idx].tile.take() else {
 		return;
 	};
-	machine.units[idx].pos = (0.0, 0.0);
+	machine.units[idx].local = (0.0, 0.0);
 	let entity = machine.units[idx].entity.clone();
 	if let Some(grid) = machine.grid.clone() {
 		if let Some(t) = grid.borrow_mut().tiles.get_mut(tile) {
