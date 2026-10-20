@@ -21,6 +21,13 @@
 //! - `getExactTime` is a live clock in the original: it moves within a frame
 //!   (probed), and the AI's background task budgets its work with it (~5 ms a frame).
 //!   Which clock it reads here is the host's choice ([`ExactClock`]).
+//!
+//! Event lifetime, as probed and disassembled: the engine never drops a
+//! pending event by itself (not on `World.clearScene`, `Tactical.clearScene`, or a new
+//! campaign); only `Time.clearEvents()` does, for every unit at once. The states'
+//! scripts call it on leaving a campaign, before a load and when a battle ends. Virtual
+//! events freeze while the virtual speed is 0 and keep their absolute deadline when the
+//! clock is reset or set.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,9 +35,19 @@ use std::time::Instant;
 
 use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
+// The script-facing `TimeUnit` values.
 const UNIT_REAL: i64 = 0;
 const UNIT_VIRTUAL: i64 = 1;
 const UNIT_ROUNDS: i64 = 2;
+
+// The original stores an event under its own internal unit, which `hasEventScheduled`
+// compares the script's value against (disassembled, 0x51d2d0/0x51d310): Real 0,
+// Virtual 1, frames 2 (engine-internal events only) and Rounds 3. Value 4 asks for
+// "any event".
+const KIND_REAL: i64 = 0;
+const KIND_VIRTUAL: i64 = 1;
+const KIND_ROUNDS: i64 = 3;
+const HAS_ANY: i64 = 4;
 
 /// The clock behind `Time.getExactTime()`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,7 +65,8 @@ pub enum ExactClock {
 
 /// A scheduled callback: fires when its clock reaches `fire_threshold`.
 struct Event {
-	unit: i64,
+	/// The internal unit (`KIND_*`), not the script's `TimeUnit` value.
+	kind: i64,
 	fire_threshold: f64,
 	callback: SqStrongRef,
 	userdata: SqStrongRef,
@@ -62,7 +80,12 @@ struct TimeState {
 	round: i64,
 	frame: i64,
 	last_delta: f64, // real ms of the last frame
+	/// Pending events in scheduling order, the order a pass fires them in.
 	events: Vec<Event>,
+	/// While a pass fires events (`firing`), new ones wait here and join `events`
+	/// after it, so none fires in the pass that scheduled it.
+	deferred: Vec<Event>,
+	firing: bool,
 	/// Set for [`ExactClock::Live`]: `getExactTime` counts from here.
 	live_origin: Option<Instant>,
 }
@@ -99,23 +122,47 @@ impl TimeService {
 	}
 
 	/// Advance the Real and Virtual clocks by a frame of `real_delta_ms` real
-	/// milliseconds (the host supplies this from its own clock), then fire any due
-	/// Real/Virtual events. Call once per frame.
+	/// milliseconds (the host supplies this from its own clock), then fire every due
+	/// event of all three units. Call once per frame.
+	///
+	/// As the original's pass (`0x5443e0`): one walk over the pending events in
+	/// scheduling order, firing each due one as it is reached (Rounds events too:
+	/// `setRound` only sets the round, they fire here). Events scheduled by a callback
+	/// wait for the next pass. A callback that calls `Time.clearEvents()` drops the
+	/// rest of the pass as well.
 	pub fn tick(&self, vm: &SQVM, real_delta_ms: f64) {
-		let due = {
+		{
 			let mut st = self.state.borrow_mut();
 			st.real_time += real_delta_ms;
 			st.frame += 1;
 			st.last_delta = real_delta_ms;
 			st.virtual_time += st.virtual_speed * real_delta_ms;
-			let (real_now, virtual_now) = (st.real_time, st.virtual_time);
-			drain_due(&mut st.events, |e| match e.unit {
-				UNIT_REAL => real_now >= e.fire_threshold,
-				UNIT_VIRTUAL => virtual_now >= e.fire_threshold,
-				_ => false,
-			})
-		};
-		fire_all(vm, due);
+			st.firing = true;
+		}
+		let mut i = 0;
+		loop {
+			let due = {
+				let mut st = self.state.borrow_mut();
+				let (real_now, virtual_now, round_now) = (st.real_time, st.virtual_time, st.round as f64);
+				let is_due = |e: &Event| match e.kind {
+					KIND_REAL => real_now >= e.fire_threshold,
+					KIND_VIRTUAL => virtual_now >= e.fire_threshold,
+					_ => round_now >= e.fire_threshold, // KIND_ROUNDS
+				};
+				while i < st.events.len() && !is_due(&st.events[i]) {
+					i += 1;
+				}
+				if i >= st.events.len() {
+					break;
+				}
+				st.events.remove(i)
+			};
+			let _ = due.callback.call(vm, (due.userdata,)); // a throwing callback must not abort the frame
+		}
+		let mut st = self.state.borrow_mut();
+		st.firing = false;
+		let deferred = std::mem::take(&mut st.deferred);
+		st.events.extend(deferred);
 	}
 
 	/// Choose the clock behind `getExactTime` (default [`ExactClock::Frame`]).
@@ -128,7 +175,8 @@ impl TimeService {
 
 	/// Number of scheduled events not yet fired (host/test inspection).
 	pub fn pending_events(&self) -> usize {
-		self.state.borrow().events.len()
+		let st = self.state.borrow();
+		st.events.len() + st.deferred.len()
 	}
 
 	/// Real time since boot in seconds (`Time.getRealTimeF()`).
@@ -164,7 +212,12 @@ impl TimeService {
 	/// references). Call before closing the VM if the service might outlive it. The
 	/// same as the script-side `Time.clearEvents()`.
 	pub fn clear(&self) {
-		self.state.borrow_mut().events.clear();
+		// Taken out first: dropping an event's references may run script finalizers.
+		let dropped = {
+			let mut st = self.state.borrow_mut();
+			(std::mem::take(&mut st.events), std::mem::take(&mut st.deferred))
+		};
+		drop(dropped);
 	}
 
 	/// Install the `Time` table and the `TimeUnit` enum into the root.
@@ -219,52 +272,63 @@ impl TimeService {
 				let state = self.state.clone();
 				vm.make_closure(move |seconds: Number| state.borrow_mut().virtual_time = seconds.0 as f32 as f64 * 1000.0)
 			}),
+			// Drops every pending event, of all units, without calling it (0x5446b0;
+			// the original's only caller is this native, so nothing else in the engine
+			// drops events: the states' scripts call it on leaving a campaign or a
+			// battle and before a load).
 			("clearEvents", {
-				let state = self.state.clone();
-				vm.make_closure(move || state.borrow_mut().events.clear())
+				let service = self.clone();
+				vm.make_closure(move || service.clear())
 			}),
+			// Compares against the internal unit (see `KIND_*`), so `Rounds` (2) asks
+			// for frame events and is false for scheduled Rounds events, 3 finds those,
+			// and 4 is "any event". Events scheduled during the running pass don't
+			// count yet (disassembled, 0x51d2d0).
 			("hasEventScheduled", {
 				let state = self.state.clone();
 				vm.make_closure(move |unit: i64| {
-					state.borrow().events.iter().any(|e| e.unit == unit)
+					let st = state.borrow();
+					if unit == HAS_ANY {
+						!st.events.is_empty()
+					} else {
+						st.events.iter().any(|e| e.kind == unit)
+					}
 				})
 			}),
+			// Only sets the round: due Rounds events fire in the next frame's pass
+			// (0x51d290).
 			("setRound", {
 				let state = self.state.clone();
-				vm.make_closure(move |vm: &SQVM, round: i64| {
-					// Setting the round fires any due Rounds events.
-					let due = {
-						let mut st = state.borrow_mut();
-						st.round = round;
-						let now = round as f64;
-						drain_due(&mut st.events, |e| {
-							e.unit == UNIT_ROUNDS && now >= e.fire_threshold
-						})
-					};
-					fire_all(vm, due);
-				})
+				vm.make_closure(move |round: i64| state.borrow_mut().round = round)
 			}),
 			("scheduleEvent", {
 				let state = self.state.clone();
 				vm.make_closure(
 					move |unit: i64, delay: Number, callback: SqStrongRef, userdata: Retained| {
 						let mut st = state.borrow_mut();
+						// Any other unit schedules nothing (0x51d310).
+						let kind = match unit {
+							UNIT_REAL => KIND_REAL,
+							UNIT_VIRTUAL => KIND_VIRTUAL,
+							UNIT_ROUNDS => KIND_ROUNDS,
+							_ => return,
+						};
 						// Whole milliseconds (rounds), as the original: the clock's integer
 						// value (what getVirtualTime/getRealTime read) plus the delay
 						// truncated (disassembled). So an AI that waits `getVirtualTime() +
 						// d` and a hit due `d` later fall due together, and the event
 						// fires first (events fire at the start of the frame).
-						let base = match unit {
-							UNIT_VIRTUAL => st.virtual_time.trunc(),
-							UNIT_ROUNDS => st.round as f64,
-							_ => st.real_time.trunc(), // UNIT_REAL and anything else
+						let base = match kind {
+							KIND_VIRTUAL => st.virtual_time.trunc(),
+							KIND_ROUNDS => st.round as f64,
+							_ => st.real_time.trunc(),
 						};
-						st.events.push(Event {
-							unit,
-							fire_threshold: base + delay.0.trunc(),
-							callback,
-							userdata: userdata.0,
-						});
+						let event = Event { kind, fire_threshold: base + delay.0.trunc(), callback, userdata: userdata.0 };
+						if st.firing {
+							st.deferred.push(event);
+						} else {
+							st.events.push(event);
+						}
 					},
 				)
 			}),
@@ -281,32 +345,6 @@ impl TimeService {
 		time_unit.set("Virtual", UNIT_VIRTUAL);
 		time_unit.set("Rounds", UNIT_ROUNDS);
 		SqTable::root(vm).set("TimeUnit", time_unit);
-	}
-}
-
-/// Remove and return the `(callback, userdata)` of every event matching `due`.
-fn drain_due(
-	events: &mut Vec<Event>,
-	due: impl Fn(&Event) -> bool,
-) -> Vec<(SqStrongRef, SqStrongRef)> {
-	let mut fired = Vec::new();
-	let mut i = 0;
-	while i < events.len() {
-		if due(&events[i]) {
-			let e = events.remove(i);
-			fired.push((e.callback, e.userdata));
-		} else {
-			i += 1;
-		}
-	}
-	fired
-}
-
-/// Invoke each due callback as `callback(userdata)`. Errors are swallowed: a
-/// scheduled callback that throws must not abort the frame.
-fn fire_all(vm: &SQVM, due: Vec<(SqStrongRef, SqStrongRef)>) {
-	for (callback, userdata) in due {
-		let _ = callback.call(vm, (userdata,));
 	}
 }
 

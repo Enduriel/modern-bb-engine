@@ -191,25 +191,25 @@ fn schedule_event_virtual_respects_speed() {
 }
 
 #[test]
-fn schedule_event_rounds_fires_on_set_round() {
+fn schedule_event_rounds_fires_in_the_next_pass() {
+	// `setRound` only sets the round (0x51d290); a due Rounds event fires in the next
+	// frame's pass, as Real and Virtual ones do (0x5443e0).
 	let (vm, time) = setup();
-	let _ = time; // rounds advance via Time.setRound, not tick
 	vm.run_script(
 		r#"
 		::round_fired <- false;
 		Time.scheduleEvent(TimeUnit.Rounds, 2, function (_u) { ::round_fired = true; }, null);
+		Time.setRound(1);
 		"#,
 		"sched_r",
 	)
 	.expect("scheduled rounds");
-	vm.run_script("Time.setRound(1);", "r1").expect("round 1");
-	vm.run_script("assert(::round_fired == false);", "r1_check")
-		.expect("not due at round 1");
-	vm.run_script("Time.setRound(2);", "r2").expect("round 2");
-	vm.run_script("assert(::round_fired == true);", "r2_check")
-		.expect("fired at round 2");
-	vm.run_script("assert(Time.getRound() == 2);", "round_now")
-		.expect("round updated");
+	time.tick(&vm, 16.0);
+	vm.run_script("assert(::round_fired == false);", "r1_check").expect("not due at round 1");
+	vm.run_script("Time.setRound(2); assert(::round_fired == false);", "r2").expect("setRound doesn't fire");
+	time.tick(&vm, 16.0);
+	vm.run_script("assert(::round_fired == true); assert(Time.getRound() == 2);", "r2_check")
+		.expect("fired in the pass after round 2");
 }
 
 #[test]
@@ -262,4 +262,150 @@ fn bound_callback_keeps_its_environment() {
 	time.tick(&vm, 20.0);
 	vm.run_script("assert(::obj.result == 12);", "bound_check")
 		.expect("bound `this` (7) + userdata (5) == 12");
+}
+
+#[test]
+fn has_event_scheduled_compares_the_internal_unit() {
+	// The original stores Rounds events under internal unit 3 and compares the script's
+	// value against it; 4 means any event (disassembled 0x51d2d0, probed).
+	let (vm, _time) = setup();
+	vm.run_script(
+		r#"
+		assert(!Time.hasEventScheduled(4));
+		Time.scheduleEvent(TimeUnit.Rounds, 1, function (_u) {}, null);
+		assert(!Time.hasEventScheduled(TimeUnit.Rounds));
+		assert(Time.hasEventScheduled(3));
+		assert(Time.hasEventScheduled(4));
+		assert(!Time.hasEventScheduled(TimeUnit.Real));
+		Time.scheduleEvent(TimeUnit.Virtual, 1, function (_u) {}, null);
+		assert(Time.hasEventScheduled(TimeUnit.Virtual));
+		"#,
+		"has",
+	)
+	.expect("hasEventScheduled units");
+}
+
+#[test]
+fn unknown_unit_schedules_nothing() {
+	let (vm, time) = setup();
+	vm.run_script(
+		r#"
+		::u <- false;
+		Time.scheduleEvent(3, 0, function (_u) { ::u = true; }, null);
+		Time.scheduleEvent(7, 0, function (_u) { ::u = true; }, null);
+		assert(!Time.hasEventScheduled(4));
+		"#,
+		"bad_units",
+	)
+	.expect("unknown units");
+	assert_eq!(time.pending_events(), 0);
+	vm.run_script("Time.setRound(100);", "round").unwrap();
+	time.tick(&vm, 1000.0);
+	vm.run_script("assert(::u == false);", "check").expect("never fired");
+}
+
+#[test]
+fn a_pass_fires_in_scheduling_order() {
+	// One walk over the pending events in scheduling order, not deadline order.
+	let (vm, time) = setup();
+	vm.run_script(
+		r#"
+		::order <- [];
+		Time.scheduleEvent(TimeUnit.Real, 300, function (_u) { ::order.push("a300"); }, null);
+		Time.scheduleEvent(TimeUnit.Real, 100, function (_u) { ::order.push("b100"); }, null);
+		Time.scheduleEvent(TimeUnit.Rounds, 1, function (_u) { ::order.push("c_round"); }, null);
+		Time.setRound(1);
+		"#,
+		"sched",
+	)
+	.unwrap();
+	time.tick(&vm, 500.0);
+	vm.run_script(r#"assert(::order.len() == 3 && ::order[0] == "a300" && ::order[1] == "b100" && ::order[2] == "c_round");"#, "check")
+		.expect("scheduling order");
+}
+
+#[test]
+fn an_event_scheduled_by_a_callback_waits_for_the_next_pass() {
+	let (vm, time) = setup();
+	vm.run_script(
+		r#"
+		::child <- false;
+		Time.scheduleEvent(TimeUnit.Real, 0, function (_u) {
+			Time.scheduleEvent(TimeUnit.Real, 0, function (_u) { ::child = true; }, null);
+			// Not counted until the pass ends (the original keeps it on a side list).
+			::seen <- Time.hasEventScheduled(TimeUnit.Real);
+		}, null);
+		"#,
+		"sched",
+	)
+	.unwrap();
+	time.tick(&vm, 16.0);
+	vm.run_script("assert(::child == false); assert(::seen == false);", "same_pass").expect("not in the same pass");
+	assert_eq!(time.pending_events(), 1);
+	time.tick(&vm, 16.0);
+	vm.run_script("assert(::child == true);", "next_pass").expect("fired in the next pass");
+}
+
+#[test]
+fn clear_events_in_a_callback_drops_the_rest_of_the_pass() {
+	// What loading a campaign from a scheduled callback does (onBeforeDeserialize calls
+	// Time.clearEvents()). The original frees the events under its own pass there
+	// (undefined behaviour, it has crashed); we drop them, due or not.
+	let (vm, time) = setup();
+	vm.run_script(
+		r#"
+		::fired <- [];
+		Time.scheduleEvent(TimeUnit.Real, 0, function (_u) {
+			::fired.push("first");
+			Time.scheduleEvent(TimeUnit.Real, 0, function (_u) { ::fired.push("scheduled_before_clear"); }, null);
+			Time.clearEvents();
+			Time.scheduleEvent(TimeUnit.Real, 0, function (_u) { ::fired.push("scheduled_after_clear"); }, null);
+		}, null);
+		Time.scheduleEvent(TimeUnit.Real, 0, function (_u) { ::fired.push("second"); }, null);
+		Time.scheduleEvent(TimeUnit.Virtual, 0, function (_u) { ::fired.push("virtual"); }, null);
+		"#,
+		"sched",
+	)
+	.unwrap();
+	time.tick(&vm, 16.0);
+	vm.run_script(r#"assert(::fired.len() == 1 && ::fired[0] == "first");"#, "pass").expect("rest of the pass dropped");
+	time.tick(&vm, 16.0);
+	vm.run_script(r#"assert(::fired.len() == 2 && ::fired[1] == "scheduled_after_clear");"#, "next").expect("only the post-clear event survives");
+	assert_eq!(time.pending_events(), 0);
+}
+
+#[test]
+fn clear_events_drops_every_unit_and_nothing_else_does() {
+	// Real time runs on, Virtual events freeze at speed 0 and fire when it resumes;
+	// only clearEvents drops anything.
+	let (vm, time) = setup();
+	vm.run_script(
+		r#"
+		::fired <- [];
+		Time.setVirtualSpeed(0.0);
+		Time.scheduleEvent(TimeUnit.Virtual, 100, function (_u) { ::fired.push("virtual"); }, null);
+		Time.scheduleEvent(TimeUnit.Real, 100, function (_u) { ::fired.push("real"); }, null);
+		"#,
+		"sched",
+	)
+	.unwrap();
+	time.tick(&vm, 1000.0);
+	vm.run_script(r#"assert(::fired.len() == 1 && ::fired[0] == "real");"#, "paused").expect("virtual frozen");
+	vm.run_script("Time.setVirtualSpeed(1.0);", "resume").unwrap();
+	time.tick(&vm, 100.0);
+	vm.run_script(r#"assert(::fired.len() == 2 && ::fired[1] == "virtual");"#, "resumed").expect("virtual resumes");
+	vm.run_script(
+		r#"
+		Time.scheduleEvent(TimeUnit.Real, 10, function (_u) { ::fired.push("x"); }, null);
+		Time.scheduleEvent(TimeUnit.Virtual, 10, function (_u) { ::fired.push("x"); }, null);
+		Time.scheduleEvent(TimeUnit.Rounds, 1, function (_u) { ::fired.push("x"); }, null);
+		Time.clearEvents();
+		assert(!Time.hasEventScheduled(4));
+		Time.setRound(5);
+		"#,
+		"clear",
+	)
+	.unwrap();
+	time.tick(&vm, 1000.0);
+	vm.run_script("assert(::fired.len() == 2);", "cleared").expect("all units dropped");
 }
