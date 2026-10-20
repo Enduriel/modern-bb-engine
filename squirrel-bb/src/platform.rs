@@ -1,5 +1,5 @@
 //! Where things are on this machine: the original game's install, the documents folder
-//! it saves in, the developer's copies of its saves, and this engine's own saves. The
+//! it saves in, the developer's copies of its saves, and this engine's own saves and log. The
 //! first step of the platform layer: the original's paths are Linux with
 //! Steam (the original under Proton) for now, ours are each system's; each path can be
 //! overridden from the environment.
@@ -53,6 +53,13 @@ pub fn saves_dir() -> Option<PathBuf> {
 	std::env::var_os("BB_SAVES_DIR")
 		.map(PathBuf::from)
 		.or_else(|| Some(data_home()?.join(FOLDER).join("savegames")))
+}
+
+/// Where this engine keeps its log (`log.html`, CEF's `cef.log`, and `logs/` with the
+/// earlier sessions' logs): `$BB_LOGS_DIR`, else our folder in the per-user data folder
+/// (beside `savegames`). Never the original's folder.
+pub fn logs_dir() -> Option<PathBuf> {
+	std::env::var_os("BB_LOGS_DIR").map(PathBuf::from).or_else(|| Some(data_home()?.join(FOLDER)))
 }
 
 #[cfg(windows)]

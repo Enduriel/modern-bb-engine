@@ -2,7 +2,7 @@
 //! starts at the main menu, exits cleanly, and the scripts' video mode is put on it as they set it. Skips
 //! cleanly without gamescope or the Steam install, or when gamescope can't start (no
 //! display, no runtime folder). Each run waits its turn behind the probes' games
-//! ([`bb_engine::game_queue`]).
+//! ([`bb_engine::game_queue`]). Every run logs into its own folder (`--logs`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -61,6 +61,9 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		.arg("--mute")
 		// Tests never start Steam, even with its library beside the test's bb.
 		.arg("--no-steam")
+		// Its log goes to the run's folder, never the player's.
+		.arg("--logs")
+		.arg(dir.join("logs"))
 		.args(args)
 		// Saves (and mods' storages) stay in the run's folder unless it names another:
 		// never the user's.
@@ -277,5 +280,50 @@ fn bb_starts_a_modded_campaign_at_once() {
 	// With the page, the start shows MSU's page as the menu's Start does.
 	if cfg!(feature = "ui") {
 		assert!(run.stderr.contains("player: MSU's new-campaign settings showed"), "{}", run.stderr);
+	}
+}
+
+/// `bb` logs to log.html in the original's format in the folder `--logs` names (with the
+/// page, CEF to cef.log beside it); the next run keeps that log there, zipped, in `logs/`.
+#[test]
+fn bb_writes_its_log_and_keeps_the_last() {
+	let dir = run_dir("logs");
+	let (settings, shot, logs) = (dir.join("settings.cfg"), dir.join("shot.png"), dir.join("logs"));
+	let lines = r#"::logWarning("marked <b>up</b>"); ::Time.scheduleEvent(::TimeUnit.Real, 1, function( _d ) { local probe = null; probe.foo(); }, null);"#;
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--at", "3", lines, "--shot", "20", shot.to_str().unwrap()];
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let first = std::fs::read(logs.join("log.html")).expect("log.html");
+	let html = String::from_utf8_lossy(&first);
+	assert!(html.starts_with("<html><head><title>Battle Brothers 1.5.2.3</title><style type=\"text/css\">body{"), "{html}");
+	assert!(html.contains("<div class=\"tag\">Core</div><div class=\"text\">Using write path: "), "{html}");
+	assert!(html.contains("<div class=\"tag\">SQ</div><div class=\"text\">marked <b>up</b></div></div></div>"), "{html}");
+	assert!(
+		html.contains("<div class=\"tag\">Script Error</div><div class=\"text\">the index 'foo' does not exist</div></div><div class=\"stacktrace-container\">"),
+		"{html}"
+	);
+	assert!(html.contains("<div class=\"valueVar\">probe = Null, _d = Null, this = Table</div>"), "{html}");
+	assert!(html.ends_with("</div></body></html>"), "a clean exit ends the page: {html}");
+	if cfg!(feature = "ui") {
+		assert!(logs.join("cef.log").exists(), "cef.log beside log.html");
+	}
+	// The next run keeps the first's log, zipped alone.
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let kept: Vec<_> = std::fs::read_dir(logs.join("logs")).expect("logs/").flatten().map(|e| e.path()).collect();
+	let zip = kept
+		.iter()
+		.find(|p| p.file_name().unwrap().to_string_lossy().starts_with("log-"))
+		.unwrap_or_else(|| panic!("the first log's zip: {kept:?}"));
+	let mut archive = zip::ZipArchive::new(std::fs::File::open(zip).unwrap()).unwrap();
+	assert_eq!(archive.len(), 1);
+	let mut entry = archive.by_index(0).unwrap();
+	assert_eq!(entry.name(), "log.html");
+	let mut bytes = Vec::new();
+	std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+	assert_eq!(bytes, first, "the first log, intact");
+	eprintln!("the first log: {} bytes, zipped {}", first.len(), std::fs::metadata(zip).unwrap().len());
+	if cfg!(feature = "ui") {
+		assert!(kept.iter().any(|p| p.file_name().unwrap().to_string_lossy().starts_with("cef-")), "{kept:?}");
 	}
 }

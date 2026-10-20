@@ -62,6 +62,9 @@ pub struct Boot<'a> {
 	/// Where the saves (and mods' storages, which they read as they boot) are kept as
 	/// files; in memory without one.
 	pub saves: Option<std::path::PathBuf>,
+	/// Where CEF writes its log (the page's front only): beside log.html; without one, in
+	/// its temporary profile, gone when it closes.
+	pub cef_log: Option<std::path::PathBuf>,
 	/// The store the install is from, and the achievements' service.
 	pub store: Store,
 }
@@ -133,6 +136,7 @@ impl Game {
 			mode,
 			devtools,
 			saves: None,
+			cef_log: None,
 			store: Store::default(),
 		};
 		Game::start(gpu, &boot)

@@ -41,6 +41,7 @@ impl Front {
 			battle_motion: squirrel_bb::BattleMotion::Timed,
 			mods: boot.mods,
 			steam_build: boot.store.steam_build,
+			cef_log: boot.cef_log.clone(),
 			..HostConfig::default()
 		};
 		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;

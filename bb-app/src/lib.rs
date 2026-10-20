@@ -8,6 +8,7 @@ pub mod frame_scenes;
 pub mod front;
 pub mod game;
 pub mod keys;
+pub mod logs;
 pub mod platform;
 pub mod settings;
 pub mod stats;

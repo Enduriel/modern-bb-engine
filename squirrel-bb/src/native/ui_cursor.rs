@@ -71,7 +71,11 @@ impl UiCursor {
 				}
 				let known = sprites.with(|r| r.get(&name).is_some());
 				if !known {
-					eprintln!("[Warning] Unknown Brush requested: {name}");
+					crate::html_log::engine(
+						crate::html_log::Class::Warning,
+						"SceneManager",
+						&format!("Unknown Brush requested: {name}"),
+					);
 				}
 				let since = virtual_time(vm);
 				let mut s = state.borrow_mut();

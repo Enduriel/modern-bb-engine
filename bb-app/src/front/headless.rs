@@ -26,8 +26,9 @@ impl Front {
 		})
 		.map_err(|e| e.to_string())?;
 		boot.store.attach(&engine);
-		// An uncaught script error prints its call stack to stderr, as the original logs it.
-		engine.vm_mut().install_standard_error_handlers();
+		// An uncaught script error prints its call stack to stderr and log.html, as the
+		// original logs it.
+		squirrel_bb::report_script_errors(engine.vm_mut());
 		engine.video().set_mode(boot.mode);
 		if let Some(dir) = &boot.saves {
 			engine.saves().set_directory(dir.clone());

@@ -6,9 +6,10 @@
 //! (`scripts/skills/backgrounds/background.nope` looks for
 //! `scripts/skills/backgrounds/background.(nut/cnut)`); `inherit` logs that twice.
 
-use squirrel::{SQVM, SqStrongRef, SqTable};
+use squirrel::{SQVM, SqStrongRef};
 
 use crate::error::ScriptError;
+use crate::html_log::{self, Class};
 
 /// The original's line for a script file it can't find.
 fn file_not_found(path: &str) -> String {
@@ -16,12 +17,10 @@ fn file_not_found(path: &str) -> String {
 	format!("Failed to load script file \"{stem}.(nut/cnut)\". Reason: File not found.")
 }
 
-/// Log `lines` as errors, through the scripts' `logError`.
-fn log_errors(vm: &SQVM, lines: &[String]) {
-	if let Some(log) = SqTable::root(vm).get::<SqStrongRef>("logError") {
-		for line in lines {
-			let _ = log.call(vm, (line.clone(),));
-		}
+/// Log `lines` as errors of the script system (the original's tag `Script`).
+fn log_errors(_vm: &SQVM, lines: &[String]) {
+	for line in lines {
+		html_log::engine(Class::Error, "Script", line);
 	}
 }
 

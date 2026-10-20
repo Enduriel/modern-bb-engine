@@ -54,6 +54,9 @@ pub struct Options {
 	/// Steam's API, started on a Steam install (see `bb_app::steam`); achievements off
 	/// without it.
 	pub steam: Option<Rc<SteamStats>>,
+	/// Where CEF writes its log (beside log.html, see `main`); without one, in its
+	/// temporary profile.
+	pub cef_log: Option<PathBuf>,
 }
 
 /// Everything that exists once the window does.
@@ -205,6 +208,7 @@ impl App {
 			.map_err(|e| format!("no surface for the window: {e}"))?;
 		let gpu = Gpu::for_surface(&self.instance, &surface)?;
 		eprintln!("GPU: {}", gpu.adapter);
+		squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Info, "Renderer", format!("Device: {}", gpu.adapter));
 		let options = &self.options;
 		let saves = options.saves.clone().or_else(squirrel_bb::platform::saves_dir);
 		match &saves {
@@ -220,6 +224,7 @@ impl App {
 			mode,
 			devtools: options.devtools,
 			saves,
+			cef_log: options.cef_log.clone(),
 			store: Store {
 				steam_build: options.steam_build,
 				user_stats: options.steam.clone().map(|s| s as Rc<dyn squirrel_bb::UserStats>),

@@ -65,13 +65,15 @@ impl UiSession {
 			engine.vm_mut().set_print_handler(|s| eprint!("{s}"));
 		}
 		if echo != Echo::Off {
-			// Script errors print their full call stack (to stderr), as the original
-			// logs them, including those in the page's calls into the scripts.
-			engine.vm_mut().install_standard_error_handlers();
+			// Script errors print their full call stack (to stderr, and log.html when
+			// one is open), as the original logs them, including those in the page's
+			// calls into the scripts.
+			squirrel_bb::report_script_errors(engine.vm_mut());
 		}
 		let log: Rc<RefCell<PageLog>> = Rc::default();
 		let sink = log.clone();
 		let protocol = UiProtocol::new(host, move |text| {
+			squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Error, "UI", text);
 			let line = LogLine {
 				level: "bridge".into(),
 				text: text.to_string(),
@@ -176,13 +178,22 @@ impl UiSession {
 				source,
 				line,
 			} => {
+				if level == "error" {
+					page_error_to_log(&message, &source, line);
+				}
 				let file = source.rsplit('/').next().unwrap_or_default();
 				self.record(&level, format!("{message} ({file}:{line})"));
 			}
 			Event::LoadError { url, error } => {
-				self.record("error", format!("failed to load {url}: {error}"))
+				let text = format!("failed to load {url}: {error}");
+				squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Error, "UI", &text);
+				self.record("error", text)
 			}
-			Event::RendererGone(why) => self.record("error", format!("the page crashed: {why}")),
+			Event::RendererGone(why) => {
+				let text = format!("the page crashed: {why}");
+				squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Error, "UI", &text);
+				self.record("error", text)
+			}
 			Event::Procedural { path, responder } => match self.procedural.borrow_mut().as_mut() {
 				Some(queue) => queue.push(super::ProceduralRequest { path, responder }),
 				None => responder.respond_image(None),
@@ -440,4 +451,16 @@ impl UiSession {
 			.map_err(|e| e.to_string())?;
 		Ok(Some((frame.width, frame.height)))
 	}
+}
+
+/// A page error in log.html, as the original logs its UI's (probed): only
+/// errors (its `console.log`, `info` and `warn` go nowhere), tagged `UI`, as
+/// `ConsoleAPI <url>:<line>:<column>: <message>` for `console.error` and `JS …` for an
+/// uncaught exception. Chromium reports no column, so ours is `<url>:<line>: `.
+fn page_error_to_log(message: &str, source: &str, line: i32) {
+	let text = match message.strip_prefix("Uncaught ") {
+		Some(rest) => format!("JS {source}:{line}: {rest}"),
+		None => format!("ConsoleAPI {source}:{line}: {message}"),
+	};
+	squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Error, "UI", text);
 }

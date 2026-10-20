@@ -4,7 +4,7 @@
 //! cargo run --release -p bb-app --features ui -- [--mods] [--new-campaign] [--seed SEED]
 //!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
-//!     [--no-steam] [--steam-api PATH]
+//!     [--logs DIR] [--no-steam] [--steam-api PATH]
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) and plays them: the
@@ -29,6 +29,10 @@
 //!   place for them, and `--saves` keeps the saves in that folder instead of the
 //!   system's place for them (`battle-brothers-modern/savegames` in the user's data
 //!   folder; never the original's).
+//! - The game logs to `log.html` in the original's format (and CEF to `cef.log`), in
+//!   `battle-brothers-modern/` in the user's data folder, or the folder `--logs` names;
+//!   the earlier sessions' logs are kept there in `logs/`, zipped. The terminal gets
+//!   the lines too.
 //! - The sound plays on the default output device, unless `--mute`.
 //! - On a Steam install (see `bb_steam::install` for the rule), achievements and stats
 //!   go to the player's Steam account through Steam's library beside `bb`
@@ -53,7 +57,8 @@ use winit::event_loop::EventLoop;
 /// The map seed of a campaign started at once, unless `--seed` gives one.
 const DEFAULT_SEED: &str = "rust-engine-test";
 
-fn options() -> Result<(app::Options, SteamOptions), String> {
+/// The options, Steam's, and the log folder (`None`: the system has no data folder).
+fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 	let mut steam = SteamOptions::from_env();
 	let mut options = app::Options {
 		data_dir: PathBuf::from(STEAM_DATA_DIR),
@@ -69,7 +74,9 @@ fn options() -> Result<(app::Options, SteamOptions), String> {
 		saves: None,
 		steam_build: false,
 		steam: None,
+		cef_log: None,
 	};
+	let mut logs = squirrel_bb::platform::logs_dir();
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
 		let mut value = || args.next().ok_or(format!("{arg} needs a value"));
@@ -99,6 +106,7 @@ fn options() -> Result<(app::Options, SteamOptions), String> {
 			"--devtools" => return Err("--devtools needs bb built with --features ui".to_string()),
 			"--settings" => options.settings = Some(PathBuf::from(value()?)),
 			"--saves" => options.saves = Some(PathBuf::from(value()?)),
+			"--logs" => logs = Some(PathBuf::from(value()?)),
 			"--at" => {
 				let frames = value()?.parse().map_err(|_| "--at FRAMES CODE")?;
 				options.at.push((frames, value()?));
@@ -110,7 +118,7 @@ fn options() -> Result<(app::Options, SteamOptions), String> {
 			_ => return Err(format!("unknown argument {arg}")),
 		}
 	}
-	Ok((options, steam))
+	Ok((options, steam, logs))
 }
 
 fn main() -> ExitCode {
@@ -120,8 +128,18 @@ fn main() -> ExitCode {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
 	bb_app::platform::tune_allocator();
-	let run = || -> Result<(), String> {
-		let (mut options, steam) = options()?;
+	let mut logs = None;
+	let mut run = || -> Result<(), String> {
+		let (mut options, steam, log_dir) = options()?;
+		if let Some(dir) = log_dir {
+			match bb_app::logs::Logs::start(&dir) {
+				Ok(started) => {
+					options.cef_log = Some(started.cef_log());
+					logs = Some(started);
+				}
+				Err(e) => eprintln!("no log file: {e}"),
+			}
+		}
 		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
 		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
 		// environment): the stats logger, the renderer's and the page's start after it.
@@ -137,7 +155,11 @@ fn main() -> ExitCode {
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
 		app.error.take().map_or(Ok(()), Err)
 	};
-	match run() {
+	let result = run();
+	if let Some(logs) = logs {
+		logs.close(result.as_ref().err().map(String::as_str));
+	}
+	match result {
 		Ok(()) => ExitCode::SUCCESS,
 		Err(e) => {
 			eprintln!("error: {e}");

@@ -136,8 +136,12 @@ pub struct HostConfig {
 	/// When the page makes its frames (and paints what changed): on Chromium's clock by
 	/// default, in step with the game's frames for the game in a window.
 	pub frames: PageFrames,
-	/// A directory CEF may use for its profile and log (created if missing).
+	/// A directory CEF may use for its profile and log (created if missing; removed when
+	/// the page closes).
 	pub cache_dir: PathBuf,
+	/// Where CEF writes its log instead of `cef.log` in `cache_dir` (kept: the game's
+	/// log folder).
+	pub cef_log: Option<PathBuf>,
 	/// Serve Chrome DevTools on `127.0.0.1:<port>` (open `chrome://inspect` in a
 	/// browser). Off by default.
 	pub devtools_port: Option<u16>,
@@ -172,6 +176,7 @@ impl Default for HostConfig {
 			height: 1080,
 			frames: PageFrames::Clock(30),
 			cache_dir: std::env::temp_dir().join(format!("bb-ui-{}", std::process::id())),
+			cef_log: None,
 			devtools_port: None,
 			exact_clock: squirrel_bb::ExactClock::Frame,
 			battle_camera: squirrel_bb::BattleCamera::Instant,
@@ -228,7 +233,7 @@ impl UiHost {
 			windowless_rendering_enabled: 1,
 			multi_threaded_message_loop: 1,
 			root_cache_path: path(config.cache_dir.clone()),
-			log_file: path(config.cache_dir.join("cef.log")),
+			log_file: path(config.cef_log.clone().unwrap_or_else(|| config.cache_dir.join("cef.log"))),
 			log_severity: LogSeverity::WARNING,
 			resources_dir_path: path(cef_dir.clone()),
 			locales_dir_path: path(cef_dir.join("locales")),
@@ -244,7 +249,7 @@ impl UiHost {
 			std::ptr::null_mut(),
 		) != 1
 		{
-			return Err("CEF failed to initialize (see cef.log in the cache dir)".into());
+			return Err("CEF failed to initialize (see its cef.log)".into());
 		}
 		ready_rx
 			.recv_timeout(Duration::from_secs(30))

@@ -10,6 +10,9 @@ bb-assets = { path = "../bb-assets" }
 # STORED (base .dat) + DEFLATE (mod .zip) only — the heavier codecs (bzip2/zstd/aes)
 # are off to keep the dependency set minimal.
 zip = { version = "1.1.4", default-features = false, features = ["deflate"] }
+# Local time for the archived logs' zip entries, and their names' UTC stamps (already
+# squirrel-bb's, with the same features).
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

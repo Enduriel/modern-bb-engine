@@ -11,6 +11,7 @@
 //!   * [`files`] — the game's other files (textures, …), readable from any thread
 //!   * [`vfs`]   — reading `.dat` (ZIP) archives
 //!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
+//!   * [`log_files`] — bb's log files, the earlier sessions' kept as zips
 //!   * [`harness`] — headless boot steps over a real install (menu, new campaign)
 //!
 //! Next: the 3.0.4 → current-version bytecode transcoder (the game ships Squirrel
@@ -23,6 +24,7 @@ pub mod datsource;
 pub mod files;
 pub mod game_queue;
 pub mod harness;
+pub mod log_files;
 pub mod mounts;
 pub mod script_cache;
 pub mod tactical_player;

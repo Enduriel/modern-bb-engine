@@ -274,6 +274,7 @@ dependencies = [
  "squirrel-bb",
  "wgpu",
  "winit",
+ "zip",
 ]
 
 [[package]]
@@ -301,6 +302,7 @@ version = "0.1.0"
 dependencies = [
  "bb-assets",
  "criterion",
+ "jiff",
  "squirrel",
  "squirrel-bb",
  "zip",

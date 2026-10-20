@@ -29,6 +29,8 @@ wgpu = "30.0.1"
 winit = "0.30.13"
 
 [dev-dependencies]
+# To read the logs' archives in tests (bb-engine's, with the same features).
+zip = { version = "1.1.4", default-features = false, features = ["deflate"] }
 
 # Own `main`: the browser host re-runs the test binary for its child processes, and
 # starts only once per process.
