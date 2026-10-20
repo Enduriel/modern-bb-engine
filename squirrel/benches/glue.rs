@@ -5,7 +5,9 @@
 //! crate offers (`forward_retained`: `Variadic<Retained>` + `call_member_forwarding`;
 //! `forward_stack`: `Variadic<StackArg>` + `forward_member`). `bind_closures` rebinds a
 //! class-level-sized table (40 methods, 10 data slots) to an instance, as every BB
-//! object creation does for each level of its class chain.
+//! object creation does for each level of its class chain. `with_payload` reads the
+//! payloads of 1000 instances from the host, as the engine's per-frame passes over
+//! sprites do.
 //!
 //! `cargo bench -p squirrel --bench glue -- --save-baseline before`, change the code,
 //! then `-- --baseline before`.
@@ -134,6 +136,18 @@ fn bench(c: &mut Criterion) {
 	let env = SqTable::new(&vm);
 	group.bench_function("bind_closures", |b| {
 		b.iter(|| level.bind_closures_to(black_box(&env)))
+	});
+	let mut vm = SQVM::new(1024);
+	let class = ClassBuilder::<Tile>::new("Payload").build(&mut vm);
+	let handles: Vec<squirrel::SqStrongRef> = (0..1000).map(|_| class.instantiate(&vm, Tile::default())).collect();
+	group.bench_function("with_payload", |b| {
+		b.iter(|| {
+			let mut s = 0.0;
+			for h in &handles {
+				s += class.with_payload(&vm, h, |t| t.x).unwrap();
+			}
+			black_box(s)
+		})
 	});
 	group.finish();
 }

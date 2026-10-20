@@ -286,6 +286,11 @@ fn host_reads_and_writes_an_instance_payload() {
 	assert_eq!(point.with_payload(&vm, &instance, |p| p.x), Some(5.0));
 	point.with_payload(&vm, &instance, |p| p.y = 9.0);
 	vm.run_script("assert(::p.Y == 9.0);", "check").unwrap();
+	// The ref keeps where the payload is: later script writes still show, through it
+	// and its clones.
+	vm.run_script("::p.X = 7.0;", "set again").unwrap();
+	assert_eq!(point.with_payload(&vm, &instance, |p| p.x), Some(7.0));
+	assert_eq!(point.with_payload(&vm, &instance.clone(), |p| p.x), Some(7.0));
 
 	// A different payload type (or a non-instance) yields None.
 	assert_eq!(other.with_payload(&vm, &instance, |v| *v), None);

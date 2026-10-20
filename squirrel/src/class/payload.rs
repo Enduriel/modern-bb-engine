@@ -63,6 +63,15 @@ pub(crate) unsafe extern "C" fn instance_release_hook<T>(
 /// the instance stays alive (it is on the stack during the call that produced
 /// `idx`). The caller must not retain it past that.
 pub(crate) unsafe fn payload_ptr<T: 'static>(vm: &SQVM, idx: i64) -> Option<*mut NativePayload<T>> {
+	unsafe { payload_of::<T>(any_payload(vm, idx)?) }
+}
+
+/// The [`NativePayload`] of the instance at `idx`, whatever its `T` (checked by the
+/// shared typetag only).
+///
+/// # Safety
+/// As [`payload_ptr`].
+pub(crate) unsafe fn any_payload(vm: &SQVM, idx: i64) -> Option<squirrel_sys::SQUserPointer> {
 	let ptr = vm.as_ptr();
 	// 1. Typetag must be ours — proves this instance carries a NativePayload, so
 	//    reading the header below is sound (not an arbitrary foreign pointer).
@@ -79,9 +88,15 @@ pub(crate) unsafe fn payload_ptr<T: 'static>(vm: &SQVM, idx: i64) -> Option<*mut
 	if unsafe { squirrel_sys::sq_getinstanceup(ptr, idx, &mut up, std::ptr::null_mut(), 0) } != SQ_OK {
 		return None;
 	}
-	if up.is_null() {
-		return None;
-	}
+	(!up.is_null()).then_some(up)
+}
+
+/// `up` (a [`NativePayload`] of some type) as a `NativePayload<T>`, if its `TypeId`
+/// header says it is one.
+///
+/// # Safety
+/// `up` must point at a live [`NativePayload`].
+pub(crate) unsafe fn payload_of<T: 'static>(up: squirrel_sys::SQUserPointer) -> Option<*mut NativePayload<T>> {
 	// 3. The TypeId header must match the concrete `T`.
 	let payload = up as *mut NativePayload<T>;
 	if unsafe { (*payload).type_id } != TypeId::of::<T>() {

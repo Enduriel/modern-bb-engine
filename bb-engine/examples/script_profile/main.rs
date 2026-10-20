@@ -7,7 +7,10 @@
 //! cargo run --release -p bb-engine --example script_profile -- \
 //!     [--vanilla] [--only PREFIXES] [--save NAME | --new-campaign] [--saves DIR]
 //!     [--frames N] [--hz HZ] [--phases paused,town,running] [--top N] [--out REPORT.md]
+//!     [--script FILE.nut]
 //! ```
+//!
+//! - `--script` runs a script once the world is up (e.g. to log what a phase does).
 //!
 //! - `--save NAME` copies `NAME.sav` from `--saves` (default: bb's savegames folder) into
 //!   a scratch folder as `bb_probe_NAME.sav` and loads that; the original is only read.
@@ -42,6 +45,7 @@ struct Options {
 	phases: Vec<String>,
 	top: usize,
 	out: Option<PathBuf>,
+	script: Option<PathBuf>,
 }
 
 fn options() -> Options {
@@ -55,6 +59,7 @@ fn options() -> Options {
 		phases: vec!["paused".into(), "town".into(), "running".into()],
 		top: 30,
 		out: None,
+		script: None,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -70,6 +75,7 @@ fn options() -> Options {
 			"--phases" => o.phases = value().split(',').map(str::to_string).collect(),
 			"--top" => o.top = value().parse().expect("--top N"),
 			"--out" => o.out = Some(PathBuf::from(value())),
+			"--script" => o.script = Some(PathBuf::from(value())),
 			other => panic!("unknown argument {other}"),
 		}
 	}
@@ -114,6 +120,9 @@ fn main() {
 		None => new_campaign(&engine),
 	}
 	eprintln!("in the world after {:.1} s", t.elapsed().as_secs_f64());
+	if let Some(path) = &o.script {
+		script(&engine, "--script", &std::fs::read_to_string(path).expect("read --script"));
+	}
 
 	let mut text = format!(
 		"# Script profile: {}{}\n\n{} frames per phase at {} Hz real time.\n\n",
@@ -149,6 +158,13 @@ const STATE: &str = "\"paused \" + ::World.State.isPaused() + \", time speed \" 
 
 fn enter_phase(engine: &GameEngine, phase: &str) {
 	let leave_town = "if (::World.State.m.LastEnteredTown != null) ::World.State.m.MenuStack.pop(true);";
+	if phase == "running" {
+		// Leaving a town pauses again a few frames on (AutoPauseAfterCity).
+		script(engine, "leave the town", leave_town);
+		for _ in 0..30 {
+			step(engine, 1000.0 / 60.0, None);
+		}
+	}
 	let src = match phase {
 		"paused" => format!("{leave_town} ::World.State.setPause(true);"),
 		"town" => "local p = ::World.State.getPlayer(); local best = null; local d = 0;
@@ -156,7 +172,13 @@ fn enter_phase(engine: &GameEngine, phase: &str) {
 				if (best == null || s.getTile().getDistanceTo(p.getTile()) < d) { best = s; d = s.getTile().getDistanceTo(p.getTile()); }
 			::World.State.enterLocation(best);"
 			.to_string(),
-		"running" => format!("{leave_town} ::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.State.setNormalTime();"),
+		// Hostile parties about to attack the company leave first (a battle would start).
+		"running" => format!(
+			"local p = ::World.State.getPlayer();
+			foreach (e in ::World.getAllEntitiesAtPos(p.getPos(), 600.0))
+				if (e.isParty() && e.getID() != p.getID() && !e.isAlliedWithPlayer()) e.die();
+			::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.State.setNormalTime();"
+		),
 		other => panic!("unknown phase {other} (paused, town, running)"),
 	};
 	script(engine, phase, &src);
@@ -224,6 +246,8 @@ fn load_campaign(engine: &GameEngine, name: &str) {
 fn new_campaign(engine: &GameEngine) {
 	harness::prepare_new_campaign(engine, "script-profile").expect("prepare the campaign");
 	harness::start_new_campaign(engine).expect("start the campaign");
+	// MSU's new-campaign settings page, as a player saves it.
+	script(engine, "MSU settings", "if (\"MSU\" in getroottable()) ::MSU.SettingsScreen.onSaveButtonPressed({});");
 	harness::run_past_intro(engine).expect("past the intro");
 }
 

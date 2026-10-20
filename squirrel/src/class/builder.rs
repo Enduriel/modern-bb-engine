@@ -249,12 +249,23 @@ impl<T: 'static> SqClass<T> {
 	/// (checked by typetag and `TypeId`); `None` otherwise. For host code that keeps
 	/// strong refs to its instances and needs their state back (e.g. to save it).
 	/// No script runs inside `f`, so the borrow can't be observed by script code.
+	///
+	/// The payload's place is read from the VM once per ref (and its clones) and kept
+	/// in it: an instance's payload never moves, and the ref keeps the instance alive.
 	pub fn with_payload<R>(&self, vm: &SQVM, instance: &SqStrongRef, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-		instance.push(vm); // [instance]
-		let payload = unsafe { super::payload::payload_ptr::<T>(vm, -1) };
-		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) }; // []
+		let mut up = instance.cached_payload();
+		if up.is_null() {
+			instance.push(vm); // [instance]
+			up = unsafe { super::payload::any_payload(vm, -1) }.unwrap_or(std::ptr::null_mut());
+			unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) }; // []
+			if up.is_null() {
+				return None;
+			}
+			instance.cache_payload(up);
+		}
 		// The caller's strong ref keeps the instance (and so the payload) alive.
-		payload.map(|p| f(unsafe { &mut (*p).value }))
+		let payload = unsafe { super::payload::payload_of::<T>(up) }?;
+		Some(f(unsafe { &mut (*payload).value }))
 	}
 
 	/// Create an instance carrying `value` as its payload, returned as an owned

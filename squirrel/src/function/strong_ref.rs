@@ -45,6 +45,9 @@ pub struct SqStrongRef {
 	vm: squirrel_sys::HSQUIRRELVM,
 	// The referenced object, kept alive by an addref taken at construction.
 	obj: squirrel_sys::HSQOBJECT,
+	// A native instance's payload, once read (null until then): it stays where it is
+	// while the instance lives, which this ref ensures (see `SqClass::with_payload`).
+	payload: std::cell::Cell<squirrel_sys::SQUserPointer>,
 }
 
 impl SqStrongRef {
@@ -58,6 +61,7 @@ impl SqStrongRef {
 		SqStrongRef {
 			vm: vm.as_ptr(),
 			obj,
+			payload: std::cell::Cell::new(std::ptr::null_mut()),
 		}
 	}
 
@@ -100,6 +104,16 @@ impl SqStrongRef {
 		let held = Self::from_stack(vm, -1);
 		unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
 		held
+	}
+
+	/// The native payload [`SqClass::with_payload`](crate::SqClass::with_payload) read
+	/// last through this ref (null if none yet).
+	pub(crate) fn cached_payload(&self) -> squirrel_sys::SQUserPointer {
+		self.payload.get()
+	}
+
+	pub(crate) fn cache_payload(&self, payload: squirrel_sys::SQUserPointer) {
+		self.payload.set(payload);
 	}
 
 	pub(crate) fn push(&self, vm: &SQVM) {
@@ -360,7 +374,11 @@ impl Clone for SqStrongRef {
 	fn clone(&self) -> Self {
 		let mut obj = self.obj;
 		unsafe { squirrel_sys::sq_addref(self.vm, &mut obj) };
-		SqStrongRef { vm: self.vm, obj }
+		SqStrongRef {
+			vm: self.vm,
+			obj,
+			payload: self.payload.clone(),
+		}
 	}
 }
 
