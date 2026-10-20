@@ -72,9 +72,9 @@ fn a_campaign_survives_save_and_load() {
 
 	let regions = engine.world_scene().region_texts;
 	assert!(!regions.is_empty());
-	engine.run_script("::World.State.saveCampaign(\"milestone\");", "save").expect("save");
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_milestone\");", "save").expect("save");
 	let before = summary(&engine, &out);
-	engine.run_script("::World.State.loadCampaign(\"milestone\");", "load").expect("load");
+	engine.run_script("::World.State.loadCampaign(\"bb_probe_milestone\");", "load").expect("load");
 	let after = summary(&engine, &out);
 	assert_eq!(before, after, "the loaded world differs");
 	assert_eq!(engine.world_scene().region_texts, regions, "region names survive");

@@ -184,7 +184,7 @@ fn reloading_a_campaign_does_not_grow_memory() {
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("reload_memory");
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
-	std::fs::copy(&from, dir.join("reload.sav")).unwrap();
+	std::fs::copy(&from, dir.join("bb_probe_reload.sav")).unwrap();
 
 	let mut engine = harness::open_install(Path::new(harness::STEAM_DATA_DIR)).expect("open install");
 	engine.vm_mut().install_standard_error_handlers();
@@ -194,23 +194,23 @@ fn reloading_a_campaign_does_not_grow_memory() {
 	until(&engine, 600, "the main menu", AT_MENU);
 	// The world state ignores a load within 4 s of the game's start.
 	until(&engine, 600, "4 s at the menu", "::Time.getRealTimeF() > 4.5");
-	load_from_menu(&engine, "reload");
+	load_from_menu(&engine, "bb_probe_reload");
 	let rss_start = rss_kb();
 
-	let loads = load_in_campaign(&engine, "reload", LOADS_IN_CAMPAIGN);
+	let loads = load_in_campaign(&engine, "bb_probe_reload", LOADS_IN_CAMPAIGN);
 	assert_flat("in-campaign", &loads);
 
 	let loads: Vec<After> = (0..LOADS_FROM_MENU)
 		.map(|_| {
-			load_from_menu(&engine, "reload");
+			load_from_menu(&engine, "bb_probe_reload");
 			after_load(&engine)
 		})
 		.collect();
 	assert_flat("from-menu", &loads);
 
 	// A save in this engine's own format.
-	engine.run_script("::World.State.saveCampaign(\"reload_ours\");", "save").unwrap();
-	let loads = load_in_campaign(&engine, "reload_ours", LOADS_OWN_FORMAT);
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_reload_ours\");", "save").unwrap();
+	let loads = load_in_campaign(&engine, "bb_probe_reload_ours", LOADS_OWN_FORMAT);
 	assert_flat("own-format", &loads);
 
 	let rss_end = rss_kb();

@@ -265,7 +265,7 @@ fn smoke(mut engine: harness::GameEngine) {
 	until(&engine, 1, "the world menu", &menu_up);
 	script(&engine, "save menu", &format!("{WORLD_MENU}.getMainMenuModule().onSaveCampaignButtonPressed();"));
 	frame(&engine);
-	script(&engine, "save", &format!("{WORLD_MENU}.getSaveCampaignMenuModule().onSaveButtonPressed(\"smoke\");"));
+	script(&engine, "save", &format!("{WORLD_MENU}.getSaveCampaignMenuModule().onSaveButtonPressed(\"bb_probe_smoke\");"));
 	let saved = player::eval_string(&engine, SUMMARY).unwrap().unwrap();
 	frame(&engine);
 
@@ -287,8 +287,8 @@ fn smoke(mut engine: harness::GameEngine) {
 	)
 	.unwrap()
 	.unwrap();
-	assert!(listed.contains("smoke/"), "the save isn't listed: {listed}");
-	script(&engine, "load", &format!("{MENU}.getLoadCampaignMenuModule().onLoadButtonPressed(\"smoke\");"));
+	assert!(listed.contains("bb_probe_smoke/"), "the save isn't listed: {listed}");
+	script(&engine, "load", &format!("{MENU}.getLoadCampaignMenuModule().onLoadButtonPressed(\"bb_probe_smoke\");"));
 	until(
 		&engine,
 		600,

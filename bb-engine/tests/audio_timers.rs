@@ -24,7 +24,8 @@ const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 const AT_MENU: &str = "::RootState.get(\"WorldState\") == null && ::RootState.get(\"MainMenuState\").m.MainMenuScreen.isVisible() && !::RootState.get(\"MainMenuState\").m.MainMenuScreen.isAnimating()";
 const LOADED: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
 const TACTICAL: &str = "TacticalFromWorldState";
-const SAVE: &str = "audio_timers_test";
+/// The test's save, kept in memory (the engine has no save directory here).
+const SAVE: &str = "bb_probe_audio_timers";
 
 /// `hasEventScheduled` for units 0–4 as a string of bits (`::__has()`), and every
 /// `clearEvents()` call logged with it before and after (`::__clears`).
@@ -82,16 +83,6 @@ fn clears(engine: &harness::GameEngine) -> String {
 	let s = player::eval_string(engine, "::__clears.len() ? ::__clears.reduce(@(a, b) a + \",\" + b) : \"\"").unwrap().unwrap_or_default();
 	run(engine, "::__clears.clear();");
 	s
-}
-
-fn remove_save() {
-	let Some(dir) = squirrel_bb::platform::saves_dir() else { return };
-	let Ok(entries) = std::fs::read_dir(dir) else { return };
-	for e in entries.flatten() {
-		if e.file_name().to_string_lossy().starts_with(SAVE) {
-			let _ = std::fs::remove_file(e.path());
-		}
-	}
 }
 
 #[test]
@@ -163,7 +154,6 @@ fn the_audio_timers_are_time_events() {
 	assert_eq!(has(&engine), "10001");
 	run(&engine, &format!("::World.State.saveCampaign(\"{SAVE}\");"));
 	run(&engine, &format!("::World.State.m.CampaignLoadTime = -100.0; ::World.State.loadCampaign(\"{SAVE}\");"));
-	remove_save();
 	assert_eq!(clears(&engine), "10001>00000", "the load's clear");
 	assert_eq!(has(&engine), "00000");
 	assert!(player::eval_i64(&engine, "::World.State.m.LastPlayerTile == null ? 1 : 0").unwrap() == Some(1));

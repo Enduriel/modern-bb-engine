@@ -21,7 +21,7 @@ fn storages_round_trip_like_the_original() {
 	engine
 		.run_script(
 			r#"
-			local w = ::PersistenceManager.createStorage("MSU#mod_test#settings");
+			local w = ::PersistenceManager.createStorage("bb_probe_MSU#mod_test#settings");
 			w.beginWrite();
 			w.writeU8(200); w.writeString("hello"); w.writeU32(70000); w.writeI32(-5);
 			w.writeF32(1.5); w.writeBool(true); w.writeU16(65535);
@@ -29,14 +29,14 @@ fn storages_round_trip_like_the_original() {
 
 			local listed = null;
 			foreach (st in ::PersistenceManager.queryStorages())
-				if (st.getFileName() == "MSU#mod_test#settings") listed = st;
+				if (st.getFileName() == "bb_probe_MSU#mod_test#settings") listed = st;
 			assert(listed != null);
-			assert(listed.getName() == "MSU#mod_test#settings");
+			assert(listed.getName() == "bb_probe_MSU#mod_test#settings");
 			assert(listed.getVersion() == 0);
 			assert(listed.getInt("x") == 0 && listed.getString("x") == "");
 			assert(typeof listed.getCreationDate() == "string" && listed.getCreationDate().len() == 17);
 
-			local r = ::PersistenceManager.loadStorage("MSU#mod_test#settings");
+			local r = ::PersistenceManager.loadStorage("bb_probe_MSU#mod_test#settings");
 			r.beginRead();
 			assert(r.readU8() == 200);
 			assert(r.readString() == "hello");
@@ -46,13 +46,13 @@ fn storages_round_trip_like_the_original() {
 			assert(r.readBool() == true);
 			assert(r.readU16() == 65535);
 			r.endRead();
-			assert(::PersistenceManager.loadStorage("missing") == null);
+			assert(::PersistenceManager.loadStorage("bb_probe_missing") == null);
 
-			::PersistenceManager.deleteStorage("MSU#mod_test#settings");
+			::PersistenceManager.deleteStorage("bb_probe_MSU#mod_test#settings");
 			assert(::PersistenceManager.queryStorages().len() == 0);
 
 			// deleteStorages() removes every storage.
-			foreach (n in ["a", "b"]) { local s = ::PersistenceManager.createStorage(n); s.beginWrite(); s.endWrite(); }
+			foreach (n in ["bb_probe_a", "bb_probe_b"]) { local s = ::PersistenceManager.createStorage(n); s.beginWrite(); s.endWrite(); }
 			assert(::PersistenceManager.queryStorages().len() == 2);
 			::PersistenceManager.deleteStorages();
 			assert(::PersistenceManager.queryStorages().len() == 0);
@@ -95,24 +95,24 @@ fn storages_are_the_originals_files() {
 		h
 	};
 	let body = [2, 0, b'h', b'i', 7];
-	std::fs::write(dir.join("MSU#x.sav"), [header(b"MSU#x"), body.to_vec()].concat()).unwrap();
+	std::fs::write(dir.join("bb_probe_MSU#x.sav"), [header(b"bb_probe_MSU#x"), body.to_vec()].concat()).unwrap();
 
 	let engine = Engine::new(NoScripts);
 	engine.saves().set_directory(dir.clone());
 	engine
 		.run_script(
 			r#"
-			local r = ::PersistenceManager.loadStorage("MSU#x");
-			assert(r.getMetaData().getName() == "MSU#x");
+			local r = ::PersistenceManager.loadStorage("bb_probe_MSU#x");
+			assert(r.getMetaData().getName() == "bb_probe_MSU#x");
 			assert(r.readString() == "hi" && r.readU8() == 7);
-			local w = ::PersistenceManager.createStorage("mine");
+			local w = ::PersistenceManager.createStorage("bb_probe_mine");
 			w.beginWrite(); w.writeString("hi"); w.writeU8(7); w.endWrite();
 			"#,
 			"original storages",
 		)
 		.expect("an original storage reads back");
-	let mine = std::fs::read(dir.join("mine.sav")).unwrap();
-	let expected = [header(b"mine"), body.to_vec()].concat();
+	let mine = std::fs::read(dir.join("bb_probe_mine.sav")).unwrap();
+	let expected = [header(b"bb_probe_mine"), body.to_vec()].concat();
 	assert_eq!(mine[..7], expected[..7]);
 	// The times are now; the rest is as the original writes it.
 	assert_eq!(mine[23..], expected[23..]);
@@ -127,25 +127,25 @@ fn a_stream_knows_its_file_and_refuses_the_other_direction() {
 	engine
 		.run_script(
 			r#"
-			local w = ::PersistenceManager.createStorage("two_ways");
-			assert(w.getFileName() == "two_ways");
+			local w = ::PersistenceManager.createStorage("bb_probe_two_ways");
+			assert(w.getFileName() == "bb_probe_two_ways");
 			w.beginWrite();
 			w.writeU8(7);
 			local refused = null;
 			try { w.readU8(); } catch (e) { refused = e; }
 			assert(refused == "readU8: the stream is being written");
 			w.endWrite();
-			local r = ::PersistenceManager.loadStorage("two_ways");
-			assert(r.getFileName() == "two_ways");
+			local r = ::PersistenceManager.loadStorage("bb_probe_two_ways");
+			assert(r.getFileName() == "bb_probe_two_ways");
 			r.beginRead();
 			refused = null;
 			try { r.writeU8(1); } catch (e) { refused = e; }
 			assert(refused == "writeU8: the stream is being read");
 			assert(r.readU8() == 7);
 			r.endRead();
-			::PersistenceManager.deleteStorage("two_ways");
+			::PersistenceManager.deleteStorage("bb_probe_two_ways");
 			"#,
-			"two_ways",
+			"bb_probe_two_ways",
 		)
 		.expect("both directions' members");
 }
@@ -171,19 +171,19 @@ fn storages_list_newest_first_then_by_file_name() {
 	};
 	// (name, created, modified, the file system's modification time)
 	let saves = [
-		("c", 200, 200, 1_900_000_000),
-		("A", 500, 300, 1_800_000_000),
-		("x", 100, 100, 1_700_000_000),
-		("b", 100, 400, 1_600_000_000),
-		("x-1", 100, 100, 1_700_000_000),
-		("X", 100, 100, 1_700_000_000),
+		("bb_probe_c", 200, 200, 1_900_000_000),
+		("bb_probe_A", 500, 300, 1_800_000_000),
+		("bb_probe_x", 100, 100, 1_700_000_000),
+		("bb_probe_b", 100, 400, 1_600_000_000),
+		("bb_probe_x-1", 100, 100, 1_700_000_000),
+		("bb_probe_X", 100, 100, 1_700_000_000),
 	];
 	for (name, created, modified, mtime) in saves {
 		let file = std::fs::File::create(dir.join(format!("{name}.sav"))).unwrap();
 		std::io::Write::write_all(&mut &file, &header(name, created, modified)).unwrap();
 		file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(mtime)).unwrap();
 	}
-	std::fs::write(dir.join("broken.sav"), b"not a save").unwrap();
+	std::fs::write(dir.join("bb_probe_broken.sav"), b"not a save").unwrap();
 	std::fs::write(dir.join("notes.txt"), header("notes", 900, 900)).unwrap();
 
 	let engine = Engine::new(NoScripts);
@@ -193,7 +193,7 @@ fn storages_list_newest_first_then_by_file_name() {
 			r#"
 			local s = "";
 			foreach (m in ::PersistenceManager.queryStorages()) s += m.getFileName() + ",";
-			if (s != "b,A,c,X,x-1,x,") throw "listed " + s;
+			if (s != "bb_probe_b,bb_probe_A,bb_probe_c,bb_probe_X,bb_probe_x-1,bb_probe_x,") throw "listed " + s;
 			"#,
 			"list order",
 		)

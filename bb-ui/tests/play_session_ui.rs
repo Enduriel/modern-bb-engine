@@ -908,9 +908,12 @@ const CAMPAIGN: &str = r#"(function() {
 	return s;
 })()"#;
 
+/// The start of every save name a test makes.
+const SAVE_PREFIX: &str = "bb_probe_";
+
 /// Save the campaign from the in-game menu (Escape, "Save Campaign", a new save named
-/// `name`), then load it ("Load Campaign", the save, "Load"): the campaign loaded is
-/// the one saved.
+/// `SAVE_PREFIX` + `name`), then load it ("Load Campaign", the save, "Load"): the
+/// campaign loaded is the one saved.
 fn save_and_load(p: &Play, name: &str) -> Result<(), String> {
 	leave_town(p)?;
 	p.script("::World.State.setPause(true);")?;
@@ -922,6 +925,10 @@ fn save_and_load(p: &Play, name: &str) -> Result<(), String> {
 	during("a new save", pick_campaign(p, "New Savegame"))?;
 	during("saving", p.session.click_when_ready("Save", STEP))?;
 	during("naming the save", p.session.fill_field(".enter-name-container input", name))?;
+	// The field takes letters, digits and spaces only (its keydown filter): the prefix's
+	// underscores go in through the field's own setter.
+	let name = &format!("{SAVE_PREFIX}{name}");
+	p.session.eval(&format!("jQuery('.enter-name-container input').setInputText({name:?})"))?;
 	during("confirming the name", p.session.click_when_ready("Ok", STEP))?;
 	let listed = format!("(function() {{ foreach (s in ::PersistenceManager.queryStorages()) if (s.getName() == \"{name}\") return 1; return 0; }})()");
 	during("the save being written", p.session.pump_until(Duration::from_secs(20), |_| p.int(&listed).is_ok_and(|n| n == 1)).then_some(()).ok_or("no save named so".to_string()))?;

@@ -76,20 +76,20 @@ fn a_campaign_saved_to_disk_loads_in_a_new_game() {
 		for _ in 0..300 {
 			harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
 		}
-		engine.run_script("::World.State.setPause(true); ::World.State.saveCampaign(\"disk\");", "save").expect("save");
-		assert!(folder.0.join("disk.sav").is_file(), "the save is a file");
+		engine.run_script("::World.State.setPause(true); ::World.State.saveCampaign(\"bb_probe_disk\");", "save").expect("save");
+		assert!(folder.0.join("bb_probe_disk.sav").is_file(), "the save is a file");
 		// Saved over: the newer campaign is the one kept.
-		engine.run_script("::World.Assets.addMoney(1234); ::World.State.saveCampaign(\"disk\"); ::World.State.saveCampaign(\"spare\");", "save again").expect("save again");
-		assert_eq!(listed(&engine), "disk spare ", "both saves listed");
+		engine.run_script("::World.Assets.addMoney(1234); ::World.State.saveCampaign(\"bb_probe_disk\"); ::World.State.saveCampaign(\"bb_probe_spare\");", "save again").expect("save again");
+		assert_eq!(listed(&engine), "bb_probe_disk bb_probe_spare ", "both saves listed");
 		// Deleted from the menus: the file goes.
-		engine.run_script("::PersistenceManager.deleteStorage(\"spare\");", "delete").expect("delete");
-		assert!(!folder.0.join("spare.sav").exists(), "the deleted save's file is gone");
+		engine.run_script("::PersistenceManager.deleteStorage(\"bb_probe_spare\");", "delete").expect("delete");
+		assert!(!folder.0.join("bb_probe_spare.sav").exists(), "the deleted save's file is gone");
 		player::eval_string(&engine, SUMMARY).unwrap().unwrap()
 		// The engine goes here, as when the game quits.
 	};
 
 	let engine = engine_at_menu(&folder.0);
-	assert_eq!(listed(&engine), "disk ", "the new game lists the save");
+	assert_eq!(listed(&engine), "bb_probe_disk ", "the new game lists the save");
 	// The world state ignores a load within 4 s (real time) of the last, the game's
 	// start counting as one: a player can't be at the menu that soon in the original.
 	while player::eval_i64(&engine, "::Time.getRealTimeF() > 4.5 ? 1 : 0").unwrap() != Some(1) {
@@ -97,7 +97,7 @@ fn a_campaign_saved_to_disk_loads_in_a_new_game() {
 	}
 	engine.run_script(&format!("{MENU}.getMainMenuModule().onLoadCampaignButtonPressed();"), "load menu").expect("load menu");
 	harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
-	engine.run_script(&format!("{MENU}.getLoadCampaignMenuModule().onLoadButtonPressed(\"disk\");"), "load").expect("load");
+	engine.run_script(&format!("{MENU}.getLoadCampaignMenuModule().onLoadButtonPressed(\"bb_probe_disk\");"), "load").expect("load");
 	until(
 		&engine,
 		"::RootState.get(\"WorldState\") != null && (\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()",

@@ -92,8 +92,8 @@ fn the_extension_rides_after_the_fog_and_survives_its_absence() {
 	engine.run_script("::World.State.setPause(true);", "pause").expect("pause");
 
 	// No sections: the original's save as it is.
-	engine.run_script("::World.State.saveCampaign(\"plain\");", "save").expect("save");
-	let plain = std::fs::read(file("plain")).expect("plain save");
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_plain\");", "save").expect("save");
+	let plain = std::fs::read(file("bb_probe_plain")).expect("plain save");
 	assert!(plain.starts_with(&[0xbb, 0, 2]), "the original's container by default");
 	assert_ne!(&plain[plain.len() - 4..], b"BBME", "nothing after the fog");
 
@@ -102,8 +102,8 @@ fn the_extension_rides_after_the_fog_and_survives_its_absence() {
 		loads: RefCell::default(),
 	});
 	engine.saves().add_extension_section(recorder.clone());
-	engine.run_script("::World.State.saveCampaign(\"ext\");", "save").expect("save");
-	let ext = std::fs::read(file("ext")).expect("ext save");
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_ext\");", "save").expect("save");
+	let ext = std::fs::read(file("bb_probe_ext")).expect("ext save");
 	let tail = extension(&[("test.recorder", b"recorded state")]);
 	assert!(ext.ends_with(&tail), "the extension, as documented, ends the file");
 	// Before it, the fog of war ends the body, as in the plain save (0xbb, the length,
@@ -112,19 +112,19 @@ fn the_extension_rides_after_the_fog_and_survives_its_absence() {
 	let body = &ext[..ext.len() - tail.len()];
 	assert_eq!(body[body.len() - fog..], plain[plain.len() - fog..], "the fog ends the body");
 
-	load(&engine, "ext");
+	load(&engine, "bb_probe_ext");
 	assert_eq!(recorder.loads.borrow().last(), Some(&Some(b"recorded state".to_vec())), "the section's bytes back");
-	load(&engine, "plain");
+	load(&engine, "bb_probe_plain");
 	assert_eq!(recorder.loads.borrow().last(), Some(&None), "a save without the section: None");
 
 	// A section nothing here owns (another mod's), next to ours: kept to the next save.
 	let mut foreign = ext[..ext.len() - tail.len()].to_vec();
 	foreign.extend_from_slice(&extension(&[("other.mod", &[1, 2, 3]), ("test.recorder", b"old")]));
-	std::fs::write(file("foreign"), &foreign).expect("write");
-	load(&engine, "foreign");
+	std::fs::write(file("bb_probe_foreign"), &foreign).expect("write");
+	load(&engine, "bb_probe_foreign");
 	assert_eq!(recorder.loads.borrow().last(), Some(&Some(b"old".to_vec())));
-	engine.run_script("::World.State.saveCampaign(\"again\");", "save").expect("save");
-	let again = std::fs::read(file("again")).expect("again save");
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_again\");", "save").expect("save");
+	let again = std::fs::read(file("bb_probe_again")).expect("again save");
 	assert!(
 		again.ends_with(&extension(&[("other.mod", &[1, 2, 3]), ("test.recorder", b"recorded state")])),
 		"the foreign section is written back; ours is saved anew"
@@ -134,7 +134,7 @@ fn the_extension_rides_after_the_fog_and_survives_its_absence() {
 	// so does this engine (the bytes are ignored).
 	let mut junk = plain.clone();
 	junk.extend_from_slice(&[0x5a; 1000]);
-	std::fs::write(file("junk"), &junk).expect("write");
-	load(&engine, "junk");
+	std::fs::write(file("bb_probe_junk"), &junk).expect("write");
+	load(&engine, "bb_probe_junk");
 	assert_eq!(recorder.loads.borrow().last(), Some(&None));
 }

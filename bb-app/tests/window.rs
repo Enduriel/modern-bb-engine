@@ -62,6 +62,9 @@ fn run_bb(dir: &Path, (width, height): (u32, u32), args: &[&str]) -> Option<Run>
 		// Tests never start Steam, even with its library beside the test's bb.
 		.arg("--no-steam")
 		.args(args)
+		// Saves (and mods' storages) stay in the run's folder unless it names another:
+		// never the user's.
+		.env("BB_SAVES_DIR", dir.join("saves"))
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
 		.env("BB_TEST_STDERR", &stderr)

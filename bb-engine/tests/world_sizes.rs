@@ -54,28 +54,28 @@ fn campaign_on(cols: i64, rows: i64, mask: u32) {
 
 	// Our format, and back.
 	engine.saves().set_format(SaveFormat::Own);
-	engine.run_script("::World.State.saveCampaign(\"sized\");", "save").unwrap();
-	assert!(std::fs::read(dir.join("sized.sav")).unwrap().starts_with(OWN_MAGIC));
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_sized\");", "save").unwrap();
+	assert!(std::fs::read(dir.join("bb_probe_sized.sav")).unwrap().starts_with(OWN_MAGIC));
 	frames(&engine, 300);
-	engine.run_script("::World.State.loadCampaign(\"sized\");", "load").unwrap();
+	engine.run_script("::World.State.loadCampaign(\"bb_probe_sized\");", "load").unwrap();
 	assert_eq!(player::eval_string(&engine, WORLD).unwrap().unwrap(), before, "{cols} x {rows}: loaded");
 	let patch = engine.world_grid().take_fog_patch().expect("the loaded fog mask");
 	assert_eq!(patch.mask, mask, "the loaded mask keeps its size");
 
 	// The original's format; past its map size, with the version's over-limit bit.
 	engine.saves().set_format(SaveFormat::Original);
-	engine.run_script("::World.State.saveCampaign(\"sized_original\");", "save").unwrap();
-	let bytes = std::fs::read(dir.join("sized_original.sav")).unwrap();
+	engine.run_script("::World.State.saveCampaign(\"bb_probe_sized_original\");", "save").unwrap();
+	let bytes = std::fs::read(dir.join("bb_probe_sized_original.sav")).unwrap();
 	assert!(bytes.starts_with(&[0xbb, 0, 2]), "{cols} x {rows}: the original's container");
 	let version = u32::from_le_bytes(bytes[3..7].try_into().unwrap());
 	let over = cols > 140 || rows > 170;
 	assert_eq!(version, if over { 0x0100_0000 | 65 } else { 65 }, "{cols} x {rows}: the version");
 	frames(&engine, 300);
-	engine.run_script("::World.State.loadCampaign(\"sized_original\");", "load").unwrap();
+	engine.run_script("::World.State.loadCampaign(\"bb_probe_sized_original\");", "load").unwrap();
 	let loaded = player::eval_string(&engine, WORLD).unwrap().unwrap();
 	assert!(loaded.starts_with(&format!("{cols}x{rows} ")), "loaded again: {loaded}");
 	// The scripts see the version they wrote, the bit cleared.
-	let meta = "(function() { foreach (m in ::PersistenceManager.queryStorages()) if (m.getFileName() == \"sized_original\") return m.getVersion(); })()";
+	let meta = "(function() { foreach (m in ::PersistenceManager.queryStorages()) if (m.getFileName() == \"bb_probe_sized_original\") return m.getVersion(); })()";
 	assert_eq!(player::eval_i64(&engine, meta).unwrap(), Some(65));
 	frames(&engine, 60);
 	let _ = std::fs::remove_dir_all(&dir);

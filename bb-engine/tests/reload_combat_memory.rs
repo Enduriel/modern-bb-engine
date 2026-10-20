@@ -154,7 +154,7 @@ fn battles_between_loads_do_not_grow_memory() {
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("reload_combat_memory");
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
-	std::fs::copy(&from, dir.join("reload.sav")).unwrap();
+	std::fs::copy(&from, dir.join("bb_probe_reload.sav")).unwrap();
 
 	let mut engine = harness::open_install(Path::new(harness::STEAM_DATA_DIR)).expect("open install");
 	engine.vm_mut().install_standard_error_handlers();
@@ -165,7 +165,7 @@ fn battles_between_loads_do_not_grow_memory() {
 	until(&engine, 600, "4 s at the menu", "::Time.getRealTimeF() > 4.5");
 	engine.run_script(&format!("{MENU}.getMainMenuModule().onLoadCampaignButtonPressed();"), "load menu").unwrap();
 	frames(&engine, 1);
-	engine.run_script(&format!("{MENU}.getLoadCampaignMenuModule().onLoadButtonPressed(\"reload\");"), "load").unwrap();
+	engine.run_script(&format!("{MENU}.getLoadCampaignMenuModule().onLoadButtonPressed(\"bb_probe_reload\");"), "load").unwrap();
 	until(&engine, 600, "the campaign loading", LOADED);
 
 	let mb = |b: usize| b as f64 / 1_048_576.0;
@@ -182,10 +182,10 @@ fn battles_between_loads_do_not_grow_memory() {
 		harness::engage_nearest_hostile(&engine).expect("engage");
 		until(&engine, 60 * 600, "the battle over and back in the world", BACK_IN_WORLD);
 		let result = player::eval_i64(&engine, "::__lastCombatResult").unwrap();
-		engine.run_script("::World.State.saveCampaign(\"after_battle\");", "save").unwrap();
+		engine.run_script("::World.State.saveCampaign(\"bb_probe_after_battle\");", "save").unwrap();
 		// The world state ignores a load within 4 s of the last.
 		frames(&engine, 300);
-		engine.run_script("::World.State.loadCampaign(\"reload\");", "load").unwrap();
+		engine.run_script("::World.State.loadCampaign(\"bb_probe_reload\");", "load").unwrap();
 		frames(&engine, 1);
 		let waiting = waiting_in_cycles(&engine);
 		let h = held(&engine);

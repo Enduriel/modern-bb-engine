@@ -193,20 +193,20 @@ mod tests {
 		let mut meta = Meta {
 			version: 72,
 			name: "Label".into(),
-			file_name: "slot1".into(),
+			file_name: "bb_probe_slot1".into(),
 			created: 1_760_000_000,
 			modified: 1_760_000_001,
 			..Meta::default()
 		};
 		meta.set_int("days".into(), 12);
 		meta.set_string("banner".into(), "banner_04".into());
-		storage.write("slot1", encode(&meta, &[1, 2, 3])).unwrap();
-		assert_eq!(storage.names(), ["slot1"]);
-		let (format, back, mut body) = decode(storage.read("slot1").unwrap(), "slot1").unwrap();
+		storage.write("bb_probe_slot1", encode(&meta, &[1, 2, 3])).unwrap();
+		assert_eq!(storage.names(), ["bb_probe_slot1"]);
+		let (format, back, mut body) = decode(storage.read("bb_probe_slot1").unwrap(), "bb_probe_slot1").unwrap();
 		assert_eq!(format, Format::Own);
 		assert_eq!(back, meta);
 		assert_eq!((body.u8().unwrap(), body.u8().unwrap(), body.u8().unwrap()), (1, 2, 3));
-		storage.delete("slot1");
+		storage.delete("bb_probe_slot1");
 		assert!(storage.names().is_empty());
 	}
 
@@ -231,30 +231,30 @@ mod tests {
 	fn saves_in_a_folder_are_written_whole_and_replaced_whole() {
 		let folder = Folder::new("whole");
 		let storage = Storage::Dir(folder.0.clone());
-		storage.write("slot1", b"first".to_vec()).unwrap();
-		assert_eq!(storage.read("slot1").unwrap(), b"first");
-		storage.write("slot1", b"second".to_vec()).unwrap();
-		assert_eq!(storage.read("slot1").unwrap(), b"second");
-		assert_eq!(storage.names(), ["slot1"]);
+		storage.write("bb_probe_slot1", b"first".to_vec()).unwrap();
+		assert_eq!(storage.read("bb_probe_slot1").unwrap(), b"first");
+		storage.write("bb_probe_slot1", b"second".to_vec()).unwrap();
+		assert_eq!(storage.read("bb_probe_slot1").unwrap(), b"second");
+		assert_eq!(storage.names(), ["bb_probe_slot1"]);
 		// Nothing is left of the writing.
 		let files: Vec<_> = std::fs::read_dir(&folder.0).unwrap().flatten().map(|e| e.file_name()).collect();
-		assert_eq!(files, ["slot1.sav"]);
-		storage.delete("slot1");
-		assert!(storage.names().is_empty() && !storage.exists("slot1"));
+		assert_eq!(files, ["bb_probe_slot1.sav"]);
+		storage.delete("bb_probe_slot1");
+		assert!(storage.names().is_empty() && !storage.exists("bb_probe_slot1"));
 	}
 
 	#[test]
 	fn a_save_cut_short_leaves_the_old_one() {
 		let folder = Folder::new("cut");
 		let storage = Storage::Dir(folder.0.clone());
-		storage.write("slot1", b"the old save".to_vec()).unwrap();
+		storage.write("bb_probe_slot1", b"the old save".to_vec()).unwrap();
 		// A crash after writing the new bytes, before they're put in place.
-		write_temp(&folder.0, "slot1", b"the new sa").unwrap();
-		assert_eq!(storage.read("slot1").unwrap(), b"the old save");
-		assert_eq!(storage.names(), ["slot1"], "the leftover isn't a save");
+		write_temp(&folder.0, "bb_probe_slot1", b"the new sa").unwrap();
+		assert_eq!(storage.read("bb_probe_slot1").unwrap(), b"the old save");
+		assert_eq!(storage.names(), ["bb_probe_slot1"], "the leftover isn't a save");
 		// The next save goes through over the leftover.
-		storage.write("slot1", b"the new save".to_vec()).unwrap();
-		assert_eq!(storage.read("slot1").unwrap(), b"the new save");
+		storage.write("bb_probe_slot1", b"the new save".to_vec()).unwrap();
+		assert_eq!(storage.read("bb_probe_slot1").unwrap(), b"the new save");
 	}
 
 	#[test]

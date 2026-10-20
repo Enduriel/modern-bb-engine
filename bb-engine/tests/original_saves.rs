@@ -60,7 +60,8 @@ fn script(engine: &harness::GameEngine, what: &str, src: &str) {
 
 const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 
-/// The fixtures, copied where the engine may write (the game saves on some actions).
+/// The fixtures, copied where the engine may write (the game saves on some actions),
+/// each named `bb_probe_<its name>`, as every save a test makes is.
 fn saves_dir(test: &str) -> Option<std::path::PathBuf> {
 	let from = Path::new(harness::ORIGINAL_SAVES_DIR);
 	if !Path::new(harness::STEAM_DATA_DIR).exists() || !from.join("new_campaign.sav").exists() {
@@ -71,7 +72,7 @@ fn saves_dir(test: &str) -> Option<std::path::PathBuf> {
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
 	for f in std::fs::read_dir(from).unwrap().flatten() {
-		std::fs::copy(f.path(), dir.join(f.file_name())).unwrap();
+		std::fs::copy(f.path(), dir.join(format!("bb_probe_{}", f.file_name().to_string_lossy()))).unwrap();
 	}
 	Some(dir)
 }
@@ -130,7 +131,7 @@ fn loads_in(test: &str, name: &str) -> Option<(harness::GameEngine, std::path::P
 
 #[test]
 fn an_original_save_loads_as_the_original_had_it_and_runs_on() {
-	let Some(engine) = loads_as_the_original_had_it("an_original_save_loads", "new_campaign") else { return };
+	let Some(engine) = loads_as_the_original_had_it("an_original_save_loads", "bb_probe_new_campaign") else { return };
 	script(&engine, "unpause", "::World.State.setAutoPause(false); ::World.State.setPause(false);");
 	let start = player::eval_i64(&engine, "(::World.getTime().Time * 100).tointeger()").unwrap().unwrap();
 	for _ in 0..1200 {
@@ -144,8 +145,8 @@ fn an_original_save_loads_as_the_original_had_it_and_runs_on() {
 /// and saved it again.
 #[test]
 fn other_original_saves_load_as_the_original_had_them() {
-	loads_as_the_original_had_it("later_original_saves_load", "new_campaign_later");
-	loads_as_the_original_had_it("reloaded_original_saves_load", "new_campaign_reloaded");
+	loads_as_the_original_had_it("later_original_saves_load", "bb_probe_new_campaign_later");
+	loads_as_the_original_had_it("reloaded_original_saves_load", "bb_probe_new_campaign_reloaded");
 }
 
 /// The campaign the saves are of, started here as the original's capture probe started
@@ -178,7 +179,7 @@ fn a_new_campaign_is_the_one_the_original_saved() {
 		"(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null",
 	);
 	let ours = player::eval_string(&engine, DUMP).unwrap().unwrap();
-	let original = std::fs::read_to_string(dir.join("new_campaign.dump.txt")).unwrap();
+	let original = std::fs::read_to_string(dir.join("bb_probe_new_campaign.dump.txt")).unwrap();
 	let (ours, original): (Vec<&str>, Vec<&str>) = (ours.lines().collect(), original.lines().collect());
 	let differ: Vec<String> = ours
 		.iter()
@@ -204,7 +205,7 @@ fn a_new_campaign_is_the_one_the_original_saved() {
 /// layers, which the original's own load doesn't keep either (`compare_original_saves`).
 #[test]
 fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
-	let Some((engine, dir)) = loads_in("round_trip", "new_campaign") else { return };
+	let Some((engine, dir)) = loads_in("round_trip", "bb_probe_new_campaign") else { return };
 	engine.saves().set_format(squirrel_bb::SaveFormat::Original);
 	// The capture ran with Modern Hooks.
 	engine.saves().set_modified(true);
@@ -216,10 +217,10 @@ fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
 	script(
 		&engine,
 		"load and save",
-		"::Math.seedRandom(12345); ::World.State.loadCampaign(\"new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
+		"::Math.seedRandom(12345); ::World.State.loadCampaign(\"bb_probe_new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
 	);
 	let ours = std::fs::read(dir.join("bb_probe_resave.sav")).expect("our save");
-	let original = std::fs::read(dir.join("new_campaign_reloaded_seeded.sav")).unwrap();
+	let original = std::fs::read(dir.join("bb_probe_new_campaign_reloaded_seeded.sav")).unwrap();
 	let differences = squirrel_bb::compare_original_saves(&ours, &original).expect("both read");
 	assert!(differences.is_empty(), "ours vs the original's:\n{}", differences.join("\n"));
 }

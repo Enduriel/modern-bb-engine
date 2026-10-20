@@ -121,8 +121,8 @@ fn world_natives_from_the_disassembly() {
 		"presave",
 		r#"
 		::World.presave();
-		::World.save("presave_test", null);
-		if (::World.canLoad("presave_test")) wrong.push("saved before the world was drawn");
+		::World.save("bb_probe_presave_test", null);
+		if (::World.canLoad("bb_probe_presave_test")) wrong.push("saved before the world was drawn");
 		"#,
 	);
 	harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
@@ -130,9 +130,9 @@ fn world_natives_from_the_disassembly() {
 		&engine,
 		"save after presave",
 		r#"
-		::World.save("presave_test", null);
-		if (!::World.canLoad("presave_test")) wrong.push("not saved after the world was drawn");
-		if (::World.canLoad("no_such_save")) wrong.push("canLoad of a missing save");
+		::World.save("bb_probe_presave_test", null);
+		if (!::World.canLoad("bb_probe_presave_test")) wrong.push("not saved after the world was drawn");
+		if (::World.canLoad("bb_probe_no_such_save")) wrong.push("canLoad of a missing save");
 		"#,
 	);
 
