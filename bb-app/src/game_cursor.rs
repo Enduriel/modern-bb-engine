@@ -14,10 +14,8 @@
 //! the scripts do (or haven't followed the mouse, as behind the loading screen), the
 //! game draws its cursor there until it is at the mouse again.
 //!
-//! The software cursor is drawn unscaled, in the window's pixels. The system's custom
-//! cursors are in physical pixels on X11, Wayland (winit sets a viewport) and Windows,
-//! but in points on macOS, where a scaled display would show them larger: there the
-//! game draws its cursor unless the scale is 1 (see [`shows_pixels`]).
+//! The software cursor is drawn unscaled, in the window's pixels, and the system's shows
+//! the same pixels at any display scale (see `system_cursor`).
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -52,13 +50,6 @@ pub fn choose(look: &CursorLook, system: bool, at_mouse: bool, frame: Option<usi
 		Some(frame) if system && at_mouse => CursorShow::Sprite { brush: brush.clone(), frame },
 		_ => CursorShow::Drawn,
 	}
-}
-
-/// Whether the system shows a cursor picture pixel for pixel on a display of
-/// `scale_factor` (as the software cursor draws it): everywhere but on a scaled macOS
-/// display, whose cursors are in points.
-pub fn shows_pixels(scale_factor: f64) -> bool {
-	!cfg!(target_os = "macos") || scale_factor == 1.0
 }
 
 /// The cursor sprites' pictures for the system, built on first use: every frame of a
@@ -149,12 +140,6 @@ mod tests {
 		let file = CursorShow::File("cursor_hand".into());
 		assert_eq!(choose(&look(Some("cursor_hand"), true), true, true, Some(0)), file);
 		assert_eq!(choose(&look(Some("cursor_hand"), true), false, false, None), file);
-	}
-
-	#[test]
-	fn scaled_macos_displays_keep_the_software_cursor() {
-		assert!(shows_pixels(1.0));
-		assert_eq!(shows_pixels(2.0), !cfg!(target_os = "macos"));
 	}
 
 	/// The files, counting reads (each atlas is decoded once).

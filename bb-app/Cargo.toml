@@ -28,6 +28,11 @@ squirrel-bb = { path = "../squirrel-bb" }
 wgpu = "30.0.1"
 winit = "0.30.13"
 
+# macOS: the game's cursor pixel for pixel on scaled displays (`system_cursor`).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.3"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSBitmapImageRep", "NSCursor", "NSGraphics", "NSImage", "NSImageRep", "NSResponder", "NSView", "NSWindow"] }
+
 [dev-dependencies]
 # To read the logs' archives in tests (bb-engine's, with the same features).
 zip = { version = "1.1.4", default-features = false, features = ["deflate"] }

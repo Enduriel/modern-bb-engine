@@ -18,4 +18,5 @@ pub mod settings;
 pub mod shown;
 pub mod stats;
 pub mod steam;
+pub mod system_cursor;
 pub mod wheel;

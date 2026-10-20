@@ -13,12 +13,13 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{ModifiersState, PhysicalKey};
-use winit::window::{CustomCursor, Window, WindowId};
+use winit::window::{Window, WindowId};
 
 use bb_app::display::{self, Placement};
 use bb_app::front::Key;
 use bb_app::game::{Boot, Game, Start, Store};
-use bb_app::game_cursor::{self, CursorShow};
+use bb_app::game_cursor::CursorShow;
+use bb_app::system_cursor::{self, Cursor, Shower};
 use bb_app::steam::SteamStats;
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
@@ -116,10 +117,16 @@ struct Running {
 	/// `ui.software_cursor`).
 	system_cursor: bool,
 	/// The hardware cursors, by name (`<install>/cursors/*.cur`).
-	cursors: HashMap<String, CustomCursor>,
+	cursors: HashMap<String, Cursor>,
 	/// The game's cursor sprites as the system's, by brush and animation frame, made
 	/// as they first show.
-	sprite_cursors: HashMap<(String, usize), CustomCursor>,
+	sprite_cursors: HashMap<(String, usize), Cursor>,
+	/// The display scale the cursors above were made for (they show pixel for pixel).
+	cursor_scale: f64,
+	/// Shows them over the window.
+	cursor_shower: Shower,
+	/// The install's data folder (the hardware cursors are beside it).
+	data_dir: PathBuf,
 	/// The wheel's turn short of a whole notch (see `wheel`).
 	wheel: Notches,
 	/// The modifier keys held.
@@ -163,8 +170,8 @@ impl FrameTimes {
 }
 
 /// The original's hardware cursors: each `<install>/cursors/<name>.cur` (the install
-/// is above the data folder), keyed by name.
-fn load_cursors(event_loop: &ActiveEventLoop, data_dir: &Path) -> HashMap<String, CustomCursor> {
+/// is above the data folder), keyed by name, for a display of `scale`.
+fn load_cursors(event_loop: &ActiveEventLoop, data_dir: &Path, scale: f64) -> HashMap<String, Cursor> {
 	let Some(dir) = data_dir.parent().map(|d| d.join("cursors")) else { return HashMap::new() };
 	let Ok(entries) = std::fs::read_dir(&dir) else { return HashMap::new() };
 	let mut cursors = HashMap::new();
@@ -175,10 +182,9 @@ fn load_cursors(event_loop: &ActiveEventLoop, data_dir: &Path) -> HashMap<String
 			eprintln!("cursor {}: unreadable", path.display());
 			continue;
 		};
-		let source = CustomCursor::from_rgba(image.rgba, image.width as u16, image.height as u16, image.hotspot.0, image.hotspot.1);
-		match source {
-			Ok(source) => {
-				cursors.insert(name, event_loop.create_custom_cursor(source));
+		match system_cursor::make(event_loop, &image, scale) {
+			Ok(cursor) => {
+				cursors.insert(name, cursor);
 			}
 			Err(e) => eprintln!("cursor {}: {e}", path.display()),
 		}
@@ -306,6 +312,8 @@ impl App {
 		let frame_rect = display::frame_rect((config.width, config.height), game.screen());
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
 		let pacer = Pacer::new(None, config.present_mode == wgpu::PresentMode::Fifo);
+		let cursor_scale = window.scale_factor();
+		let cursor_shower = Shower::new(&window);
 		let mut running = Running {
 			window,
 			surface,
@@ -333,8 +341,11 @@ impl App {
 			stats_waiting: (0, 0),
 			shown_cursor: None,
 			system_cursor: !self.settings.software_cursor(),
-			cursors: load_cursors(event_loop, &self.options.data_dir),
+			cursors: load_cursors(event_loop, &self.options.data_dir, cursor_scale),
 			sprite_cursors: HashMap::new(),
+			cursor_scale,
+			cursor_shower,
+			data_dir: self.options.data_dir.clone(),
 			wheel: Notches::default(),
 			modifiers: ModifiersState::empty(),
 			steam: self.options.steam.clone(),
@@ -464,40 +475,42 @@ impl Running {
 	/// the last, as the original's). Set only when it changes: an animated cursor's
 	/// frames change on the game's virtual time, checked every frame.
 	fn follow_cursor(&mut self, event_loop: &ActiveEventLoop) {
-		let system = self.system_cursor && game_cursor::shows_pixels(self.window.scale_factor());
-		self.game.use_system_cursor(system);
+		// The pictures show pixel for pixel: made anew for a display of another scale.
+		let scale = self.window.scale_factor();
+		if scale != self.cursor_scale {
+			self.cursor_scale = scale;
+			self.cursors = load_cursors(event_loop, &self.data_dir, scale);
+			self.sprite_cursors.clear();
+			self.shown_cursor = None;
+		}
+		self.game.use_system_cursor(self.system_cursor);
 		let show = self.game.cursor_show();
 		if self.shown_cursor.as_ref() == Some(&show) {
 			return;
 		}
-		match &show {
-			CursorShow::File(name) => {
-				if let Some(cursor) = self.cursors.get(name) {
-					self.window.set_cursor(cursor.clone());
-				}
-				self.window.set_cursor_visible(true);
-			}
+		let cursor = match &show {
+			// A name without a file keeps the last cursor.
+			CursorShow::File(name) => match self.cursors.get(name) {
+				Some(cursor) => Some(cursor.clone()),
+				None => return,
+			},
 			CursorShow::Sprite { brush, frame } => {
 				let key = (brush.clone(), *frame);
 				if !self.sprite_cursors.contains_key(&key) {
 					for (i, image) in self.game.cursor_pictures(brush).iter().flat_map(|p| p.iter()).enumerate() {
-						let (width, height) = (image.width as u16, image.height as u16);
-						let (x, y) = image.hotspot;
-						match CustomCursor::from_rgba(image.rgba.clone(), width, height, x, y) {
-							Ok(source) => {
-								self.sprite_cursors.insert((brush.clone(), i), event_loop.create_custom_cursor(source));
+						match system_cursor::make(event_loop, image, scale) {
+							Ok(cursor) => {
+								self.sprite_cursors.insert((brush.clone(), i), cursor);
 							}
 							Err(e) => eprintln!("cursor {brush} frame {i}: {e}"),
 						}
 					}
 				}
-				if let Some(cursor) = self.sprite_cursors.get(&key) {
-					self.window.set_cursor(cursor.clone());
-				}
-				self.window.set_cursor_visible(true);
+				self.sprite_cursors.get(&key).cloned()
 			}
-			CursorShow::Drawn | CursorShow::Hidden => self.window.set_cursor_visible(false),
-		}
+			CursorShow::Drawn | CursorShow::Hidden => None,
+		};
+		self.cursor_shower.show(&self.window, cursor.as_ref());
 		self.shown_cursor = Some(show);
 	}
 
