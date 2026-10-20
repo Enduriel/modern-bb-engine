@@ -11,7 +11,9 @@
 //! - `velocity`: a 64 px square moved by Velocity (the page's script, a tick per page
 //!   frame: its tick rate is the page's animation frame rate);
 //! - `css full`: the whole view faded in and out by a CSS animation (every pixel changes
-//!   every page frame: the worst case).
+//!   every page frame: the worst case for the compositor);
+//! - `repaint text`: a 960x600 panel of text over a picture, its text colour changed every
+//!   page frame (rasterized again every frame: the worst case for rasterization).
 //!
 //! Per scene: the game's frame rate, the page's paints a second, the time our paint
 //! handler takes (importing a paint's GPU buffer the first time, copying what changed
@@ -75,6 +77,27 @@ const CSS_FULL: &str = r#"(function () {
 	scene.innerHTML = '<style>@keyframes pp-fade { from { opacity: 0.1; } to { opacity: 0.9; } }</style>'
 		+ '<div style="position:absolute;left:0;top:0;right:0;bottom:0;background:#246;z-index:99999;animation:pp-fade 1s linear infinite alternate"></div>';
 	document.body.appendChild(scene);
+	return true;
+})()"#;
+
+/// A 960x600 panel of text over a scaled picture whose text colour changes every page
+/// frame: the panel is rasterized again every frame (no compositor shortcut), the case
+/// where CPU and GPU raster differ most.
+const REPAINT: &str = r#"(function () {
+	var scene = document.createElement('div'); scene.id = 'pp-scene';
+	var text = '';
+	for (var i = 0; i < 40; i++) text += '<p style="margin:0">The company marches on Lorrested, ' + i + ' days of food left, 1234 crowns.</p>';
+	scene.innerHTML = '<div style="position:absolute;left:200px;top:200px;width:960px;height:600px;overflow:hidden;z-index:99999;'
+		+ 'background:url(coui://gfx/ui/skin/background_inventory.png) 0 0 / 100% 100%;font:16px FreeUniversal-Regular, sans-serif">' + text + '</div>';
+	document.body.appendChild(scene);
+	var panel = scene.firstChild; window.__ppBox = panel; window.__ppTicks = 0;
+	function tick() {
+		if (window.__ppBox !== panel) return;
+		window.__ppTicks++;
+		panel.style.color = 'hsl(' + (window.__ppTicks * 7 % 360) + ',60%,70%)';
+		requestAnimationFrame(tick);
+	}
+	requestAnimationFrame(tick);
 	return true;
 })()"#;
 
@@ -355,7 +378,7 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 	let procs: Vec<(u32, String)> =
 		bb_app::stats::tree_memory().unwrap_or_default().into_iter().map(|p| (p.pid, p.role)).collect();
 	println!("{w}x{h} at {hz} Hz, {seconds} s a scene");
-	for (name, setup) in [("idle", ""), ("css small", CSS_SMALL), ("velocity", VELOCITY), ("css full", CSS_FULL), ("idle again", "")] {
+	for (name, setup) in [("idle", ""), ("css small", CSS_SMALL), ("velocity", VELOCITY), ("css full", CSS_FULL), ("repaint text", REPAINT), ("idle again", "")] {
 		if runs(name) {
 			scene(&mut run, name, setup, seconds, &procs)?;
 		}
@@ -380,6 +403,8 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 	let pss: u64 = memory.iter().map(|p| p.pss()).sum();
 	let parts: Vec<String> = memory.iter().map(|p| format!("{} {:.0}", p.role, p.pss() as f64 / 1048576.0)).collect();
 	println!("memory (PSS): {:.0} MB in all: {}", pss as f64 / 1048576.0, parts.join(", "));
+	let (vram, gtt) = memory.iter().fold((0, 0), |(v, g), p| (v + p.vram, g + p.gtt));
+	println!("GPU memory: {:.0} MB in video memory, {:.0} MB in GTT", vram as f64 / 1048576.0, gtt as f64 / 1048576.0);
 	println!("page texture on the GPU: {:.1} MiB", run.game.front().layer_bytes() as f64 / 1048576.0);
 	Ok(())
 }

@@ -18,11 +18,19 @@ use crate::coui::SCHEME;
 /// hands each paint over as a GPU buffer (`shared_texture_enabled`,
 /// `OnAcceleratedPaint`), never as pixels in memory. ANGLE runs on the system's EGL
 /// (`gl-egl`, what CEF picks for offscreen GPU paints on Linux). The page's content is
-/// still rasterized on the CPU (`--disable-gpu-rasterization`, added with these): GPU
-/// raster changes pixels against the original's, e.g. the battle results' name
-/// separators (`line_metal.png` as a bottom `border-image`) came out a light 3 px bar
-/// where the original and CPU raster draw dark, light, dark rows; CPU raster keeps the
-/// frame goldens exact for ~3% of a core more in animations. `BB_UI_GPU_RASTER=1` rasterizes on the GPU instead, to compare. No audio output, and
+/// still rasterized on the CPU (`--disable-gpu-rasterization`, added with these);
+/// `BB_UI_GPU_RASTER=1` rasterizes it on the GPU instead.
+///
+/// No mipmaps on Chromium's GPU (`--disable-mipmap-generation`: Skia's Ganesh then
+/// reports no mipmap support). Skia's GPU path picks a mip level by the larger of an
+/// image's two scales, so an image shrunk along one axis only is drawn from a level
+/// that has lost the other axis's detail: the battle results' name separators
+/// (`line_metal.png`, 1024x3, as a bottom `border-image` 3 px tall and ~190 px wide)
+/// came out as a 3 px bar of the picture's middle row, where the original and CPU
+/// raster draw its dark, light and dark rows. Without mipmaps, GPU raster draws what
+/// CPU raster does (Chromium's image decode cache still pre-scales images shrunk along
+/// both axes, as it does for CPU raster), and every frame golden matches either way.
+/// No audio output, and
 /// none of Chrome's background services. The on-device AI model's performance class is
 /// given as "GPU blocked" (8, what Chrome for Testing assumes): otherwise, three minutes
 /// in, Chrome probes the GPU for it from a utility process and logs "Unable to get gpu
@@ -47,6 +55,7 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("password-store", Some("basic")),
 	("optimization-guide-performance-class", Some("8")),
 	("in-process-gpu", None),
+	("disable-mipmap-generation", None),
 	("no-zygote", None),
 	("enable-features", Some("NetworkServiceInProcess2")),
 	("disable-features", Some("SpareRendererForSitePerProcess")),
