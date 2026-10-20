@@ -93,6 +93,8 @@ pub fn report(title: &str, notes: &str, p: &Profile, owners: &Owners, top: usize
 	functions.sort_by(|a, b| b.total_ns.cmp(&a.total_ns));
 	table(&mut s, "Top functions by inclusive time", &functions[..functions.len().min(top)], owners, frames);
 
+	natives(&mut s, &p.functions, frames, top);
+
 	let mut files: HashMap<String, (u64, u64)> = HashMap::new();
 	for f in &p.functions {
 		let key = match f.kind {
@@ -162,6 +164,32 @@ fn table(s: &mut String, title: &str, functions: &[&ProfiledFunction], owners: &
 			f.calls as f64 / frames as f64,
 			per(f.self_ns),
 			per(f.total_ns)
+		);
+	}
+	s.push('\n');
+}
+
+/// The engine's natives by own time: calls a frame, ms a frame, and ns a call (the
+/// profiler's dispatch to the hook, ~40 ns, is in each call's figure).
+fn natives(s: &mut String, functions: &[ProfiledFunction], frames: u64, top: usize) {
+	let mut list: Vec<&ProfiledFunction> = functions.iter().filter(|f| f.kind == FunctionKind::Native).collect();
+	list.sort_by(|a, b| b.self_ns.cmp(&a.self_ns));
+	let total: u64 = list.iter().map(|f| f.self_ns).sum();
+	let calls: u64 = list.iter().map(|f| f.calls).sum();
+	let _ = writeln!(
+		s,
+		"### Natives by own time ({:.3} ms a frame, {:.0} calls a frame)\n\n| native | calls a frame | own ms a frame | ns a call |\n|---|---:|---:|---:|",
+		total as f64 / 1e6 / frames as f64,
+		calls as f64 / frames as f64
+	);
+	for f in list.iter().take(top) {
+		let _ = writeln!(
+			s,
+			"| {} | {:.1} | {:.4} | {:.0} |",
+			label(f).replace('|', "\\|"),
+			f.calls as f64 / frames as f64,
+			f.self_ns as f64 / 1e6 / frames as f64,
+			f.self_ns as f64 / f.calls.max(1) as f64
 		);
 	}
 	s.push('\n');

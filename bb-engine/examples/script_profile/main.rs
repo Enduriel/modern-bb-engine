@@ -14,7 +14,7 @@
 //! - `--live-clock` puts a live clock behind `Time.getExactTime`, as `bb` and the
 //!   original have it (the AI's background work then spreads over frames, and a script
 //!   can time itself); the frame's time otherwise.
-//! - `--phases` takes any of the three, `battle` (the nearest hostile party engaged,
+//! - `--phases` takes any of the three, `fast` (running at 4x), `battle` (the nearest hostile party engaged,
 //!   both sides fought by the AI; best last, as the world isn't entered again), or
 //!   `none`.
 //!
@@ -152,12 +152,13 @@ fn main() {
 		for _ in 0..120 {
 			step(&engine, dt, None);
 		}
-		let plain = timed(&engine, dt, o.frames, None);
+		let (plain, spread) = timed(&engine, dt, o.frames, None);
 		let mut profiler = ScriptProfiler::new();
-		let profiled = timed(&engine, dt, o.frames, Some(&mut profiler));
+		let (profiled, _) = timed(&engine, dt, o.frames, Some(&mut profiler));
 		let state = player::eval_string(&engine, STATE).ok().flatten().unwrap_or_default();
 		let notes = format!(
-			"{state}\n\n- a frame (the engine's frame and the UI client's replies): {plain:.3} ms unprofiled, {profiled:.3} ms profiled"
+			"{state}\n\n- a frame (the engine's frame and the UI client's replies): {plain:.3} ms unprofiled (p50 {:.3}, p99 {:.3}, max {:.3}), {profiled:.3} ms profiled",
+			spread.0, spread.1, spread.2
 		);
 		text += &script_profile::report(phase, &notes, &profiler.profile(), &owners, o.top);
 	}
@@ -173,7 +174,7 @@ const STATE: &str = "\"paused \" + ::World.State.isPaused() + \", time speed \" 
 
 fn enter_phase(engine: &GameEngine, phase: &str, loaded: bool) {
 	let leave_town = "if (::World.State.m.LastEnteredTown != null) ::World.State.m.MenuStack.pop(true);";
-	if phase == "running" {
+	if phase == "running" || phase == "fast" {
 		// Leaving a town pauses again a few frames on (AutoPauseAfterCity).
 		script(engine, "leave the town", leave_town);
 		for _ in 0..30 {
@@ -198,7 +199,14 @@ fn enter_phase(engine: &GameEngine, phase: &str, loaded: bool) {
 			enter_battle(engine, loaded);
 			return;
 		}
-		other => panic!("unknown phase {other} (paused, town, running, battle)"),
+		// As `running`, at the fast speed (4x).
+		"fast" => format!(
+			"local p = ::World.State.getPlayer();
+			foreach (e in ::World.getAllEntitiesAtPos(p.getPos(), 600.0))
+				if (e.isParty() && e.getID() != p.getID() && !e.isAlliedWithPlayer()) e.die();
+			::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.State.setNormalTime(); ::World.setSpeedMult(4.0);"
+		),
+		other => panic!("unknown phase {other} (paused, town, running, fast, battle)"),
 	};
 	script(engine, phase, &src);
 }
@@ -221,13 +229,14 @@ fn enter_battle(engine: &GameEngine, loaded: bool) {
 	panic!("battle: not started after 3000 frames");
 }
 
-/// Step `frames` frames, profiled into `profiler` if given: the mean frame in ms.
-fn timed(engine: &GameEngine, dt: f64, frames: u32, mut profiler: Option<&mut ScriptProfiler>) -> f64 {
-	let mut spent = 0.0;
-	for _ in 0..frames {
-		spent += step(engine, dt, profiler.as_deref_mut());
-	}
-	spent / frames as f64
+/// Step `frames` frames, profiled into `profiler` if given: the mean frame in ms, and the
+/// frames' p50, p99 and max.
+fn timed(engine: &GameEngine, dt: f64, frames: u32, mut profiler: Option<&mut ScriptProfiler>) -> (f64, (f64, f64, f64)) {
+	let mut times: Vec<f64> = (0..frames).map(|_| step(engine, dt, profiler.as_deref_mut())).collect();
+	let mean = times.iter().sum::<f64>() / frames.max(1) as f64;
+	times.sort_by(f64::total_cmp);
+	let at = |q: f64| times.get(((times.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0.0);
+	(mean, (at(0.5), at(0.99), at(1.0)))
 }
 
 /// One frame: the engine's frame and the UI client's replies (profiled into `profiler`

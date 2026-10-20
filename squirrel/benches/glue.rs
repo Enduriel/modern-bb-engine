@@ -68,6 +68,16 @@ fn vm_with_tile() -> SQVM {
 		.build(&mut vm);
 	let tile = class.instantiate(&vm, Tile::default());
 	SqTable::root(&vm).set("T", tile);
+	// A native call's own cost: no arguments, two numbers, and one that hands back a new
+	// instance of the class (as `World.getTile` and `createVec` do).
+	vm.register("nop", || {});
+	vm.register("add2", |a: i64, b: i64| a + b);
+	let factory = class.clone();
+	vm.register("make_tile", move |vm: &SQVM| factory.instantiate(vm, Tile::default()));
+	// The strong-reference churn alone: an object argument held, and a held object returned.
+	vm.register("take_retained", |_r: Retained| {});
+	let held = class.instantiate(&vm, Tile::default());
+	vm.register("give_held", move || held.clone());
 
 	// Two overloaded `add(a, b)` dispatchers over the same `__sqrat_ol_ add_2` leaf.
 	let retained = vm.make_closure(|vm: &SQVM, this: This, args: Variadic<Retained>| {
@@ -93,6 +103,34 @@ fn vm_with_tile() -> SQVM {
 fn bench(c: &mut Criterion) {
 	let vm = vm_with_tile();
 	let cases = [
+		(
+			"script_call",
+			"local f = function() {}; for (local i = 0; i < 100000; i++) f();",
+		),
+		(
+			"native_nop",
+			"local f = ::nop; for (local i = 0; i < 100000; i++) f();",
+		),
+		(
+			"native_add2",
+			"local f = ::add2, s = 0; for (local i = 0; i < 100000; i++) s += f(i, 1); return s;",
+		),
+		(
+			"native_retained_arg",
+			"local f = ::take_retained, t = ::T; for (local i = 0; i < 100000; i++) f(t);",
+		),
+		(
+			"native_return_ref",
+			"local f = ::give_held; for (local i = 0; i < 100000; i++) f();",
+		),
+		(
+			"loop",
+			"for (local i = 0; i < 100000; i++) {}",
+		),
+		(
+			"native_instance",
+			"local f = ::make_tile; for (local i = 0; i < 100000; i++) f();",
+		),
 		(
 			"property_get",
 			"local t = ::T, s = 0; for (local i = 0; i < 100000; i++) s += t.Region; return s;",
