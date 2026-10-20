@@ -206,9 +206,15 @@ mod tests {
 					check("iteration", dump(e), dump(l));
 					break;
 				case 7:
+					// A clone of an unbound lazy table stays lazy until it is iterated: check
+					// some at once, keep others lazy (keys added and slots given after the
+					// clone are then laid out at materialization).
 					local ce = clone e, cl = clone l;
-					check("clone", dump(ce), dump(cl));
-					if (rnd(3) == 0) pairs.push([ce, cl]);
+					if (rnd(2) == 0) {
+						check("clone", dump(ce), dump(cl));
+						if (rnd(3) == 0) pairs.push([ce, cl]);
+					}
+					else pairs.push([ce, cl]);
 					break;
 				case 8:
 					// A lazy clone of a lazy table, unbound (a class's copy of its ancestors).
@@ -252,6 +258,36 @@ mod tests {
 			vm.run_script(&format!("run({seed});"), "run").unwrap_or_else(|e| panic!("{e}"));
 		}
 		vm.collect_garbage();
+	}
+
+	/// Slots given to a clone of a lazy table, after keys added since the clone (they
+	/// come after them) and right at the clone (after the clone, not before it).
+	#[test]
+	fn slots_given_after_a_clone_of_a_lazy_table_keep_their_place() {
+		let mut vm = vm();
+		vm.install_standard_error_handlers();
+		vm.run_script(
+			r##"
+			function dump(t) { local s = ""; foreach (k, v in t) s += k + "=" + v + ","; return s + "#" + t.len(); }
+			local src = { a = 1, b = 2, c = 3 };
+			local env = { id = "e" };
+			foreach (added in [0, 1, 2]) foreach (before in [0, 1]) {
+				local l = lazyclone(src), e = clone src;
+				for (local i = 0; i < before; i++) { l["p" + i] <- i; e["p" + i] <- i; }
+				local lc = clone l, ec = clone e;
+				for (local i = 0; i < added; i++) { lc["x" + i] <- i; ec["x" + i] <- i; }
+				assert(lazyinject(lc, { n1 = 5, n2 = 6 }, ["n1", "n2"], env));
+				ec.n1 <- 5; ec.n2 <- 6;
+				lc["y"] <- 7; ec["y"] <- 7;
+				assert(lc.len() == ec.len());
+				assert(lc.n1 == 5 && lc.n2 == 6);
+				local a = dump(ec), b = dump(lc);
+				if (a != b) throw "added " + added + ", before " + before + ": " + a + " vs " + b;
+			}
+			"##,
+			"injected after a clone",
+		)
+		.unwrap_or_else(|e| panic!("{e}"));
 	}
 
 	#[test]
