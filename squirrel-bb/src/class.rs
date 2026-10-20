@@ -59,6 +59,7 @@ use squirrel::{CensusTrack, SQVM, SqStrongRef, SqTable};
 use crate::error::ScriptError;
 use crate::hash::{basename, class_name_hash, normalize_path};
 use crate::module::include;
+use crate::native::inject::add_bound;
 use crate::source::ScriptSource;
 use crate::state::SharedState;
 
@@ -230,12 +231,10 @@ pub(crate) fn new_instance<S: ScriptSource>(
 		// The base level has no delegate, so `contains` only sees its own slots.
 		let base_level = &mut levels[0];
 		base_level.set("InstanceName", format!("{}@{count}", basename(&norm)));
-		for (name, native) in natives.iter().flat_map(|(s, b)| [("self", s), ("base", b)]) {
-			if !base_level.contains(name) {
-				if let Some(bound) = native.bindenv(vm, &leaf_table) {
-					base_level.set(name, bound);
-				}
-			}
+		if let Some(natives) = natives {
+			// Bound when first read, on a lazy level (see `native::inject`).
+			let indices: Vec<u16> = (0..2).filter(|&i| !base_level.contains(["self", "base"][i as usize])).collect();
+			add_bound(vm, base_level, &leaf_table, &natives, &indices);
 		}
 	}
 	levels

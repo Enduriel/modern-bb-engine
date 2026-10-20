@@ -27,7 +27,7 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable};
 
-use super::inject::inject_natives;
+use super::inject::{Natives, inject_natives};
 use super::overload::{make_dispatcher, overload_key, single_overload};
 use super::world_layout;
 use super::world_query::{self, QueryEntity};
@@ -215,7 +215,8 @@ struct EntityMachine {
 	dead: Vec<usize>,
 	/// Passes over the slots running scripts (think, sight): no slot is taken meanwhile.
 	walking: u32,
-	methods: Vec<(&'static str, SqStrongRef)>,
+	/// The natives injected into every entity (see `inject`).
+	natives: Rc<Natives>,
 	player_view: view::PlayerView,
 	footprints: footprints::Footprints,
 	thinkers: think::Thinkers,
@@ -263,16 +264,11 @@ fn inject_levels(
 	entity: &SqStrongRef,
 	record_idx: usize,
 ) {
-	let methods: Vec<(&'static str, SqStrongRef)> = machine
-		.borrow()
-		.methods
-		.iter()
-		.map(|(n, c)| (*n, c.clone()))
-		.collect();
+	let natives = machine.borrow().natives.clone();
 	let Some(leaf) = entity.as_table(vm) else {
 		return;
 	};
-	for identity in inject_natives(vm, &leaf, &methods) {
+	for identity in inject_natives(vm, &leaf, &natives) {
 		let mut m = machine.borrow_mut();
 		m.by_identity.insert(identity, record_idx);
 		m.entities[record_idx].identities.push(identity);
@@ -659,7 +655,7 @@ impl WorldEntities {
 				by_id: HashMap::new(),
 				dead: Vec::new(),
 				walking: 0,
-				methods: Vec::new(),
+				natives: Rc::default(),
 				player_view: view::PlayerView::default(),
 				footprints: footprints::Footprints::default(),
 				thinkers: think::Thinkers::default(),
@@ -931,7 +927,7 @@ impl WorldEntities {
 			let leaf = crate::native::stubs::closure(vm, crate::native::stubs::name(format!("World entity.{name}")));
 			methods.extend(single_overload(vm, name, key, leaf));
 		}
-		self.machine.borrow_mut().methods = methods;
+		self.machine.borrow_mut().natives = Rc::new(Natives::new(methods));
 
 		// --- World.spawnLocation / World.spawnEntity: Sqrat overloads (script, at the tile
 		// under the mouse (see `hover`) / script, coords / script, x, y). Locations occupy
@@ -1247,7 +1243,7 @@ impl WorldEntities {
 		m.by_id.clear();
 		m.dead.clear();
 		m.thinkers = think::Thinkers::default();
-		m.methods.clear();
+		m.natives = Rc::default();
 		m.sprite_class = None;
 		m.label_class = None;
 	}

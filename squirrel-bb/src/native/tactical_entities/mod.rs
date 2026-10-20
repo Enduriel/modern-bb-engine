@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
-use super::inject::inject_natives;
+use super::inject::{Natives, inject_natives};
 use super::overload::{make_dispatcher, overload_key, single_overload};
 
 mod persist;
@@ -211,7 +211,8 @@ struct TacticalMachine {
 	sprite_class: Option<SqClass<UnitSpriteData>>,
 	/// Unit ids, shared with the world's entities (see `entity_ids`).
 	ids: EntityIds,
-	methods: Vec<(&'static str, SqStrongRef)>,
+	/// The natives injected into every entity (see `inject`).
+	natives: Rc<Natives>,
 	/// The battle map, for placing units and objects.
 	grid: Option<crate::native::tactical_grid::Grid>,
 	/// Resolves sprite brushes (set by the host before `install`).
@@ -262,16 +263,11 @@ fn inject_levels(
 	entity: &SqStrongRef,
 	record_idx: usize,
 ) {
-	let methods: Vec<(&'static str, SqStrongRef)> = machine
-		.borrow()
-		.methods
-		.iter()
-		.map(|(n, c)| (*n, c.clone()))
-		.collect();
+	let natives = machine.borrow().natives.clone();
 	let Some(leaf) = entity.as_table(vm) else {
 		return;
 	};
-	for identity in inject_natives(vm, &leaf, &methods) {
+	for identity in inject_natives(vm, &leaf, &natives) {
 		machine.borrow_mut().by_identity.insert(identity, record_idx);
 	}
 }
@@ -662,7 +658,7 @@ impl TacticalEntities {
 				roster_class: None,
 				sprite_class: None,
 				ids: EntityIds::default(),
-				methods: Vec::new(),
+				natives: Rc::default(),
 				grid: None,
 				sprites: Sprites::default(),
 				effects: None,
@@ -1046,7 +1042,7 @@ impl TacticalEntities {
 		methods.extend(colors::unit_natives(vm, &self.machine));
 		methods.extend(vision::unit_natives(vm, &self.machine));
 		methods.extend(render::unit_natives(vm, &self.machine));
-		self.machine.borrow_mut().methods = methods;
+		self.machine.borrow_mut().natives = Rc::new(Natives::new(methods));
 
 		// Roster handle class + the World roster accessors.
 		let roster_class = build_roster_class(vm, &self.machine);
@@ -1372,7 +1368,7 @@ impl TacticalEntities {
 		m.rosters.clear();
 		m.units.clear();
 		m.by_identity.clear();
-		m.methods.clear();
+		m.natives = Rc::default();
 		m.roster_class = None;
 		m.sprite_class = None;
 		m.grid = None;

@@ -26,7 +26,7 @@ pub use entity_ids::EntityIds;
 pub(crate) mod fog_mask;
 mod display_modes;
 mod identity;
-mod inject;
+pub(crate) mod inject;
 mod log;
 mod math;
 pub(crate) mod original_world;

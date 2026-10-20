@@ -160,7 +160,8 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 				let table = me.as_table(vm)?;
 				table.delegate().map(|t| t.to_strong())
 			});
-			self.state.borrow_mut().class_natives = Some((self_native, base_native));
+			let natives = crate::native::inject::Natives::new(vec![("self", self_native), ("base", base_native)]);
+			self.state.borrow_mut().class_natives = Some(std::rc::Rc::new(natives));
 		}
 		{
 			let state = self.state.clone();

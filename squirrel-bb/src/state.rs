@@ -50,7 +50,7 @@ pub(crate) struct State<S: ScriptSource> {
 	pub(crate) fonts: Vec<std::rc::Rc<crate::modern_engine::FontRegistration>>,
 	/// The `self` and `base` natives every instance gets on its base level (bound to
 	/// it); set by `ModuleSystem::install`.
-	pub(crate) class_natives: Option<(SqStrongRef, SqStrongRef)>,
+	pub(crate) class_natives: Option<std::rc::Rc<crate::native::inject::Natives>>,
 	/// Whether class levels are lazy clones (see `class.rs`): on, unless
 	/// `BB_LAZY_LEVELS=0` (to compare with plain clones).
 	pub(crate) lazy_levels: bool,
