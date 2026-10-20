@@ -20,6 +20,7 @@ pub struct Front {
 	drawn: bool,
 	/// The frame rate for the FPS display, shown at the next step (see [`Front::set_fps`]).
 	fps: Option<u32>,
+	profiling: Option<crate::script_profile::ScriptProfiling>,
 }
 
 impl Front {
@@ -72,12 +73,14 @@ impl Front {
 		if let Start::NewCampaign(seed) = &boot.start {
 			session.start_campaign(seed)?;
 		}
+		let archives = crate::game::archives(boot.data_dir, boot.mods).map_err(|e| e.to_string())?;
 		Ok(Front {
 			session,
 			layer: UiLayer::new(gpu),
 			captured: 0,
 			drawn: false,
 			fps: None,
+			profiling: crate::script_profile::ScriptProfiling::from_env(&archives),
 		})
 	}
 
@@ -98,7 +101,11 @@ impl Front {
 			self.session.park();
 			self.session.set_fps(&fps.to_string());
 		}
-		self.session.step_unparked(ms)?;
+		let session = &self.session;
+		match &mut self.profiling {
+			Some(profiling) => profiling.step(session.engine().vm(), || session.step_unparked(ms))?,
+			None => session.step_unparked(ms)?,
+		}
 		// A page frame for each game frame: after its draw (`draw`), or now for a frame
 		// that wasn't drawn (a loop that only steps), so the page never stands still.
 		if !std::mem::replace(&mut self.drawn, false) {

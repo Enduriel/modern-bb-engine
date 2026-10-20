@@ -12,6 +12,7 @@ pub mod keys;
 pub mod logs;
 pub mod pacing;
 pub mod platform;
+pub mod script_profile;
 pub mod settings;
 pub mod shown;
 pub mod stats;

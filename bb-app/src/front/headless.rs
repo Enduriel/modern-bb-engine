@@ -8,6 +8,7 @@ use crate::game::{Boot, Start};
 
 pub struct Front {
 	engine: GameEngine,
+	profiling: Option<crate::script_profile::ScriptProfiling>,
 }
 
 impl Front {
@@ -18,6 +19,7 @@ impl Front {
 		// work then spreads over frames. The battle camera glides and units hop over
 		// time, as the original's.
 		let archives = crate::game::archives(boot.data_dir, boot.mods).map_err(|e| e.to_string())?;
+		let profiling = crate::script_profile::ScriptProfiling::from_env(&archives);
 		let mut engine = harness::open_mounted(boot.data_dir, archives, |c| {
 			c.exact_clock = squirrel_bb::ExactClock::Live;
 			c.battle_camera = squirrel_bb::BattleCamera::Glides;
@@ -49,7 +51,7 @@ impl Front {
 			engine.run_script("::RootState.get(\"MainMenuState\").hide();", "hide the main menu")?;
 			engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;
 		}
-		Ok(Front { engine })
+		Ok(Front { engine, profiling })
 	}
 
 	pub fn engine(&self) -> &GameEngine {
@@ -58,9 +60,16 @@ impl Front {
 
 	/// Advance the game by `ms` of real time.
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
-		self.engine.frame(ms)?;
-		self.engine.pump_ui()?;
-		Ok(())
+		let engine = &self.engine;
+		let step = || -> Result<(), String> {
+			engine.frame(ms)?;
+			engine.pump_ui()?;
+			Ok(())
+		};
+		match &mut self.profiling {
+			Some(profiling) => profiling.step(engine.vm(), step),
+			None => step(),
+		}
 	}
 
 	/// Before the scripts run outside a step: no page to hold.

@@ -13,6 +13,7 @@
 //!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
 //!   * [`log_files`] — bb's log files, the earlier sessions' kept as zips
 //!   * [`harness`] — headless boot steps over a real install (menu, new campaign)
+//!   * [`script_profile`] — reports of where the scripts' time goes, by function and mod
 //!
 //! Next: the 3.0.4 → current-version bytecode transcoder (the game ships Squirrel
 //! 3.0.4 / 32-bit compiled bytecode; we run a newer 64-bit VM, so the `.cnut`
@@ -27,6 +28,7 @@ pub mod harness;
 pub mod log_files;
 pub mod mounts;
 pub mod script_cache;
+pub mod script_profile;
 pub mod tactical_player;
 pub mod transcode;
 pub mod vfs;
