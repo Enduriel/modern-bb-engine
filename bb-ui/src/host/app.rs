@@ -18,8 +18,9 @@ use crate::coui::SCHEME;
 /// hands each paint over as a GPU buffer (`shared_texture_enabled`,
 /// `OnAcceleratedPaint`), never as pixels in memory. ANGLE runs on the system's EGL
 /// (`gl-egl`, what CEF picks for offscreen GPU paints on Linux). The page's content is
-/// still rasterized on the CPU (`--disable-gpu-rasterization`, added with these);
-/// `BB_UI_GPU_RASTER=1` rasterizes it on the GPU instead.
+/// rasterized on the GPU too (Chromium's default there): where the page repaints, it
+/// takes about a third of the CPU that CPU raster does. `BB_UI_CPU_RASTER=1` rasterizes
+/// on the CPU instead (`--disable-gpu-rasterization`), to compare.
 ///
 /// No mipmaps on Chromium's GPU (`--disable-mipmap-generation`: Skia's Ganesh then
 /// reports no mipmap support). Skia's GPU path picks a mip level by the larger of an
@@ -29,7 +30,8 @@ use crate::coui::SCHEME;
 /// came out as a 3 px bar of the picture's middle row, where the original and CPU
 /// raster draw its dark, light and dark rows. Without mipmaps, GPU raster draws what
 /// CPU raster does (Chromium's image decode cache still pre-scales images shrunk along
-/// both axes, as it does for CPU raster), and every frame golden matches either way.
+/// both axes, as it does for CPU raster) but for antialiasing (at most 17/255), and
+/// every frame golden matches either way. Skia's Ganesh only: Graphite ignores it.
 /// No audio output, and
 /// none of Chrome's background services. The on-device AI model's performance class is
 /// given as "GPU blocked" (8, what Chrome for Testing assumes): otherwise, three minutes
@@ -178,9 +180,9 @@ wrap_app! {
 			// secrets, so it stays out of it.
 			#[cfg(target_os = "macos")]
 			command_line.append_switch(Some(&"use-mock-keychain".into()));
-			// The page's pixels rasterized on the CPU, as before (see `SWITCHES`), unless
-			// asked to compare with Chromium's GPU raster.
-			if std::env::var_os("BB_UI_GPU_RASTER").is_none_or(|v| v == "0") {
+			// The page's pixels rasterized on the CPU when asked, to compare (see
+			// `SWITCHES`).
+			if std::env::var_os("BB_UI_CPU_RASTER").is_some_and(|v| v != "0") {
 				command_line.append_switch(Some(&"disable-gpu-rasterization".into()));
 			}
 			let v8_flags = std::env::var("BB_UI_V8_FLAGS").unwrap_or_else(|_| V8_FLAGS.to_string());
