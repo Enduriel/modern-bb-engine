@@ -14,10 +14,9 @@
 use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
 use crate::gpu::Gpu;
-use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::world::WorldView;
-use crate::world_pass::{PassParams, WorldPass};
+use crate::world_pass::{PassDraw, PassParams, WorldPass};
 
 const FRAGMENT: &str = r#"
 @fragment
@@ -109,23 +108,22 @@ impl FogPass {
 		);
 	}
 
-	/// Draw the fog over `target`: `fog` is `gfx/fow.png`, `map_extent` the world size
-	/// the mask spans, `real_time` (seconds) drives the drift, `ambient` is the scene's
-	/// light. Nothing is drawn before the mask's first patch.
-	#[allow(clippy::too_many_arguments)]
-	pub fn draw(
+	/// The fog's draw over a frame, for a pass of its encoder: `fog` is `gfx/fow.png`,
+	/// `map_extent` the world size the mask spans, `real_time` (seconds) drives the
+	/// drift, `ambient` is the scene's light. Nothing is drawn before the mask's first
+	/// patch.
+	pub(crate) fn prepare(
 		&self,
 		gpu: &Gpu,
-		target: &RenderTarget,
 		view: &WorldView,
 		fog: &GpuTexture,
 		map_extent: (f32, f32),
 		real_time: f32,
 		ambient: [f32; 4],
-	) {
-		let Some((_, mask, _)) = &self.mask else { return };
+	) -> Option<PassDraw> {
+		let (_, mask, _) = self.mask.as_ref()?;
 		if !(map_extent.0 > 0.0 && map_extent.1 > 0.0) {
-			return;
+			return None;
 		}
 		let size = FOG_MASK_SIZE as f32;
 		let params = PassParams {
@@ -135,6 +133,6 @@ impl FogPass {
 			factor: real_time / 100.0,
 			ambient,
 		};
-		self.pass.draw(gpu, target, None, &params, fog, Some(mask));
+		Some(self.pass.prepare(gpu, &params, fog, Some(mask)))
 	}
 }

@@ -13,7 +13,7 @@
 use std::num::NonZeroU64;
 
 use crate::gpu::Gpu;
-use crate::target::{RenderTarget, TARGET_FORMAT};
+use crate::target::TARGET_FORMAT;
 use crate::texture::GpuTexture;
 use crate::world::WorldView;
 
@@ -205,17 +205,11 @@ impl WorldPass {
 		}
 	}
 
-	/// Draw over `target` (cleared first to `clear`, if given). `texture` repeats
-	/// across the map; `mask`, for a masked pass, is clamped to the map's edges.
-	pub fn draw(
-		&self,
-		gpu: &Gpu,
-		target: &RenderTarget,
-		clear: Option<[f64; 4]>,
-		params: &PassParams,
-		texture: &GpuTexture,
-		mask: Option<&wgpu::TextureView>,
-	) {
+	/// A draw of the pass, for a pass of a frame's encoder to record (see
+	/// [`PassDraw::record`]): its uniforms written, its textures bound (`texture`
+	/// repeats across the map; `mask`, for a masked pass, is clamped to the map's
+	/// edges). One a frame: the uniforms are the pass's own.
+	pub fn prepare(&self, gpu: &Gpu, params: &PassParams, texture: &GpuTexture, mask: Option<&wgpu::TextureView>) -> PassDraw {
 		let view = params.view;
 		let floats: [f32; 16] = [
 			view.center[0],
@@ -268,34 +262,24 @@ impl WorldPass {
 			layout: &self.layout,
 			entries: &entries,
 		});
-		let load = match clear {
-			Some([r, g, b, a]) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-			None => wgpu::LoadOp::Load,
-		};
-		let mut encoder = gpu
-			.device
-			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-		{
-			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label: Some(self.label),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &target.view,
-					depth_slice: None,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load,
-						store: wgpu::StoreOp::Store,
-					},
-				})],
-				depth_stencil_attachment: None,
-				timestamp_writes: None,
-				occlusion_query_set: None,
-				multiview_mask: None,
-			});
-			pass.set_pipeline(&self.pipeline);
-			pass.set_bind_group(0, &group, &[]);
-			pass.draw(0..3, 0..1);
+		PassDraw {
+			pipeline: self.pipeline.clone(),
+			group,
 		}
-		gpu.queue.submit([encoder.finish()]);
+	}
+}
+
+/// A pass's draw made ready (see [`WorldPass::prepare`]).
+pub(crate) struct PassDraw {
+	pipeline: wgpu::RenderPipeline,
+	group: wgpu::BindGroup,
+}
+
+impl PassDraw {
+	/// Record it into `pass`.
+	pub(crate) fn record(&self, pass: &mut wgpu::RenderPass) {
+		pass.set_pipeline(&self.pipeline);
+		pass.set_bind_group(0, &self.group, &[]);
+		pass.draw(0..3, 0..1);
 	}
 }

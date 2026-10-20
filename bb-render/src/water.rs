@@ -9,10 +9,9 @@
 //! the frame time times the virtual speed) over 130.
 
 use crate::gpu::Gpu;
-use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::world::WorldView;
-use crate::world_pass::{PassParams, WorldPass};
+use crate::world_pass::{PassDraw, PassParams, WorldPass};
 
 const FRAGMENT: &str = r#"
 @fragment
@@ -38,24 +37,21 @@ impl WaterPass {
 		}
 	}
 
-	/// Draw the water over `target`, cleared to `clear` first: `water` is
+	/// The water's draw over a frame, for a pass of its encoder: `water` is
 	/// `gfx/water.png`, `map_extent` the map's extent, `virtual_time` (seconds) drives
-	/// the drift, `ambient` is the scene's light. Draws nothing, and returns false,
-	/// without a map.
-	#[allow(clippy::too_many_arguments)]
-	pub fn draw(
+	/// the drift, `ambient` is the scene's light. `None` without a map: nothing is
+	/// drawn.
+	pub(crate) fn prepare(
 		&self,
 		gpu: &Gpu,
-		target: &RenderTarget,
-		clear: Option<[f64; 4]>,
 		view: &WorldView,
 		water: &GpuTexture,
 		map_extent: (f32, f32),
 		virtual_time: f32,
 		ambient: [f32; 4],
-	) -> bool {
+	) -> Option<PassDraw> {
 		if !(map_extent.0 > 0.0 && map_extent.1 > 0.0) {
-			return false;
+			return None;
 		}
 		let params = PassParams {
 			view,
@@ -64,7 +60,6 @@ impl WaterPass {
 			factor: virtual_time / 130.0,
 			ambient,
 		};
-		self.pass.draw(gpu, target, clear, &params, water, None);
-		true
+		Some(self.pass.prepare(gpu, &params, water, None))
 	}
 }

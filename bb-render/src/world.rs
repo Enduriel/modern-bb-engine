@@ -24,9 +24,8 @@ use bb_assets::{BrushFrame, SpriteRegistry};
 use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
 
 use crate::fast_hash::FastMap;
-use crate::labels::{LabelFont, label_quads};
+use crate::labels::LabelFont;
 use crate::sprite::{Quad, SceneUniforms};
-use crate::text::{TextRun, glyph_quads, text_scale};
 
 /// The bitmap fonts world text draws in (`None` where the data lacks one).
 #[derive(Clone, Copy, Default)]
@@ -52,11 +51,11 @@ pub(crate) const CLOUD_SHADOW_DROP: f32 = -500.0;
 
 /// How far past its anchor a tile's or an entity's sprites can reach: well past the hex
 /// (400 x 200 around a 180 x 120 cell).
-const SPRITE_REACH: f32 = 400.0;
+pub(crate) const SPRITE_REACH: f32 = 400.0;
 
 /// Region names: white at alpha `0x66`, at 0.4 of the script's scale (`0x4f0350`).
-const REGION_TEXT_COLOR: [u8; 4] = [255, 255, 255, 0x66];
-const REGION_TEXT_SCALE: f32 = 0.4;
+pub(crate) const REGION_TEXT_COLOR: [u8; 4] = [255, 255, 255, 0x66];
+pub(crate) const REGION_TEXT_SCALE: f32 = 0.4;
 
 /// What part of the world is shown.
 #[derive(Clone, Copy, Debug)]
@@ -182,10 +181,10 @@ pub(crate) enum Layer {
 /// A bird's alpha, and its shadow's alpha, scale and offset down (the bird's two
 /// sprites, `0x4e3ad0`). The shadow's colour comes from a global set at startup
 /// (`0x68f0a8`) that hasn't been read; it's black here, as the clouds' shadows are.
-const BIRD_ALPHA: u8 = 0xa8;
-const BIRD_SHADOW_ALPHA: u8 = 0x10;
-const BIRD_SHADOW_SCALE: f32 = 1.25;
-const BIRD_SHADOW_DROP: f32 = 150.0;
+pub(crate) const BIRD_ALPHA: u8 = 0xa8;
+pub(crate) const BIRD_SHADOW_ALPHA: u8 = 0x10;
+pub(crate) const BIRD_SHADOW_SCALE: f32 = 1.25;
+pub(crate) const BIRD_SHADOW_DROP: f32 = 150.0;
 
 /// A frame's quads in drawing order, and the atlases they index.
 pub struct WorldQuads {
@@ -244,28 +243,6 @@ fn quads_of<'a>(
 	let QuadScratch { drawables, order, keys, quads } = scratch;
 	drawables.clear();
 	let mut ids = AtlasIds::default();
-	// `key`: the sort key without the brush's depth bias, which is added here.
-	let push = |drawables: &mut Vec<Drawable>,
-	            ids: &mut AtlasIds<'a>,
-	            layer: Layer,
-	            key: i64,
-	            brush: &str,
-	            frame: u32,
-	            anchor: [f32; 2],
-	            offset: [f32; 2],
-	            look: Look| {
-		if let Some((texture, depth_bias, quad)) = sprite_quad(sprites, brush, frame, anchor, offset, look) {
-			drawables.push(Drawable {
-				layer,
-				key: key + i64::from(depth_bias),
-				quad: Quad {
-					texture: ids.id(texture),
-					..quad
-				},
-			});
-		}
-	};
-
 	for tile in scene.tiles.iter().filter(|t| tiles && on_screen(t.pos)) {
 		if let Some((key, texture, quad)) = terrain_quad(tile, sprites) {
 			drawables.push(Drawable {
@@ -284,266 +261,19 @@ fn quads_of<'a>(
 			}
 		}
 	}
-	for entity in scene
-		.entities
-		.iter()
-		.filter(|e| e.shown && on_screen(e.pos))
-	{
-		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
-		for sprite in entity
-			.sprites
-			.iter()
-			.filter(|s| s.visible && !s.brush.is_empty())
-		{
-			let offset = [sprite.offset.0 as f32, sprite.offset.1 as f32];
-			// `setSpriteScaling(name, false)`: the sprite keeps its screen size at any
-			// zoom (the settlement banner).
-			let zoom_scale = if sprite.scaling { 1.0 } else { 1.0 / view.zoom };
-			let look = Look {
-				scale: sprite.scale as f32 * zoom_scale,
-				flipped: sprite.flipped,
-				alpha: (sprite.color >> 24) as f32,
-				rotation: sprite.rotation,
-				tint: {
-					let [_, r, g, b] = sprite.color.to_be_bytes();
-					[r, g, b]
+	// The moving layer, item by item (see `crate::world_items`).
+	let mut item_quads = Vec::new();
+	for item in crate::world_items::items(scene, view, fonts).filter(|item| item.shows(view)) {
+		item.quads(sprites, fonts, &mut item_quads);
+		for q in item_quads.drain(..) {
+			drawables.push(Drawable {
+				layer: q.layer,
+				key: q.key,
+				quad: Quad {
+					texture: ids.id(q.texture),
+					..q.quad
 				},
-			};
-			let pushed = drawables.len();
-			push(
-				drawables,
-				&mut ids,
-				Layer::Entities,
-				anchor[1] as i64,
-				&sprite.brush,
-				sprite.frame,
-				anchor,
-				offset,
-				look,
-			);
-			if let Some(d) = drawables.get_mut(pushed) {
-				d.quad.flags = unlit(sprite.ignore_ambient);
-			}
-		}
-	}
-
-	// Clouds: each a shadow and the cloud over it (`0x4e3ed0`). The shadow's key is
-	// 2000 more than the cloud's, so it draws first.
-	let [left, right, bottom, top] = view.bounds(CLOUD_REACH);
-	for cloud in scene.clouds.iter().filter(|c| {
-		let (x, y) = c.pos;
-		x >= left && x <= right && y >= bottom && y <= top
-	}) {
-		let anchor = [cloud.pos.0, cloud.pos.1];
-		let [_, r, g, b] = cloud.color.to_be_bytes();
-		let shadow = Look {
-			scale: cloud.scale * CLOUD_SHADOW_SCALE,
-			alpha: cloud.alpha * CLOUD_SHADOW_ALPHA * 255.0,
-			tint: [0; 3],
-			..Look::PLAIN
-		};
-		let below = [anchor[0], anchor[1] + CLOUD_SHADOW_DROP * cloud.scale];
-		push(
-			drawables,
-				&mut ids,
-			Layer::Effects,
-			cloud.key + 2000,
-			cloud.brush,
-			0,
-			below,
-			[0.0; 2],
-			shadow,
-		);
-		let look = Look {
-			scale: cloud.scale,
-			alpha: cloud.alpha * 255.0,
-			tint: [r, g, b],
-			..Look::PLAIN
-		};
-		push(
-			drawables,
-				&mut ids,
-			Layer::Effects,
-			cloud.key,
-			cloud.brush,
-			0,
-			anchor,
-			[0.0; 2],
-			look,
-		);
-	}
-
-	if let Some(font) = fonts.region {
-		let zoom = 1.0 / view.zoom;
-		for region in &scene.region_texts {
-			// Text the bitmap font can't draw is shaped in the outline fonts.
-			let decoded = crate::fonts::decode::engine_text(&region.text);
-			let shaped = match &decoded {
-				crate::fonts::decode::EngineText::Bitmap(_) => None,
-				crate::fonts::decode::EngineText::Shaped(text) => match fonts.shaper {
-					Some(shaper) => Some(shaper.borrow_mut().shape(font.name(), text, None).clone()),
-					None => continue,
-				},
-			};
-			let text: &[u8] = match &decoded {
-				crate::fonts::decode::EngineText::Bitmap(bytes) => bytes,
-				crate::fonts::decode::EngineText::Shaped(_) => &[],
-			};
-			let (width, height) = match &shaped {
-				Some(shaped) => (shaped.width, shaped.height),
-				None => (font.font.text_width(text) as f32, font.font.cell_height as f32),
-			};
-			let run = TextRun {
-				text,
-				font,
-				pos: [region.pos.0, region.pos.1],
-				// Centred both ways.
-				offset: [-width / 2.0, height / 2.0],
-				scale: text_scale(zoom, region.scale * REGION_TEXT_SCALE, true),
-				rotation: region.rotation,
-				color: REGION_TEXT_COLOR,
-			};
-			// A bitmap glyph samples the font's atlas (its texture key outlives the
-			// decoded text).
-			let quads: Vec<(&str, Quad)> = match &shaped {
-				Some(shaped) => crate::text::shaped_quads(&run, shaped),
-				None => glyph_quads(&run).into_iter().map(|(_, quad)| (font.texture, quad)).collect(),
-			};
-			for (texture, quad) in quads {
-				drawables.push(Drawable {
-					layer: Layer::Details,
-					key: 0,
-					quad: Quad {
-						texture: ids.id(texture),
-						..quad
-					},
-				});
-			}
-		}
-	}
-
-	// Footprints: key 0 in the details layer, after the region names (`0x4e49a0`).
-	for footprint in scene
-		.footprints
-		.iter()
-		.filter(|f| on_screen((f.pos.0.into(), f.pos.1.into())))
-	{
-		let look = Look {
-			scale: footprint.scale,
-			alpha: footprint.alpha,
-			..Look::PLAIN
-		};
-		let anchor = [footprint.pos.0, footprint.pos.1];
-		push(
-			drawables,
-				&mut ids,
-			Layer::Details,
-			0,
-			&footprint.brush,
-			0,
-			anchor,
-			[0.0; 2],
-			look,
-		);
-	}
-	// Waves: key 0 in the effects layer, under the clouds.
-	for wave in scene
-		.waves
-		.iter()
-		.filter(|w| on_screen((w.pos.0.into(), w.pos.1.into())))
-	{
-		let look = Look {
-			alpha: wave.alpha,
-			..Look::PLAIN
-		};
-		push(
-			drawables,
-				&mut ids,
-			Layer::Effects,
-			0,
-			&wave.brush,
-			0,
-			[wave.pos.0, wave.pos.1],
-			[0.0; 2],
-			look,
-		);
-	}
-
-	// Particle effects: key 0 in the effects layer, after the waves.
-	for particle in scene.particles.iter().filter(|p| on_screen((p.pos.0.into(), p.pos.1.into()))) {
-		let [a, r, g, b] = particle.color.to_be_bytes();
-		let look = Look {
-			scale: particle.scale,
-			alpha: f32::from(a),
-			rotation: particle.rotation,
-			tint: [r, g, b],
-			..Look::PLAIN
-		};
-		push(
-			drawables,
-				&mut ids,
-			Layer::Effects,
-			0,
-			&particle.brush,
-			0,
-			[particle.pos.0, particle.pos.1],
-			[0.0; 2],
-			look,
-		);
-	}
-
-	// The birds, sorted by their keys among the effects: each white at alpha 0xa8 over
-	// its shadow, the same frame at alpha 0x10, 1.25 times as large and offset 150 down
-	// (an offset scales with its sprite).
-	for bird in scene.birds.iter().filter(|b| on_screen((b.pos.0.into(), b.pos.1.into()))) {
-		let anchor = [bird.pos.0, bird.pos.1];
-		let shadow = Look {
-			scale: BIRD_SHADOW_SCALE,
-			alpha: f32::from(BIRD_SHADOW_ALPHA),
-			tint: [0; 3],
-			..Look::PLAIN
-		};
-		push(
-			drawables,
-				&mut ids,
-			Layer::Effects,
-			bird.key,
-			bird.brush,
-			bird.frame,
-			anchor,
-			[0.0, -BIRD_SHADOW_DROP],
-			shadow,
-		);
-		let look = Look {
-			alpha: f32::from(BIRD_ALPHA),
-			..Look::PLAIN
-		};
-		push(drawables, &mut ids, Layer::Effects, bird.key, bird.brush, bird.frame, anchor, [0.0; 2], look);
-	}
-
-	if let Some(font) = fonts.label {
-		for entity in scene
-			.entities
-			.iter()
-			.filter(|e| e.shown && on_screen(e.pos))
-		{
-			let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
-			for label in entity
-				.labels
-				.iter()
-				.filter(|l| l.visible && !l.text.is_empty())
-			{
-				for (texture, quad) in label_quads(label, anchor, 1.0 / view.zoom, font, fonts.shaper) {
-					drawables.push(Drawable {
-						layer: Layer::Labels,
-						key: anchor[1] as i64,
-						quad: Quad {
-							texture: ids.id(texture),
-							..quad
-						},
-					});
-				}
-			}
+			});
 		}
 	}
 

@@ -22,6 +22,7 @@ pub mod frame_diff;
 pub mod frame_timing;
 mod gpu;
 mod kept_map;
+mod kept_sprites;
 pub mod labels;
 mod memory;
 mod mips;
@@ -42,6 +43,7 @@ mod usage;
 mod water;
 pub mod world;
 mod world_pass;
+mod world_items;
 mod world_renderer;
 
 pub use cursor::frame_at as cursor_frame_at;

@@ -63,6 +63,12 @@ struct VertexOut {
 
 @vertex
 fn vs_main(v: VertexIn) -> VertexOut {
+	return vertex_out(v);
+}
+
+// A vertex as the fragment stage takes it (shared with the instanced vertex stage,
+// `instanced.wgsl`).
+fn vertex_out(v: VertexIn) -> VertexOut {
 	var out: VertexOut;
 	var position = v.position;
 	position.x = (position.x - u.translation.x) * u.scale.x;

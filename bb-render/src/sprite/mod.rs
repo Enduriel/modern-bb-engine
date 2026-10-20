@@ -7,10 +7,13 @@
 //! (`NUM_TEXTURE_SAMPLERS`, eight `if` branches in `sprite.fs`).
 
 use std::num::NonZeroU64;
+use std::ops::Range;
 
 use crate::gpu::Gpu;
 use crate::target::{RenderTarget, TARGET_FORMAT};
 use crate::texture::GpuTexture;
+
+pub(crate) mod instances;
 
 /// Atlases one draw call can sample.
 pub const SLOTS: usize = 8;
@@ -110,6 +113,9 @@ pub struct Quad {
 /// The sprite program and its fixed GPU objects.
 pub struct SpriteRenderer {
 	pipeline: wgpu::RenderPipeline,
+	/// The same program drawing quads kept as instances (see [`instances`]).
+	instanced: wgpu::RenderPipeline,
+	instances_layout: wgpu::BindGroupLayout,
 	uniforms: wgpu::Buffer,
 	uniform_group: wgpu::BindGroup,
 	textures_layout: wgpu::BindGroupLayout,
@@ -120,9 +126,10 @@ pub struct SpriteRenderer {
 }
 
 impl SpriteRenderer {
-	/// The bytes of its own on the GPU: its textures and the kept quads' buffer.
+	/// The bytes of its own on the GPU: its textures and the kept quads' buffers.
 	pub fn bytes(&self) -> u64 {
-		self.blank.bytes() + self.streams.borrow().kept.buffer.as_ref().map_or(0, wgpu::Buffer::size)
+		let streams = self.streams.borrow();
+		self.blank.bytes() + streams.kept.buffer.as_ref().map_or(0, wgpu::Buffer::size) + streams.instances.bytes()
 	}
 
 	pub fn new(gpu: &Gpu) -> Self {
@@ -231,6 +238,44 @@ impl SpriteRenderer {
 			multiview_mask: None,
 			cache: None,
 		});
+		let instances_layout = instances::layout(gpu);
+		let instanced_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some("sprite instanced"),
+			source: wgpu::ShaderSource::Wgsl(concat!(include_str!("sprite.wgsl"), include_str!("instanced.wgsl")).into()),
+		});
+		let instanced_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("sprite instanced"),
+			bind_group_layouts: &[Some(&uniform_layout), Some(&textures_layout), Some(&instances_layout)],
+			immediate_size: 0,
+		});
+		let instanced = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("sprite instanced"),
+			layout: Some(&instanced_layout),
+			vertex: wgpu::VertexState {
+				module: &instanced_shader,
+				entry_point: Some("vs_instanced"),
+				compilation_options: Default::default(),
+				buffers: &[],
+			},
+			primitive: wgpu::PrimitiveState::default(),
+			depth_stencil: None,
+			multisample: wgpu::MultisampleState::default(),
+			fragment: Some(wgpu::FragmentState {
+				module: &instanced_shader,
+				entry_point: Some("fs_main"),
+				compilation_options: Default::default(),
+				targets: &[Some(wgpu::ColorTargetState {
+					format: TARGET_FORMAT,
+					blend: Some(wgpu::BlendState {
+						color: blend,
+						alpha: blend_alpha,
+					}),
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			multiview_mask: None,
+			cache: None,
+		});
 		let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("sprite uniforms"),
 			size: UNIFORM_SIZE,
@@ -262,6 +307,8 @@ impl SpriteRenderer {
 		let blank = GpuTexture::upload(gpu, "blank", &blank_image);
 		SpriteRenderer {
 			pipeline,
+			instanced,
+			instances_layout,
 			uniforms,
 			uniform_group,
 			textures_layout,
@@ -286,8 +333,9 @@ impl SpriteRenderer {
 	}
 
 	/// Draw `parts` in order into `target`, after clearing it to `clear` (if given): quads
-	/// streamed now (each one's `texture` indexing `textures`) and calls over the kept
-	/// quads (see [`SpriteRenderer::keep`]), in one pass.
+	/// streamed now (each one's `texture` indexing `textures`), calls over the kept quads
+	/// (see [`SpriteRenderer::keep`]) and over the kept instances (see
+	/// [`SpriteRenderer::write_instance`]), in one pass.
 	pub(crate) fn draw_parts(
 		&self,
 		gpu: &Gpu,
@@ -297,43 +345,68 @@ impl SpriteRenderer {
 		parts: &[Part],
 		textures: &[&GpuTexture],
 	) {
+		let mut encoder = gpu
+			.device
+			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+		let prepared = self.prepare(gpu, &mut encoder, scene, parts, textures);
+		{
+			let mut pass = begin_pass(&mut encoder, target, clear, "sprites");
+			self.record(&mut pass, &prepared, parts, 0..parts.len());
+		}
+		self.finish(&encoder);
+		gpu.queue.submit([encoder.finish()]);
+	}
+
+	/// Get `parts` ready to be recorded in a pass of `encoder` (see
+	/// [`record`](Self::record)): the uniforms written, the streamed quads' vertices and
+	/// the kept quads' and instances' writes recorded on `encoder`, and each call's bind
+	/// group made. [`finish`](Self::finish) must follow before `encoder` is submitted.
+	pub(crate) fn prepare(
+		&self,
+		gpu: &Gpu,
+		encoder: &mut wgpu::CommandEncoder,
+		scene: &SceneUniforms,
+		parts: &[Part],
+		textures: &[&GpuTexture],
+	) -> Prepared {
 		gpu.queue.write_buffer(&self.uniforms, 0, &scene.bytes());
 		let mut streams = self.streams.borrow_mut();
 		let streams = &mut *streams;
 		// The streamed quads' vertices in order (quad `i`'s four at `4i`), each with its
 		// call's slot for its atlas, built in memory of ours and copied for the upload in
 		// one go (the upload's mapped memory is slow to write piecemeal).
-		let mut streamed: Vec<(usize, Vec<Call>)> = Vec::new();
+		let mut streamed: Vec<Option<(usize, Vec<Call>)>> = Vec::new();
 		let vertices = &mut streams.scratch;
 		vertices.clear();
 		let mut count = 0;
 		for part in parts {
-			if let Part::Streamed(quads) = part {
-				let calls = batch(quads);
-				for call in &calls {
-					for quad in &quads[call.quads.clone()] {
-						let slot = call.slots.iter().position(|&t| t == quad.texture).expect("batched") as u32;
-						push_vertices(vertices, quad, slot);
+			match part {
+				Part::Streamed(quads) => {
+					let calls = batch(quads);
+					for call in &calls {
+						for quad in &quads[call.quads.clone()] {
+							let slot = call.slots.iter().position(|&t| t == quad.texture).expect("batched") as u32;
+							push_vertices(vertices, quad, slot);
+						}
 					}
+					streamed.push(Some((count, calls)));
+					count += quads.len();
 				}
-				streamed.push((count, calls));
-				count += quads.len();
+				_ => streamed.push(None),
 			}
 		}
 		let bytes = vertices.len();
-		let mut encoder = gpu
-			.device
-			.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-		let vertex_buffer = streams.vertices.write(gpu, &mut encoder, vertices).clone();
+		let vertex_buffer = streams.vertices.write(gpu, encoder, vertices).clone();
 		let kept = &mut streams.kept;
 		if let Some(buffer) = &kept.buffer {
 			for (at, range) in kept.writes.drain(..) {
 				if let Some(size) = wgpu::BufferSize::new(range.len() as u64) {
-					streams.vertices.belt.write_buffer(&mut encoder, buffer, at, size).copy_from_slice(&kept.bytes[range]);
+					streams.vertices.belt.write_buffer(encoder, buffer, at, size).copy_from_slice(&kept.bytes[range]);
 				}
 			}
 		}
 		kept.bytes.clear();
+		let instances = streams.instances.upload(gpu, &self.instances_layout, encoder, &mut streams.vertices.belt);
 		let kept_quads = parts
 			.iter()
 			.filter_map(|p| match p {
@@ -342,67 +415,111 @@ impl SpriteRenderer {
 			})
 			.max()
 			.unwrap_or(0);
-		let index_buffer = streams.indices.quads(gpu, count.max(kept_quads));
-		let groups: Vec<Vec<wgpu::BindGroup>> = streamed
-			.iter()
-			.map(|(_, calls)| calls.iter().map(|call| self.texture_group(gpu, &call.slots, textures)).collect())
+		let indices = streams.indices.quads(gpu, count.max(kept_quads)).clone();
+		let streamed = streamed
+			.into_iter()
+			.map(|part| {
+				part.map(|(base, calls)| {
+					let calls = calls
+						.into_iter()
+						.map(|call| {
+							let group = self.texture_group(gpu, &call.slots, textures);
+							(call.quads, group)
+						})
+						.collect();
+					(base, calls)
+				})
+			})
 			.collect();
+		Prepared {
+			streamed,
+			vertices: (vertex_buffer, bytes as u64),
+			indices,
+			kept: streams.kept.buffer.clone(),
+			instances,
+		}
+	}
 
-		{
-			let load = match clear {
-				Some([r, g, b, a]) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-				None => wgpu::LoadOp::Load,
-			};
-			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label: Some("sprites"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &target.view,
-					depth_slice: None,
-					resolve_target: None,
-					ops: wgpu::Operations {
-						load,
-						store: wgpu::StoreOp::Store,
-					},
-				})],
-				depth_stencil_attachment: None,
-				timestamp_writes: None,
-				occlusion_query_set: None,
-				multiview_mask: None,
-			});
-			pass.set_pipeline(&self.pipeline);
-			pass.set_bind_group(0, &self.uniform_group, &[]);
-			pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-			let mut streamed = streamed.iter().zip(&groups);
-			for part in parts {
-				match part {
-					Part::Streamed(_) => {
-						let ((base, calls), groups) = streamed.next().expect("a streamed part");
-						if calls.is_empty() {
-							continue;
-						}
-						pass.set_vertex_buffer(0, vertex_buffer.slice(..bytes as u64));
-						for (call, group) in calls.iter().zip(groups) {
-							pass.set_bind_group(1, group, &[]);
-							let (first, end) = ((base + call.quads.start) as u32, (base + call.quads.end) as u32);
-							pass.draw_indexed(first * 6..end * 6, 0, 0..1);
-						}
+	/// Record `parts[range]` (as [`prepare`](Self::prepare)d) into `pass`.
+	pub(crate) fn record(&self, pass: &mut wgpu::RenderPass, prepared: &Prepared, parts: &[Part], range: Range<usize>) {
+		pass.set_bind_group(0, &self.uniform_group, &[]);
+		// Which pipeline is set: none yet, the vertex buffers' or the instances'.
+		let mut set = None;
+		let plain = |pass: &mut wgpu::RenderPass, set: &mut Option<bool>| {
+			if *set != Some(false) {
+				pass.set_pipeline(&self.pipeline);
+				pass.set_index_buffer(prepared.indices.slice(..), wgpu::IndexFormat::Uint32);
+				*set = Some(false);
+			}
+		};
+		for (i, part) in parts.iter().enumerate().filter(|(i, _)| range.contains(i)) {
+			match part {
+				Part::Streamed(_) => {
+					let Some((base, calls)) = &prepared.streamed[i] else { continue };
+					if calls.is_empty() {
+						continue;
 					}
-					Part::Kept(calls) => {
-						let Some(buffer) = &streams.kept.buffer else { continue };
-						if calls.is_empty() {
-							continue;
-						}
-						pass.set_vertex_buffer(0, buffer.slice(..));
-						for (quads, group) in calls.iter() {
-							pass.set_bind_group(1, *group, &[]);
-							pass.draw_indexed(quads.start * 6..quads.end * 6, 0, 0..1);
-						}
+					plain(pass, &mut set);
+					let (buffer, bytes) = &prepared.vertices;
+					pass.set_vertex_buffer(0, buffer.slice(..*bytes));
+					for (quads, group) in calls {
+						pass.set_bind_group(1, group, &[]);
+						let (first, end) = ((base + quads.start) as u32, (base + quads.end) as u32);
+						pass.draw_indexed(first * 6..end * 6, 0, 0..1);
+					}
+				}
+				Part::Kept(calls) => {
+					let Some(buffer) = &prepared.kept else { continue };
+					if calls.is_empty() {
+						continue;
+					}
+					plain(pass, &mut set);
+					pass.set_vertex_buffer(0, buffer.slice(..));
+					for (quads, group) in calls.iter() {
+						pass.set_bind_group(1, *group, &[]);
+						pass.draw_indexed(quads.start * 6..quads.end * 6, 0, 0..1);
+					}
+				}
+				Part::Instanced(calls) => {
+					let Some(instances) = &prepared.instances else { continue };
+					if calls.is_empty() {
+						continue;
+					}
+					if set != Some(true) {
+						pass.set_pipeline(&self.instanced);
+						pass.set_bind_group(2, instances, &[]);
+						set = Some(true);
+					}
+					for (entries, group) in calls.iter() {
+						pass.set_bind_group(1, *group, &[]);
+						pass.draw(0..6, entries.clone());
 					}
 				}
 			}
 		}
-		streams.vertices.belt.finish_and_recall_on_submit(&encoder);
-		gpu.queue.submit([encoder.finish()]);
+	}
+
+	/// The prepared draws' uploads are recorded: call before `encoder` is submitted.
+	pub(crate) fn finish(&self, encoder: &wgpu::CommandEncoder) {
+		self.streams.borrow_mut().vertices.belt.finish_and_recall_on_submit(encoder);
+	}
+
+	/// Keep room for `count` instances ([`Part::Instanced`]): whether the room was made
+	/// anew, every instance to be written again.
+	pub(crate) fn keep_instances(&self, gpu: &Gpu, count: usize) -> bool {
+		self.streams.borrow_mut().instances.keep(gpu, count)
+	}
+
+	/// Write instance `at` as `quad` (in its atlas's or page's coordinates; its `texture`
+	/// is ignored, the order list gives each its slot) with the next draw.
+	pub(crate) fn write_instance(&self, at: usize, quad: &Quad) {
+		self.streams.borrow_mut().instances.write(at, quad);
+	}
+
+	/// Draw the instances in the order `entries` gives from the next draw on (see
+	/// [`instances::Instances::set_order`]).
+	pub(crate) fn set_instance_order(&self, entries: &[u32]) {
+		self.streams.borrow_mut().instances.set_order(entries);
 	}
 
 	/// Keep room for `quads` quads drawn from frame to frame ([`Part::Kept`]): whether
@@ -489,7 +606,54 @@ pub(crate) enum Part<'a> {
 	Streamed(&'a [Quad]),
 	/// Calls over the kept quads: each a range of them and the atlases' bind group they
 	/// were written for.
-	Kept(&'a [(std::ops::Range<u32>, &'a wgpu::BindGroup)]),
+	Kept(&'a [(Range<u32>, &'a wgpu::BindGroup)]),
+	/// Calls over the kept instances: each a range of the order list's entries and the
+	/// atlases' bind group their slots index.
+	Instanced(&'a [(Range<u32>, &'a wgpu::BindGroup)]),
+}
+
+/// Parts made ready for a pass (see [`SpriteRenderer::prepare`]).
+pub(crate) struct Prepared {
+	/// For each streamed part, its first quad in the vertex buffer and its calls: their
+	/// quads (from the part's first) and bind groups.
+	streamed: Vec<Option<(usize, Vec<StreamedCall>)>>,
+	/// The streamed vertices' buffer and their bytes.
+	vertices: (wgpu::Buffer, u64),
+	indices: wgpu::Buffer,
+	kept: Option<wgpu::Buffer>,
+	instances: Option<wgpu::BindGroup>,
+}
+
+/// A streamed part's call: its quads (from the part's first) and bind group.
+type StreamedCall = (Range<usize>, wgpu::BindGroup);
+
+/// A pass over `target` of `encoder`, clearing it to `clear` first (if given).
+pub(crate) fn begin_pass<'e>(
+	encoder: &'e mut wgpu::CommandEncoder,
+	target: &RenderTarget,
+	clear: Option<[f64; 4]>,
+	label: &str,
+) -> wgpu::RenderPass<'e> {
+	let load = match clear {
+		Some([r, g, b, a]) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
+		None => wgpu::LoadOp::Load,
+	};
+	encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+		label: Some(label),
+		color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+			view: &target.view,
+			depth_slice: None,
+			resolve_target: None,
+			ops: wgpu::Operations {
+				load,
+				store: wgpu::StoreOp::Store,
+			},
+		})],
+		depth_stencil_attachment: None,
+		timestamp_writes: None,
+		occlusion_query_set: None,
+		multiview_mask: None,
+	})
 }
 
 /// A run of consecutive quads drawn by one call, and the atlases bound for it.
@@ -562,6 +726,7 @@ struct Streams {
 	/// The vertices' bytes as they're built.
 	scratch: Vec<u8>,
 	kept: Kept,
+	instances: instances::Instances,
 }
 
 /// Quads kept on the GPU from frame to frame (the world map's terrain and details, see
@@ -584,6 +749,7 @@ impl Streams {
 			indices: QuadIndices::default(),
 			scratch: Vec::new(),
 			kept: Kept::default(),
+			instances: instances::Instances::default(),
 		}
 	}
 }

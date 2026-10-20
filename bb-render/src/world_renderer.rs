@@ -18,6 +18,7 @@ use squirrel_bb::scene::tactical::TacticalScene;
 use crate::fast_hash::FastMap;
 use crate::fog::FogPass;
 use crate::kept_map::{self, Built, KeptMap, Placing};
+use crate::kept_sprites::{self, KeptSprites, Locating};
 use crate::gpu::Gpu;
 use crate::fonts::shaper::{GLYPH_PAGE, TextShaper, glyph_page};
 use crate::fonts::{FontDb, Registration};
@@ -25,7 +26,7 @@ use crate::labels::{LabelFont, WHITE};
 use crate::mips::{MipMaker, samples_mips};
 use crate::pages::{FramePages, Located};
 use crate::residency::{Drawer, Residency};
-use crate::sprite::{Part, Quad, SceneUniforms, SpriteRenderer};
+use crate::sprite::{Part, Prepared, Quad, SceneUniforms, SpriteRenderer, begin_pass};
 use crate::tactical::tactical_quads;
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
@@ -95,6 +96,19 @@ pub struct WorldRenderer {
 	frame: FrameQuads,
 	/// The world map's terrain and details, kept from frame to frame.
 	kept: KeptMap,
+	/// The world map's moving layer, kept from frame to frame (see [`crate::kept_sprites`]).
+	moving: KeptSprites,
+	/// The fonts mods registered: text shaped before one came is shaped again.
+	fonts_registered: usize,
+}
+
+/// How a world frame draws its moving layer (entities, labels, effects).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Moving {
+	/// Built for this frame, streamed.
+	Streamed,
+	/// Kept on the GPU (see [`crate::kept_sprites`]).
+	Kept,
 }
 
 /// A draw's quads located (see [`WorldRenderer::resolve`]) and bound (see
@@ -180,7 +194,7 @@ const WATER_TEXTURE: &str = "gfx/water.png";
 const CLEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 
 /// Where the bitmap fonts are; their atlases have no mips (see [`GpuTexture`]).
-const FONT_DIR: &str = "gfx/fonts/";
+pub(crate) const FONT_DIR: &str = "gfx/fonts/";
 
 /// The font world labels are drawn in.
 const LABEL_FONT: &str = "gfx/fonts/cinzel_bold_20";
@@ -227,11 +241,14 @@ impl WorldRenderer {
 			quad_scratch: QuadScratch::default(),
 			frame: FrameQuads::default(),
 			kept: KeptMap::default(),
+			moving: KeptSprites::default(),
+			fonts_registered: 0,
 		}
 	}
 
 	/// A mod's font (`ModernEngine.registerFont`): its family, or why it can't be used.
 	pub fn register_font(&mut self, font: Registration) -> Result<String, String> {
+		self.fonts_registered += 1;
 		self.text.get_mut().db().register(font)
 	}
 
@@ -529,8 +546,9 @@ impl WorldRenderer {
 	/// The game discarded a scene: what only it needed goes, and the warmed images no
 	/// draw asked for.
 	pub fn discard(&mut self, discard: Discard) {
-		// The kept map's bind groups hold their textures.
+		// The kept map's and moving layer's bind groups hold their textures.
 		self.kept.forget_groups();
+		self.moving.forget_groups();
 		self.textures.drop_all_decoded();
 		if let Some(pages) = &mut self.pages {
 			match discard {
@@ -601,8 +619,9 @@ impl WorldRenderer {
 		let resident = self.resident();
 		let over = self.residency.over_budget(&resident);
 		if !over.is_empty() {
-			// The kept map's bind groups hold their textures.
+			// The kept map's and moving layer's bind groups hold their textures.
 			self.kept.forget_groups();
+			self.moving.forget_groups();
 		}
 		for path in over {
 			self.textures.remove(&path);
@@ -639,13 +658,15 @@ impl WorldRenderer {
 		atlases: Atlases,
 	) -> FrameStats {
 		self.kept.build(&scene.tiles, registry, None);
-		self.draw_world(gpu, target, scene, registry, view, atlases)
+		self.draw_world(gpu, target, scene, registry, view, atlases, Moving::Streamed)
 	}
 
 	/// [`draw`](Self::draw) with the map's terrain and details kept on the GPU from frame
 	/// to frame (see [`crate::kept_map`]): built again only when `map`'s revision (or the
-	/// registry) changes, the details changed written again. `scene`'s own tiles aren't
-	/// drawn (a scene without them, `Engine::world_scene_where(|_| false)`, copies nothing).
+	/// registry) changes, the details changed written again. The moving layer is kept
+	/// too, its items built again only when they change (see [`crate::kept_sprites`]).
+	/// `scene`'s own tiles aren't drawn (a scene without them,
+	/// `Engine::world_scene_where(|_| false)`, copies nothing).
 	pub fn draw_kept(
 		&mut self,
 		gpu: &Gpu,
@@ -666,9 +687,10 @@ impl WorldRenderer {
 			self.kept.build(&tiles, registry, built);
 		}
 		self.kept.change(map.changes, registry);
-		self.draw_world(gpu, target, scene, registry, view, atlases)
+		self.draw_world(gpu, target, scene, registry, view, atlases, Moving::Kept)
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn draw_world(
 		&mut self,
 		gpu: &Gpu,
@@ -677,6 +699,7 @@ impl WorldRenderer {
 		registry: &SpriteRegistry,
 		view: &WorldView,
 		atlases: Atlases,
+		moving: Moving,
 	) -> FrameStats {
 		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
 		self.textures.pump(upload);
@@ -687,10 +710,22 @@ impl WorldRenderer {
 		};
 		let world = {
 			let _span = crate::frame_timing::span("world quads");
-			world_quads_around_map(scene, registry, view, fonts, &mut self.quad_scratch)
+			match moving {
+				Moving::Streamed => Some(world_quads_around_map(scene, registry, view, fonts, &mut self.quad_scratch)),
+				Moving::Kept => {
+					let built = kept_sprites::Built {
+						sheets: registry.sheets().len(),
+						fonts: self.fonts_registered,
+					};
+					self.moving.update(scene, view, registry, fonts, built, self.pages.is_some());
+					None
+				}
+			}
 		};
 		self.upload_glyphs(gpu);
-		self.record_usage(&world, view.zoom, None);
+		if let Some(world) = &world {
+			self.record_usage(world, view.zoom, None);
+		}
 		self.index(registry);
 		for path in [WATER_TEXTURE, FOG_TEXTURE].into_iter().filter(|p| *p == WATER_TEXTURE || scene.fog_of_war) {
 			match atlases {
@@ -709,12 +744,16 @@ impl WorldRenderer {
 		if self.sprites.keep(gpu, self.kept.len()) {
 			self.kept.unplace();
 		}
+		if moving == Moving::Kept && self.sprites.keep_instances(gpu, self.moving.places()) {
+			self.moving.unwritten();
+		}
 		if let Some(pages) = &mut self.pages {
 			pages.pump(gpu, &self.mips);
 		}
 		let generation = |pages: &Option<FramePages>| pages.as_ref().map_or(0, FramePages::generation);
 		let at = generation(&self.pages);
 		self.kept.begin_frame(at);
+		self.moving.begin_frame(at);
 		let mut shown = self.kept.shown(view);
 		let wait = atlases == Atlases::WaitForAll;
 		let whole_path = |path: &str| path.starts_with(FONT_DIR);
@@ -725,9 +764,20 @@ impl WorldRenderer {
 			whole: &whole_path,
 		});
 		let mut frame = std::mem::take(&mut self.frame);
-		let asked = self.resolve(gpu, &world, atlases, Drawer::World, (view.zoom, None), &mut frame.resolved);
+		let asked = match &world {
+			Some(world) => self.resolve(gpu, world, atlases, Drawer::World, (view.zoom, None), &mut frame.resolved),
+			None => {
+				let mut locating = Locating {
+					pages: self.pages.as_mut(),
+					wait,
+					generation: at,
+				};
+				let waiting = self.moving.locate(&mut locating, &self.sprites);
+				self.ask(gpu, wait) && (waiting > 0 || shown.waiting > 0)
+			}
+		};
 		let now = generation(&self.pages);
-		if (asked && shown.waiting > 0) || now != at {
+		if (asked && shown.waiting > 0) || now != at || (asked && world.is_none()) {
 			self.kept.begin_frame(now);
 			self.kept.frames_came();
 			self.kept.place(&mut shown, now, &mut Placing {
@@ -736,8 +786,21 @@ impl WorldRenderer {
 				sprites: &self.sprites,
 				whole: &whole_path,
 			});
+			if world.is_none() {
+				self.moving.begin_frame(now);
+				self.moving.frames_came();
+				self.moving.locate(
+					&mut Locating {
+						pages: self.pages.as_mut(),
+						wait,
+						generation: now,
+					},
+					&self.sprites,
+				);
+			}
 		}
 		let (kept_failed, kept_unready) = self.kept_atlases(gpu, &shown, atlases, view.zoom);
+		let moving_failed = if world.is_none() { self.moving_atlases(gpu, atlases, view.zoom) } else { 0 };
 		{
 			let (pages, textures, blank) = (&self.pages, &self.textures, self.sprites.blank_view());
 			let paths = self.kept.atlas_paths().to_vec();
@@ -746,12 +809,32 @@ impl WorldRenderer {
 				kept_map::From::Whole(atlas) => textures.slot(&paths[atlas]).and_then(Slot::texture).map_or(blank, |t| &t.view),
 			});
 		}
-		let (ready, mut stats) = self.bind(&world, &frame.resolved, &[world.details_end, world.labels_from], &mut frame.parts);
+		let (ready, mut stats) = match &world {
+			Some(world) => self.bind(world, &frame.resolved, &[world.details_end, world.labels_from], &mut frame.parts),
+			None => {
+				let (pages, textures, white, glyphs) = (&self.pages, &self.textures, &self.white, &self.glyph_pages);
+				let paths = self.moving.atlas_paths().to_vec();
+				let drawn = self.moving.bind(&self.sprites, gpu, |from| match from {
+					kept_sprites::From::White => Some(&white.view),
+					kept_sprites::From::Glyph(page) => glyphs.get(page).map(|t| &t.view),
+					kept_sprites::From::Page(page) => Some(&pages.as_ref().expect("paged").texture(page).view),
+					kept_sprites::From::Whole(atlas) => textures.slot(&paths[atlas]).and_then(Slot::texture).map(|t| &t.view),
+				});
+				let stats = FrameStats {
+					quads: drawn.quads,
+					waiting: drawn.waiting,
+					failed: moving_failed,
+				};
+				(Vec::new(), stats)
+			}
+		};
 		drop(resolve_span);
-		let [details, map, labels] = &frame.parts;
-		stats.quads = details.len() + map.len() + labels.len() + shown.quads - kept_unready;
+		stats.quads += shown.quads - kept_unready;
 		stats.waiting += shown.waiting + kept_unready;
 		stats.failed += kept_failed;
+		if world.is_some() {
+			stats.quads = frame.parts.iter().map(Vec::len).sum::<usize>() + shown.quads - kept_unready;
+		}
 		// The day's light: on lit sprites, the water and the fog.
 		let ambient = argb_floats(scene.light.color);
 		let uniforms = SceneUniforms {
@@ -759,51 +842,139 @@ impl WorldRenderer {
 			ambient_saturation: scene.light.saturation,
 			..view.uniforms()
 		};
-		let water = match self.textures.slot(WATER_TEXTURE).and_then(Slot::texture) {
-			Some(water) => self.water.draw(
-				gpu,
-				target,
-				Some(CLEAR),
-				view,
-				water,
-				scene.extent,
-				self.clock.virtual_time,
-				ambient,
-			),
-			_ => false,
-		};
-		let clear = (!water).then_some(CLEAR);
 		let sprites_span = crate::frame_timing::span("sprites draw");
-		// The map's terrain and details keyed from 0 up, the details layer's own (region
-		// names, footprints), the map's details keyed below 0, then the entities and the
-		// effects.
+		// One pass: the water, the map's terrain and details keyed from 0 up, the details
+		// layer's own (region names, footprints), the map's details keyed below 0, the
+		// entities and the effects, the fog of war where its mask has it, then the labels.
+		let water = self
+			.textures
+			.slot(WATER_TEXTURE)
+			.and_then(Slot::texture)
+			.and_then(|water| self.water.prepare(gpu, view, water, scene.extent, self.clock.virtual_time, ambient));
+		let fog = self
+			.textures
+			.slot(FOG_TEXTURE)
+			.and_then(Slot::texture)
+			.filter(|_| scene.fog_of_war)
+			.and_then(|fog| self.fog.prepare(gpu, view, fog, scene.extent, self.clock.real, ambient));
 		let (before, after) = (self.kept.calls(&shown, true), self.kept.calls(&shown, false));
-		let parts = [Part::Kept(&before), Part::Streamed(details), Part::Kept(&after), Part::Streamed(map)];
-		self.sprites.draw_parts(gpu, target, &uniforms, clear, &parts, &ready);
-		drop(sprites_span);
-
-		if scene.fog_of_war {
-			if let Some(fog_texture) = self.textures.slot(FOG_TEXTURE).and_then(Slot::texture) {
-				self.fog.draw(
-					gpu,
-					target,
-					view,
-					fog_texture,
-					scene.extent,
-					self.clock.real,
-					ambient,
-				);
+		let moving_calls: [Vec<_>; kept_sprites::PARTS] = std::array::from_fn(|part| match world {
+			None => self.moving.calls(part),
+			Some(_) => Vec::new(),
+		});
+		let [details, map, labels] = &frame.parts;
+		let parts = match world {
+			Some(_) => [Part::Kept(&before), Part::Streamed(details), Part::Kept(&after), Part::Streamed(map), Part::Streamed(labels)],
+			None => [
+				Part::Kept(&before),
+				Part::Instanced(&moving_calls[0]),
+				Part::Kept(&after),
+				Part::Instanced(&moving_calls[1]),
+				Part::Instanced(&moving_calls[2]),
+			],
+		};
+		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+		let prepared: Prepared = self.sprites.prepare(gpu, &mut encoder, &uniforms, &parts, &ready);
+		{
+			let mut pass = begin_pass(&mut encoder, target, Some(CLEAR), "world");
+			if let Some(water) = &water {
+				water.record(&mut pass);
 			}
+			self.sprites.record(&mut pass, &prepared, &parts, 0..4);
+			if let Some(fog) = &fog {
+				fog.record(&mut pass);
+			}
+			self.sprites.record(&mut pass, &prepared, &parts, 4..5);
 		}
-
-		self.sprites
-			.draw(gpu, target, &uniforms, None, labels, &ready);
+		self.sprites.finish(&encoder);
+		gpu.queue.submit([encoder.finish()]);
+		drop(sprites_span);
 		drop(ready);
+		drop(moving_calls);
 		self.frame = frame;
-		self.quad_scratch.recycle(world);
+		if let Some(world) = world {
+			self.quad_scratch.recycle(world);
+		}
 		let _span = crate::frame_timing::span("fit budget");
 		self.fit_budget();
 		stats
+	}
+
+	/// Send this frame's asks for frames to the pages' loader and wait for them (a
+	/// frame that waits for all loads them now): whether any were asked for.
+	fn ask(&mut self, gpu: &Gpu, wait: bool) -> bool {
+		match self.pages.as_mut() {
+			Some(p) if wait => {
+				p.load_asks_now(gpu, &self.mips);
+				true
+			}
+			Some(p) => {
+				let asked = p.send_asks();
+				if !asked.is_empty() {
+					p.pump_until(gpu, &self.mips, &asked, std::time::Instant::now() + crate::pages::WAIT_BUDGET);
+				}
+				!asked.is_empty()
+			}
+			None => false,
+		}
+	}
+
+	/// The atlases the moving layer draws whole this frame: loaded (or waited for), drawn
+	/// now, given their mips if drawn at `zoom` samples them, and their usage recorded if
+	/// tracked. Returns how many failed to load.
+	fn moving_atlases(&mut self, gpu: &Gpu, atlases: Atlases, zoom: f32) -> usize {
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
+		if self.usage.is_some() {
+			let mut list = crate::world::AtlasList::default();
+			let quads = self
+				.moving
+				.drawn_quads()
+				.map(|(path, quad)| Quad {
+					texture: list.index_of(path),
+					..*quad
+				})
+				.collect();
+			let map = crate::world::WorldQuads {
+				quads,
+				atlases: list,
+				labels_from: 0,
+				details_end: 0,
+			};
+			self.record_usage(&map, zoom, None);
+		}
+		let mut failed = 0;
+		for atlas in self.moving.drawn_from(self.pages.as_mut()) {
+			let path = self.moving.atlas_paths()[atlas].clone();
+			if path == WHITE || glyph_page(&path).is_some() {
+				continue;
+			}
+			match atlases {
+				Atlases::WaitForAll => {
+					let _ = self.textures.get_now(&path, upload);
+				}
+				Atlases::DrawReady => {
+					let _ = self.textures.get_or_upload(&path, upload);
+				}
+			}
+			self.residency.drawn(&path, Drawer::World);
+			if matches!(self.textures.slot(&path), Some(Slot::Missing(..) | Slot::Failed(_))) {
+				failed += 1;
+			}
+			let Some(size) = self
+				.textures
+				.slot(&path)
+				.and_then(Slot::texture)
+				.filter(|t| t.texture.mip_level_count() == 1 && !path.starts_with(FONT_DIR))
+				.map(|t| (t.width, t.height))
+			else {
+				continue;
+			};
+			if self.moving.whole_quads(atlas).any(|quad| samples_mips(quad, zoom, size, None)) {
+				let (mips, textures) = (&self.mips, &mut self.textures);
+				textures.update(&path, |texture| Some(mips.with_mips(gpu, texture)));
+			}
+		}
+		failed
 	}
 
 	/// The atlases the kept map's segments `shown` draw whole: loaded (or waited for),
