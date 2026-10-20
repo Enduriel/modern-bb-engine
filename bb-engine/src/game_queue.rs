@@ -15,7 +15,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// The runner's queue.
 const QUEUE: &str = "/tmp/bb-probe-queue";
 
-/// A place in the queue; dropping it gives the display up.
+/// A place in the queue; dropping it gives the display up, and so does the process's end
+/// (a ticket kept in a static stays until then).
 pub struct Ticket(PathBuf);
 
 impl Ticket {
@@ -37,7 +38,9 @@ impl Ticket {
 					"the game display stayed busy for {max_wait:?} ({QUEUE})"
 				));
 			}
-			std::thread::sleep(Duration::from_secs(1));
+			// A quarter of a second: a turn handed on is taken at once, and reading a
+			// folder of a few names that often costs nothing.
+			std::thread::sleep(Duration::from_millis(250));
 		}
 		Ok(ticket)
 	}
