@@ -45,6 +45,41 @@ struct Node {
 	on_entity: bool,
 }
 
+/// A search's working memory, kept between searches so a search doesn't allocate and
+/// clear a node per map tile (an AI turn runs dozens). A node is only read once the
+/// search has written it; `open` and `closed` hold the number of the search that marked
+/// the tile, so starting a search clears them all at once.
+#[derive(Default)]
+struct Scratch {
+	nodes: Vec<Node>,
+	open: Vec<u32>,
+	closed: Vec<u32>,
+	heap: Vec<usize>,
+	search: u32,
+}
+
+impl Scratch {
+	/// Ready for a search over `n` tiles: every tile neither open nor closed.
+	fn begin(&mut self, n: usize) {
+		if self.nodes.len() < n {
+			self.nodes.resize(n, Node::default());
+			self.open.resize(n, 0);
+			self.closed.resize(n, 0);
+		}
+		self.search = self.search.wrapping_add(1);
+		if self.search == 0 {
+			self.open.fill(0);
+			self.closed.fill(0);
+			self.search = 1;
+		}
+		self.heap.clear();
+	}
+}
+
+thread_local! {
+	static SCRATCH: std::cell::RefCell<Scratch> = std::cell::RefCell::default();
+}
+
 /// Directions in the order the original expands them, with their axial steps.
 const EXPANSION: [(i32, i64, i64); 6] = [(0, 0, 1), (3, 0, -1), (1, 1, 0), (5, -1, 1), (4, -1, 0), (2, 1, -1)];
 
@@ -116,6 +151,11 @@ fn target_enterable(q: &Query, start: usize, dest: usize) -> bool {
 /// Search from `start` to within `within` tiles of `dest`. Returns the steps (the
 /// first move first, the goal last; the start excluded), or `None` if there is no way.
 pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Option<Vec<Step>> {
+	// A search runs no script, so it never re-enters.
+	SCRATCH.with_borrow_mut(|scratch| search(q, start, dest, within, scratch))
+}
+
+fn search(q: &Query, start: usize, dest: usize, within: i32, scratch: &mut Scratch) -> Option<Vec<Step>> {
 	let s = q.settings;
 	if start == dest {
 		return None;
@@ -131,9 +171,9 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 	}
 	let (costs, level_cost) = step_costs(s);
 	let n_tiles = q.grid.tiles.len();
-	let mut nodes = vec![Node::default(); n_tiles];
-	let mut open = vec![false; n_tiles];
-	let mut closed = vec![false; n_tiles];
+	scratch.begin(n_tiles);
+	let Scratch { nodes, open, closed, heap, search: this } = scratch;
+	let this = *this;
 	let dest_tile = q.tile(dest);
 
 	let st = q.tile(start);
@@ -147,8 +187,8 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 		dir: 6,
 		on_entity: false,
 	};
-	open[start] = true;
-	let mut heap: Vec<usize> = vec![start];
+	open[start] = this;
+	heap.push(start);
 	let mut found = false;
 	let mut extra_pops = 3;
 
@@ -162,7 +202,7 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 		}
 		let cur = {
 			let less = |a: usize, b: usize| nodes[a].f > nodes[b].f;
-			heap::pop(&mut heap, &less).expect("heap is non-empty")
+			heap::pop(heap, &less).expect("heap is non-empty")
 		};
 		let c = nodes[cur];
 
@@ -171,7 +211,7 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 				continue;
 			}
 			let Some(ti) = q.grid.idx_checked(c.q + dq, c.r + dr) else { continue };
-			if closed[ti] {
+			if closed[ti] == this {
 				continue;
 			}
 			let t = q.tile(ti);
@@ -233,7 +273,7 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 
 			let hostile_zone = q.in_hostile_zone(t);
 			if !s.allow_zoc_passing && hostile_zone && !occupied {
-				closed[ti] = true;
+				closed[ti] = this;
 				continue;
 			}
 			if occupied && !hostile_zone {
@@ -246,7 +286,7 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 				g = g.wrapping_add(s.zoc_cost.wrapping_mul(10));
 			}
 			let f = g.wrapping_add(dist.wrapping_mul(20));
-			if !open[ti] {
+			if open[ti] != this {
 				nodes[ti] = Node {
 					f,
 					g,
@@ -258,8 +298,8 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 					on_entity: occupied,
 				};
 				let less = |a: usize, b: usize| nodes[a].f > nodes[b].f;
-				heap::push(&mut heap, ti, &less);
-				open[ti] = true;
+				heap::push(heap, ti, &less);
+				open[ti] = this;
 			} else if g < nodes[ti].g {
 				let n = &mut nodes[ti];
 				n.g = g;
@@ -267,11 +307,11 @@ pub(crate) fn find_path(q: &Query, start: usize, dest: usize, within: i32) -> Op
 				n.dir = dir;
 				n.f = f;
 				let less = |a: usize, b: usize| nodes[a].f > nodes[b].f;
-				heap::make(&mut heap, &less);
+				heap::make(heap, &less);
 			}
 		}
-		closed[cur] = true;
-		open[cur] = false;
+		closed[cur] = this;
+		open[cur] = 0;
 	}
 
 	if !found {

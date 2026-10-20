@@ -50,6 +50,9 @@ struct NavState {
 	motion: BattleMotion,
 	/// The path's footsteps (`buildVisualisation`).
 	markers: Vec<visual::Marker>,
+	/// [`occupants_into`](Self::occupants_into)'s buffer for `findPath`, kept between
+	/// searches.
+	occupant_buf: Vec<Option<i64>>,
 }
 
 impl NavState {
@@ -66,15 +69,20 @@ impl NavState {
 
 	/// The faction of whoever stands on each tile.
 	fn occupants(&self) -> Vec<Option<i64>> {
+		let mut out = Vec::new();
+		self.occupants_into(&mut out);
+		out
+	}
+
+	/// [`occupants`](Self::occupants) into `out` (cleared first).
+	fn occupants_into(&self, out: &mut Vec<Option<i64>>) {
 		let g = self.grid.borrow();
-		g.tiles
-			.iter()
-			.map(|t| {
-				t.occupant
-					.as_ref()
-					.map(|(e, _)| self.units.info(e.identity()).map_or(0, |u| u.faction))
-			})
-			.collect()
+		out.clear();
+		out.extend(g.tiles.iter().map(|t| {
+			t.occupant
+				.as_ref()
+				.map(|(e, _)| self.units.info(e.identity()).map_or(0, |u| u.faction))
+		}));
 	}
 
 	/// The tile a placed unit stands on (`entity` may be a `WeakTableRef` to it).
@@ -105,6 +113,7 @@ impl TacticalNavigator {
 				teleports: Vec::new(),
 				motion: BattleMotion::default(),
 				markers: Vec::new(),
+				occupant_buf: Vec::new(),
 			})),
 		}
 	}
@@ -207,7 +216,8 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 					return false;
 				}
 				st.path.clear();
-				let occupants = st.occupants();
+				let mut occupants = std::mem::take(&mut st.occupant_buf);
+				st.occupants_into(&mut occupants);
 				let settings = s.0.0.borrow().clone();
 				let path = {
 					let g = st.grid.borrow();
@@ -218,6 +228,7 @@ fn build_class(vm: &mut SQVM) -> SqClass<NavHandle> {
 					};
 					pathfind::find_path(&q, from.0.id, to.0.id, within as i32)
 				};
+				st.occupant_buf = occupants;
 				match path {
 					Some(p) => {
 						st.path = p;
