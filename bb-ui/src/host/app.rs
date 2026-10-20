@@ -19,12 +19,12 @@ use crate::coui::SCHEME;
 /// `OnAcceleratedPaint`), never as pixels in memory. ANGLE runs on the system's EGL
 /// on Linux (`gl-egl`, what CEF picks for offscreen GPU paints there) and on Metal on
 /// macOS (Chromium's default there, [`ANGLE`]). The page's content is
-/// rasterized on the GPU too (Chromium's default there): where the page repaints, it
+/// rasterized on the GPU too, on both (Chromium's default): where the page repaints, it
 /// takes about a third of the CPU that CPU raster does. `BB_UI_CPU_RASTER=1` rasterizes
-/// on the CPU instead (`--disable-gpu-rasterization`), to compare.
+/// on the CPU instead (`--disable-gpu-rasterization`, [`cpu_raster`]), to compare.
 ///
-/// No mipmaps on Chromium's GPU (`--disable-mipmap-generation`: Skia's Ganesh then
-/// reports no mipmap support). Skia's GPU path picks a mip level by the larger of an
+/// Linux: no mipmaps on Chromium's GPU (`--disable-mipmap-generation`: Skia's Ganesh
+/// then reports no mipmap support). Skia's GPU path picks a mip level by the larger of an
 /// image's two scales, so an image shrunk along one axis only is drawn from a level
 /// that has lost the other axis's detail: the battle results' name separators
 /// (`line_metal.png`, 1024x3, as a bottom `border-image` 3 px tall and ~190 px wide)
@@ -32,7 +32,10 @@ use crate::coui::SCHEME;
 /// raster draw its dark, light and dark rows. Without mipmaps, GPU raster draws what
 /// CPU raster does (Chromium's image decode cache still pre-scales images shrunk along
 /// both axes, as it does for CPU raster) but for antialiasing (at most 17/255), and
-/// every frame golden matches either way. Skia's Ganesh only: Graphite ignores it.
+/// every frame golden matches either way. Skia's Ganesh only: macOS rasterizes with
+/// Graphite (Dawn on Metal; Ganesh isn't available there), which ignores the switch and
+/// draws the separators as CPU raster does without it (glyph antialiasing differs, at
+/// most 33/255), so the switch is given on Linux only ([`OS_SWITCHES`]).
 /// No audio output, and
 /// none of Chrome's background services. The on-device AI model's performance class is
 /// given as "GPU blocked" (8, what Chrome for Testing assumes): otherwise, three minutes
@@ -58,7 +61,6 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("password-store", Some("basic")),
 	("optimization-guide-performance-class", Some("8")),
 	("in-process-gpu", None),
-	("disable-mipmap-generation", None),
 	("no-zygote", None),
 	("enable-features", Some("NetworkServiceInProcess2")),
 	("disable-features", Some("SpareRendererForSitePerProcess")),
@@ -77,6 +79,20 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 /// for no measurable frame or CPU cost. Recheck on a V8 upgrade: the flag's meaning
 /// may change.
 const V8_FLAGS: &str = "--optimize-for-size";
+
+/// The switches for this operating system only: on Linux, no mipmaps for Skia's Ganesh
+/// (see [`SWITCHES`]).
+#[cfg(target_os = "linux")]
+const OS_SWITCHES: &[(&str, Option<&str>)] = &[("disable-mipmap-generation", None)];
+#[cfg(not(target_os = "linux"))]
+const OS_SWITCHES: &[(&str, Option<&str>)] = &[];
+
+/// Whether the page's content is rasterized on the CPU (`--disable-gpu-rasterization`):
+/// only when `BB_UI_CPU_RASTER=1` asks, to compare (see [`SWITCHES`]). GPU raster is the
+/// default on Linux and macOS.
+fn cpu_raster() -> bool {
+	std::env::var_os("BB_UI_CPU_RASTER").is_some_and(|v| !v.is_empty() && v != "0")
+}
 
 /// The backend ANGLE (Chromium's GL) draws through: see [`SWITCHES`].
 #[cfg(not(target_os = "macos"))]
@@ -177,7 +193,7 @@ wrap_app! {
 			if let Some(ozone) = self.ozone {
 				command_line.append_switch_with_value(Some(&"ozone-platform".into()), Some(&ozone.into()));
 			}
-			for (name, value) in SWITCHES {
+			for (name, value) in SWITCHES.iter().chain(OS_SWITCHES) {
 				match value {
 					Some(value) => command_line.append_switch_with_value(Some(&(*name).into()), Some(&(*value).into())),
 					None => command_line.append_switch(Some(&(*name).into())),
@@ -189,7 +205,7 @@ wrap_app! {
 			command_line.append_switch(Some(&"use-mock-keychain".into()));
 			// The page's pixels rasterized on the CPU when asked, to compare (see
 			// `SWITCHES`).
-			if std::env::var_os("BB_UI_CPU_RASTER").is_some_and(|v| v != "0") {
+			if cpu_raster() {
 				command_line.append_switch(Some(&"disable-gpu-rasterization".into()));
 			}
 			let v8_flags = std::env::var("BB_UI_V8_FLAGS").unwrap_or_else(|_| V8_FLAGS.to_string());
