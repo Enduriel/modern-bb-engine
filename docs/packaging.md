@@ -14,7 +14,7 @@ Options: `--out DIR` (default `<target dir>/package`), `--cache DIR` (where the 
 crate is kept, default `<target dir>/package-cache`), `--cef-dir DIR` (the CEF
 distribution, if the build downloaded more than one), `--no-build` (package the `bb`
 already built for the target), `--no-archive`. It needs `curl` and `tar` on the path,
-and `strip` on Linux.
+`strip` on Linux, and `codesign` on macOS.
 
 ## What it does
 
@@ -70,8 +70,33 @@ German and recording every shared object its processes mapped:
 - **Linux aarch64:** a pinned library exists; not built.
 - **Windows x86_64:** laid out from every DLL and resource at the top of CEF's folder
   (`bb.exe` beside them), but not yet built or run.
-- **macOS:** refused. It needs an app bundle with CEF's framework and helper apps.
-  The pinned universal `libsteam_api.dylib` is ready for it.
+- **macOS arm64:** built on an M4 (2026-10-20): an app bundle, below. Its executable
+  runs the game windowed; launching it through Finder is still to be checked.
+
+## macOS: `bb.app`
+
+```text
+bb-aarch64-apple-darwin/
+  bb.app/Contents/
+    Info.plist
+    MacOS/bb, libsteam_api.dylib
+    Frameworks/Chromium Embedded Framework.framework   (English locale only)
+    Frameworks/bb Helper.app, Frameworks/bb Helper (Renderer).app
+  licenses/
+```
+
+- CEF's child processes run the helpers, copies of `bb` (each carries its own bundle's
+  signature, so not links), and `LSUIElement` keeps them out of the Dock. Chromium
+  starts the page's renderer from the `(Renderer)` one; without it the page never
+  loads. The `(GPU)`, `(Plugin)` and `(Alerts)` helpers of CEF's own layout go unused:
+  the GPU runs in the game's process, and there are no plugins or notifications.
+- `bb` finds the framework in `Contents/Frameworks`, and tells CEF the bundle it runs in
+  (`bb-ui/src/host/mac.rs`).
+- The bundle is signed ad hoc (`codesign --force --deep --sign -`; Apple Silicon runs
+  only signed programs). It is not notarized.
+- No `strip`: it would break the linker's signature, and the bundle is signed after.
+- Sizes (CEF 154.0.34): 334 MiB unpacked, 144 MiB as `.tar.gz`. `bb` is 18 MB, the
+  framework 271 MB.
 
 ## Steam at run time
 
