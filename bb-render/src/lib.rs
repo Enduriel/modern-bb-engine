@@ -12,9 +12,11 @@
 //! - [`UiLayer`]: the UI page blended over a frame.
 //! - [`Presenter`]: copies a finished frame onto a window's surface.
 //! - [`portrait`]: an entity drawn on its own, for the UI's procedural images.
+//! - [`cursor_image`]: the cursor sprites as system cursor pictures.
 //! - [`frame_diff`]: where a frame of ours differs from a screenshot of the original.
 
 mod cursor;
+pub mod cursor_image;
 mod fast_hash;
 mod fog;
 pub mod fonts;
@@ -46,7 +48,7 @@ mod world_pass;
 mod world_items;
 mod world_renderer;
 
-pub use cursor::frame_at as cursor_frame_at;
+pub use cursor::{frame_at as cursor_frame_at, frame_index_at as cursor_frame_index_at};
 pub use gpu::Gpu;
 pub use memory::{RendererMemory, TextureMemory};
 pub use usage::AtlasUse;

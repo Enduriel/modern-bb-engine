@@ -11,12 +11,18 @@ use crate::world::{AtlasList, Look, WorldQuads, frame_quad};
 
 /// The frame of `sprite` that shows `since` seconds into its animation.
 pub fn frame_at(sprite: &BrushSprite, since: f32) -> Option<&BrushFrame> {
+	sprite.frames.get(frame_index_at(sprite, since))
+}
+
+/// Which of `sprite`'s frames shows `since` seconds into its animation (0 for a
+/// still one).
+pub fn frame_index_at(sprite: &BrushSprite, since: f32) -> usize {
 	let frames = sprite.frames.len();
 	if frames <= 1 || sprite.frame_time_ms == 0 {
-		return sprite.frames.first();
+		return 0;
 	}
 	let ms = (since.max(0.0) * 1000.0) as u64;
-	sprite.frames.get((ms / u64::from(sprite.frame_time_ms)) as usize % frames)
+	(ms / u64::from(sprite.frame_time_ms)) as usize % frames
 }
 
 /// The cursor `brush`'s quad at `at` (from the screen's centre, y up), `since` seconds
@@ -81,5 +87,7 @@ mod tests {
 		assert_eq!(frame_at(&s, 0.05).unwrap().name, "1");
 		assert_eq!(frame_at(&s, 0.52).unwrap().name, "0", "ten frames, then again");
 		assert_eq!(frame_at(&sprite(1, 0), 3.0).unwrap().name, "0");
+		assert_eq!(frame_index_at(&s, 0.12), 2);
+		assert_eq!(frame_index_at(&sprite(0, 50), 1.0), 0, "no frames");
 	}
 }
