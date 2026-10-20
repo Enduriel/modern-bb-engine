@@ -14,6 +14,7 @@
 //! With the `cef` feature, [`host`] runs the page in Chromium (CEF), offscreen.
 
 pub mod bridge;
+pub mod clipboard;
 pub mod coui;
 pub mod hot_reload;
 pub mod json;

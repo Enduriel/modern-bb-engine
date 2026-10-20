@@ -31,6 +31,12 @@
 //   __bbPark()           park until the game lets the page go on
 // An entry is ["t", event, args...]: engine._trigger(event, args...), or ["e", code]:
 // evaluate test code, as __bbEval does.
+//
+// Copy and paste go through the game's clipboard (the system's, in the windowed game;
+// `bb-ui/src/clipboard.rs`), as Coherent's went through Windows': the text a copy or
+// cut takes (Ctrl+C/X, execCommand('copy'/'cut')) is handed to the game, and a paste
+// (Ctrl+V, execCommand('paste')) inserts the game's text. `navigator.clipboard`'s text
+// calls do the same.
 (function () {
 	'use strict';
 	// The renderer's native call into the game (`host/bridge_client.rs`), taken off
@@ -176,6 +182,107 @@
 	define('__bbEval', function (code) {
 		return toJson(run(['e', code]));
 	});
+
+	// The text a copy or cut takes: what the page put on the event's clipboardData
+	// if it took the copy over, else the selection (never a password field's).
+	function copiedText(event) {
+		if (event.defaultPrevented) {
+			return event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+		}
+		var element = document.activeElement;
+		if (element && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT')) {
+			if (element.type === 'password') {
+				return '';
+			}
+			try {
+				if (typeof element.selectionStart === 'number') {
+					return element.value.substring(element.selectionStart, element.selectionEnd);
+				}
+			} catch (e) {
+				// No selection on this kind of input (type=number, ...).
+			}
+		}
+		var selection = window.getSelection();
+		return selection ? String(selection) : '';
+	}
+
+	function writeClipboard(text) {
+		try {
+			request('clipboard-write', text);
+		} catch (e) {
+			reportError('copying', e);
+		}
+	}
+
+	// The game's clipboard text, or null when it has none.
+	function readClipboard() {
+		try {
+			var text = request('clipboard-read');
+			return typeof text === 'string' ? text : null;
+		} catch (e) {
+			reportError('pasting', e);
+			return null;
+		}
+	}
+
+	// After the page's own listeners, so a copy the page took over is seen as it left it.
+	function onCopy(event) {
+		var text = copiedText(event);
+		if (text !== '') {
+			writeClipboard(text);
+		}
+	}
+	window.addEventListener('copy', onCopy, false);
+	window.addEventListener('cut', onCopy, false);
+	// Put `text` where the caret is in `element`, over its selection, as a paste
+	// does. Not through execCommand('insertText'): inside execCommand('paste') a
+	// second command doesn't run.
+	function insertText(element, text) {
+		if (element && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT')) {
+			try {
+				element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
+			} catch (e) {
+				return; // No caret in this kind of input (type=number, ...).
+			}
+			element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: text }));
+			return;
+		}
+		var selection = window.getSelection();
+		if (!selection || selection.rangeCount === 0) {
+			return;
+		}
+		var range = selection.getRangeAt(0);
+		range.deleteContents();
+		var node = document.createTextNode(text);
+		range.insertNode(node);
+		range.setStartAfter(node);
+		range.collapse(true);
+		selection.removeAllRanges();
+		selection.addRange(range);
+	}
+
+	// First, so the page's own listeners see the paste as handled.
+	window.addEventListener('paste', function (event) {
+		var text = readClipboard();
+		if (text === null) {
+			return;
+		}
+		event.preventDefault();
+		var target = document.activeElement;
+		if (target && (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
+			insertText(target, text);
+		}
+	}, true);
+	if (navigator.clipboard) {
+		navigator.clipboard.writeText = function (text) {
+			writeClipboard(String(text));
+			return Promise.resolve();
+		};
+		navigator.clipboard.readText = function () {
+			var text = readClipboard();
+			return Promise.resolve(text === null ? '' : text);
+		};
+	}
 
 	define('__bbPark', function () {
 		try {

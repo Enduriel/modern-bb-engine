@@ -7,7 +7,7 @@
 //! show paint nothing, bold or italic text in a face without either draws in it as it
 //! is, text advances by whole pixels, and right clicks open no menu, as in Coherent;
 //! scripts inserted at runtime run in Coherent's order. The page's links reach the URL
-//! opener the game installs.
+//! opener the game installs; copy and paste go through the game's clipboard.
 //! Where the game discards a scene, the page gives its memory back. Vanilla's FPS
 //! module shows only when the game asks for it. Scroll bars follow their content without
 //! polling it. Skips if there is no Steam install.
@@ -21,11 +21,13 @@
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_ui::host::{Echo, HostConfig, MouseButton, UiSession};
+use bb_ui::clipboard::{Clipboard, MemoryClipboard};
+use bb_ui::host::{Echo, HostConfig, Modifiers, MouseButton, UiSession};
 use bb_ui::json::Json;
 use squirrel::SqTable;
 
@@ -65,7 +67,9 @@ fn wait_for_button(session: &UiSession, label: &str, timeout: Duration) -> Resul
 }
 
 fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), String> {
-	let session = UiSession::start(data_dir, HostConfig::default(), Echo::Off)?;
+	let clipboard = Arc::new(MemoryClipboard::default());
+	let config = HostConfig { clipboard: clipboard.clone(), ..HostConfig::default() };
+	let session = UiSession::start(data_dir, config, Echo::Off)?;
 	let screens = session.protocol().screens();
 	ensure(
 		screens.len() == 22,
@@ -254,6 +258,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	inserted_scripts_run_in_coherents_order(&session)?;
 	fps_module_shows_when_asked(&session)?;
 	scroll_bars_follow_their_content(&session)?;
+	copy_and_paste_use_the_games_clipboard(&session, &clipboard)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -389,6 +394,73 @@ fn links_reach_the_url_opener(session: &UiSession) -> Result<(), String> {
 		.iter()
 		.any(|line| line.text == r#"ui: openURL "file:///etc/passwd" (refused: not an http(s) URL)"#);
 	ensure(refused, "the file URL wasn't logged as refused")
+}
+
+/// Copy and paste go through the game's clipboard (the system's in `bb`; here the
+/// test's own), as Coherent's went through Windows': Plan Perks' Export and Paste
+/// buttons (`select()` then `execCommand('copy')` / `('paste')`), Ctrl+C and Ctrl+V in
+/// a field, and a page that puts its own text on the copy. Password fields never
+/// copy out.
+fn copy_and_paste_use_the_games_clipboard(session: &UiSession, clipboard: &MemoryClipboard) -> Result<(), String> {
+	let eval = |code: &str| session.eval(code).map_err(|e| format!("{e}\nin: {code}"));
+	let value = |id: &str| -> Result<String, String> {
+		Ok(eval(&format!("document.getElementById('{id}').value"))?.as_str().unwrap_or("").to_string())
+	};
+	eval(
+		"['bbClipA', 'bbClipB'].forEach(function (id) { var i = document.createElement('input'); i.type = 'text'; i.id = id; \
+		 document.body.appendChild(i); }); \
+		 var p = document.createElement('input'); p.type = 'password'; p.id = 'bbClipP'; p.value = 'secret'; document.body.appendChild(p); 0",
+	)?;
+	// Export: the code lands on the clipboard.
+	eval("var a = $('#bbClipA'); a.val('build-1234'); a.select(); document.execCommand('copy'); a.val(''); 0")?;
+	ensure(
+		clipboard.read_text().as_deref() == Some("build-1234"),
+		format!("execCommand('copy') put {:?} on the clipboard", clipboard.read_text()),
+	)?;
+	// Paste: what another program copied lands in the field, over its selection.
+	clipboard.write_text("from élsewhere");
+	eval("var b = $('#bbClipB'); b.val('old'); b.select(); document.execCommand('paste'); 0")?;
+	ensure(value("bbClipB")? == "from élsewhere", format!("execCommand('paste') left {:?}", value("bbClipB")?))?;
+	// The keys: Ctrl+C copies the selection, Ctrl+V pastes at the caret.
+	let ctrl = Modifiers { control: true, ..Modifiers::default() };
+	let keys = |code: i32| {
+		session.host().key(0x11, true, Modifiers::default());
+		session.host().key(code, true, ctrl);
+		session.host().key(code, false, ctrl);
+		session.host().key(0x11, false, Modifiers::default());
+	};
+	eval("var b = document.getElementById('bbClipB'); b.focus(); b.setSelectionRange(5, 14); 0")?;
+	keys(0x43);
+	let copied = || clipboard.read_text().as_deref() == Some("élsewhere");
+	ensure(session.pump_until(Duration::from_secs(5), |_| copied()), format!("Ctrl+C put {:?} on the clipboard", clipboard.read_text()))?;
+	clipboard.write_text("[keyed]");
+	eval("var b = document.getElementById('bbClipB'); b.focus(); b.setSelectionRange(4, 4); 0")?;
+	keys(0x56);
+	let pasted = || value("bbClipB").is_ok_and(|v| v == "from[keyed] élsewhere");
+	ensure(session.pump_until(Duration::from_secs(5), |_| pasted()), format!("Ctrl+V left {:?}", value("bbClipB")?))?;
+	// A page that takes the copy over: its own text goes.
+	eval(
+		"var own = function (e) { e.clipboardData.setData('text/plain', \"the page's own\"); e.preventDefault(); }; \
+		 document.addEventListener('copy', own); var a = $('#bbClipA'); a.val('ignored'); a.select(); \
+		 document.execCommand('copy'); document.removeEventListener('copy', own); 0",
+	)?;
+	ensure(
+		clipboard.read_text().as_deref() == Some("the page's own"),
+		format!("a copy the page took over put {:?} on the clipboard", clipboard.read_text()),
+	)?;
+	eval("var p = document.getElementById('bbClipP'); p.focus(); p.select(); document.execCommand('copy'); 0")?;
+	ensure(
+		clipboard.read_text().as_deref() == Some("the page's own"),
+		format!("a password field copied {:?} out", clipboard.read_text()),
+	)?;
+	// navigator.clipboard's text calls too.
+	eval("navigator.clipboard.writeText('via the API'); 0")?;
+	ensure(
+		clipboard.read_text().as_deref() == Some("via the API"),
+		format!("navigator.clipboard.writeText put {:?} on the clipboard", clipboard.read_text()),
+	)?;
+	eval("['bbClipA', 'bbClipB', 'bbClipP'].forEach(function (id) { var e = document.getElementById(id); e.parentNode.removeChild(e); }); 0")?;
+	Ok(())
 }
 
 /// Vanilla's FPS module: not on the page until the game shows it, then on

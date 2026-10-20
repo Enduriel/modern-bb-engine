@@ -45,6 +45,8 @@ impl Front {
 			mods: boot.mods,
 			steam_build: boot.store.steam_build,
 			cef_log: boot.cef_log.clone(),
+			// Copy and paste reach the player's other programs, as the original's do.
+			clipboard: std::sync::Arc::new(crate::clipboard::SystemClipboard::new()),
 			..HostConfig::default()
 		};
 		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;

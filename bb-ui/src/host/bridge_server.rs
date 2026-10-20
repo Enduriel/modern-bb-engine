@@ -2,6 +2,10 @@
 //! socket ([`bridge_wire`](super::bridge_wire)) and go to the game thread as
 //! [`Event::Request`]s; each connection waits for its [`Responder`]'s answer and writes
 //! it back. One renderer, one connection; a new renderer (after a crash) connects anew.
+//!
+//! The page's clipboard requests (`clipboard-read`, `clipboard-write`, see
+//! [`crate::clipboard`]) don't need the game's thread: this thread answers them from
+//! the host's clipboard.
 
 use std::net::TcpStream;
 use std::sync::{Arc, mpsc};
@@ -9,6 +13,7 @@ use std::sync::{Arc, mpsc};
 use super::bridge_wire::{Endpoint, Listener, read_frame, split_request, write_frame};
 use super::client::{Event, Shared};
 use super::responder::{Responder, done};
+use crate::json::Json;
 
 /// Which bridge call the page made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +62,12 @@ pub(super) fn start(listener: Listener, shared: Arc<Shared>) -> Endpoint {
 /// One renderer's calls, in turn, until it goes away.
 fn serve(mut stream: TcpStream, shared: &Shared) {
 	while let Ok(frame) = read_frame(&mut stream) {
+		if let Some(answer) = split_request(&frame).and_then(|(kind, body)| clipboard_answer(shared, kind, body)) {
+			if write_frame(&mut stream, answer.as_bytes()).is_err() {
+				return;
+			}
+			continue;
+		}
 		let request = split_request(&frame).and_then(|(k, p)| Some((RequestKind::parse(k)?, p.to_string())));
 		let Some((kind, body)) = request else { return };
 		let (tx, rx) = mpsc::sync_channel(1);
@@ -70,5 +81,19 @@ fn serve(mut stream: TcpStream, shared: &Shared) {
 		if write_frame(&mut stream, &answer).is_err() {
 			return;
 		}
+	}
+}
+
+/// The answer to a clipboard request, or `None` for any other: `clipboard-read` is
+/// answered with the text as JSON (`null` for none), `clipboard-write` (the text as its
+/// body) with `null`.
+fn clipboard_answer(shared: &Shared, kind: &str, body: &str) -> Option<String> {
+	match kind {
+		"clipboard-read" => Some(shared.clipboard.read_text().map_or_else(|| "null".to_string(), |t| Json::Str(t).to_text())),
+		"clipboard-write" => {
+			shared.clipboard.write_text(body);
+			Some("null".to_string())
+		}
+		_ => None,
 	}
 }

@@ -14,6 +14,7 @@ use super::frame::Painted;
 use super::paint_stats::PaintCounters;
 use super::bridge_server::RequestKind;
 use super::responder::Responder;
+use crate::clipboard::Clipboard;
 
 /// What the CEF threads report to the game thread.
 #[derive(Debug)]
@@ -68,6 +69,8 @@ pub(super) struct Shared {
 	pub images_served: AtomicU64,
 	/// What the paints cost on our side.
 	pub paint_counters: PaintCounters,
+	/// What the page copies to and pastes from (see [`crate::clipboard`]).
+	pub clipboard: Arc<dyn Clipboard>,
 }
 
 impl Shared {

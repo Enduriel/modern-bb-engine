@@ -89,6 +89,7 @@ pub use session::UiSession;
 pub use session_play::ProceduralRequest;
 
 use crate::bridge::{Reply, Transport};
+use crate::clipboard::{Clipboard, MemoryClipboard};
 use crate::coui::{MAIN_PAGE, SCHEME, UiFiles};
 use crate::json::Json;
 
@@ -209,6 +210,9 @@ pub struct HostConfig {
 	/// The scripts' `isSteamBuild()`: whether the install is Steam's (the windowed game
 	/// asks `bb-steam`'s rule). True by default, as the harness's engines are.
 	pub steam_build: bool,
+	/// What the page copies to and pastes from: a clipboard of the page's own by
+	/// default; the windowed game passes the system's (see [`crate::clipboard`]).
+	pub clipboard: Arc<dyn Clipboard>,
 }
 
 impl Default for HostConfig {
@@ -227,6 +231,7 @@ impl Default for HostConfig {
 			mods: false,
 			extra_mods: Vec::new(),
 			steam_build: true,
+			clipboard: Arc::new(MemoryClipboard::default()),
 		}
 	}
 }
@@ -320,6 +325,7 @@ impl UiHost {
 			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
 			paint_counters: Default::default(),
+			clipboard: config.clipboard.clone(),
 		});
 		bridge_server::start(bridge, shared.clone());
 		let mut factory = scheme::CouiFactory::new(files, shared.clone());
@@ -354,6 +360,11 @@ impl UiHost {
 			serif_font_family: "Times New Roman".into(),
 			sans_serif_font_family: "Arial".into(),
 			fixed_font_family: "Courier New".into(),
+			// What Coherent allowed: `execCommand('copy')`/`('cut')` outside a click,
+			// and `execCommand('paste')` (Plan Perks' Paste button). The text itself
+			// comes from the game's clipboard (`bootstrap.js`, `crate::clipboard`).
+			javascript_access_clipboard: State::ENABLED,
+			javascript_dom_paste: State::ENABLED,
 			..Default::default()
 		};
 		let mut client = client::page_client(shared);

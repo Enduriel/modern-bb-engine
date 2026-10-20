@@ -2,6 +2,7 @@
 //! ([`game::Game`]), with their UI ([`front`]) and the player's keys ([`keys`]). The `bb`
 //! binary puts it in a window.
 
+pub mod clipboard;
 pub mod display;
 #[cfg(feature = "ui")]
 pub mod frame_scenes;
