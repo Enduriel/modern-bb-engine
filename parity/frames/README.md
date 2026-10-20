@@ -12,10 +12,17 @@ diff.py      diffs every scene, each engine's second run left out as noise
 
 The steps: the intro event (then Huzzah!), the world map at dawn, a town, night on the
 map, a battle (the UI goldens' pinned ambush) on the player's first turn, a short and a
-long path, a skill aimed, effects (blood, a pool, a cloud), and the results screen
-and its loot. A step can poll a scene until it returns true (`until`) before its
+long path, a skill aimed, effects (blood, a pool, a cloud), a zombie rising from the
+ground at 40 and 80 %, units hidden by what is drawn in front of them (a unit behind
+higher tiles, one sunk, one beside a tree, a boulder between two, then the camera cut
+down to level 0), and the results screen and its loot. A step can poll a scene until it returns true (`until`) before its
 shot, and click a page button after it. Ours (bb-app's `frame_scenes`) walks the same
 list.
+
+A probe with fewer steps before the battle gets a different battle map in each engine:
+the map is drawn from `Math.rand` where `tactical_state.initMap` runs, and draws made
+in between (the loading screen's tips, as the page answers) move it. Wrap
+`::MapGen.get` to reseed first (for example: `local get = ::MapGen.get; ::MapGen.get <- function (t) { ::Math.seedRandom(4243); return get.call(::MapGen, t); }`).
 
 ## Running
 
