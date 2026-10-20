@@ -119,7 +119,10 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 		}
 	};
 	let mut b = ClassBuilder::<CameraHandle>::new("WorldCamera")
-		.property("Level", |c: &CameraHandle| c.1, |c: &mut CameraHandle, v: i64| c.1 = v)
+		// The world's camera has no levels: its range is 0 to 0 (disassembled, 0x4eeb31),
+		// so setting `Level` or climbing (`climbBy`, the battle camera's 0x4be4c0) keeps 0.
+		.property("Level", |c: &CameraHandle| c.1, |c: &mut CameraHandle, v: i64| c.1 = v.clamp(0, 0))
+		.method("climbBy", |c: &mut CameraHandle, n: i64| c.1 = c.1.saturating_add(n).clamp(0, 0))
 		// Never mirrored on the world map; read only, as the class's.
 		.property_ro("IsFlipped", |_c: &CameraHandle| false)
 		.property(
@@ -217,8 +220,8 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 			let due = update.borrow_mut().due(moving.borrow().is_moving());
 			camera_callbacks::fire(vm, due);
 		});
-	// The world camera has no levels to climb; the overlays' screen positions are visual.
-	for name in ["climbBy", "render", "updateEntityOverlays"] {
+	// The overlays' screen positions are visual.
+	for name in ["render", "updateEntityOverlays"] {
 		let stub = super::stubs::name(format!("World.getCamera().{name}"));
 		b = b.method(name, move |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| super::stubs::note(stub));
 	}

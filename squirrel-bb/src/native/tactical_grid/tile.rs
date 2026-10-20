@@ -248,12 +248,17 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			let spawner = t.grid.borrow().object_spawner.clone().ok_or("spawnObject: no entity host")?;
 			spawner(vm, &path, t.id)
 		})
-		.method("removeObject", |t: &mut TileHandle| {
-			t.with_mut(|d| {
-				if d.occupant.as_ref().is_some_and(|o| !o.1) {
-					d.occupant = None;
+		// Whatever stands here leaves the map and the battle (the entity host's
+		// `remove_object`); a map without one only frees the tile.
+		.method("removeObject", |t: &mut TileHandle, vm: &SQVM| -> Result<(), String> {
+			let remover = t.grid.borrow().object_remover.clone();
+			match remover {
+				Some(remove) => remove(vm, t.id),
+				None => {
+					t.with_mut(|d| d.occupant = None);
+					Ok(())
 				}
-			})
+			}
 		})
 		.method("setBrush", |t: &mut TileHandle, brush: String| t.with_mut(|d| d.brush = brush))
 		// setColor, clear and spawnDetail are Sqrat overloads (`__sqrat_ol_ <name>_<N>`

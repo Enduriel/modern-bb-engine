@@ -176,9 +176,16 @@ fn pos_of(vm: &SQVM, value: &SqStrongRef) -> Option<(f64, f64)> {
 	Some((v.get_member::<Number>(vm, "X")?.0, v.get_member::<Number>(vm, "Y")?.0))
 }
 
-/// The lowest and highest camera levels.
+/// The lowest and highest camera levels: the range a battle gives its camera
+/// (disassembled, 0x4cebad).
 const MIN_LEVEL: i64 = 0;
 const MAX_LEVEL: i64 = 3;
+
+/// The camera's level after `Level = level` or `climbBy`: kept in its range, as the
+/// original's setter (0x4be200) and `climbBy` (0x4be4c0) keep it.
+pub(crate) fn clamp_level(level: i64) -> i64 {
+	level.clamp(MIN_LEVEL, MAX_LEVEL)
+}
 
 pub(crate) struct CameraHandle(Grid);
 
@@ -246,7 +253,7 @@ fn adjusts_level(vm: &SQVM) -> bool {
 pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 	let mut b = ClassBuilder::<CameraHandle>::new("TacticalCamera")
 		.property("Level", |c: &CameraHandle| c.0.borrow().camera.level, |c: &mut CameraHandle, v: i64| {
-			c.0.borrow_mut().camera.level = v;
+			c.0.borrow_mut().camera.level = clamp_level(v);
 		})
 		.property("Zoom", |c: &CameraHandle| c.0.borrow().camera.zoom(), |c: &mut CameraHandle, v: f64| {
 			let camera = &mut c.0.borrow_mut().camera;
@@ -442,12 +449,14 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 		}
 		Ok(())
 	});
-	// The level's easing: visual only.
+	// climbBy(n): the level n higher (lower, negative), kept in range; the battle
+	// topbar's map level buttons climb 1 and -1. Picking, the tiles drawn raised and the
+	// orientation overlays all follow the level.
+	b = b.method("climbBy", |c: &mut CameraHandle, n: i64| {
+		let mut g = c.0.borrow_mut();
+		g.camera.level = clamp_level(g.camera.level.saturating_add(n));
+	});
 	b = super::camera_callbacks::add(b, grid);
-	for name in ["climbBy"] {
-		let stub = crate::native::stubs::name(format!("Tactical.getCamera().{name}"));
-		b = b.method(name, move |_c: &mut CameraHandle, Variadic(_a): Variadic<Retained>| crate::native::stubs::note(stub));
-	}
 	b.build(vm)
 }
 

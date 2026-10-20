@@ -1,13 +1,14 @@
 //! Putting tactical entities (units and map objects) on the battle map: the tile they
-//! stand on, `getTile`/`isPlacedOnMap`/`removeFromMap`, and `tile.spawnObject`.
+//! stand on, `getTile`/`isPlacedOnMap`/`removeFromMap`/`die`, and `tile.spawnObject`/
+//! `tile.removeObject`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef};
 
-use super::{TacticalMachine, create_unit, ignore_missing};
-use crate::native::tactical_grid::{self, ObjectSpawner};
+use super::{TacticalMachine, create_unit, ignore_missing, unit_identity};
+use crate::native::tactical_grid::{self, ObjectRemover, ObjectSpawner};
 
 type Machine = Rc<RefCell<TacticalMachine>>;
 
@@ -119,6 +120,49 @@ pub(super) fn remove_from_map(m: &Machine, vm: &SQVM, idx: usize) -> Result<(), 
 	ignore_missing(entity.call_method(vm, "onRemovedFromMap", ()))?;
 	unplace(m, idx);
 	Ok(())
+}
+
+/// `entity.die()`: the entity's `onFinish` runs (an actor's lifts its zones while still
+/// on the map), then it leaves the map and the battle (probed 2026-10-13: right after
+/// die() it is off the map, its tile empty, getEntityByID null). Its record stays, dead,
+/// until the battle's scene is cleared (`release_unrostered`).
+pub(super) fn destroy(m: &Machine, vm: &SQVM, idx: usize) -> Result<(), String> {
+	let entity = m.borrow().units[idx].entity.clone();
+	ignore_missing(entity.call_method(vm, "onFinish", ()))?;
+	unplace(m, idx);
+	m.borrow_mut().units[idx].dead = true;
+	Ok(())
+}
+
+/// `tile.removeObject()` (disassembled, 0x4dab60): whatever stands on tile `tile`, a map
+/// object or an actor alike, leaves it without its `onRemovedFromMap`, then is
+/// destroyed by the same virtual as `die()` (0x4c4640): its `onFinish` runs, off the map
+/// by then, and it is gone from the battle, so nothing draws it any more and sight goes
+/// through. An empty tile: nothing.
+pub(super) fn remove_object(m: &Machine, vm: &SQVM, tile: usize) -> Result<(), String> {
+	let occupant = {
+		let machine = m.borrow();
+		let Some(grid) = machine.grid.clone() else { return Ok(()) };
+		let g = grid.borrow();
+		g.tiles.get(tile).and_then(|t| t.occupant.as_ref().map(|(e, _)| e.clone()))
+	};
+	let Some(entity) = occupant else { return Ok(()) };
+	let idx = m.borrow().by_identity.get(&unit_identity(vm, &entity)).copied();
+	let Some(idx) = idx else {
+		// Not one of ours (can't happen: only `place` claims tiles); free the tile.
+		if let Some(grid) = m.borrow().grid.clone() {
+			release(&mut grid.borrow_mut().tiles[tile], &entity);
+		}
+		return Ok(());
+	};
+	unplace(m, idx);
+	destroy(m, vm, idx)
+}
+
+/// What `tile.removeObject()` runs (see [`remove_object`]).
+pub(super) fn object_remover(m: &Machine) -> ObjectRemover {
+	let m = m.clone();
+	Rc::new(move |vm: &SQVM, tile: usize| remove_object(&m, vm, tile))
 }
 
 /// `Tactical.addEntityToMap(entity, x, y)`: place an existing entity (a brother from

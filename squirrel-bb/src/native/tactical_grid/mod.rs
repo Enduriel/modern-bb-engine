@@ -114,6 +114,10 @@ pub(crate) type UnitTileLookup = Rc<dyn Fn(i64) -> Option<usize>>;
 /// What `tile.spawnObject(path)` runs: create the object entity `path` on tile `id`.
 pub(crate) type ObjectSpawner = Rc<dyn Fn(&SQVM, &str, usize) -> Result<SqStrongRef, String>>;
 
+/// What `tile.removeObject()` runs: take whatever stands on tile `id` off the map and
+/// out of the battle (see `tactical_entities::placement::remove_object`).
+pub(crate) type ObjectRemover = Rc<dyn Fn(&SQVM, usize) -> Result<(), String>>;
+
 /// What else `tile.clear(flags)` clears on tile `id`: the battle effects lying there
 /// (`None`: every flag).
 pub(crate) type ClearHook = Rc<dyn Fn(&SQVM, usize, Option<i64>)>;
@@ -131,6 +135,7 @@ pub(crate) struct TacticalGridState {
 	/// Shared script code for `tile.Properties` objects (their `set`/`get`/… methods).
 	properties_delegate: Option<SqStrongRef>,
 	object_spawner: Option<ObjectSpawner>,
+	object_remover: Option<ObjectRemover>,
 	occupant_lookup: Option<OccupantLookup>,
 	unit_tile_lookup: Option<UnitTileLookup>,
 	clear_hook: Option<ClearHook>,
@@ -159,6 +164,7 @@ impl TacticalGridState {
 			engine_rng: EngineRng::unseeded(),
 			properties_delegate: None,
 			object_spawner: None,
+			object_remover: None,
 			occupant_lookup: None,
 			unit_tile_lookup: None,
 			clear_hook: None,
@@ -457,6 +463,11 @@ impl TacticalGrid {
 	/// Set what `tile.spawnObject` runs (the entity host's object creation).
 	pub(crate) fn set_object_spawner(&self, spawner: ObjectSpawner) {
 		self.grid.borrow_mut().object_spawner = Some(spawner);
+	}
+
+	/// Set what `tile.removeObject` runs (the entity host's removal).
+	pub(crate) fn set_object_remover(&self, remover: ObjectRemover) {
+		self.grid.borrow_mut().object_remover = Some(remover);
 	}
 
 	/// Set how sight learns who stands where (the entity host's records).
@@ -869,6 +880,7 @@ impl TacticalGrid {
 		g.detail_class = None;
 		g.properties_delegate = None;
 		g.object_spawner = None;
+		g.object_remover = None;
 		g.occupant_lookup = None;
 		g.unit_tile_lookup = None;
 		g.clear_hook = None;

@@ -881,19 +881,15 @@ impl TacticalEntities {
 				}
 			})
 		};
-		// die(): the entity's onFinish runs (an actor's lifts its zones while still on
-		// the map), then it leaves the map and the battle (probed 2026-10-13: right
-		// after die() it is off the map, its tile empty, getEntityByID null).
+		// die(): see `placement::destroy`.
 		let die = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				let idx = m.borrow().by_identity.get(&vm.this_identity()).copied();
-				let Some(idx) = idx else { return Ok(()) };
-				let entity = m.borrow().units[idx].entity.clone();
-				ignore_missing(entity.call_method(vm, "onFinish", ()))?;
-				placement::unplace(&m, idx);
-				m.borrow_mut().units[idx].dead = true;
-				Ok(())
+				match idx {
+					Some(idx) => placement::destroy(&m, vm, idx),
+					None => Ok(()),
+				}
 			})
 		};
 		let remove_from_map = {
@@ -1256,6 +1252,7 @@ impl TacticalEntities {
 	pub fn attach_map(&self, grid: &crate::native::TacticalGrid) {
 		self.machine.borrow_mut().grid = Some(grid.handle());
 		grid.set_object_spawner(placement::object_spawner(&self.machine));
+		grid.set_object_remover(placement::object_remover(&self.machine));
 		let m = self.machine.clone();
 		grid.set_occupant_lookup(Rc::new(move || vision::occupants(&m)));
 		let m = self.machine.clone();
