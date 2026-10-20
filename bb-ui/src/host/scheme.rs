@@ -15,6 +15,8 @@
 //!   200 with a fallback image when composing fails, never a load error.
 //! - A PNG asked for with `?bb-upside-down` comes upside down ([`upside_down`]): the
 //!   picture of a background Coherent tiles (`tiles.js`).
+//! - Fonts on macOS come as their [`whole_pixel`] variants: glyphs advance by whole
+//!   pixels there, as in Coherent.
 
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -24,7 +26,7 @@ use cef::*;
 use super::client::{Event, Shared};
 use super::responder::{Body, Responder, blank};
 use crate::coui::{UiFiles, mime_type, url_to_path};
-use crate::upside_down;
+use crate::{upside_down, whole_pixel};
 
 /// Where procedural images live.
 const PROCEDURAL_PREFIX: &str = "procedural/";
@@ -82,6 +84,9 @@ wrap_resource_handler! {
 				// A tiled background's picture, which Coherent draws upside down.
 				let data = if mime == "image/png" && upside_down::asked_for(&url) {
 					upside_down::upside_down(&data).unwrap_or(data)
+				} else if whole_pixel::WANTED && mime.starts_with("font/") {
+					// Glyphs advance by whole pixels, as Coherent's do (macOS).
+					whole_pixel::variant(&data).unwrap_or(data)
 				} else {
 					data
 				};

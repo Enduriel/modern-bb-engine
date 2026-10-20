@@ -9,7 +9,8 @@
 //!   * [`parity`] — page snapshots compared with the original's (UI parity goldens);
 //!   * [`png`] — screenshots of the rendered UI;
 //!   * [`upside_down`] — pictures turned upside down, as Coherent tiles them;
-//!   * [`web_url`] — which URLs the page may have opened in the system's browser.
+//!   * [`web_url`] — which URLs the page may have opened in the system's browser;
+//!   * [`whole_pixel`] — fonts whose glyphs advance by whole pixels (macOS).
 //!
 //! With the `cef` feature, [`host`] runs the page in Chromium (CEF), offscreen.
 
@@ -24,6 +25,7 @@ pub mod png;
 pub mod sq_json;
 pub mod upside_down;
 pub mod web_url;
+pub mod whole_pixel;
 
 #[cfg(feature = "cef")]
 pub mod host;

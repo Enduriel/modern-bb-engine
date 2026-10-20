@@ -65,6 +65,8 @@ mod session;
 mod session_input;
 mod session_fps;
 mod session_play;
+#[cfg(target_os = "macos")]
+mod system_fonts;
 mod targets;
 pub mod tracing;
 
@@ -174,12 +176,25 @@ pub fn run_subprocess() -> Option<i32> {
 		}
 		return None;
 	}
+	#[cfg(target_os = "macos")]
+	if CefString::from(&command_line.switch_value(Some(&"type".into()))).to_string() == "renderer" {
+		system_fonts::register();
+	}
 	let mut app = app::host_app(None, None, None, None);
 	Some(execute_process(
 		Some(args.as_main_args()),
 		Some(&mut app),
 		std::ptr::null_mut(),
 	))
+}
+
+/// The font a generic family names: one of Windows' defaults (on macOS its
+/// [`system_fonts`] variant).
+fn generic_family(family: &str) -> String {
+	#[cfg(target_os = "macos")]
+	return system_fonts::generic(family);
+	#[cfg(not(target_os = "macos"))]
+	family.to_string()
 }
 
 /// How to run the page.
@@ -401,10 +416,10 @@ impl UiHost {
 		let browser_settings = BrowserSettings {
 			windowless_frame_rate: config.frames.clock_rate(),
 			background_color: 0,
-			standard_font_family: "Times New Roman".into(),
-			serif_font_family: "Times New Roman".into(),
-			sans_serif_font_family: "Arial".into(),
-			fixed_font_family: "Courier New".into(),
+			standard_font_family: generic_family("Times New Roman").as_str().into(),
+			serif_font_family: generic_family("Times New Roman").as_str().into(),
+			sans_serif_font_family: generic_family("Arial").as_str().into(),
+			fixed_font_family: generic_family("Courier New").as_str().into(),
 			// What Coherent allowed: `execCommand('copy')`/`('cut')` outside a click,
 			// and `execCommand('paste')` (Plan Perks' Paste button). The text itself
 			// comes from the game's clipboard (`bootstrap.js`, `crate::clipboard`).

@@ -70,6 +70,16 @@ wrap_render_process_handler! {
 					eprintln!("bb-ui: {url} failed: {}", CefString::from(&exception.message()));
 				}
 			}
+			#[cfg(target_os = "macos")]
+			{
+				let (mut retval, mut exception) = (None, None);
+				let script = super::system_fonts::page_script();
+				let url = "bb://system_fonts.js";
+				context.eval(Some(&script.as_str().into()), Some(&url.into()), 1, Some(&mut retval), Some(&mut exception));
+				if let Some(exception) = exception {
+					eprintln!("bb-ui: {url} failed: {}", CefString::from(&exception.message()));
+				}
+			}
 		}
 
 		fn on_process_message_received(
