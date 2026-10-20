@@ -31,6 +31,12 @@ local mode = ::Settings.getVideoMode();
 	{ scene = "pathLong", shot = "battle_path_long", until = null, click = null },
 	{ scene = "skill", shot = "battle_skill", until = null, click = null },
 	{ scene = "battleEffects", shot = "battle_effects", until = null, click = null },
+	{ scene = "rise", shot = null, until = null, click = null },
+	{ scene = "rise40", shot = "battle_rise_40", until = null, click = null },
+	{ scene = "rise80", shot = "battle_rise_80", until = null, click = null },
+	{ scene = "occl", shot = "battle_occlusion", until = null, click = null },
+	{ scene = "occlCut", shot = "battle_occlusion_cut", until = null, click = null },
+	{ scene = "occlClear", shot = null, until = null, click = null },
 	{ scene = "winBattle", shot = "battle_results", until = "resultsShown", click = "Continue" },
 	{ scene = null, shot = "battle_loot", until = null, click = null }
 ];
@@ -346,7 +352,175 @@ local function showPath( _tile )
 		local camera = ::Tactical.getCamera();
 		camera.setPos(mid.Pos);
 		camera.Level = camera.getBestLevelForTile(mid);
+		// Where the occlusion scenes' clean-up puts the camera back.
+		::probeEffectsCamera <- { tile = mid, level = camera.Level };
 		note = "middle " + mid.SquareCoords.X + "," + mid.SquareCoords.Y + "; pool " + pool.SquareCoords.X + "," + pool.SquareCoords.Y;
+	}
+	else if (_scene == "rise")
+	{
+		// A zombie spawned next to the company, rising as actor.riseFromGround's rising
+		// branch has it (without its particles), with virtual time frozen so each shot
+		// pins how far up it is (onRender still runs every frame).
+		::Time.setVirtualSpeed(0.0);
+		local cam = ::Tactical.getCamera();
+		local S = ::Const.Direction.S;
+		local bros = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
+		local best = null, bd = 0;
+		local size = ::Tactical.getMapSize();
+		local c = bros[0].getTile().Pos;
+		for (local x = 1; x < size.X - 1; x++)
+			for (local y = 1; y < size.Y - 1; y++)
+			{
+				local t = ::Tactical.getTileSquare(x, y);
+				if (!t.IsEmpty || !t.IsVisibleForPlayer || !t.hasNextTile(S)) continue;
+				local s = t.getNextTile(S);
+				if (t.Level != s.Level || !s.IsDiscovered || !s.IsEmpty) continue;
+				local d = (t.Pos.X - c.X) * (t.Pos.X - c.X) + (t.Pos.Y - c.Y) * (t.Pos.Y - c.Y);
+				if (best == null || d < bd) { best = t; bd = d; }
+			}
+		local e = ::Tactical.spawnEntity("scripts/entity/tactical/enemies/zombie", best.Coords.X, best.Coords.Y);
+		e.setFaction(::Const.Faction.Undead);
+		::probeRiser <- e;
+		local p0 = e.getPos(), r0 = e.getRelativePos();
+		e.setPos(::createVec(10, -30));
+		local p1 = e.getPos(), r1 = e.getRelativePos();
+		e.m.IsAttackable = false;
+		e.m.IsRaising = true;
+		e.m.RenderAnimationSpeed = 1.0;
+		e.m.RenderAnimationStartTime = ::Time.getVirtualTimeF();
+		e.setRenderCallbackEnabled(true);
+		cam.setPos(best.Pos);
+		cam.Level = cam.getBestLevelForTile(best);
+		note = "tile " + best.SquareCoords.X + "," + best.SquareCoords.Y + " pos " + best.Pos.X + "," + best.Pos.Y + " level " + best.Level
+			+ "; getPos " + p0.X + "," + p0.Y + " rel " + r0.X + "," + r0.Y + "; after setPos(10,-30) getPos " + p1.X + "," + p1.Y + " rel " + r1.X + "," + r1.Y
+			+ "; camera level " + cam.Level;
+	}
+	else if (_scene.len() > 4 && _scene.slice(0, 4) == "rise")
+	{
+		local p = _scene.slice(4).tointeger() / 100.0;
+		local e = ::probeRiser;
+		e.m.RenderAnimationStartTime = ::Time.getVirtualTimeF() - p * ::Const.Combat.ResurrectAnimationTime - (p >= 1.0 ? 0.5 : 0.0);
+		if (p >= 1.0 && !e.m.IsRaising) {}
+		local q = e.getPos(), r = e.getRelativePos();
+		note = "p " + p + " getPos " + q.X + "," + q.Y + " rel " + r.X + "," + r.Y;
+	}
+	else if (_scene == "occl")
+	{
+		// How units are hidden by what is drawn in front of them. Virtual time frozen;
+		// four set-ups on tiles whose neighbours are all empty and in sight, each with the
+		// levels of its tile and neighbours set by hand (Const.Direction: N 0, NE 1, SE 2,
+		// S 3, SW 4, NW 5).
+		::Time.setVirtualSpeed(0.0);
+		local bros = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
+		local c = bros[0].getTile().Pos;
+		local size = ::Tactical.getMapSize();
+		local open = function ( _t )
+		{
+			return _t.IsEmpty && _t.IsDiscovered && _t.IsVisibleForPlayer;
+		};
+		local cands = [];
+		for (local x = 2; x < size.X - 2; x++)
+			for (local y = 2; y < size.Y - 2; y++)
+			{
+				local t = ::Tactical.getTileSquare(x, y);
+				if (!open(t)) continue;
+				local ok = true;
+				for (local d = 0; d < 6 && ok; d++)
+					ok = t.hasNextTile(d) && open(t.getNextTile(d));
+				if (!ok) continue;
+				local dx = t.Pos.X - c.X, dy = t.Pos.Y - c.Y;
+				if (dx * dx > 900 * 900 || dy * dy > 420 * 420) continue;
+				cands.push({ t = t, d = dx * dx + dy * dy, i = x * 1000 + y });
+			}
+		cands.sort(function ( _a, _b ) { return _a.d != _b.d ? _a.d <=> _b.d : _a.i <=> _b.i; });
+		local picked = [];
+		foreach( cand in cands )
+		{
+			local far = true;
+			foreach( p in picked )
+				far = far && cand.t.getDistanceTo(p) >= 4;
+			if (far) picked.push(cand.t);
+			if (picked.len() == 4) break;
+		}
+		if (picked.len() < 4)
+		{
+			note = "only " + picked.len() + " places";
+			::logInfo("PROBE scene occl = " + note);
+			return true;
+		}
+		// Levels: [tile, N, NE, SE, S, SW, NW].
+		local setLevels = function ( _t, _l )
+		{
+			_t.Level = _l[0];
+			local order = [0, 1, 2, 3, 4, 5];
+			foreach( i, d in order )
+				_t.getNextTile(d).Level = _l[i + 1];
+		};
+		local white = function ( _e )
+		{
+			foreach( name in ["bottom", "top", "body", "web"] )
+				if (_e.hasSprite(name))
+				{
+					local s = _e.getSprite(name);
+					s.Color = ::createColor("#ffffff");
+					s.setHorizontalFlipping(false);
+				}
+		};
+		local zombie = function ( _t )
+		{
+			local e = ::Tactical.spawnEntity("scripts/entity/tactical/enemies/zombie", _t.Coords.X, _t.Coords.Y);
+			e.setFaction(::Const.Faction.Undead);
+			e.m.IsAttackable = false;
+			return e;
+		};
+		local a = picked[0], b = picked[1], cc = picked[2], d = picked[3];
+		// A: at rest, the tile in front (S) a level up, the one front-left (SW) two up.
+		setLevels(a, [0, 0, 0, 0, 1, 2, 0]);
+		// B: sunk 100, its tile a level up, S lower, SE a level higher still.
+		setLevels(b, [1, 1, 1, 2, 0, 1, 1]);
+		// C: all flat; the unit pushed to the side (into SE), a tree on S.
+		setLevels(cc, [0, 0, 0, 0, 0, 0, 0]);
+		// D: all flat; a boulder on the tile, a unit sunk 60 behind it (N), another at rest
+		// in front (S).
+		setLevels(d, [0, 0, 0, 0, 0, 0, 0]);
+		local za = zombie(a);
+		local zb = zombie(b);
+		zb.setPos(::createVec(0, -100));
+		local zc = zombie(cc);
+		zc.setPos(::createVec(50, -40));
+		local tree = ::Tactical.spawnEntity("scripts/entity/tactical/objects/tree_lush", cc.getNextTile(3).Coords.X, cc.getNextTile(3).Coords.Y);
+		white(tree);
+		local boulder = ::Tactical.spawnEntity("scripts/entity/tactical/objects/boulder", d.Coords.X, d.Coords.Y);
+		white(boulder);
+		local zd1 = zombie(d.getNextTile(0));
+		zd1.setPos(::createVec(0, -60));
+		local zd2 = zombie(d.getNextTile(3));
+		::probeOccl <- [za, zb, zc, tree, boulder, zd1, zd2];
+		local cx = (a.Pos.X + b.Pos.X + cc.Pos.X + d.Pos.X) / 4.0;
+		local cy = (a.Pos.Y + b.Pos.Y + cc.Pos.Y + d.Pos.Y) / 4.0;
+		local cam = ::Tactical.getCamera();
+		cam.setPos(::createVec(cx, cy));
+		cam.Level = 3;
+		local where = function ( _t ) { return _t.SquareCoords.X + "," + _t.SquareCoords.Y + " (" + _t.Pos.X + "," + _t.Pos.Y + ")"; };
+		note = "A " + where(a) + " B " + where(b) + " C " + where(cc) + " D " + where(d) + "; camera " + cx + "," + cy
+			+ "; zb rel " + zb.getRelativePos().X + "," + zb.getRelativePos().Y + " zc rel " + zc.getRelativePos().X + "," + zc.getRelativePos().Y;
+	}
+	else if (_scene == "occlCut")
+	{
+		// The camera cut down to level 0: tiles above it are capped, and nothing that
+		// stands on them is drawn (B's unit, on level 1).
+		::Tactical.getCamera().Level = 0;
+	}
+	else if (_scene == "occlClear")
+	{
+		// What the rise and the occlusion set-ups spawned goes again (no kill: the
+		// results screen and the loot stay as they were), the camera back where the
+		// effects left it.
+		::probeOccl.push(::probeRiser);
+		foreach( e in ::probeOccl )
+			if (e.isAlive()) e.die();
+		::Tactical.getCamera().setPos(::probeEffectsCamera.tile.Pos);
+		::Tactical.getCamera().Level = ::probeEffectsCamera.level;
 	}
 	else if (_scene == "winBattle")
 	{
