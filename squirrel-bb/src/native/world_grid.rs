@@ -929,6 +929,13 @@ impl WorldGrid {
 		self.grid.borrow_mut().fog.take_patch()
 	}
 
+	/// Whether the drawn fog is clear all over the world rectangle `[left, right, bottom,
+	/// top]` (see [`FogMask::clear_within`]): the fog pass, which drifts with real time,
+	/// then draws nothing there.
+	pub fn fog_clear_within(&self, rect: [f32; 4]) -> bool {
+		self.grid.borrow().fog.clear_within(rect)
+	}
+
 	/// The region names, in spawn order.
 	pub fn region_texts(&self) -> Vec<SceneRegionText> {
 		self.grid.borrow().region_texts.clone()

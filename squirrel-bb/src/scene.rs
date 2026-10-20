@@ -12,7 +12,7 @@ pub use crate::native::world_clouds::SceneCloud;
 pub use crate::native::world_waves::SceneWave;
 
 /// The world map as last set by the scripts.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorldScene {
 	/// Every tile, row by row (`col` fastest); only those on screen from
 	/// [`Engine::world_scene_where`](crate::Engine::world_scene_where).
@@ -118,7 +118,7 @@ pub struct SceneRegionText {
 }
 
 /// One world tile.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneTile {
 	pub col: i64,
 	pub row: i64,
@@ -192,7 +192,7 @@ impl Default for SceneDetail {
 }
 
 /// One world entity (a party, location, …).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneEntity {
 	pub id: i64,
 	/// Position in world units.
@@ -206,7 +206,7 @@ pub struct SceneEntity {
 }
 
 /// One of an entity's text labels.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneLabel {
 	pub name: String,
 	/// One glyph per byte, as the original draws it: scripts' bytes, not necessarily
@@ -220,7 +220,7 @@ pub struct SceneLabel {
 }
 
 /// One of an entity's named sprites.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneSprite {
 	pub name: String,
 	/// The brush drawn (`""` for none).

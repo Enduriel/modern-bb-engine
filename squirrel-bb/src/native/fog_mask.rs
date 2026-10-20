@@ -233,6 +233,27 @@ impl FogMask {
 		self.dirty = Some(self.dirty.map_or(changed, |d| d.union(changed)));
 	}
 
+	/// Whether every texel a pass sampling the mask over the world rectangle `[left,
+	/// right, bottom, top]` reads is clear (alpha 0): those under it, their neighbours
+	/// that bilinear filtering blends in, and past the map's edges the edge texels (the
+	/// fog pass clamps). False before the map exists.
+	pub fn clear_within(&self, [left, right, bottom, top]: [f32; 4]) -> bool {
+		let n = self.size;
+		if self.alpha.is_empty() || n == 0 || !(self.world.0 > 0.0 && self.world.1 > 0.0) {
+			return false;
+		}
+		let (kx, ky) = (n as f32 / self.world.0, n as f32 / self.world.1);
+		// A sample at texel coordinate t reads texels floor(t - 0.5) and the next.
+		let span = |lo: f32, hi: f32, k: f32| {
+			let last = n as f32 - 1.0;
+			let first = (lo * k - 0.5).floor().clamp(0.0, last) as usize;
+			let end = ((hi * k - 0.5).floor() + 1.0).clamp(0.0, last) as usize;
+			(first, end)
+		};
+		let ((i0, i1), (j0, j1)) = (span(left, right, kx), span(bottom, top, ky));
+		(j0..=j1).all(|j| self.alpha[j * n + i0..=j * n + i1].iter().all(|&a| a == 0))
+	}
+
 	/// What changed since the last call, or `None` if nothing did.
 	pub fn take_patch(&mut self) -> Option<FogPatch> {
 		let r = self.dirty.take()?;
@@ -361,6 +382,23 @@ mod tests {
 		assert_eq!(m.at(61, 161), 255, "the brush's opaque rim");
 		assert_eq!(m.at(59, 200), 255, "outside the quad");
 		assert_eq!(m.at(100, 241), 255);
+	}
+
+	#[test]
+	fn a_rectangle_is_clear_only_where_every_texel_read_there_is() {
+		let mut m = FogMask::default();
+		assert!(!m.clear_within([0.0, 10.0, 0.0, 10.0]), "no map yet");
+		m = mask();
+		m.stamp((100.0, 200.0), 10.0);
+		// The brush is sampled bilinearly: texels 90..110 (across and up) are clear,
+		// fading to opaque from there to the quad's edges.
+		assert_eq!((m.at(89, 200), m.at(90, 200), m.at(109, 200), m.at(110, 200)), (6, 0, 0, 6));
+		assert!(m.clear_within([91.0, 109.0, 191.0, 209.0]));
+		// A sample at x = 90.2 blends texel 89 in.
+		assert!(!m.clear_within([90.2, 109.0, 191.0, 209.0]));
+		assert!(!m.clear_within([91.0, 109.0, 191.0, 230.0]), "reaches the rim above");
+		// Past the map's edge the pass reads the edge texels, which are fogged.
+		assert!(!m.clear_within([-50.0, -10.0, 185.0, 215.0]));
 	}
 
 	#[test]
