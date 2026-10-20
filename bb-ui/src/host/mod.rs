@@ -35,6 +35,7 @@ mod app;
 mod bridge_client;
 mod bridge_server;
 mod bridge_wire;
+mod click_count;
 mod client;
 mod damage;
 #[cfg(target_os = "linux")]
@@ -256,6 +257,8 @@ pub struct UiHost {
 	pointer: Cell<Option<(i32, i32)>>,
 	/// Mouse buttons held (`EVENTFLAG_*_MOUSE_BUTTON` bits), which moves carry.
 	held: Cell<u32>,
+	/// Counts runs of clicks, which the presses and releases carry.
+	clicks: Cell<click_count::ClickCounter<MouseButton>>,
 	/// When the page's frames begin (see [`PageFrames`]).
 	frame_clock: page_frames::FrameClock,
 	cache_dir: PathBuf,
@@ -342,6 +345,9 @@ impl UiHost {
 			next_request: Cell::new(1),
 			pointer: Cell::new(None),
 			held: Cell::new(0),
+			clicks: Cell::new(click_count::ClickCounter::new(
+				click_count::DoubleClick::system(),
+			)),
 			frame_clock: page_frames::FrameClock::new(config.frames),
 			cache_dir: config.cache_dir,
 			_args: args,
@@ -711,6 +717,7 @@ impl UiHost {
 	pub fn mouse_move(&self, x: i32, y: i32) {
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
+			self.update_clicks(|c| c.moved((x, y)));
 			let modifiers = self.held.get();
 			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), 0);
 		}
@@ -719,21 +726,41 @@ impl UiHost {
 	/// Move the mouse out of the view, if it's in it (hover ends).
 	pub fn mouse_leave(&self) {
 		if let (Some((x, y)), Some(host)) = (self.pointer.take(), self.browser_host()) {
+			self.update_clicks(|c| c.reset());
 			let modifiers = self.held.get();
 			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), 1);
 		}
 	}
 
-	/// Left-click at `(x, y)`: move there, press, release.
+	/// Left-click at `(x, y)`: move there, press, release. A click soon after another
+	/// in the same place continues its run (a double click, a triple click), as a
+	/// player's would.
 	pub fn click(&self, x: i32, y: i32) {
 		let Some(host) = self.browser_host() else {
 			return;
 		};
 		self.pointer.set(Some((x, y)));
+		self.update_clicks(|c| c.moved((x, y)));
+		let count = self.update_clicks(|c| c.press(MouseButton::Left, (x, y), Instant::now()));
 		let event = MouseEvent { x, y, modifiers: 0 };
 		host.send_mouse_move_event(Some(&event), 0);
-		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 0, 1);
-		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 1, 1);
+		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 0, count);
+		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 1, count);
+	}
+
+	/// Double-click at `(x, y)`: two clicks there, the first starting a new run.
+	pub fn double_click(&self, x: i32, y: i32) {
+		self.update_clicks(|c| c.reset());
+		self.click(x, y);
+		self.click(x, y);
+	}
+
+	/// Run `f` on the click counter, and give back what it returns.
+	fn update_clicks<R>(&self, f: impl FnOnce(&mut click_count::ClickCounter<MouseButton>) -> R) -> R {
+		let mut clicks = self.clicks.get();
+		let result = f(&mut clicks);
+		self.clicks.set(clicks);
+		result
 	}
 
 	/// `button` went down or up at `(x, y)` (view pixels), as a player's mouse does it.
@@ -743,6 +770,14 @@ impl UiHost {
 			return;
 		};
 		self.pointer.set(Some((x, y)));
+		let count = self.update_clicks(|c| {
+			c.moved((x, y));
+			if down {
+				c.press(button, (x, y), Instant::now())
+			} else {
+				c.release(button)
+			}
+		});
 		let flag = button.held_flag();
 		let held = if down {
 			self.held.get() | flag
@@ -750,7 +785,7 @@ impl UiHost {
 			self.held.get() & !flag
 		};
 		// The event itself carries the button while it goes down and until it is up.
-		live_input::button(&host, x, y, button, down, self.held.get() | flag);
+		live_input::button(&host, x, y, button, down, self.held.get() | flag, count);
 		self.held.set(held);
 	}
 
@@ -786,6 +821,7 @@ impl UiHost {
 	pub fn wheel(&self, x: i32, y: i32, notches: i32) {
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
+			self.update_clicks(|c| c.moved((x, y)));
 			input::wheel(&host, x, y, notches);
 		}
 	}

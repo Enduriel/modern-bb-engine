@@ -4,7 +4,8 @@
 //! screen, to the origin's intro event and, after "Huzzah!", the running world screen.
 //! Then back to the main menu and into a new campaign, twice: the second time round,
 //! the page loads none of the pictures again (they stay loaded, as in Coherent's image
-//! cache), and the screens taken down leave no handlers behind.
+//! cache), and the screens taken down leave no handlers behind. Last, the campaign is
+//! saved, and double-clicking the save in "Load Campaign" loads it.
 //! The game's `ui/` runs in the Chromium host (offscreen, headless) against the real
 //! scripts. Skips if there is no Steam install.
 //!
@@ -118,6 +119,7 @@ fn play(session: &UiSession) -> Result<(), String> {
 		"no WorldState after the campaign started",
 	)?;
 	back_to_the_menu_and_into_new_campaigns(session)?;
+	double_clicking_a_save_loads_it(session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -205,6 +207,53 @@ fn back_to_the_menu_and_into_new_campaigns(session: &UiSession) -> Result<(), St
 		after == handlers,
 		format!("the page's handlers went from {handlers:?} to {after:?} over a campaign"),
 	)
+}
+
+/// The save [`double_clicking_a_save_loads_it`] makes.
+const SAVE: &str = "bb_probe_double_click";
+
+/// From the main menu: a new campaign, saved (to a fresh folder) and quit; then
+/// "Load Campaign" and a double click on the save's entry loads it, as vanilla's list
+/// does (`assignListCampaignDoubleClickHandler`, a jQuery `dblclick`).
+fn double_clicking_a_save_loads_it(session: &UiSession) -> Result<(), String> {
+	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("campaign_ui_saves");
+	let _ = std::fs::remove_dir_all(&dir);
+	session.engine().saves().set_directory(dir.clone());
+	let result = save_and_double_click(session, &dir);
+	let _ = std::fs::remove_dir_all(&dir);
+	result
+}
+
+fn save_and_double_click(session: &UiSession, dir: &Path) -> Result<(), String> {
+	new_campaign(session)?;
+	session
+		.engine()
+		.run_script(&format!("::World.State.saveCampaign({SAVE:?});"), "save")?;
+	ensure(
+		std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some()),
+		format!("no save written to {}", dir.display()),
+	)?;
+	back_to_the_menu(session)?;
+	during(
+		"clicking \"Load Campaign\"",
+		session.click_when_ready("Load Campaign", STEP),
+	)?;
+	during(
+		"double-clicking the save",
+		session.double_click_when_ready(SAVE, STEP),
+	)?;
+	let deadline = std::time::Instant::now() + STEP;
+	loop {
+		session.run_frames(0.2)?;
+		let names = session.engine().root_state().state_names();
+		if names.iter().any(|n| n == "WorldState") && session.shows_text("Day 1")? {
+			return Ok(());
+		}
+		ensure(
+			std::time::Instant::now() < deadline,
+			format!("the save didn't load: {names:?}, buttons {:?}", session.visible_buttons()?),
+		)?;
+	}
 }
 
 fn main() -> ExitCode {

@@ -58,6 +58,15 @@ impl UiSession {
 		})
 	}
 
+	/// Double-click at `(x, y)`, as a player would: two clicks, which the page sees as
+	/// a `dblclick` too.
+	pub fn double_click_at(&self, x: i32, y: i32) -> Result<(), String> {
+		self.input("dblclick", |host| {
+			host.double_click(x, y);
+			1
+		})
+	}
+
 	/// Move the mouse to `(x, y)` and leave it there.
 	pub fn move_to(&self, x: i32, y: i32) -> Result<(), String> {
 		// The page sees no move if the mouse is there already.
@@ -155,6 +164,12 @@ impl UiSession {
 	pub fn click_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
 		let (x, y) = self.locate_when_ready(target, timeout)?;
 		self.click_at(x, y)
+	}
+
+	/// Double-click `target` (see [`UiSession::locate_when_ready`]) once it's ready.
+	pub fn double_click_when_ready(&self, target: &str, timeout: Duration) -> Result<(), String> {
+		let (x, y) = self.locate_when_ready(target, timeout)?;
+		self.double_click_at(x, y)
 	}
 
 	/// Move the mouse over `target` (see [`UiSession::locate_when_ready`]) once it's

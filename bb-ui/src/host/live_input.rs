@@ -48,7 +48,8 @@ impl MouseButton {
 	}
 }
 
-/// `button` went down or up at `(x, y)`, with `held` (`EVENTFLAG_*` bits) on the event.
+/// `button` went down or up at `(x, y)`, with `held` (`EVENTFLAG_*` bits) on the event,
+/// as the `count`th click of a run (2 for a double click).
 pub(super) fn button(
 	host: &BrowserHost,
 	x: i32,
@@ -56,6 +57,7 @@ pub(super) fn button(
 	button: MouseButton,
 	down: bool,
 	held: u32,
+	count: i32,
 ) {
 	let event = MouseEvent {
 		x,
@@ -63,7 +65,7 @@ pub(super) fn button(
 		modifiers: held,
 	};
 	host.send_mouse_move_event(Some(&event), 0);
-	host.send_mouse_click_event(Some(&event), button.cef(), i32::from(!down), 1);
+	host.send_mouse_click_event(Some(&event), button.cef(), i32::from(!down), count);
 }
 
 /// Key `code` went down or up.
