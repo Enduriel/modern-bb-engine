@@ -11,6 +11,9 @@ bb-assets = { path = "../bb-assets", default-features = false }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
 # Unicode script names for ModernEngine.registerFont (cosmic-text's).
 unicode-script = "0.5.8"
+# Portable maths: the scripts see the same float
+# results on every OS, where each system's libm may differ in the last bit.
+libm = "0.2.16"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

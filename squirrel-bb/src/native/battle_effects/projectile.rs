@@ -94,7 +94,7 @@ impl Projectile {
 			return self.torque * (now - self.start);
 		}
 		let (x, y) = self.pos(now);
-		let deg = (f64::from(self.to.0 - x).atan2(f64::from(self.to.1 - y)) as f32) * 57.295_78;
+		let deg = (libm::atan2(f64::from(self.to.0 - x), f64::from(self.to.1 - y)) as f32) * 57.295_78;
 		-(if deg < 0.0 { deg + 360.0 } else { deg })
 	}
 

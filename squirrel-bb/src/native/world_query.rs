@@ -103,7 +103,7 @@ pub(crate) fn direction6(from: (f64, f64), to: (f64, f64)) -> i64 {
 pub(crate) fn direction8(from: (f64, f64), to: (f64, f64)) -> i64 {
 	let dx = to.0 as f32 - from.0 as f32;
 	let dy = to.1 as f32 - from.1 as f32;
-	let rad = f64::from(dx).atan2(f64::from(dy)) as f32;
+	let rad = libm::atan2(f64::from(dx), f64::from(dy)) as f32;
 	let mut deg = super::world_nav::cvtt_i32(f64::from(rad * 57.295_78_f32));
 	if deg < 0 {
 		deg += 360;

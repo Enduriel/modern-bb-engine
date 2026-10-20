@@ -24,12 +24,20 @@ fn round_f32(x: f64) -> i64 {
 /// `Math.getAngleTo`: see the registration.
 fn angle_to(a: &Vec2f, b: &Vec2f) -> f64 {
 	let (dx, dy) = ((b.x as f32) - (a.x as f32), (b.y as f32) - (a.y as f32));
-	// The original's atan2 runs in double and rounds the result to f32.
-	let mut angle = ((dx as f64).atan2(dy as f64) as f32) * 57.29578_f32;
+	// The original's atan2 runs in double and rounds the result to f32. `libm`, not the
+	// system's maths library, so every OS gets the same bits.
+	let mut angle = (libm::atan2(dx as f64, dy as f64) as f32) * 57.29578_f32;
 	if angle < 0.0 {
 		angle += 360.0;
 	}
 	f64::from(-angle)
+}
+
+/// A NaN made from operands that aren't NaN is x86's default NaN, negative, as the
+/// original's CPU makes it (`pow(-8, 0.333)` is `-nan(ind)` there, probed); ARM64 makes a
+/// positive one. The VM's own arithmetic does the same (squirrel-sys `sq_x86nan`).
+fn x86_nan(result: f64, operands: &[f64]) -> f64 {
+	if result.is_nan() && !operands.iter().any(|x| x.is_nan()) { -f64::NAN } else { result }
 }
 
 /// x86 `cvttss2si`: truncate toward zero; NaN or out of `i32` range is `i32::MIN`.
@@ -102,9 +110,10 @@ pub(crate) fn install(vm: &mut SQVM, prng: Prng) {
 		// round returns an INTEGER: `trunc(x + 0.5)` (or `- 0.5` below zero) in f32, as
 		// the original computes it (disassembled at `0x5370a0`), f32 rounding included.
 		("round", vm.make_closure(|x: Number| round_f32(x.0))),
+		// `libm`'s, for the same bits on every OS.
 		(
 			"pow",
-			vm.make_closure(|base: Number, exp: Number| base.0.powf(exp.0)),
+			vm.make_closure(|base: Number, exp: Number| x86_nan(libm::pow(base.0, exp.0), &[base.0, exp.0])),
 		),
 		// getAngleTo(v1, v2): the compass bearing from v1 to v2 (atan2(dx, dy), so north
 		// is 0 and east 90), normalised to [0, 360) and then NEGATED, in f32, as the

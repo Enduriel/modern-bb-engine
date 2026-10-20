@@ -69,7 +69,7 @@ impl Pool {
 	pub fn offset(&self, now: f32) -> (f32, f32) {
 		let e = self.eased(now);
 		let angle = f64::from(self.rotation * 0.017_453_292);
-		let (sin, cos) = (angle.sin() as f32, angle.cos() as f32);
+		let (sin, cos) = (libm::sin(angle) as f32, libm::cos(angle) as f32);
 		(self.offset.0 + self.spread * -sin * e, self.offset.1 + self.spread * cos * e)
 	}
 

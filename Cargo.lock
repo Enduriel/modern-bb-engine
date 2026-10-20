@@ -3138,6 +3138,7 @@ dependencies = [
  "bb-assets",
  "criterion",
  "jiff",
+ "libm",
  "squirrel",
  "unicode-script",
 ]
