@@ -125,7 +125,23 @@ fn new_campaign(p: &Play) -> Result<(), String> {
 	during("clicking \"Huzzah!\"", s.click_when_ready("Huzzah!", STEP))?;
 	during("waiting for the world screen", s.wait_for_text("Day 1", STEP))?;
 	p.shot("world");
-	Ok(())
+	pin_town_seeds(p)
+}
+
+/// Pin every town's shop and roster seeds, as the parity probes do: a town fills its
+/// stock and recruits from them when first entered, and they hold the real time at its
+/// creation (settlement.create), so prices and recruits, and the crowns left after
+/// buying and hiring, would differ from run to run.
+fn pin_town_seeds(p: &Play) -> Result<(), String> {
+	p.script(
+		r#"
+		foreach (i, s in ::World.EntityManager.getSettlements())
+		{
+			s.m.ShopSeed = 1000 + i;
+			s.m.RosterSeed = 2000 + i;
+		}
+		"#,
+	)
 }
 
 /// Walk the company to the nearest town (with `building`, if given) and into it,
@@ -837,6 +853,10 @@ fn retinue(p: &Play) -> Result<(), String> {
 		::World.Assets.addBusinessReputation(300);
 		"#,
 	)?;
+	// The page enables "Hire" only when the crowns cover the price (the scripts check
+	// it too): the shops' first goods can have cost most of them by now.
+	let cost = p.int("::World.Retinue.getFollower(\"follower.cook\").getCost()")?;
+	p.script(&format!("local m = ::World.Assets.getMoney(); if (m < {cost}) ::World.Assets.addMoney({cost} - m);"))?;
 	during("opening the retinue", p.session.click_when_ready("css:img[src$=\"ui/icons/campfire.png\"]", STEP))?;
 	let free = "img[src$=\"ui/campfire/free_slot.png\"]:not(.no-pointer-events)";
 	during("waiting for the campfire", settled(p, |p| nth(p, free, 0).is_ok()))?;
@@ -845,10 +865,18 @@ fn retinue(p: &Play) -> Result<(), String> {
 	p.session.click_at(x, y)?;
 	during("waiting for the followers", settled(p, |p| nth(p, ".list-entry", 0).is_ok()))?;
 	p.shot("followers");
-	let cost = p.int("::World.Retinue.getFollower(\"follower.cook\").getCost()")?;
 	let unlocked = p.int("::World.Retinue.getFollower(\"follower.cook\").isUnlocked() ? 1 : 0")?;
 	ensure(unlocked == 1, "the cook isn't unlocked with eight kinds of provisions")?;
 	during("picking the cook", p.session.click_when_ready("The Cook", STEP))?;
+	// "Hire" hires the picked entry, and does nothing while disabled (crowns short of
+	// the price, the follower locked): wait for the cook picked and the button enabled.
+	let picked = "(function () {
+		var e = jQuery('.list-entry.is-selected').data('entry'), b = jQuery('.l-hire-button .ui-control');
+		return 'picked ' + (e ? e.ID : 'none') + ', hire ' + (b.length === 0 ? 'missing' : b.is('[disabled]') ? 'disabled' : 'enabled');
+	})()";
+	let state = || p.session.eval(picked).map(|v| v.as_str().map_or_else(|| v.to_text(), str::to_string)).unwrap_or_else(|e| e);
+	let ready = p.session.pump_until(STEP, |s| !s.animating().unwrap_or(true) && state() == "picked follower.cook, hire enabled");
+	ensure(ready, format!("the cook can't be hired: {}; crowns {}, his price {cost}", state(), p.int("::World.Assets.getMoney()")?))?;
 	let before = p.int("::World.Assets.getMoney()")?;
 	during("hiring the cook", p.session.click_when_ready("Hire", STEP))?;
 	paid(p, before, cost, "the cook")?;
