@@ -254,6 +254,8 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	text_lays_out_in_whole_pixels(&session)?;
 	discards_give_memory_back(&session)?;
 	right_clicks_reach_the_page(&session)?;
+	modifiers_reach_the_pages_mouse_events(&session)?;
+	images_dont_drag_away_clicks(&session)?;
 	page_tasks_run_between_scripts(&session)?;
 	inserted_scripts_run_in_coherents_order(&session)?;
 	fps_module_shows_when_asked(&session)?;
@@ -1001,6 +1003,85 @@ fn right_clicks_reach_the_page(session: &UiSession) -> Result<(), String> {
 	ensure(
 		seen.as_str() == Some("contextmenu mousedown mouseup"),
 		format!("the page saw the right click as {}", seen.to_text()),
+	)
+}
+
+/// The modifier keys held reach the page's mouse events, as a player's do: vanilla's
+/// inventory reads `ctrlKey` and `altKey` on its clicks (Ctrl+right-click to the bag,
+/// Alt+right-click to repair; in a shop, Alt+right-click without the flag sells).
+fn modifiers_reach_the_pages_mouse_events(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		"window.__bbMods = [];
+		['mousemove', 'mousedown', 'mouseup', 'mousewheel'].forEach(function (type) {
+			document.addEventListener(type, function (e) {
+				window.__bbMods.push(e.type + ':' + (e.ctrlKey ? 'c' : '') + (e.altKey ? 'a' : '') + (e.shiftKey ? 's' : ''));
+			}, true);
+		});
+		true",
+	)?;
+	let host = session.host();
+	let only = |control, alt, shift| Modifiers { control, alt, shift };
+	host.set_modifiers(only(true, false, false));
+	host.mouse_move(7, 7);
+	host.mouse_button(7, 7, MouseButton::Left, true);
+	host.mouse_button(7, 7, MouseButton::Left, false);
+	host.set_modifiers(only(false, true, false));
+	host.mouse_button(7, 7, MouseButton::Right, true);
+	host.mouse_button(7, 7, MouseButton::Right, false);
+	host.set_modifiers(only(false, false, true));
+	host.wheel(7, 7, -1);
+	host.set_modifiers(Modifiers::default());
+	host.mouse_move(8, 8);
+	session.run_frames(0.3)?;
+	let seen = session.eval("window.__bbMods.join(' ')")?;
+	let seen = seen.as_str().unwrap_or("");
+	let events: Vec<&str> = seen.split(' ').collect();
+	// Each button event comes with a move to its place, which Chromium may or may not
+	// pass on: the moves are checked apart.
+	let (moves, others): (Vec<&str>, Vec<&str>) = events.iter().partition(|e| e.starts_with("mousemove"));
+	ensure(
+		others == ["mousedown:c", "mouseup:c", "mousedown:a", "mouseup:a", "mousewheel:s"]
+			&& moves.first() == Some(&"mousemove:c")
+			&& moves.last() == Some(&"mousemove:"),
+		format!("the page saw the modifiers as {seen:?}"),
+	)
+}
+
+/// A press on an image button that moves a few pixels before its release is still a
+/// click, as in Coherent, which never starts a drag of its own: Chromium would start
+/// dragging the image away and drop the click (vanilla's image buttons: end turn, the
+/// top bar's).
+fn images_dont_drag_away_clicks(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		"(function () {
+			var button = document.createElement('div');
+			button.id = 'bbDragTest';
+			button.setAttribute('style', 'position:fixed;left:40px;top:40px;width:64px;height:64px;z-index:100000;');
+			var image = document.createElement('img');
+			image.src = 'coui://gfx/ui/skin/background_inventory.png';
+			image.setAttribute('style', 'width:64px;height:64px;');
+			button.appendChild(image);
+			window.__bbDrag = [];
+			button.addEventListener('click', function () { window.__bbDrag.push('click'); });
+			// A drag the page lets start (any the host lets through).
+			document.addEventListener('dragstart', function (e) { if (!e.defaultPrevented) window.__bbDrag.push('dragstart'); }, true);
+			document.body.appendChild(button);
+			return true;
+		})()",
+	)?;
+	session.run_frames(0.2)?;
+	let host = session.host();
+	host.mouse_move(60, 60);
+	host.mouse_button(60, 60, MouseButton::Left, true);
+	for step in 1..=8 {
+		host.mouse_move(60 + 2 * step, 60);
+	}
+	host.mouse_button(76, 60, MouseButton::Left, false);
+	session.run_frames(0.3)?;
+	let seen = session.eval("document.body.removeChild(document.getElementById('bbDragTest')); window.__bbDrag.join(' ')")?;
+	ensure(
+		seen.as_str() == Some("click"),
+		format!("a press moved over an image button came to the page as {}", seen.to_text()),
 	)
 }
 

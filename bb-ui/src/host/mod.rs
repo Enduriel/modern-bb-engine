@@ -259,6 +259,8 @@ pub struct UiHost {
 	held: Cell<u32>,
 	/// Counts runs of clicks, which the presses and releases carry.
 	clicks: Cell<click_count::ClickCounter<MouseButton>>,
+	/// Modifier keys held (`EVENTFLAG_*_DOWN` bits), which every mouse event carries.
+	modifiers: Cell<u32>,
 	/// When the page's frames begin (see [`PageFrames`]).
 	frame_clock: page_frames::FrameClock,
 	cache_dir: PathBuf,
@@ -348,6 +350,7 @@ impl UiHost {
 			clicks: Cell::new(click_count::ClickCounter::new(
 				click_count::DoubleClick::system(),
 			)),
+			modifiers: Cell::new(0),
 			frame_clock: page_frames::FrameClock::new(config.frames),
 			cache_dir: config.cache_dir,
 			_args: args,
@@ -713,12 +716,24 @@ impl UiHost {
 		self.pointer.get()
 	}
 
+	/// The modifier keys held now. Every mouse event carries them from here on, as a
+	/// player's do: the page reads them as `ctrlKey`, `altKey` and `shiftKey` (the
+	/// inventory's Ctrl- and Alt-clicks, the shop's Alt+right-click repair).
+	pub fn set_modifiers(&self, modifiers: Modifiers) {
+		self.modifiers.set(modifiers.flags());
+	}
+
+	/// What a mouse event carries: the buttons and modifier keys held.
+	fn mouse_flags(&self) -> u32 {
+		self.held.get() | self.modifiers.get()
+	}
+
 	/// Move the mouse to `(x, y)` (view pixels).
 	pub fn mouse_move(&self, x: i32, y: i32) {
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
 			self.update_clicks(|c| c.moved((x, y)));
-			let modifiers = self.held.get();
+			let modifiers = self.mouse_flags();
 			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), 0);
 		}
 	}
@@ -727,7 +742,7 @@ impl UiHost {
 	pub fn mouse_leave(&self) {
 		if let (Some((x, y)), Some(host)) = (self.pointer.take(), self.browser_host()) {
 			self.update_clicks(|c| c.reset());
-			let modifiers = self.held.get();
+			let modifiers = self.mouse_flags();
 			host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), 1);
 		}
 	}
@@ -742,7 +757,7 @@ impl UiHost {
 		self.pointer.set(Some((x, y)));
 		self.update_clicks(|c| c.moved((x, y)));
 		let count = self.update_clicks(|c| c.press(MouseButton::Left, (x, y), Instant::now()));
-		let event = MouseEvent { x, y, modifiers: 0 };
+		let event = MouseEvent { x, y, modifiers: self.modifiers.get() };
 		host.send_mouse_move_event(Some(&event), 0);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 0, count);
 		host.send_mouse_click_event(Some(&event), MouseButtonType::LEFT, 1, count);
@@ -785,7 +800,7 @@ impl UiHost {
 			self.held.get() & !flag
 		};
 		// The event itself carries the button while it goes down and until it is up.
-		live_input::button(&host, x, y, button, down, self.held.get() | flag, count);
+		live_input::button(&host, x, y, button, down, self.mouse_flags() | flag, count);
 		self.held.set(held);
 	}
 
@@ -822,7 +837,7 @@ impl UiHost {
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
 			self.update_clicks(|c| c.moved((x, y)));
-			input::wheel(&host, x, y, notches);
+			input::wheel(&host, x, y, notches, self.mouse_flags());
 		}
 	}
 

@@ -80,6 +80,18 @@
 		}
 	}, true);
 
+	// No native drags. Chromium starts dragging an image (or a link, or selected text)
+	// away once a press on it moves a few pixels, and then the release is no click: a
+	// shaky click on any of vanilla's image buttons (end turn, the top bar's) was lost.
+	// The game's UI drags with mouse events only (jquery.event.drag, which keeps the
+	// native drag off its own items), and neither vanilla nor the mods surveyed use
+	// HTML5 drag and drop, which Coherent's offscreen views have no system drag for.
+	// Unprobed in the original (a probe can't press its mouse); the press moves on as
+	// mouse events, as in the game's own drags.
+	window.addEventListener('dragstart', function (e) {
+		e.preventDefault();
+	}, true);
+
 	// Absolutely positioned boxes centred between their top and bottom insets by `auto`
 	// margins. When the insets leave less room than the box (the world top bar's time
 	// buttons: `top: 13.8rem; bottom: 0` in a 7.3rem box), CSS 2.1, which old WebKit

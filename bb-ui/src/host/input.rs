@@ -202,9 +202,10 @@ pub(super) fn type_text(host: &BrowserHost, text: &str) {
 pub const WHEEL_DELTA_PER_NOTCH: i32 = 30 * 120;
 
 /// Turn the wheel `notches` times over (x, y): positive is away from the player
-/// (scrolling up), as `wheelDelta` counts.
-pub(super) fn wheel(host: &BrowserHost, x: i32, y: i32, notches: i32) {
-	let event = MouseEvent { x, y, modifiers: 0 };
+/// (scrolling up), as `wheelDelta` counts. The event carries `modifiers`
+/// (`EVENTFLAG_*` bits).
+pub(super) fn wheel(host: &BrowserHost, x: i32, y: i32, notches: i32, modifiers: u32) {
+	let event = MouseEvent { x, y, modifiers };
 	host.send_mouse_move_event(Some(&event), 0);
 	host.send_mouse_wheel_event(Some(&event), 0, WHEEL_DELTA_PER_NOTCH / CHROMIUM_WHEEL_SCALE * notches);
 }
