@@ -14,8 +14,8 @@
 //!   see [`music`](super::music).
 //! - `Settings.getSoundVolume(channel)` / `setSoundVolume(channel, v)` (`0x500b00`,
 //!   `0x500b30`): channel -1 is the master; the music's volume is stored halved, so it
-//!   reads back as set. A change re-applies every sound's volume. `isHardwareSound`
-//!   is the original's default, true.
+//!   reads back as set. A change re-applies every sound's volume. (`isHardwareSound`
+//!   is `settings`'.)
 //!
 //! The original has no `Sound.playAtmosphere` (one vanilla tutorial scenario calls it,
 //! and would fail there too).
@@ -196,10 +196,8 @@ pub(crate) fn install(vm: &mut SQVM, m: &Manager) {
 			}
 		})
 	};
-	let is_hardware_sound = vm.make_closure(|| true);
 	if let Some(mut settings) = SqTable::root(vm).get::<SqTable>("Settings") {
 		settings.set("getSoundVolume", get_volume);
 		settings.set("setSoundVolume", set_volume);
-		settings.set("isHardwareSound", is_hardware_sound);
 	}
 }

@@ -13,7 +13,7 @@
 //!   (an intentional divergence), and the mode then follows the window's real size.
 //!
 //! `Settings.save()` and `saveWithCustomVideoMode(mode)` ask the host to keep the mode
-//! ([`VideoSettings::take_save`]).
+//! with the other settings ([`VideoSettings::take_save`]; see `settings`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -21,6 +21,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Native, SQVM, SqClass, SqStrongRef};
 
 use super::display_modes::{DisplayMode, Source};
+use super::settings::game::SavedSettings;
 
 /// The frame-rate cap with VSync off.
 const FRAME_CAP_WITHOUT_VSYNC: i64 = 144;
@@ -106,8 +107,10 @@ struct VideoState {
 	mode: VideoMode,
 	/// How many times the scripts set a mode (`setVideoMode`).
 	changes: u64,
-	/// A mode the scripts asked to keep, until the host takes it.
-	save: Option<VideoMode>,
+	/// Settings the scripts asked to keep, until the host takes them.
+	save: Option<SavedSettings>,
+	/// What the host's settings file holds, as far as the engine knows (`Settings.load`).
+	stored: Option<SavedSettings>,
 	/// The monitor's resolutions, as the host reports them (`None` headless).
 	monitor: Option<Vec<(i64, i64)>>,
 }
@@ -125,6 +128,7 @@ impl Default for VideoSettings {
 			mode: VideoMode::DEFAULT,
 			changes: 0,
 			save: None,
+			stored: None,
 			monitor: None,
 		})))
 	}
@@ -160,9 +164,31 @@ impl VideoSettings {
 		})
 	}
 
-	/// The mode the scripts last asked to keep, once.
-	pub fn take_save(&self) -> Option<VideoMode> {
-		self.0.borrow_mut().save.take()
+	/// The settings the scripts last asked to keep (`Settings.save`), once: the host
+	/// writes them to its settings file.
+	pub fn take_save(&self) -> Option<SavedSettings> {
+		let mut s = self.0.borrow_mut();
+		let saved = s.save.take();
+		if saved.is_some() {
+			s.stored = saved;
+		}
+		saved
+	}
+
+	/// Keep `saved` for the host (`Settings.save`).
+	pub(crate) fn request_save(&self, saved: SavedSettings) {
+		self.0.borrow_mut().save = Some(saved);
+	}
+
+	/// What the host's settings file holds (`Settings.load` reads it back).
+	pub(crate) fn stored(&self) -> Option<SavedSettings> {
+		let s = self.0.borrow();
+		s.save.or(s.stored)
+	}
+
+	/// Note what the host's settings file holds.
+	pub(crate) fn set_stored(&self, saved: SavedSettings) {
+		self.0.borrow_mut().stored = Some(saved);
 	}
 
 	/// The screen's width and height, and the UI scale.
@@ -243,7 +269,7 @@ pub(crate) fn class(vm: &mut SQVM) -> SqClass<ModeRef> {
 	b.build(vm)
 }
 
-/// `getVideoMode`, `setVideoMode`, `save` and `saveWithCustomVideoMode`, over `current`.
+/// `getVideoMode` and `setVideoMode`, over `current`.
 pub(crate) fn natives(vm: &mut SQVM, class: &SqClass<ModeRef>, current: &VideoSettings) -> Vec<(&'static str, SqStrongRef)> {
 	let get = {
 		let (class, current) = (class.clone(), current.clone());
@@ -259,18 +285,7 @@ pub(crate) fn natives(vm: &mut SQVM, class: &SqClass<ModeRef>, current: &VideoSe
 			s.changes += 1;
 		})
 	};
-	let save = {
-		let current = current.clone();
-		vm.make_closure(move || {
-			let mode = current.mode();
-			current.0.borrow_mut().save = Some(mode);
-		})
-	};
-	let save_with = {
-		let current = current.clone();
-		vm.make_closure(move |mode: Native<ModeRef>| current.0.borrow_mut().save = Some(mode.0.get()))
-	};
-	vec![("getVideoMode", get), ("setVideoMode", set), ("save", save), ("saveWithCustomVideoMode", save_with)]
+	vec![("getVideoMode", get), ("setVideoMode", set)]
 }
 
 #[cfg(test)]

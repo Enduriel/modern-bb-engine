@@ -70,6 +70,9 @@ pub struct Boot<'a> {
 	/// The world map's columns and rows for the campaigns started; vanilla's otherwise.
 	pub world_size: Option<(i64, i64)>,
 	pub mode: VideoMode,
+	/// The gameplay, control and sound settings (the settings file's); the harness's
+	/// without (as for tests).
+	pub settings: Option<squirrel_bb::GameSettings>,
 	/// Serve Chrome DevTools for the page at this port (the page's front only).
 	pub devtools: Option<u16>,
 	/// Where the saves (and mods' storages, which they read as they boot) are kept as
@@ -147,6 +150,7 @@ impl Game {
 			sound,
 			world_size,
 			mode,
+			settings: None,
 			devtools,
 			saves: None,
 			cef_log: None,

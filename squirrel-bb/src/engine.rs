@@ -297,6 +297,20 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn video(&self) -> &VideoSettings {
 		&self.video
 	}
+
+	/// Give the scripts' `Settings` what the host's settings file holds besides the video
+	/// mode, as the original reads its config file at start; `Settings.load` reads it
+	/// back from here (with the video mode as it is now). Before the scripts boot.
+	pub fn apply_game_settings(&self, game: &crate::GameSettings) -> Result<(), String> {
+		crate::native::settings_apply(&self.vm, game)?;
+		self.video.set_stored(crate::SavedSettings { video: self.video.mode(), game: *game });
+		Ok(())
+	}
+
+	/// The settings the scripts' `Settings` holds now, besides the video mode.
+	pub fn game_settings(&self) -> crate::GameSettings {
+		crate::native::settings_read(&self.vm)
+	}
 	/// The sprite registry behind `doesBrushExist`; the host fills it at startup.
 	pub fn sprites(&self) -> &Sprites {
 		&self.sprites

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::{fmt, io};
 
-use squirrel_bb::{Engine, NativeConfig, installed_dlc};
+use squirrel_bb::{Engine, GameSettings, NativeConfig, installed_dlc};
 
 use crate::assets::{load_fog_stamp, load_sprites};
 use crate::mounts::Mounts;
@@ -145,6 +145,19 @@ pub fn open_install_with_mods(dir: &Path) -> io::Result<GameEngine> {
 	open_mounted(dir, archives, |_| {})
 }
 
+/// The gameplay settings of the install the original's ground truth was probed on (its
+/// `config.cfg`), with a fresh install's other settings: the harness's engines start
+/// with them, so they behave as the goldens were recorded. A fresh install has fewer
+/// gameplay options on ([`GameSettings::FRESH_INSTALL`]); the windowed game uses its
+/// settings file's.
+pub const PROBED_INSTALL_SETTINGS: GameSettings = GameSettings {
+	// AlwaysFocusCamera, AdjustCameraLevel, ShowOverlayStats, ShowOrientationOverlays,
+	// FasterPlayerMovement, FasterAIMovement, AutoLoot, AlwaysHideTrees,
+	// DontAutoEndTurns, AutoPauseAfterCity, RestoreEquipment.
+	gameplay: [false, true, true, true, true, true, false, true, true, true, true],
+	..GameSettings::FRESH_INSTALL
+};
+
 /// An engine over the install at `dir`, configured as the original sees a Steam install:
 /// DLC ownership is whichever DLC archives Steam installed (each ships its own
 /// `scripts/dlc/` init script). Transcoded scripts are cached on disk as
@@ -190,6 +203,10 @@ pub fn open_mounted(
 	configure(&mut config);
 	let fog_stamp = source.with_archives(|archives| load_fog_stamp(archives, &sprites.registry));
 	let engine = Engine::with_config(source, &config);
+	// The settings the parity goldens were captured with (the probed install's).
+	if let Err(e) = engine.apply_game_settings(&PROBED_INSTALL_SETTINGS) {
+		eprintln!("[Error] settings: {e}");
+	}
 	engine.sprites().set(sprites.registry);
 	match fog_stamp {
 		Ok(stamp) => engine.world_grid().set_fog_stamp(stamp),

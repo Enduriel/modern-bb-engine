@@ -40,6 +40,9 @@ impl Front {
 		// original logs it.
 		squirrel_bb::report_script_errors(engine.vm_mut());
 		engine.video().set_mode(boot.mode);
+		if let Some(settings) = &boot.settings {
+			engine.apply_game_settings(settings)?;
+		}
 		if let Some(dir) = &boot.saves {
 			engine.saves().set_directory(dir.clone());
 		}

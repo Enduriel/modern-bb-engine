@@ -264,6 +264,7 @@ impl App {
 			sound: !options.mute,
 			world_size: options.world_size,
 			mode,
+			settings: Some(self.settings.game_settings()),
 			devtools: options.devtools,
 			saves,
 			cef_log: options.cef_log.clone(),
@@ -439,11 +440,11 @@ impl Running {
 	}
 
 	/// Put the scripts' video mode on the window when they set one (`setVideoMode`), and
-	/// keep the mode they ask to keep (`Settings.save`) in `settings`.
+	/// keep what they ask to keep (`Settings.save`) in `settings`.
 	fn follow_video(&mut self, settings: &mut Settings) {
 		let video = self.game.video();
-		if let Some(mode) = video.take_save() {
-			if let Err(e) = settings.save_video_mode(&mode) {
+		if let Some(saved) = video.take_save() {
+			if let Err(e) = settings.keep(&saved) {
 				eprintln!("settings: {e}");
 			}
 		}

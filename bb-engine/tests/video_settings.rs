@@ -1,7 +1,7 @@
 //! The scripts' video mode, as the original's (see `squirrel_bb::native::video_mode`):
 //! `Settings.getVideoMode()` is the game's own mode, so a write to it shows at once;
 //! `setVideoMode` tells the host and sets the frame cap from VSync; the save natives
-//! hand the host the mode to keep; the resolution queries hand out copies. Skips
+//! hand the host the mode to keep (with the other settings, see `game_settings.rs`); the resolution queries hand out copies. Skips
 //! cleanly when the Steam install isn't there.
 
 use std::path::Path;
@@ -60,6 +60,6 @@ fn the_scripts_video_mode_is_the_games() {
 		)
 		.expect("save");
 	let saved = video.take_save().expect("a mode to keep");
-	assert_eq!((saved.width, saved.height), (1280, 720));
+	assert_eq!((saved.video.width, saved.video.height), (1280, 720));
 	assert_eq!(video.take_save(), None);
 }

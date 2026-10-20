@@ -94,6 +94,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		sound: false,
 		world_size: None,
 		mode: VideoMode::DEFAULT,
+		settings: None,
 		devtools: None,
 		saves: None,
 		cef_log: None,

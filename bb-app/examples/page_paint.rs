@@ -243,6 +243,7 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 		sound: false,
 		world_size: None,
 		mode: VideoMode { width, height, refresh_rate: hz.round() as i64, ..VideoMode::DEFAULT },
+		settings: None,
 		devtools: None,
 		saves: None,
 		cef_log: None,

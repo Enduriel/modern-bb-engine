@@ -1,19 +1,41 @@
 //! The `Settings` engine table + the `ControlSettings` value class; the video mode is
-//! [`super::video_mode`]'s.
+//! [`super::video_mode`]'s, what `save` keeps is [`game`]'s.
 //!
-//! Headless: a software cursor, and the gameplay settings the original reports. The
-//! video mode is kept and shared with the host, which applies and keeps it; the sound
-//! setters and `load` are stubs. `main_menu_state.onShow` reads
-//! `Settings.getVideoMode().Width/Height`; `cursor` reads
+//! As the original's (disassembled 2026-10-20, registration `0x5000e9`–`0x500238`):
+//! - `getControlSettings()` (`0x500ad0`) hands out the game's one `ControlSettings`
+//!   (a global, `0x65f8a8`), wrapped anew each call: a script's writes to it stick
+//!   (edge-of-screen scrolling, the hardware cursor) and every later call sees them.
+//! - `getGameplaySettings()` / `getTempGameplaySettings()` (`0x500ae0`, `0x500af0`) are
+//!   likewise globals; here persistent tables, so writes stick.
+//! - `isHardwareSound()` / `setHardwareSound(b)` (`0x500bb0`, `0x500bc0`) read and set
+//!   the sound device's flag. It changes nothing audible here; it is kept and saved.
+//! - `save()` (`0x500be0`) writes the video mode, the hardware-sound flag, the volumes,
+//!   the control and the gameplay settings to the config file;
+//!   `saveWithCustomVideoMode(mode)` (`0x500d30`) the same with `mode`. Here the host
+//!   keeps them in its own settings file ([`VideoSettings::take_save`]).
+//! - `load(videoOnly)` (`0x500e70`) reads the file back: false without one; the hardware
+//!   sound flag, then either the video mode (`videoOnly`) or the volumes, control and
+//!   gameplay settings. Here it reads back what the host's file holds as the engine
+//!   knows it (what the host gave at start, [`crate::Engine::apply_game_settings`], or
+//!   last saved).
+//!
+//! A fresh install starts from [`GameSettings::FRESH_INSTALL`]. `main_menu_state.onShow`
+//! reads `Settings.getVideoMode().Width/Height`; `cursor` reads
 //! `getControlSettings().UseHardwareCursor`; the Options screen reads every field and
 //! the display modes ([`super::display_modes`]).
 
-use squirrel::{ClassBuilder, Native, Retained, SQVM, SqArray, SqStrongRef, SqTable, Variadic};
+pub(crate) mod game;
+
+use std::cell::Cell;
+use std::rc::Rc;
+
+use squirrel::{ClassBuilder, Native, SQVM, SqArray, SqStrongRef, SqTable, Truthy};
 
 use super::display_modes;
 use super::video_mode::{self, ModeRef, VideoMode, VideoSettings};
+use game::{GameSettings, SavedSettings};
 
-/// Input/control settings — the payload behind a `ControlSettings` instance.
+/// Input/control settings: the game's one, shared by every `ControlSettings` instance.
 #[derive(Clone, Copy)]
 struct ControlSettings {
 	use_hardware_cursor: bool,
@@ -23,22 +45,23 @@ struct ControlSettings {
 /// Register the `Settings` table and its value classes into the root; the video mode
 /// they share with the host.
 pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
+	let fresh = GameSettings::FRESH_INSTALL;
 	let current = VideoSettings::default();
 	let video = video_mode::class(vm);
-	let controls = ClassBuilder::<ControlSettings>::new("ControlSettings")
+	let controls = ClassBuilder::<Rc<Cell<ControlSettings>>>::new("ControlSettings")
 		.property(
 			"UseHardwareCursor",
-			|c| c.use_hardware_cursor,
-			|c, b| c.use_hardware_cursor = b,
+			|c| c.get().use_hardware_cursor,
+			|c, b| c.set(ControlSettings { use_hardware_cursor: b, ..c.get() }),
 		)
 		.property(
 			"UseDragStyleScrolling",
-			|c| c.use_drag_style_scrolling,
-			|c, b| c.use_drag_style_scrolling = b,
+			|c| c.get().use_drag_style_scrolling,
+			|c, b| c.set(ControlSettings { use_drag_style_scrolling: b, ..c.get() }),
 		)
 		.build(vm);
 
-	// getVideoMode, setVideoMode, save, saveWithCustomVideoMode: see `video_mode`.
+	// getVideoMode and setVideoMode: see `video_mode`.
 	let video_natives = video_mode::natives(vm, &video, &current);
 	// The display modes (minimum width, height and color bits); see `display_modes`.
 	let query_resolutions = {
@@ -67,34 +90,17 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 				.map(|&mode| video.instantiate(vm, ModeRef::Copy(VideoMode::of(mode))))
 		})
 	};
-	let get_control_settings = vm.make_closure(move |vm: &SQVM| {
-		controls.instantiate(
-			vm,
-			ControlSettings {
-				use_hardware_cursor: false,
-				use_drag_style_scrolling: true,
-			},
-		)
-	});
+	let control_settings = Rc::new(Cell::new(ControlSettings {
+		use_hardware_cursor: fresh.hardware_cursor,
+		use_drag_style_scrolling: fresh.drag_scrolling,
+	}));
+	let get_control_settings = vm.make_closure(move |vm: &SQVM| controls.instantiate(vm, control_settings.clone()));
 	// Gameplay settings: persistent shared tables (the same one each call) so script
 	// writes like `getTempGameplaySettings().CameraLocked = false` stick and later reads
-	// see them. The fields and values are the ones the original reports (probed
-	// 2026-10-13 on a configured install; they are player preferences).
+	// see them.
 	let gameplay = {
 		let mut t = SqTable::new(vm);
-		for (name, value) in [
-			("AdjustCameraLevel", true),
-			("AlwaysFocusCamera", false),
-			("AlwaysHideTrees", true),
-			("AutoLoot", false),
-			("AutoPauseAfterCity", true),
-			("DontAutoEndTurns", true),
-			("FasterAIMovement", true),
-			("FasterPlayerMovement", true),
-			("RestoreEquipment", true),
-			("ShowOrientationOverlays", true),
-			("ShowOverlayStats", true),
-		] {
+		for (name, value) in game::GAMEPLAY.iter().zip(fresh.gameplay) {
 			t.set(name, value);
 		}
 		t.to_strong()
@@ -103,6 +109,8 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 		let g = gameplay.clone();
 		vm.make_closure(move || g.clone())
 	};
+	// The executable's data (`0x65f864`), with ShowTracking set at registration
+	// (`0x50029f`); none of these are saved.
 	let temp_gameplay = {
 		let mut t = SqTable::new(vm);
 		for (name, value) in [
@@ -122,19 +130,54 @@ pub(crate) fn install(vm: &mut SQVM) -> VideoSettings {
 		let t = temp_gameplay.clone();
 		vm.make_closure(move || t.clone())
 	};
-	// The sound volumes until the engine's sound service replaces them (`audio`);
-	// hardware sound is the original's default.
-	let get_sound_volume = vm.make_closure(|Variadic(_a): Variadic<Retained>| -> f64 { 1.0 });
-	let is_hardware_sound = vm.make_closure(|| true);
-	// The sound setters and `load` are still stubs (the host loads the settings).
-	let set_sound_volume = super::stubs::closure(vm, "Settings.setSoundVolume");
-	let set_hardware_sound = super::stubs::closure(vm, "Settings.setHardwareSound");
-	let load = super::stubs::closure(vm, "Settings.load");
+	// The sound volumes until the engine's sound service replaces them (`audio`).
+	let get_sound_volume = vm.make_closure(|_channel: i64| -> f64 { 1.0 });
+	let set_sound_volume = vm.make_closure(|_channel: i64, _v: f64| {});
+	let hardware_sound = Rc::new(Cell::new(fresh.hardware_sound));
+	let is_hardware_sound = {
+		let h = hardware_sound.clone();
+		vm.make_closure(move || h.get())
+	};
+	let set_hardware_sound = {
+		let h = hardware_sound.clone();
+		vm.make_closure(move |on: Truthy| h.set(on.0))
+	};
+	// What's saved: the video mode given, and the rest as the scripts have it now.
+	let save = {
+		let current = current.clone();
+		vm.make_closure(move |vm: &SQVM| {
+			let base = current.stored().map_or(GameSettings::FRESH_INSTALL, |s| s.game);
+			current.request_save(SavedSettings { video: current.mode(), game: game::read(vm, base) });
+		})
+	};
+	let save_with = {
+		let current = current.clone();
+		vm.make_closure(move |vm: &SQVM, mode: Native<ModeRef>| {
+			let base = current.stored().map_or(GameSettings::FRESH_INSTALL, |s| s.game);
+			current.request_save(SavedSettings { video: mode.0.get(), game: game::read(vm, base) });
+		})
+	};
+	let load = {
+		let current = current.clone();
+		vm.make_closure(move |vm: &SQVM, video_only: Truthy| -> Result<bool, String> {
+			let Some(stored) = current.stored() else { return Ok(false) };
+			if video_only.0 {
+				// The original takes the file's mode as the game's, applied at its next start.
+				hardware_sound.set(stored.game.hardware_sound);
+				current.set_mode(stored.video);
+			} else {
+				game::apply(vm, &stored.game)?;
+			}
+			Ok(true)
+		})
+	};
 
 	let mut settings = SqTable::new(vm);
 	for (name, f) in video_natives {
 		settings.set(name, f);
 	}
+	settings.set("save", save);
+	settings.set("saveWithCustomVideoMode", save_with);
 	settings.set("getControlSettings", get_control_settings);
 	settings.set("getGameplaySettings", get_gameplay);
 	settings.set("getTempGameplaySettings", get_temp_gameplay);

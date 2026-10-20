@@ -1,15 +1,18 @@
 //! The engine's own settings file. The original keeps its settings in `config.cfg`
 //! (binary, its own layout); ours is a text file of `key = value` lines ([`file`]) in
 //! the system's configuration folder ([`dir`]), never the original's, with the video
-//! mode under `video.*` ([`video`]) and room for engine-only options beside it.
+//! mode under `video.*` ([`video`]), what else the original keeps (gameplay, controls,
+//! sound) under `gameplay.*`, `controls.*` and `audio.*` ([`game`]), and room for
+//! engine-only options beside them.
 
 pub mod dir;
 pub mod file;
+pub mod game;
 pub mod video;
 
 use std::path::{Path, PathBuf};
 
-use squirrel_bb::VideoMode;
+use squirrel_bb::{GameSettings, SavedSettings, VideoMode};
 
 use file::SettingsText;
 
@@ -47,6 +50,12 @@ impl Settings {
 		video::read(&self.text, start)
 	}
 
+	/// The gameplay, control and sound settings to start with; what the file leaves out
+	/// is a fresh install's.
+	pub fn game_settings(&self) -> GameSettings {
+		game::read(&self.text, GameSettings::FRESH_INSTALL)
+	}
+
 	/// The GPU memory for textures, in MiB (`render.texture_budget_mib`), if the file
 	/// sets one; otherwise it follows the GPU (`bb_render::Gpu::texture_budget`).
 	pub fn texture_budget_mib(&self) -> Option<u64> {
@@ -66,9 +75,10 @@ impl Settings {
 		self.text.get("ui.software_cursor").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
 	}
 
-	/// Keep `mode`, in the file at once.
-	pub fn save_video_mode(&mut self, mode: &VideoMode) -> Result<(), String> {
-		video::write(&mut self.text, mode);
+	/// Keep what the scripts saved (`Settings.save`), in the file at once.
+	pub fn keep(&mut self, saved: &SavedSettings) -> Result<(), String> {
+		video::write(&mut self.text, &saved.video);
+		game::write(&mut self.text, &saved.game);
 		self.save()
 	}
 
@@ -98,8 +108,13 @@ mod tests {
 			fullscreen: false,
 			..start
 		};
-		settings.save_video_mode(&mode).expect("save");
+		assert_eq!(settings.game_settings(), GameSettings::FRESH_INSTALL, "a fresh install's");
+		let mut game = GameSettings::FRESH_INSTALL;
+		game.set_gameplay("DontAutoEndTurns", true);
+		game.volumes[0] = 0.5;
+		settings.keep(&SavedSettings { video: mode, game }).expect("save");
 		assert_eq!(Settings::load(Some(path.clone())).video_mode(start), mode);
+		assert_eq!(Settings::load(Some(path.clone())).game_settings(), game);
 		assert_eq!(Settings::load(Some(path.clone())).texture_budget_mib(), None, "the GPU's by default");
 		let text = std::fs::read_to_string(&path).expect("the file") + "render.texture_budget_mib = 256\n";
 		std::fs::write(&path, text).expect("write");
