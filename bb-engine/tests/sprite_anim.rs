@@ -1,7 +1,8 @@
 //! Sprites play their brushes' frames on virtual time (see `sprite_anim`): a world
 //! party's fight sprite (`battle_animation`, nine frames of 100 ms, looping) cycles
-//! while the world runs and holds while it's paused. Skips cleanly when the Steam
-//! install isn't there.
+//! while the world runs and it shows, and holds while it's paused or hidden (the
+//! original steps only a sprite it draws: visible, with a brush). Skips cleanly when
+//! the Steam install isn't there.
 
 use std::path::Path;
 
@@ -32,6 +33,20 @@ fn a_fight_sprite_cycles_on_virtual_time() {
 	harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
 	let (id, _) = *combat_frames(&engine).first().expect("a party with a fight sprite");
 	let frame_of = |engine: &GameEngine| combat_frames(engine).into_iter().find(|&(e, _)| e == id).map(|(_, f)| f);
+	let show = |on: bool| {
+		let src = format!("::World.getEntityByID({id}).getSprite(\"combat\").Visible = {on};");
+		engine.run_script(&src, "show the fight sprite").expect("show");
+	};
+
+	// Hidden (as a party not fighting has it): it holds.
+	show(false);
+	harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	let hidden = frame_of(&engine);
+	for _ in 0..30 {
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+		assert_eq!(frame_of(&engine), hidden, "a hidden sprite isn't stepped");
+	}
+	show(true);
 
 	// Running: a second of frames shows every one of the nine, in order.
 	let mut seen = Vec::new();

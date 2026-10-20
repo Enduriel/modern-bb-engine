@@ -6,6 +6,7 @@ use squirrel::{
 
 use super::{Grid, TacticalTileData, detail, hex_distance, hex_distance_to, picking, tile_handle, vec};
 use crate::native::overload::{Overload, overload_key};
+use crate::native::sprite_class::SpriteState;
 use crate::native::world_query;
 
 /// A script handle to one tile (a shared map + the tile's index).
@@ -168,12 +169,15 @@ fn spawn_detail(t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained
 	};
 	let now = crate::native::sprite_color::real_time(vm);
 	let now_ms = crate::native::sprite_anim::virtual_ms(vm);
-	let (class, sprites, rng) = {
+	let (class, sprites, rng, moving) = {
 		let g = t.grid.borrow();
-		(g.detail_class.clone()?, g.sprites.clone(), g.engine_rng.clone())
+		(g.detail_class.clone()?, g.sprites.clone(), g.engine_rng.clone(), g.moving.clone())
 	};
 	let detail = t.with_mut(|d| detail::spawn(&mut d.details, spawn, &sprites, &rng, now, now_ms))?;
-	Some(class.instantiate(vm, detail::DetailHandle(detail)))
+	if detail.borrow().may_move() {
+		moving.note(t.id);
+	}
+	Some(class.instantiate(vm, detail::DetailHandle(detail, t.id)))
 }
 
 pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {

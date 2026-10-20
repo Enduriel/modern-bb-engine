@@ -89,7 +89,8 @@ fn write_sprite(w: &mut SaveWriter, s: &SpriteData) {
 	w.bool(s.ignore_camera_flip);
 }
 
-fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
+/// A saved sprite of entity `owner`.
+fn read_sprite(r: &mut SaveReader, owner: super::Owner) -> Result<SpriteData, String> {
 	Ok(SpriteData {
 		brush: r.str()?.into(),
 		color: crate::native::sprite_color::SpriteColor::new(r.u32()?),
@@ -109,6 +110,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<SpriteData, String> {
 		highlight: r.u32()?,
 		highlight_factor: r.f64()?,
 		ignore_camera_flip: r.bool()?,
+		owner: Some(owner),
 	})
 }
 
@@ -249,11 +251,12 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 			m.label_class.clone().ok_or("load: label class missing")?,
 		)
 	};
+	let owner = m.borrow().owner(idx);
 	let sprite_count = cx.reader.borrow_mut().u32()?;
 	for _ in 0..sprite_count {
 		let (name, data) = {
 			let mut rd = cx.reader.borrow_mut();
-			(rd.str()?, read_sprite(&mut rd)?)
+			(rd.str()?, read_sprite(&mut rd, owner)?)
 		};
 		let existing = m.borrow().entities[idx].sprites.get(&name).cloned();
 		match existing {
@@ -266,6 +269,8 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 			}
 		}
 	}
+	// A loaded sprite's frames start again at its first turn, its torque kept.
+	m.borrow().moving.note(owner);
 	let label_count = cx.reader.borrow_mut().u32()?;
 	for _ in 0..label_count {
 		let data;

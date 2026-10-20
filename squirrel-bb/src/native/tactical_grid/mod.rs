@@ -31,6 +31,8 @@ use std::rc::Rc;
 use squirrel::{Number, Retained, SQVM, SqClass, SqStrongRef, SqTable};
 
 use crate::module::FileReader;
+use crate::native::moving_sprites::Moving;
+use crate::native::sprite_class::SpriteState;
 use crate::native::{EngineRng, Sprites};
 
 use super::overload::{make_dispatcher, overload_key};
@@ -135,6 +137,8 @@ pub(crate) struct TacticalGridState {
 	hex_masks: Option<Option<Rc<picking::HexMasks>>>,
 	/// Where `Tactical.addResource` hints resources.
 	sprites: Sprites,
+	/// The tiles with details that may change on their own (see `moving_sprites`).
+	moving: Moving<usize>,
 }
 
 impl TacticalGridState {
@@ -156,6 +160,7 @@ impl TacticalGridState {
 			file_reader: None,
 			sprites: Sprites::default(),
 			hex_masks: None,
+			moving: Moving::default(),
 		}
 	}
 
@@ -283,6 +288,7 @@ impl TacticalGridState {
 		self.tiles = (0..self.width * self.height)
 			.map(|i| TacticalTileData::new(i % self.width, i / self.width))
 			.collect();
+		self.moving.clear();
 		if self.width > 0 && self.height > 0 {
 			self.camera.bound_to_map(self.width, self.height);
 		}
@@ -615,8 +621,11 @@ impl TacticalGrid {
 	/// Install the tile classes, the camera and the map natives on the `Tactical` table.
 	pub fn install(&self, vm: &mut SQVM) {
 		let class = tile::build_class(vm);
-		let sprites = self.grid.borrow().sprites.clone();
-		let detail_class = detail::build_class(vm, &sprites);
+		let (sprites, moving) = {
+			let g = self.grid.borrow();
+			(g.sprites.clone(), g.moving.clone())
+		};
+		let detail_class = detail::build_class(vm, &sprites, &moving);
 		let properties_delegate = tile::properties_delegate(vm, &self.grid);
 		let camera_class = camera::build_class(vm, &self.grid);
 		let camera = camera::instance(vm, &camera_class, &self.grid);
@@ -789,29 +798,49 @@ impl TacticalGrid {
 	/// Turn the details with a torque to virtual time `now`, in seconds (see `spin`),
 	/// and step their animations to virtual millisecond `now_ms` (see `sprite_anim`).
 	/// Those on tiles the player sees are drawn at real time `real`: a draw finishes a
-	/// fade (see `SpriteColor`), which may hide the detail.
+	/// fade (see `SpriteColor`), which may hide the detail. Only the tiles noted as
+	/// having details that may change are visited (see `moving_sprites`), and forgotten
+	/// once none may.
 	pub(crate) fn turn(&self, now: f32, now_ms: u32, real: f32) {
 		let g = self.grid.borrow();
-		for t in &g.tiles {
+		g.moving.retain(|tile| {
+			let Some(t) = g.tiles.get(tile) else { return false };
 			let seen = t.vis_mask.contains(visibility::PLAYER);
+			let mut moves = false;
 			for d in &t.details {
 				let mut d = d.borrow_mut();
 				let d = &mut *d;
-				d.rotation = d.spin.turn(d.rotation, now);
-				if let Some(scale) = d.anim.step_on(&g.sprites, &d.brush, now_ms) {
-					d.scale = scale;
+				if d.turns() {
+					d.rotation = d.spin.turn(d.rotation, now);
+					if let Some(scale) = d.anim.step_on(&g.sprites, &d.brush, now_ms) {
+						d.scale = scale;
+					}
 				}
 				if seen && d.visible && d.color.draw(real).hide {
 					d.visible = false;
 				}
+				moves |= d.may_move();
 			}
-		}
+			moves
+		});
+	}
+
+	/// The details that may change on their own though their tile isn't noted as moving
+	/// (see `moving_sprites`): a pass would miss them. Tests.
+	pub(crate) fn unnoted_moving(&self) -> usize {
+		let g = self.grid.borrow();
+		(0..g.tiles.len())
+			.filter(|&i| !g.moving.has(i))
+			.flat_map(|i| g.tiles[i].details.iter())
+			.filter(|d| d.borrow().may_move())
+			.count()
 	}
 
 	/// Release every script reference the map holds. Call before the VM is closed.
 	pub fn clear(&self) {
 		let mut g = self.grid.borrow_mut();
 		g.tiles.clear();
+		g.moving.clear();
 		g.class = None;
 		g.detail_class = None;
 		g.properties_delegate = None;

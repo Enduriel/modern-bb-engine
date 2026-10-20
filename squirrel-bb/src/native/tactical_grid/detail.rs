@@ -24,6 +24,7 @@ use std::rc::Rc;
 
 use squirrel::{ClassBuilder, SQVM, SqClass};
 
+use crate::native::moving_sprites::Moving;
 use crate::native::spin::Spin;
 use crate::native::sprite_anim::Anim;
 use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
@@ -60,9 +61,10 @@ pub(crate) struct DetailData {
 /// A detail, shared between its tile and the handles scripts hold.
 pub(crate) type Detail = Rc<RefCell<DetailData>>;
 
-/// The payload of the `TacticalDetail` handles `spawnDetail` returns.
+/// The payload of the `TacticalDetail` handles `spawnDetail` returns: the detail and
+/// its tile's index.
 #[derive(Clone)]
-pub(super) struct DetailHandle(pub Detail);
+pub(super) struct DetailHandle(pub Detail, pub usize);
 
 /// How `spawnDetail` was called.
 pub(super) struct Spawn {
@@ -217,10 +219,17 @@ impl SpriteHandle for DetailHandle {
 	}
 }
 
-/// The class of the details `spawnDetail` hands out: the sprite class.
-pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<DetailHandle> {
+/// The class of the details `spawnDetail` hands out: the sprite class. A detail that
+/// may change on its own now notes its tile on `moving`.
+pub(super) fn build_class(vm: &mut SQVM, sprites: &Sprites, moving: &Moving<usize>) -> SqClass<DetailHandle> {
 	let b = ClassBuilder::<DetailHandle>::new("TacticalDetail");
-	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: true, moving: None }).build(vm)
+	let moving = moving.clone();
+	let note: Rc<dyn Fn(&DetailHandle)> = Rc::new(move |h: &DetailHandle| {
+		if h.0.borrow().may_move() {
+			moving.note(h.1);
+		}
+	});
+	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: true, moving: Some(note) }).build(vm)
 }
 
 #[cfg(test)]

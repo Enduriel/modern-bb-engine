@@ -175,7 +175,20 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 		})
 	};
 
-	let (is_visible, set_visible) = flag(m, vm, |r| r.visible, |r, v| r.visible = v);
+	let (is_visible, _) = flag(m, vm, |r| r.visible, |r, v| r.visible = v);
+	// Shown again, its sprites' fades go on (see `moving_sprites`).
+	let set_visible = {
+		let m = m.clone();
+		vm.make_closure(move |vm: &SQVM, v: bool| {
+			let mut machine = m.borrow_mut();
+			let Some(&idx) = machine.by_identity.get(&vm.this_identity()) else { return };
+			machine.entities[idx].visible = v;
+			if v {
+				let owner = machine.owner(idx);
+				machine.moving.note(owner);
+			}
+		})
+	};
 	let (is_discovered, _) = flag(m, vm, |r| r.discovered, |r, v| r.discovered = v);
 	let (is_visible_in_fow, set_visible_in_fow) =
 		flag(m, vm, |r| r.visible_in_fog_of_war, |r, v| r.visible_in_fog_of_war = v);

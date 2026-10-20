@@ -35,21 +35,26 @@ fn with_sprite(m: &Machine, vm: &SQVM, name: &str, f: impl FnOnce(&mut SpriteDat
 
 /// `addSprite(name)` (`first`: `insertSprite`) on the calling entity.
 pub(super) fn add(m: &Machine, vm: &SQVM, name: String, first: bool) -> Option<SqStrongRef> {
-	let class = {
+	let (class, owner) = {
 		let machine = m.borrow();
-		let rec = machine.record(vm.this_identity());
-		if let Some(there) = rec.and_then(|rec| rec.sprites.get(&name)) {
+		let idx = machine.by_identity.get(&vm.this_identity()).copied();
+		if let Some(there) = idx.and_then(|i| machine.entities[i].sprites.get(&name)) {
 			return Some(there.clone());
 		}
-		machine.sprite_class.clone()?
+		(machine.sprite_class.clone()?, idx.map(|i| machine.owner(i)))
 	};
-	let sprite = class.instantiate(vm, SpriteData::fresh());
-	if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
+	let sprite = class.instantiate(vm, SpriteData::fresh(owner));
+	let mut machine = m.borrow_mut();
+	if let Some(rec) = machine.record_mut(vm.this_identity()) {
 		if first {
 			rec.sprites.insert_first(name, sprite.clone());
 		} else {
 			rec.sprites.insert(name, sprite.clone());
 		}
+	}
+	// Its brush's frames start at its first turn (see `sprite_anim`).
+	if let Some(owner) = owner {
+		machine.moving.note(owner);
 	}
 	Some(sprite)
 }

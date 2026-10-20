@@ -408,6 +408,12 @@ const AUTOPLAY: &str = r#"
 /// The world runs past the origin's intro first (see [`run_past_intro`]).
 pub fn engage_nearest_hostile(engine: &GameEngine) -> Result<(), String> {
 	run_past_intro(engine)?;
+	offer_nearest_battle(engine)
+}
+
+/// [`engage_nearest_hostile`] without waiting for the origin's intro: for a loaded
+/// campaign, whose intro is long past.
+pub fn offer_nearest_battle(engine: &GameEngine) -> Result<(), String> {
 	engine.run_script(ENGAGE_NEAREST_HOSTILE, "engage")
 }
 

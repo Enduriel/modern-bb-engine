@@ -52,6 +52,9 @@ pub(super) fn fade_sprites(m: &Machine, vm: &SQVM, idx: usize, fade: Fade, now: 
 	let (class, handles) = {
 		let machine = m.borrow();
 		let handles: Vec<SqStrongRef> = machine.entities[idx].sprites.iter().map(|(_, h)| h.clone()).collect();
+		if !matches!(fade, Fade::Alpha(_)) {
+			machine.moving.note(machine.owner(idx));
+		}
 		(machine.sprite_class.clone(), handles)
 	};
 	let Some(class) = class else { return };
@@ -188,11 +191,13 @@ fn sight_pass(m: &Machine, vm: &SQVM, order: Vec<usize>, fog: bool, now: i64) ->
 
 /// Draw the entities' sprites at real time `now` (seconds): what a draw does to them is
 /// finish their fades (see `SpriteColor`), which may hide them. The original draws an
-/// entity's sprites whether it's in sight or not (out of sight they're clear).
+/// entity's sprites whether it's in sight or not (out of sight they're clear). Only the
+/// entities noted as moving can have a fade (see `moving_sprites`).
 fn draw_sprites(m: &Machine, vm: &SQVM, now: f32) {
 	let machine = m.borrow();
 	let Some(class) = machine.sprite_class.clone() else { return };
-	for rec in machine.entities.iter().filter(|r| r.alive && r.visible) {
+	machine.moving.each(|owner| {
+		let Some(rec) = machine.owner_record(owner).filter(|r| r.visible) else { return };
 		for (_, handle) in rec.sprites.iter() {
 			class.with_payload(vm, handle, |s| {
 				if s.visible && s.color.draw(now).hide {
@@ -200,7 +205,7 @@ fn draw_sprites(m: &Machine, vm: &SQVM, now: f32) {
 				}
 			});
 		}
-	}
+	});
 }
 
 /// `World.prepareRender()` and `World.render()`.

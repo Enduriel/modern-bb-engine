@@ -40,6 +40,7 @@ pub(crate) mod prng;
 mod screen;
 mod settings;
 pub(crate) mod video_mode;
+pub(crate) mod moving_sprites;
 pub(crate) mod spin;
 pub(crate) use settings::temp_gameplay_flag;
 pub(crate) mod sprite_anim;

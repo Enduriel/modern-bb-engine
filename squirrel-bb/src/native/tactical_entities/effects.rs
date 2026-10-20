@@ -20,7 +20,7 @@ type Machine = Rc<RefCell<TacticalMachine>>;
 
 fn sprite(m: &Machine, vm: &SQVM) -> Option<SqStrongRef> {
 	let class = m.borrow().sprite_class.clone()?;
-	Some(class.instantiate(vm, UnitSpriteData::fresh()))
+	Some(class.instantiate(vm, UnitSpriteData::fresh(None)))
 }
 
 /// Flight time (ms) of a projectile from tile `from` to tile `to`.

@@ -58,7 +58,7 @@ fn write_sprite(w: &mut SaveWriter, s: &UnitSpriteData) {
 }
 
 /// A sprite's fade isn't kept: it loads with the colour it had.
-fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
+fn read_sprite(r: &mut SaveReader, owner: i64) -> Result<UnitSpriteData, String> {
 	let brush = r.str()?;
 	let mut color = SpriteColor::new(r.u32()?);
 	let offset = (r.f64()?, r.f64()?);
@@ -97,6 +97,7 @@ fn read_sprite(r: &mut SaveReader) -> Result<UnitSpriteData, String> {
 		colorization: true,
 		occlusion: if r.bool()? { Some((r.i64()?, r.i64()?, r.i64()?)) } else { None },
 		brush_bits: r.u32()?,
+		owner: Some(owner),
 	})
 }
 
@@ -190,11 +191,13 @@ fn load_unit(m: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, roster_id: i64, cx: &L
 		rec.pos = pos;
 	}
 	let sprite_class = m.borrow().sprite_class.clone().ok_or("load: sprite class missing")?;
+	// Loaded off the map: placing it notes its sprites (see `moving_sprites`).
+	let owner = m.borrow().owner(idx);
 	let sprite_count = cx.reader.borrow_mut().u32()?;
 	for _ in 0..sprite_count {
 		let (name, data) = {
 			let mut r = cx.reader.borrow_mut();
-			(r.str()?, read_sprite(&mut r)?)
+			(r.str()?, read_sprite(&mut r, owner)?)
 		};
 		let existing = m.borrow().units[idx].sprites.get(&name).cloned();
 		match existing {

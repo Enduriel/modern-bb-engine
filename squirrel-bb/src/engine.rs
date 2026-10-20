@@ -528,6 +528,16 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.tactical_entities.turn(&self.vm, now, now_ms);
 	}
 
+	/// The sprites that may change on their own (a torque, frames to play, a fade) but
+	/// that the frame's sprite passes wouldn't visit, as their owner isn't noted as
+	/// moving (see `native::moving_sprites`): always 0 unless a way a sprite starts
+	/// moving was missed. For tests.
+	pub fn unnoted_moving_sprites(&self) -> usize {
+		self.world_entities.unnoted_moving(&self.vm)
+			+ self.tactical_entities.unnoted_moving(&self.vm)
+			+ self.tactical_grid.unnoted_moving()
+	}
+
 	/// Install logging to a custom sink (defaults to stderr/stdout otherwise).
 	pub fn set_log_handler(&mut self, handler: impl Fn(crate::native::LogLevel, &str) + 'static) {
 		crate::native::install_logging(&mut self.vm, handler);

@@ -4,7 +4,10 @@
 //!   torque alone. Scripts can set `Torque` afterwards (the swamp fog does).
 //! - Each frame the engine turns every sprite with a torque by `(virtual time − the
 //!   time it last turned) × torque` degrees (`0x52c136`), so a paused game stops them.
-//!   A sprite without torque doesn't turn and keeps its last time.
+//!   A sprite without torque doesn't turn and keeps its last time. It turns as it's
+//!   drawn, and only one that's visible and has a brush (`0x52c120`'s callers), so a
+//!   hidden one keeps its last time too and catches up in one turn once shown (see
+//!   `SpriteState::turns`).
 //! - A rotation past ±360 starts again from 0: the original subtracts
 //!   `(r ∓ 360) ± 360`, which in `f32` is `r` itself (give or take its rounding), not
 //!   360.

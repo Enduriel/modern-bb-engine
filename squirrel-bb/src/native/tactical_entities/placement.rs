@@ -36,6 +36,8 @@ pub(super) fn place(m: &Machine, idx: usize, tile: usize, is_actor: bool) -> Res
 	let rec = &mut machine.units[idx];
 	rec.tile = Some(tile);
 	rec.pos = pos;
+	// Its sprites turn again (see `moving_sprites`).
+	machine.moving.note(machine.owner(idx));
 	Ok(())
 }
 

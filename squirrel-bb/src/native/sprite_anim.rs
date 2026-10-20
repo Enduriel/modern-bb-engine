@@ -8,8 +8,10 @@
 //!   millisecond (`Time`'s virtual seconds × 1000), so a paused game holds it and the
 //!   game's speed hastens it.
 //! - It moves on by the whole frames elapsed since its last step, the brush's frame
-//!   time each, keeping the remainder. The original steps a sprite when it draws it;
-//!   here every live sprite steps each frame, so a window changes nothing.
+//!   time each, keeping the remainder. The original steps a sprite when it draws it, a
+//!   visible one with a brush; here every live one of those steps each frame, on
+//!   screen or not, so a window changes nothing (see `SpriteState::turns`). A hidden
+//!   one holds, and catches up once shown.
 //! - Past the last frame, a brush without the loop flag (`0x10`) stops on its last
 //!   frame. A looping one starts over; a brush with a pause range (the bubbles, 800 to
 //!   9000 ms) first holds its first frame for a pause, drawn when the brush was set and

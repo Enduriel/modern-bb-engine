@@ -139,6 +139,9 @@ impl WorldEntities {
 				sprite_class.with_payload(vm, &handle, |s| apply_sprite(s, entry, &sprites));
 			}
 		}
+		// Its look is the save's now; the turn forgets it if nothing moves.
+		let m = self.machine.borrow();
+		m.moving.note(m.owner(idx));
 		Ok(())
 	}
 

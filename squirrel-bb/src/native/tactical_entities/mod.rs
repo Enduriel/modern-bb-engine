@@ -35,6 +35,7 @@ mod render;
 mod shaker;
 mod vision;
 use crate::module::Instantiator;
+use crate::native::moving_sprites::Moving;
 use crate::native::spin::Spin;
 use crate::native::sprite_anim::Anim;
 use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
@@ -115,10 +116,13 @@ struct UnitSpriteData {
 	/// The flag bits its brush calls left (see [`Sprites::brush_bits`]), which the
 	/// original saves.
 	brush_bits: u32,
+	/// The unit it was made for (see [`TacticalMachine::owner`]); none for an effect's.
+	owner: Option<i64>,
 }
 
 impl UnitSpriteData {
-	fn fresh() -> Self {
+	/// A new sprite of unit `owner`.
+	fn fresh(owner: Option<i64>) -> Self {
 		UnitSpriteData {
 			brush: String::new(),
 			color: SpriteColor::default(),
@@ -145,6 +149,7 @@ impl UnitSpriteData {
 			in_portrait: true,
 			colorization: true,
 			brush_bits: 0,
+			owner,
 		}
 	}
 }
@@ -221,6 +226,9 @@ struct TacticalMachine {
 	effects: Option<crate::native::battle_effects::BattleEffectsHandle>,
 	/// The units shaking now, in the order they started (see `shaker`).
 	shakes: Vec<shaker::Shake>,
+	/// The placed units whose sprites may change on their own (see `moving_sprites`),
+	/// as their [`owner`](Self::owner) keys.
+	moving: Moving<i64>,
 }
 
 impl TacticalMachine {
@@ -230,6 +238,25 @@ impl TacticalMachine {
 	fn record_mut(&mut self, identity: i64) -> Option<&mut UnitRecord> {
 		let i = *self.by_identity.get(&identity)?;
 		Some(&mut self.units[i])
+	}
+
+	/// Unit `idx` as the owner of sprites: its object's identity (one key for all its
+	/// class levels; records move, see `placement::release_unrostered`).
+	fn owner(&self, idx: usize) -> i64 {
+		self.units[idx].entity.identity()
+	}
+
+	/// The unit `owner` is, if it's still in the battle's records.
+	fn owner_record(&self, owner: i64) -> Option<&UnitRecord> {
+		let rec = &self.units[*self.by_identity.get(&owner)?];
+		(rec.entity.identity() == owner).then_some(rec)
+	}
+
+	/// One of the calling unit's sprites may change on its own now.
+	fn note_moving(&self, identity: i64) {
+		if let Some(&idx) = self.by_identity.get(&identity) {
+			self.moving.note(self.owner(idx));
+		}
 	}
 
 	/// What a unit's script-side position is relative to: its tile's world position
@@ -420,9 +447,15 @@ impl SpriteHandle for UnitSpriteData {
 
 /// Build the unit sprite class: the sprite class (see `sprite_class`), and the weapon
 /// and shield animation switches.
-fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<UnitSpriteData> {
+fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, moving: &Moving<i64>) -> SqClass<UnitSpriteData> {
 	let b = ClassBuilder::<UnitSpriteData>::new("TacticalUnitSprite");
-	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: true, moving: None })
+	let moving = moving.clone();
+	let note: Rc<dyn Fn(&UnitSpriteData)> = Rc::new(move |s: &UnitSpriteData| {
+		if let (Some(owner), true) = (s.owner, s.may_move()) {
+			moving.note(owner);
+		}
+	});
+	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: true, moving: Some(note) })
 		.property(
 			"RenderAnimationStartTime",
 			|s: &UnitSpriteData| s.render_anim_start,
@@ -601,6 +634,7 @@ impl Units {
 	pub fn fade(&self, vm: &SQVM, identity: i64, ms: i64, out: bool) {
 		let now = real_time(vm);
 		self.each_sprite(vm, identity, |s| if out { s.color.fade_out(ms, now, false) } else { s.color.fade_in(ms, now) });
+		self.0.borrow().note_moving(identity);
 	}
 
 	/// All the unit's sprites fully opaque, their fades dropped (`0x4a9a50`).
@@ -663,6 +697,7 @@ impl TacticalEntities {
 				sprites: Sprites::default(),
 				effects: None,
 				shakes: Vec::new(),
+				moving: Moving::default(),
 			})),
 		}
 	}
@@ -688,7 +723,8 @@ impl TacticalEntities {
 	/// `&mut SQVM`, after the `World` table exists.
 	pub fn install(&self, vm: &mut SQVM) {
 		let sprites = self.machine.borrow().sprites.clone();
-		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites));
+		let moving = self.machine.borrow().moving.clone();
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites, &moving));
 
 		// --- injected unit methods (recover the record via this_identity) ---
 		let get_id = {
@@ -743,7 +779,7 @@ impl TacticalEntities {
 					rec.overlay.get_or_insert_with(Default::default);
 				}
 				let class = m.borrow().sprite_class.clone()?;
-				Some(class.instantiate(vm, UnitSpriteData::fresh()))
+				Some(class.instantiate(vm, UnitSpriteData::fresh(None)))
 			})
 		};
 		// setOverlayValues(headArmor, bodyArmor, hitpoints): what the bars show.
@@ -1223,20 +1259,40 @@ impl TacticalEntities {
 	/// as a renderer reads them.
 	/// Turn the placed units' sprites that have a torque to virtual time `now`, in
 	/// seconds (see `spin`), and step their animations to virtual millisecond `now_ms`
-	/// (see `sprite_anim`).
+	/// (see `sprite_anim`): those of the units noted as moving (see `moving_sprites`),
+	/// forgotten once none of their sprites may change, or they die or leave the map
+	/// (placing one notes it again).
 	pub(crate) fn turn(&self, vm: &SQVM, now: f32, now_ms: u32) {
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return };
-		for u in m.units.iter().filter(|u| !u.dead && u.tile.is_some()) {
+		m.moving.retain(|owner| {
+			let Some(u) = m.owner_record(owner).filter(|u| !u.dead && u.tile.is_some()) else { return false };
+			let mut moves = false;
 			for (_, handle) in u.sprites.iter() {
 				class.with_payload(vm, handle, |s| {
-					s.rotation = f64::from(s.spin.turn(s.rotation as f32, now));
-					if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
-						s.scale = f64::from(scale);
+					if s.turns() {
+						s.rotation = f64::from(s.spin.turn(s.rotation as f32, now));
+						if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
+							s.scale = f64::from(scale);
+						}
 					}
+					moves |= s.may_move();
 				});
 			}
-		}
+			moves
+		});
+	}
+
+	/// The placed units' sprites that may change on their own though their unit isn't
+	/// noted as moving (see `moving_sprites`): a pass would miss them. Tests.
+	pub(crate) fn unnoted_moving(&self, vm: &SQVM) -> usize {
+		let m = self.machine.borrow();
+		let Some(class) = m.sprite_class.clone() else { return 0 };
+		(0..m.units.len())
+			.filter(|&i| !m.units[i].dead && m.units[i].tile.is_some() && !m.moving.has(m.owner(i)))
+			.flat_map(|i| m.units[i].sprites.iter())
+			.filter(|(_, h)| class.with_payload(vm, h, |s| s.may_move()).unwrap_or(false))
+			.count()
 	}
 
 	/// How a sprite a script holds looks now (a head's layer, see `battle_effects`).
@@ -1372,6 +1428,7 @@ impl TacticalEntities {
 		m.roster_class = None;
 		m.sprite_class = None;
 		m.grid = None;
+		m.moving.clear();
 	}
 }
 
@@ -1380,14 +1437,19 @@ impl TacticalEntities {
 /// below them all; a name the unit has gets that sprite back (the original logs that it
 /// already exists).
 fn new_sprite(m: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, name: String, first: bool) -> Option<SqStrongRef> {
-	let class = {
+	let (class, owner) = {
 		let machine = m.borrow();
-		if let Some(there) = machine.record(vm.this_identity()).and_then(|rec| rec.sprites.get(&name)) {
+		let idx = machine.by_identity.get(&vm.this_identity()).copied();
+		if let Some(there) = idx.and_then(|i| machine.units[i].sprites.get(&name)) {
 			return Some(there.clone());
 		}
-		machine.sprite_class.clone()?
+		(machine.sprite_class.clone()?, idx.map(|i| machine.owner(i)))
 	};
-	let sprite = class.instantiate(vm, UnitSpriteData::fresh());
+	let sprite = class.instantiate(vm, UnitSpriteData::fresh(owner));
+	// Its brush's frames start at its first turn (see `sprite_anim`).
+	if let Some(owner) = owner {
+		m.borrow().moving.note(owner);
+	}
 	if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 		if first {
 			rec.sprites.insert_first(name, sprite.clone());

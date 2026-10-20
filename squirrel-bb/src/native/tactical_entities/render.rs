@@ -108,12 +108,10 @@ fn draw_sprites(m: &Machine, vm: &SQVM) {
 	let machine = m.borrow();
 	let (Some(grid), Some(class)) = (machine.grid.clone(), machine.sprite_class.clone()) else { return };
 	let g = grid.borrow();
-	let seen = machine
-		.units
-		.iter()
-		.filter(|u| !u.dead)
-		.filter(|u| u.tile.is_some_and(|t| g.tiles[t].vis_mask.contains(PLAYER)));
-	for u in seen {
+	// Only the units noted as moving can have a fade (see `moving_sprites`).
+	machine.moving.each(|owner| {
+		let seen = |u: &&super::UnitRecord| !u.dead && u.tile.is_some_and(|t| g.tiles[t].vis_mask.contains(PLAYER));
+		let Some(u) = machine.owner_record(owner).filter(seen) else { return };
 		for (_, handle) in u.sprites.iter() {
 			class.with_payload(vm, handle, |s| {
 				if s.visible && s.color.draw(now).hide {
@@ -121,5 +119,5 @@ fn draw_sprites(m: &Machine, vm: &SQVM) {
 				}
 			});
 		}
-	}
+	});
 }

@@ -73,6 +73,27 @@ pub(crate) trait SpriteState {
 	/// `Highlight`, ARGB.
 	fn highlight(&self) -> u32;
 	fn set_highlight(&mut self, argb: u32);
+
+	/// Whether the frame's turn steps it: the original updates a sprite as it draws one
+	/// that's visible and has a brush (the callers of `0x52c120` check its brush and
+	/// flag bit 0, `Visible`), so a hidden sprite's turn and frames wait, and catch up
+	/// once it shows (see `spin`, `sprite_anim`).
+	fn turns(&self) -> bool {
+		self.flag(Flag::Visible) && !self.brush().is_empty()
+	}
+
+	/// Whether a frame's turn may change it: it [`turns`](Self::turns), with a torque
+	/// or frames still to play (or its brush's not started yet).
+	fn may_turn(&self) -> bool {
+		self.turns() && (self.spin().torque != 0.0 || self.anim().running())
+	}
+
+	/// Whether a frame may change it on its own (see `moving_sprites`): it may turn, or
+	/// it's shown with a fade (a draw ends it; a hidden sprite isn't drawn, and showing
+	/// it again counts as a change).
+	fn may_move(&self) -> bool {
+		self.may_turn() || (self.flag(Flag::Visible) && !self.color().is_fading_done())
+	}
 }
 
 /// A class's payload: a sprite, or a handle to one.
@@ -83,8 +104,8 @@ pub(crate) trait SpriteHandle: 'static {
 
 /// One kind's place in the class: its brushes, whether its sprites are a battle's (their
 /// atlases go in the battle queue, see `brushes`), and what it does once a sprite may
-/// change on its own (a brush set, `play`, a torque or a fade: world details keep a list
-/// of those to step).
+/// change on its own (a brush set, `play`, a torque, a fade or shown: each kind keeps a
+/// list of those to step, see `moving_sprites`).
 pub(crate) struct Kind<H> {
 	pub sprites: Sprites,
 	pub battle: bool,
@@ -102,10 +123,10 @@ pub(crate) fn members<H: SpriteHandle>(b: ClassBuilder<H>, kind: Kind<H>) -> Cla
 	let crt = sprites.crt();
 	let (crt_color, crt_brightness, crt_saturation) = (crt.clone(), crt.clone(), crt);
 	let (set_with, get_with, reset_with) = (sprites.clone(), sprites.clone(), sprites);
-	let (moved_torque, moved_brush, moved_play) = (moved.clone(), moved.clone(), moved.clone());
+	let (moved_torque, moved_brush, moved_play, moved_shown) = (moved.clone(), moved.clone(), moved.clone(), moved.clone());
 	let (moved_fade, moved_in, moved_out, moved_hide, moved_alpha) =
 		(moved.clone(), moved.clone(), moved.clone(), moved.clone(), moved);
-	let b = numbers(flags(b));
+	let b = numbers(flags(b, moved_shown));
 	b.property(
 		"Alpha",
 		|h: &H| h.with(|s| s.color().alpha()),
@@ -231,9 +252,20 @@ fn numbers<H: SpriteHandle>(b: ClassBuilder<H>) -> ClassBuilder<H> {
 		.fold(b, |b, (name, n)| b.property(name, move |h: &H| h.with(|s| s.num(n)), move |h: &mut H, v: f64| h.with_mut(|s| s.set_num(n, v))))
 }
 
-/// The switches scripts set as properties.
-fn flags<H: SpriteHandle>(b: ClassBuilder<H>) -> ClassBuilder<H> {
-	[("Visible", Flag::Visible), ("IgnoreAmbientColor", Flag::IgnoreAmbientColor), ("IgnoreCameraFlip", Flag::IgnoreCameraFlip)]
+/// The switches scripts set as properties. A sprite shown again may have a fade to
+/// finish (`shown`).
+fn flags<H: SpriteHandle>(b: ClassBuilder<H>, shown: Rc<dyn Fn(&H)>) -> ClassBuilder<H> {
+	let b = b.property(
+		"Visible",
+		|h: &H| h.with(|s| s.flag(Flag::Visible)),
+		move |h: &mut H, on: bool| {
+			h.with_mut(|s| s.set_flag(Flag::Visible, on));
+			if on {
+				shown(h);
+			}
+		},
+	);
+	[("IgnoreAmbientColor", Flag::IgnoreAmbientColor), ("IgnoreCameraFlip", Flag::IgnoreCameraFlip)]
 		.into_iter()
 		.fold(b, |b, (name, f)| b.property(name, move |h: &H| h.with(|s| s.flag(f)), move |h: &mut H, on: bool| h.with_mut(|s| s.set_flag(f, on))))
 }

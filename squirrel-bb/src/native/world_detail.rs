@@ -178,7 +178,8 @@ impl Changes {
 pub(crate) type Spinning = Rc<RefCell<Vec<Weak<RefCell<DetailData>>>>>;
 
 /// Keep `detail` turning if it has a torque, stepping while its animation may (one not
-/// started yet included: its first step drops a still brush), and drawn while it fades.
+/// started yet included: its first step drops a still brush), and drawn while it fades,
+/// while it shows (see [`SpriteState::may_move`]).
 pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
 	if !moves(&detail.borrow()) {
 		return;
@@ -190,16 +191,17 @@ pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
 	}
 }
 
-/// Whether a frame may change `d`: a torque, an animation still running, or a fade.
+/// Whether a frame may change `d` (see [`SpriteState::may_move`]).
 fn moves(d: &DetailData) -> bool {
-	d.spin.torque != 0.0 || d.anim.running() || !d.color.is_fading_done()
+	d.may_move()
 }
 
 /// Turn the spinning details to virtual time `now` (seconds), step the animated ones
-/// to virtual millisecond `now_ms`, draw the fading ones at real time `real` (a draw
-/// finishes a fade, see `SpriteColor`, which may hide the detail), log each that may
-/// look different now on `changes` (one that faded is drawn at `real` from now on), and
-/// forget those gone or still.
+/// to virtual millisecond `now_ms` (those shown, see `SpriteState::turns`), draw the
+/// fading ones at real time `real` (a draw finishes a fade, see `SpriteColor`, which
+/// may hide the detail), log each that may look different now on `changes` (one that
+/// faded is drawn at `real` from now on), and forget those gone, still or hidden
+/// (showing one notes it again).
 pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, changes: &Changes, now: f32, now_ms: u32, real: f32) {
 	spinning.borrow_mut().retain(|detail| {
 		let Some(detail) = detail.upgrade() else { return false };
@@ -207,9 +209,11 @@ pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, changes: &Changes
 		let d = &mut *d;
 		let before = (d.rotation, d.scale, d.frame, d.visible);
 		let fading = !d.color.is_fading_done();
-		d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
-		if let Some(scale) = d.anim.step_on(sprites, &d.brush, now_ms) {
-			d.scale = f64::from(scale);
+		if d.turns() {
+			d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
+			if let Some(scale) = d.anim.step_on(sprites, &d.brush, now_ms) {
+				d.scale = f64::from(scale);
+			}
 		}
 		d.frame = d.anim.frame();
 		if d.visible && d.color.draw(real).hide {

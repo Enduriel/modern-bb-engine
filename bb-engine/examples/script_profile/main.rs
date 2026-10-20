@@ -6,7 +6,7 @@
 //! ```text
 //! cargo run --release -p bb-engine --example script_profile -- \
 //!     [--vanilla] [--only PREFIXES] [--save NAME | --new-campaign] [--saves DIR]
-//!     [--frames N] [--hz HZ] [--phases paused,town,running] [--top N] [--out REPORT.md]
+//!     [--frames N] [--hz HZ] [--phases paused,town,running,battle] [--top N] [--out REPORT.md]
 //!     [--script FILE.nut] [--live-clock]
 //! ```
 //!
@@ -14,7 +14,9 @@
 //! - `--live-clock` puts a live clock behind `Time.getExactTime`, as `bb` and the
 //!   original have it (the AI's background work then spreads over frames, and a script
 //!   can time itself); the frame's time otherwise.
-//! - `--phases` takes any of the three, or `none`.
+//! - `--phases` takes any of the three, `battle` (the nearest hostile party engaged,
+//!   both sides fought by the AI; best last, as the world isn't entered again), or
+//!   `none`.
 //!
 //! - `--save NAME` copies `NAME.sav` from `--saves` (default: bb's savegames folder) into
 //!   a scratch folder as `bb_probe_NAME.sav` and loads that; the original is only read.
@@ -145,7 +147,7 @@ fn main() {
 		o.hz
 	);
 	for phase in &o.phases {
-		enter_phase(&engine, phase);
+		enter_phase(&engine, phase, load.is_some());
 		let dt = 1000.0 / o.hz;
 		for _ in 0..120 {
 			step(&engine, dt, None);
@@ -169,7 +171,7 @@ fn main() {
 /// What the world looks like when a phase is profiled.
 const STATE: &str = "\"paused \" + ::World.State.isPaused() + \", time speed \" + ::World.getSpeedMult() + \", town \" + (::World.State.m.LastEnteredTown != null ? ::World.State.m.LastEnteredTown.getName() : \"none\") + \", day \" + ::World.getTime().Days";
 
-fn enter_phase(engine: &GameEngine, phase: &str) {
+fn enter_phase(engine: &GameEngine, phase: &str, loaded: bool) {
 	let leave_town = "if (::World.State.m.LastEnteredTown != null) ::World.State.m.MenuStack.pop(true);";
 	if phase == "running" {
 		// Leaving a town pauses again a few frames on (AutoPauseAfterCity).
@@ -192,9 +194,31 @@ fn enter_phase(engine: &GameEngine, phase: &str) {
 				if (e.isParty() && e.getID() != p.getID() && !e.isAlliedWithPlayer()) e.die();
 			::World.State.setAutoPause(false); ::World.State.setPause(false); ::World.State.setNormalTime();"
 		),
-		other => panic!("unknown phase {other} (paused, town, running)"),
+		"battle" => {
+			enter_battle(engine, loaded);
+			return;
+		}
+		other => panic!("unknown phase {other} (paused, town, running, battle)"),
 	};
 	script(engine, phase, &src);
+}
+
+/// Into a battle with the nearest hostile party, both sides fought by the AI (see
+/// `harness::install_autoplay`), once its first round is under way.
+fn enter_battle(engine: &GameEngine, loaded: bool) {
+	script(engine, "leave the town", "if (::World.State.m.LastEnteredTown != null) ::World.State.m.MenuStack.pop(true);");
+	harness::install_autoplay(engine).expect("install the autoplay");
+	script(engine, "fight", "::__autoplayFight = true; ::__autoplayDieAsPlayers = true; ::World.State.setPause(false);");
+	// A new campaign first runs past its origin's intro, which would stop the battle.
+	if loaded { harness::offer_nearest_battle(engine) } else { harness::engage_nearest_hostile(engine) }.expect("engage");
+	let started = "(\"State\" in ::Tactical) && ::Tactical.State != null && !::LoadingScreen.isVisible() && ::Time.getRound() >= 1";
+	for _ in 0..3000 {
+		if player::eval_i64(engine, &format!("({started}) ? 1 : 0")).ok().flatten() == Some(1) {
+			return;
+		}
+		step(engine, 1000.0 / 60.0, None);
+	}
+	panic!("battle: not started after 3000 frames");
 }
 
 /// Step `frames` frames, profiled into `profiler` if given: the mean frame in ms.

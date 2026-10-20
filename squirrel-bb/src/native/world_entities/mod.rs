@@ -33,6 +33,7 @@ use super::world_layout;
 use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
 use crate::native::{EntityIds, Sprites};
+use crate::native::moving_sprites::Moving;
 use crate::native::spin::Spin;
 use crate::native::sprite_anim::Anim;
 use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
@@ -86,10 +87,24 @@ struct SpriteData {
 	/// The flag bits its brush calls left (see [`Sprites::brush_bits`]), which the
 	/// original saves.
 	brush_bits: u32,
+	/// The entity it was made for (see [`Owner`]).
+	owner: Option<Owner>,
 }
 
+/// An entity whose sprites may change on their own (see `moving_sprites`): its record's
+/// index and id (a slot taken by a new entity has a new id).
+type Owner = (usize, i64);
+
 impl SpriteData {
-	fn fresh() -> Self {
+	/// Whether a frame may change it on its own, as a sprite of `rec` (see
+	/// [`SpriteState::may_move`]): a hidden entity's sprites aren't drawn, so their fades
+	/// wait (`setVisible(true)` notes it again).
+	fn moves_in(&self, rec: &EntityRecord) -> bool {
+		if rec.visible { self.may_move() } else { self.may_turn() }
+	}
+
+	/// A new sprite of entity `owner`.
+	fn fresh(owner: Option<Owner>) -> Self {
 		SpriteData {
 			brush: "".into(),
 			color: SpriteColor::default(),
@@ -109,6 +124,7 @@ impl SpriteData {
 			spin: Spin::default(),
 			anim: Anim::default(),
 			brush_bits: 0,
+			owner,
 		}
 	}
 }
@@ -222,6 +238,8 @@ struct EntityMachine {
 	thinkers: think::Thinkers,
 	/// Resolves sprite brushes (set by the host before `install`).
 	sprites: Sprites,
+	/// The entities whose sprites may change on their own (see `moving_sprites`).
+	moving: Moving<Owner>,
 }
 
 impl EntityMachine {
@@ -232,6 +250,16 @@ impl EntityMachine {
 	fn record_mut(&mut self, identity: i64) -> Option<&mut EntityRecord> {
 		let i = *self.by_identity.get(&identity)?;
 		Some(&mut self.entities[i])
+	}
+
+	/// Entity `idx` as an [`Owner`] of sprites.
+	fn owner(&self, idx: usize) -> Owner {
+		(idx, self.entities[idx].id)
+	}
+
+	/// The live entity `owner` is.
+	fn owner_record(&self, (idx, id): Owner) -> Option<&EntityRecord> {
+		self.entities.get(idx).filter(|rec| rec.id == id && rec.alive)
 	}
 }
 
@@ -576,10 +604,17 @@ impl SpriteHandle for SpriteData {
 	}
 }
 
-/// Build the sprite class `addSprite` hands out (see `sprite_class`).
-fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites) -> SqClass<SpriteData> {
+/// Build the sprite class `addSprite` hands out (see `sprite_class`): a sprite that may
+/// change on its own now notes its entity on `moving`.
+fn build_sprite_class(vm: &mut SQVM, sprites: &Sprites, moving: &Moving<Owner>) -> SqClass<SpriteData> {
 	let b = ClassBuilder::<SpriteData>::new("WorldEntitySprite");
-	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: false, moving: None }).build(vm)
+	let moving = moving.clone();
+	let note: Rc<dyn Fn(&SpriteData)> = Rc::new(move |s: &SpriteData| {
+		if let (Some(owner), true) = (s.owner, s.may_move()) {
+			moving.note(owner);
+		}
+	});
+	sprite_class::members(b, Kind { sprites: sprites.clone(), battle: false, moving: Some(note) }).build(vm)
 }
 
 /// Build the inert label stub class returned by `addLabel`.
@@ -660,6 +695,7 @@ impl WorldEntities {
 				footprints: footprints::Footprints::default(),
 				thinkers: think::Thinkers::default(),
 				sprites: Sprites::default(),
+				moving: Moving::default(),
 			})),
 		}
 	}
@@ -678,8 +714,11 @@ impl WorldEntities {
 	/// `World.spawnLocation` (2-arg `coords` and 3-arg `x,y` overloads). Call once with
 	/// `&mut SQVM`, after the `World` table + grid natives exist.
 	pub fn install(&self, vm: &mut SQVM) {
-		let sprites = self.machine.borrow().sprites.clone();
-		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites));
+		let (sprites, moving) = {
+			let m = self.machine.borrow();
+			(m.sprites.clone(), m.moving.clone())
+		};
+		self.machine.borrow_mut().sprite_class = Some(build_sprite_class(vm, &sprites, &moving));
 		self.machine.borrow_mut().label_class = Some(build_label_class(vm));
 
 		// --- injected entity methods (each recovers its record via this_identity) ---
@@ -1131,20 +1170,41 @@ impl WorldEntities {
 
 	/// Turn the live entities' sprites that have a torque to virtual time `now`, in
 	/// seconds (see `spin`), and step their animations to virtual millisecond `now_ms`
-	/// (see `sprite_anim`).
+	/// (see `sprite_anim`): those of the entities noted as moving (see
+	/// `moving_sprites`), which are forgotten once none of their sprites may change or
+	/// they die.
 	pub(crate) fn turn(&self, vm: &SQVM, now: f32, now_ms: u32) {
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return };
-		for rec in m.entities.iter().filter(|rec| rec.alive) {
+		m.moving.retain(|owner| {
+			let Some(rec) = m.owner_record(owner) else { return false };
+			let mut moves = false;
 			for (_, handle) in rec.sprites.iter() {
 				class.with_payload(vm, handle, |s| {
-					s.rotation = s.spin.turn(s.rotation, now);
-					if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
-						s.scale = f64::from(scale);
+					if s.turns() {
+						s.rotation = s.spin.turn(s.rotation, now);
+						if let Some(scale) = s.anim.step_on(&m.sprites, &s.brush, now_ms) {
+							s.scale = f64::from(scale);
+						}
 					}
+					moves |= s.moves_in(rec);
 				});
 			}
-		}
+			moves
+		});
+	}
+
+	/// The live entities' sprites that may change on their own though their entity
+	/// isn't noted as moving (see `moving_sprites`): a pass would miss them. Tests.
+	pub(crate) fn unnoted_moving(&self, vm: &SQVM) -> usize {
+		let m = self.machine.borrow();
+		let Some(class) = m.sprite_class.clone() else { return 0 };
+		(0..m.entities.len())
+			.filter(|&i| m.entities[i].alive && !m.moving.has(m.owner(i)))
+			.map(|i| &m.entities[i])
+			.flat_map(|rec| rec.sprites.iter().map(move |(_, h)| (rec, h)))
+			.filter(|(rec, h)| class.with_payload(vm, h, |s| s.moves_in(rec)).unwrap_or(false))
+			.count()
 	}
 
 	/// What entity `id`'s portrait draws (`None` for no such live entity).
@@ -1246,5 +1306,6 @@ impl WorldEntities {
 		m.natives = Rc::default();
 		m.sprite_class = None;
 		m.label_class = None;
+		m.moving.clear();
 	}
 }

@@ -49,6 +49,7 @@ fn each_sprite(m: &Machine, vm: &SQVM, mut f: impl FnMut(&mut UnitSpriteData)) {
 			}
 		});
 	}
+	m.borrow().note_moving(vm.this_identity());
 }
 
 /// The calling unit's record.
@@ -173,6 +174,7 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 					s.saturation = saturation;
 				});
 			}
+			m.borrow().note_moving(vm.this_identity());
 			Ok(())
 		})
 	};
