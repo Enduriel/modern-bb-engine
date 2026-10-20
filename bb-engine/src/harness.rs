@@ -257,15 +257,16 @@ pub fn start_new_campaign(engine: &GameEngine) -> Result<(), String> {
 /// every origin shows one 1 s of real time in (`Time.scheduleEvent(Real, 1000, …)`),
 /// and the world pause it brings, were it to come during a battle, stops the battle's
 /// clock (the world's speed is `Time`'s virtual speed), which a player can't be in that
-/// soon. Runs frames until no real-time event is pending and the event screen is
+/// soon. Runs frames until no script's real-time event is pending (the ambience's
+/// timers are `Time` events too, always pending in the world) and the event screen is
 /// closed, pressing its first button. Does nothing past the intro, so a test that
 /// waited already keeps its timing. [`engage_nearest_hostile`] runs it; a test starting
 /// a battle itself should too (the scripted player refuses a battle so stopped).
 pub fn run_past_intro(engine: &GameEngine) -> Result<(), String> {
-	const PENDING: &str = "(::Time.hasEventScheduled(::TimeUnit.Real) || ::World.State.getEventScreen().isVisible()) ? 1 : 0";
+	const SHOWN: &str = "::World.State.getEventScreen().isVisible() ? 1 : 0";
 	const ANSWER: &str = "local s = ::World.State.getEventScreen(); if (s.isVisible() && !s.isAnimating()) s.onButtonPressed(0);";
 	for _ in 0..600 {
-		if crate::tactical_player::eval_i64(engine, PENDING)? != Some(1) {
+		if !engine.time().script_event_scheduled(0) && crate::tactical_player::eval_i64(engine, SHOWN)? != Some(1) {
 			return Ok(());
 		}
 		engine.run_script(ANSWER, "answer the intro")?;

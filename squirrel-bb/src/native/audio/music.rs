@@ -8,7 +8,9 @@
 //!   are drawn at random, never the track just played (if another exists);
 //! - a track that ends is followed at once by the next, without a fade; 3 s before
 //!   its end the next is picked and loaded;
-//! - with the music silent (its volume 0) nothing starts: it tries again every 3 s;
+//! - with the music silent (its volume 0) nothing starts: it tries again every 3 s,
+//!   a `Time` event (`Time.clearEvents()` ends the retries until the next track list;
+//!   probed 2026-10-20);
 //! - an empty list changes nothing.
 //!
 //! `Music.isPlaying()` (`0x4ae820`) is whether the current track isn't paused (it is
@@ -72,7 +74,7 @@ impl SoundManager {
 	/// Start the next track, fading it in or not (`0x4ad2d0`).
 	pub(crate) fn music_start_next(&mut self, fade_in: bool) {
 		if self.audible(MUSIC) == 0.0 {
-			self.schedule(self.now.wrapping_add(RETRY_MS), Timer::Music);
+			self.schedule(RETRY_MS, Timer::Music);
 			return;
 		}
 		if self.music.need_pick || self.music.next.is_none() {
@@ -162,8 +164,9 @@ mod tests {
 
 	#[test]
 	fn the_first_track_is_the_lists_first_at_once() {
-		let (mut m, log, _) = manager(60_000);
-		m.update(1000);
+		let (r, log, _) = manager(60_000);
+		r.at(1000);
+		let mut m = r.m();
 		assert!(!m.music_playing());
 		m.set_track_list(list(&["music/title.ogg", "music/b.ogg"]), 6000, false);
 		assert_eq!(log.borrow().started[0].1, "music/title.ogg");
@@ -175,28 +178,32 @@ mod tests {
 
 	#[test]
 	fn a_change_fades_out_then_in() {
-		let (mut m, log, _) = manager(60_000);
-		m.update(1000);
-		m.set_track_list(list(&["music/a.ogg"]), 4000, false);
-		m.set_track_list(list(&["music/a.ogg"]), 4000, false);
-		assert!(!m.music.fading_out, "the same lone track plays on");
-		m.set_track_list(list(&["music/b.ogg"]), 4000, false);
-		assert!(m.music.fading_out);
-		m.update(3000);
-		assert_eq!(m.instance(m.music.current.unwrap()).unwrap().vol, 0.5, "halfway out");
-		m.update(5000);
+		let (r, log, _) = manager(60_000);
+		let vol = || {
+			let m = r.m();
+			m.instance(m.music.current.unwrap()).unwrap().vol
+		};
+		r.at(1000);
+		r.m().set_track_list(list(&["music/a.ogg"]), 4000, false);
+		r.m().set_track_list(list(&["music/a.ogg"]), 4000, false);
+		assert!(!r.m().music.fading_out, "the same lone track plays on");
+		r.m().set_track_list(list(&["music/b.ogg"]), 4000, false);
+		assert!(r.m().music.fading_out);
+		r.at(3000);
+		assert_eq!(vol(), 0.5, "halfway out");
+		r.at(5000);
 		assert_eq!(log.borrow().started.last().unwrap().1, "music/b.ogg", "then the next");
-		m.update(7000);
-		assert_eq!(m.instance(m.music.current.unwrap()).unwrap().vol, 0.5, "halfway in");
+		r.at(7000);
+		assert_eq!(vol(), 0.5, "halfway in");
 	}
 
 	#[test]
 	fn an_ended_track_is_followed_by_another() {
-		let (mut m, log, ended) = manager(60_000);
-		m.update(1000);
-		m.set_track_list(list(&["music/a.ogg", "music/b.ogg", "music/c.ogg"]), 4000, false);
+		let (r, log, ended) = manager(60_000);
+		r.at(1000);
+		r.m().set_track_list(list(&["music/a.ogg", "music/b.ogg", "music/c.ogg"]), 4000, false);
 		ended.borrow_mut().push(1);
-		m.update(2000);
+		r.at(2000);
 		let started = log.borrow().started.clone();
 		assert_eq!(started.len(), 2);
 		assert_ne!(started[1].1, "music/a.ogg", "never the track just played");
@@ -204,13 +211,31 @@ mod tests {
 
 	#[test]
 	fn silent_music_waits() {
-		let (mut m, log, _) = manager(60_000);
-		m.channels[MUSIC] = 0.0;
-		m.update(1000);
-		m.set_track_list(list(&["music/a.ogg"]), 4000, false);
+		let (r, log, _) = manager(60_000);
+		r.m().channels[MUSIC] = 0.0;
+		r.at(1000);
+		r.m().set_track_list(list(&["music/a.ogg"]), 4000, false);
 		assert!(log.borrow().started.is_empty());
-		m.channels[MUSIC] = 0.5;
-		m.update(4000);
+		assert_eq!(r.time.pending_events(), 1, "its retry is one of Time's events");
+		r.m().channels[MUSIC] = 0.5;
+		r.at(4000);
 		assert_eq!(log.borrow().started.len(), 1, "tried again after 3 s");
+		assert_eq!(r.time.pending_events(), 0);
+	}
+
+	#[test]
+	fn clearing_times_events_ends_a_silent_musics_retries() {
+		let (r, log, _) = manager(60_000);
+		r.m().channels[MUSIC] = 0.0;
+		r.at(1000);
+		r.m().set_track_list(list(&["music/a.ogg"]), 4000, false);
+		r.at(4000);
+		assert_eq!(r.time.pending_events(), 1, "it tries again every 3 s");
+		r.time.clear();
+		r.m().channels[MUSIC] = 0.5;
+		r.at(20_000);
+		assert!(log.borrow().started.is_empty(), "nothing starts until the next track list");
+		r.m().set_track_list(list(&["music/a.ogg"]), 4000, false);
+		assert_eq!(log.borrow().started.len(), 1);
 	}
 }

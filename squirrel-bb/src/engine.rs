@@ -176,6 +176,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let audio = crate::native::audio::Audio::new(
 			Box::new(crate::native::audio::NullOut::new(modules.file_reader())),
 			config.engine_seed.map_or_else(crate::native::EngineRng::unseeded, |s| crate::native::EngineRng::seeded(s ^ AUDIO_SEED)),
+			time.clone(),
 		);
 		let world_camera = natives.world_camera.clone();
 		audio.install(&mut vm, move || crate::native::world_camera::view(&world_camera).pos, tactical_grid.camera_reader());
@@ -484,7 +485,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.root_state.update(&self.vm)?;
 		self.move_cameras(real_delta_ms);
 		self.turn_sprites();
-		self.audio.update((self.time.real_seconds() * 1000.0) as u32);
+		self.audio.update();
 		self.root_state.render(&self.vm)?;
 		self.root_state.run_background(&self.vm)?;
 		// What a battle's end, leaving a campaign or a load discarded this frame.

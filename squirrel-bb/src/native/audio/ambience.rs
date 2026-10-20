@@ -7,7 +7,9 @@
 //!   is false; at its `Pitch`, times `0.9–1.1` at random if `RandomPitch`;
 //! - the next sound comes after the longer of this one's length (plus a second for
 //!   sounds up to 8 s) and the layer's minimum delay, on the real clock, so pausing
-//!   doesn't stop it; with the channel silent it checks again after the minimum delay;
+//!   doesn't stop it; with the channel silent it checks again after the minimum delay.
+//!   The timer is a `Time` event: `Time.clearEvents()` cancels it, and the layer stays
+//!   silent until it is set again (probed 2026-10-20);
 //! - setting a layer starts it at once; its sounds already playing play on (nothing
 //!   fades), and its old timer lapses (each setting takes a new ticket). An empty list
 //!   empties the layer, which then stops scheduling.
@@ -103,8 +105,9 @@ impl SoundManager {
 		if n == 0 {
 			return;
 		}
-		if !(self.audible(AMBIENCE) > 0.0 && self.now >= last_start.wrapping_add(min_delay)) {
-			self.schedule(self.now.wrapping_add(min_delay), Timer::Ambience { layer, ticket });
+		let now = self.now();
+		if !(self.audible(AMBIENCE) > 0.0 && now >= last_start.wrapping_add(min_delay)) {
+			self.schedule(min_delay, Timer::Ambience { layer, ticket });
 			return;
 		}
 		let index = if n > 1 { self.rng.range(0, n as i64 - 1) as usize } else { 0 };
@@ -123,9 +126,9 @@ impl SoundManager {
 			self.play(id);
 		}
 		let length = self.out.length_ms(&e.file);
-		self.ambience[layer].last_start = self.now;
+		self.ambience[layer].last_start = now;
 		let delay = length.wrapping_add(if length > 8000 { 0 } else { 1000 }).max(min_delay);
-		self.schedule(self.now.wrapping_add(delay), Timer::Ambience { layer, ticket });
+		self.schedule(delay, Timer::Ambience { layer, ticket });
 	}
 }
 
@@ -144,42 +147,58 @@ mod tests {
 
 	#[test]
 	fn a_layer_plays_its_sounds_one_after_another() {
-		let (mut m, log, _) = manager(2000);
-		m.update(10_000);
-		m.set_ambience(0, rain(), 0.5, 500);
+		let (r, log, _) = manager(2000);
+		r.at(10_000);
+		r.m().set_ambience(0, rain(), 0.5, 500);
 		assert_eq!(log.borrow().started.len(), 1, "at once");
 		assert_eq!(log.borrow().volume.last(), Some(&(1, 0.4 * 1.0 * (3.0 * 0.5))), "ambience 0.4 × 3.0 × 0.5");
-		m.update(12_999);
+		r.at(12_999);
 		assert_eq!(log.borrow().started.len(), 1);
-		m.update(13_000);
+		r.at(13_000);
 		assert_eq!(log.borrow().started.len(), 2, "after its 2 s and a second");
 	}
 
 	#[test]
 	fn a_new_setting_drops_the_old_schedule_and_an_empty_one_ends_it() {
-		let (mut m, log, _) = manager(2000);
-		m.update(10_000);
-		m.set_ambience(1, rain(), 1.0, 0);
-		m.update(10_100);
-		m.set_ambience(1, rain(), 1.0, 0);
+		let (r, log, _) = manager(2000);
+		r.at(10_000);
+		r.m().set_ambience(1, rain(), 1.0, 0);
+		r.at(10_100);
+		r.m().set_ambience(1, rain(), 1.0, 0);
 		assert_eq!(log.borrow().started.len(), 2);
-		m.update(13_000);
+		r.at(13_000);
 		assert_eq!(log.borrow().started.len(), 2, "the first timer lapsed");
-		m.update(13_100);
+		r.at(13_100);
 		assert_eq!(log.borrow().started.len(), 3);
-		m.set_ambience(1, Vec::new(), 1.0, 0);
-		m.update(20_000);
+		r.m().set_ambience(1, Vec::new(), 1.0, 0);
+		r.at(20_000);
 		assert_eq!(log.borrow().started.len(), 3, "emptied: no more");
 	}
 
 	#[test]
 	fn stopping_the_ambience_stops_its_sounds() {
-		let (mut m, log, _) = manager(60_000);
-		m.update(10_000);
-		m.set_ambience(0, rain(), 1.0, 0);
-		m.stop_ambience();
+		let (r, log, _) = manager(60_000);
+		r.at(10_000);
+		r.m().set_ambience(0, rain(), 1.0, 0);
+		r.m().stop_ambience();
 		assert_eq!(log.borrow().stopped, [1]);
-		m.update(80_000);
+		r.at(80_000);
 		assert_eq!(log.borrow().started.len(), 1);
+	}
+
+	#[test]
+	fn its_timers_are_times_events() {
+		let (r, log, _) = manager(2000);
+		r.at(10_000);
+		r.m().set_ambience(0, rain(), 1.0, 0);
+		r.m().set_ambience(1, rain(), 1.0, 0);
+		assert_eq!(r.time.pending_events(), 2, "a layer's next sound each");
+		r.time.clear();
+		r.at(60_000);
+		assert_eq!(log.borrow().started.len(), 2, "cleared: no next sound");
+		assert!(r.m().ambience[0].entries.len() == 1, "the layers keep their sounds");
+		r.m().set_ambience(0, rain(), 1.0, 0);
+		assert_eq!(log.borrow().started.len(), 3, "until a setting starts the layer again");
+		assert_eq!(r.time.pending_events(), 1);
 	}
 }

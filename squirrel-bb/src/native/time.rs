@@ -28,6 +28,11 @@
 //! scripts call it on leaving a campaign, before a load and when a battle ends. Virtual
 //! events freeze while the virtual speed is 0 and keep their absolute deadline when the
 //! clock is reset or set.
+//!
+//! The engine's own timers share the list (disassembled, `0x5445f0`'s callers; probed):
+//! the ambience's next sound per layer and a silent music's retry, both
+//! Real. So `clearEvents` cancels them too, and `hasEventScheduled(TimeUnit.Real)` and
+//! `(4)` see them (see `audio`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -68,8 +73,16 @@ struct Event {
 	/// The internal unit (`KIND_*`), not the script's `TimeUnit` value.
 	kind: i64,
 	fire_threshold: f64,
-	callback: SqStrongRef,
-	userdata: SqStrongRef,
+	action: Action,
+}
+
+/// What an event does when it fires.
+enum Action {
+	/// A script's `callback(userdata)`.
+	Script { callback: SqStrongRef, userdata: SqStrongRef },
+	/// The engine's own (the music's and the ambience's timers): the original keeps them
+	/// on the same list, so `clearEvents` drops them and `hasEventScheduled` sees them.
+	Native(Box<dyn FnOnce()>),
 }
 
 #[derive(Default)]
@@ -157,12 +170,30 @@ impl TimeService {
 				}
 				st.events.remove(i)
 			};
-			let _ = due.callback.call(vm, (due.userdata,)); // a throwing callback must not abort the frame
+			match due.action {
+				// A throwing callback must not abort the frame.
+				Action::Script { callback, userdata } => drop(callback.call(vm, (userdata,))),
+				Action::Native(run) => run(),
+			}
 		}
 		let mut st = self.state.borrow_mut();
 		st.firing = false;
 		let deferred = std::mem::take(&mut st.deferred);
 		st.events.extend(deferred);
+	}
+
+	/// Schedule the engine's own `run` on the Real clock, `delay_ms` after the clock's
+	/// whole milliseconds, among the scripts' events (see [`Action::Native`]).
+	pub(crate) fn schedule_real(&self, delay_ms: u32, run: impl FnOnce() + 'static) {
+		let mut st = self.state.borrow_mut();
+		let fire_threshold = st.real_time.trunc() + f64::from(delay_ms);
+		st.push(Event { kind: KIND_REAL, fire_threshold, action: Action::Native(Box::new(run)) });
+	}
+
+	/// The Real clock in whole milliseconds, as the original's engine reads it
+	/// (`[Time + 4]`): its sounds' fades and timers run on it.
+	pub(crate) fn real_ms(&self) -> u32 {
+		self.state.borrow().real_time as u32
 	}
 
 	/// Choose the clock behind `getExactTime` (default [`ExactClock::Frame`]).
@@ -177,6 +208,13 @@ impl TimeService {
 	pub fn pending_events(&self) -> usize {
 		let st = self.state.borrow();
 		st.events.len() + st.deferred.len()
+	}
+
+	/// Whether the scripts' own events answer `Time.hasEventScheduled(unit)`, leaving out
+	/// the engine's (the music's and the ambience's timers; host/test inspection).
+	pub fn script_event_scheduled(&self, unit: i64) -> bool {
+		let st = self.state.borrow();
+		st.events.iter().any(|e| matches!(e.action, Action::Script { .. }) && (unit == HAS_ANY || e.kind == unit))
 	}
 
 	/// Real time since boot in seconds (`Time.getRealTimeF()`).
@@ -283,7 +321,8 @@ impl TimeService {
 			// Compares against the internal unit (see `KIND_*`), so `Rounds` (2) asks
 			// for frame events and is false for scheduled Rounds events, 3 finds those,
 			// and 4 is "any event". Events scheduled during the running pass don't
-			// count yet (disassembled, 0x51d2d0).
+			// count yet (disassembled, 0x51d2d0). The engine's timers count as well:
+			// with the world's ambience running, Real and 4 are always true (probed).
 			("hasEventScheduled", {
 				let state = self.state.clone();
 				vm.make_closure(move |unit: i64| {
@@ -323,12 +362,8 @@ impl TimeService {
 							KIND_ROUNDS => st.round as f64,
 							_ => st.real_time.trunc(),
 						};
-						let event = Event { kind, fire_threshold: base + delay.0.trunc(), callback, userdata: userdata.0 };
-						if st.firing {
-							st.deferred.push(event);
-						} else {
-							st.events.push(event);
-						}
+						let action = Action::Script { callback, userdata: userdata.0 };
+						st.push(Event { kind, fire_threshold: base + delay.0.trunc(), action });
 					},
 				)
 			}),
@@ -345,6 +380,17 @@ impl TimeService {
 		time_unit.set("Virtual", UNIT_VIRTUAL);
 		time_unit.set("Rounds", UNIT_ROUNDS);
 		SqTable::root(vm).set("TimeUnit", time_unit);
+	}
+}
+
+impl TimeState {
+	/// A new event: on the list, or on the side list while a pass runs.
+	fn push(&mut self, event: Event) {
+		if self.firing {
+			self.deferred.push(event);
+		} else {
+			self.events.push(event);
+		}
 	}
 }
 

@@ -1,7 +1,8 @@
 //! The game's sound, as the original's sound manager runs it (the original's
 //! library is irrKlang 1.6, disassembled 2026-10-14):
-//! - [`manager`]: the channel volumes, the playing sounds, their fades and the
-//!   real-time timers;
+//! - [`manager`]: the channel volumes, the playing sounds and their fades, on `Time`'s
+//!   real clock; the music's and the ambience's timers are events on `Time`'s list, so
+//!   `Time.clearEvents()` cancels them as in the original;
 //! - [`ambience`] and [`music`]: the two mixers the scripts drive;
 //! - [`natives`]: `Sound`, `Music` and `Settings`' sound volumes;
 //! - [`AudioOut`]: where the sounds go. The harness's [`NullOut`] is silent but keeps
@@ -30,6 +31,7 @@ pub use out::{AudioOut, Voice};
 
 use self::manager::SoundManager;
 use crate::native::EngineRng;
+use crate::native::time::TimeService;
 
 /// A sound the game is playing (or holds paused).
 #[derive(Clone, Debug, PartialEq)]
@@ -47,19 +49,25 @@ pub struct Playing {
 pub struct Audio(Rc<RefCell<SoundManager>>);
 
 impl Audio {
-	/// Playing into `out`, with its own random stream `rng`.
-	pub fn new(out: Box<dyn AudioOut>, rng: EngineRng) -> Audio {
-		Audio(Rc::new(RefCell::new(SoundManager::new(out, rng))))
+	/// Playing into `out`, with its own random stream `rng`, on `time`'s real clock
+	/// and event list.
+	pub fn new(out: Box<dyn AudioOut>, rng: EngineRng, time: TimeService) -> Audio {
+		Audio(Rc::new_cyclic(|me| RefCell::new(SoundManager::new(out, rng, time, me.clone()))))
 	}
 
-	/// Play into `out` from now on (sounds already playing are dropped).
+	/// Play into `out` from now on (sounds already playing are dropped; timers still
+	/// pending find their layers empty or their tickets lapsed).
 	pub fn set_out(&self, out: Box<dyn AudioOut>) {
 		let mut m = self.0.borrow_mut();
-		let rng = m.rng.clone();
+		let (rng, time, me) = (m.rng.clone(), m.time.clone(), m.me.clone());
 		let (master, channels) = (m.master, m.channels);
-		*m = SoundManager::new(out, rng);
+		let tickets = m.ambience.each_ref().map(|a| a.ticket);
+		*m = SoundManager::new(out, rng, time, me);
 		m.master = master;
 		m.channels = channels;
+		for (a, ticket) in m.ambience.iter_mut().zip(tickets) {
+			a.ticket = ticket;
+		}
 	}
 
 	/// Register the natives. Call after `Settings`, `World` and `Tactical` exist:
@@ -88,9 +96,9 @@ impl Audio {
 		}
 	}
 
-	/// A frame passed: the real clock reads `now_ms`.
-	pub fn update(&self, now_ms: u32) {
-		self.0.borrow_mut().update(now_ms);
+	/// A frame passed (after its scheduled events): the fades and the sounds' ends.
+	pub fn update(&self) {
+		self.0.borrow_mut().update();
 	}
 
 	/// The game discarded a scene (see [`AudioOut::discard_unused`]).

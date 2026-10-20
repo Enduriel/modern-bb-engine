@@ -1,17 +1,26 @@
 //! The original's sound manager (`SoundManager`, `0x5437d0`; disassembled 2026-10-14):
-//! the channel volumes, the playing sounds, their fades and the real-time timers the
-//! music and ambience run on. Every frame [`update`](SoundManager::update) runs the
-//! due timers, then the fades, then the sounds' ends (`0x543d70`).
+//! the channel volumes, the playing sounds and their fades. Every frame
+//! [`update`](SoundManager::update) runs the fades, then the sounds' ends (`0x543d70`).
+//!
+//! It keeps time by `Time`'s real clock in whole milliseconds (`[Time + 4]`), as the
+//! original, and the music's and the ambience's timers are events on `Time`'s list
+//! (`0x5445f0` from `0x4ad343` and `0x4ada62`; disassembled and probed 2026-10-20):
+//! they fire in the frame's pass among the scripts' events, `Time.clearEvents()`
+//! drops them, and `Time.hasEventScheduled(TimeUnit.Real)` and `(4)` see them.
 //!
 //! A sound (`SoundSource`, `0x542d30`/`0x542f00`) starts paused. Its volume is the
 //! channel's times the master's times its own (`0x5430f0`): a sound whose volume comes
 //! out exactly 0 stays paused, and resumes where it was once a volume change makes it
 //! audible. `play` (`0x543190`) unpauses it unless its volume is 0.
 
+use std::cell::RefCell;
+use std::rc::Weak;
+
 use super::ambience::Ambience;
 use super::music::Music;
 use super::out::{AudioOut, Voice};
 use crate::native::EngineRng;
+use crate::native::time::TimeService;
 
 /// The channels (`Const.Sound.Channel`).
 pub(crate) const MUSIC: usize = 0;
@@ -89,19 +98,21 @@ pub(crate) struct SoundManager {
 	pub channels: [f32; 32],
 	instances: Vec<Instance>,
 	faders: Vec<Fader>,
-	/// Due time (real ms) and what to do, in the order they were set.
-	timers: Vec<(u32, Timer)>,
 	pub ambience: [Ambience; 3],
 	pub music: Music,
 	/// The original's own random stream, apart from every game stream (`0x66eaf8`).
 	pub rng: EngineRng,
-	/// The real clock, in ms.
-	pub now: u32,
+	/// The clock it runs on, and the list its timers go on.
+	pub time: TimeService,
+	/// Itself, for its timers to find it when they fire.
+	pub me: Weak<RefCell<SoundManager>>,
 	next_id: InstanceId,
 }
 
 impl SoundManager {
-	pub fn new(out: Box<dyn AudioOut>, rng: EngineRng) -> SoundManager {
+	/// A manager on `time`; `me` is the cell it will live in (its timers reach it
+	/// through it).
+	pub fn new(out: Box<dyn AudioOut>, rng: EngineRng, time: TimeService, me: Weak<RefCell<SoundManager>>) -> SoundManager {
 		let mut channels = [1.0; 32];
 		channels[..3].copy_from_slice(&DEFAULTS[1..]);
 		SoundManager {
@@ -110,13 +121,18 @@ impl SoundManager {
 			channels,
 			instances: Vec::new(),
 			faders: Vec::new(),
-			timers: Vec::new(),
 			ambience: Default::default(),
 			music: Music::default(),
 			rng,
-			now: 0,
+			time,
+			me,
 			next_id: 1,
 		}
+	}
+
+	/// The real clock, in whole milliseconds.
+	pub fn now(&self) -> u32 {
+		self.time.real_ms()
 	}
 
 	/// The channel's volume with the master's (what `play` checks against 0).
@@ -228,7 +244,7 @@ impl SoundManager {
 	pub fn fade_in(&mut self, id: InstanceId, ms: u32) {
 		self.faders.push(Fader {
 			instance: id,
-			end: self.now.wrapping_add(ms),
+			end: self.now().wrapping_add(ms),
 			duration: ms,
 			out_from: None,
 			then: None,
@@ -242,7 +258,7 @@ impl SoundManager {
 		let from = self.instance(id).map_or(1.0, |i| i.vol);
 		self.faders.push(Fader {
 			instance: id,
-			end: self.now.wrapping_add(ms),
+			end: self.now().wrapping_add(ms),
 			duration: ms,
 			out_from: Some(from),
 			then,
@@ -258,30 +274,32 @@ impl SoundManager {
 		}
 	}
 
-	pub fn schedule(&mut self, due: u32, timer: Timer) {
-		self.timers.push((due, timer));
+	/// Run `timer` `delay` ms from now, as an event on `Time`'s Real clock (`0x5445f0`).
+	pub fn schedule(&mut self, delay: u32, timer: Timer) {
+		let me = self.me.clone();
+		self.time.schedule_real(delay, move || {
+			if let Some(m) = me.upgrade() {
+				m.borrow_mut().run_timer(timer);
+			}
+		});
 	}
 
-	/// One frame at real time `now_ms`.
-	pub fn update(&mut self, now_ms: u32) {
-		self.now = now_ms;
-		self.out.update(now_ms);
-		self.run_timers();
+	/// One frame (after the frame's events).
+	pub fn update(&mut self) {
+		let now = self.now();
+		self.out.update(now);
 		self.run_faders();
 		self.run_instances();
 	}
 
-	fn run_timers(&mut self) {
-		while let Some(at) = self.timers.iter().position(|(due, _)| *due <= self.now) {
-			let (_, timer) = self.timers.remove(at);
-			match timer {
-				Timer::Ambience { layer, ticket } => {
-					if self.ambience[layer].ticket == ticket {
-						self.ambience_next(layer);
-					}
+	fn run_timer(&mut self, timer: Timer) {
+		match timer {
+			Timer::Ambience { layer, ticket } => {
+				if self.ambience[layer].ticket == ticket {
+					self.ambience_next(layer);
 				}
-				Timer::Music => self.music_start_next(false),
 			}
+			Timer::Music => self.music_start_next(false),
 		}
 	}
 
@@ -291,7 +309,7 @@ impl SoundManager {
 			let f = &self.faders[f];
 			(f.instance, f.end, f.duration, f.out_from)
 		};
-		let rem = (end.wrapping_sub(self.now) as i32).max(0) as u32;
+		let rem = (end.wrapping_sub(self.now()) as i32).max(0) as u32;
 		let t = duration.wrapping_sub(rem) as f32 / duration as f32;
 		match out_from {
 			None => self.set_volume(id, t),
@@ -374,8 +392,10 @@ impl SoundManager {
 
 #[cfg(test)]
 pub(crate) mod tests {
-	use std::cell::RefCell;
+	use std::cell::{RefCell, RefMut};
 	use std::rc::Rc;
+
+	use squirrel::SQVM;
 
 	use super::*;
 
@@ -436,7 +456,26 @@ pub(crate) mod tests {
 		fn update(&mut self, _now_ms: u32) {}
 	}
 
-	pub fn manager(length: u32) -> (SoundManager, Rc<RefCell<Log>>, Rc<RefCell<Vec<Voice>>>) {
+	/// A manager on a `Time` service of its own, driven a frame at a time.
+	pub struct Rig {
+		pub m: Rc<RefCell<SoundManager>>,
+		pub time: TimeService,
+		vm: SQVM,
+	}
+
+	impl Rig {
+		pub fn m(&self) -> RefMut<'_, SoundManager> {
+			self.m.borrow_mut()
+		}
+
+		/// A frame at real time `ms`: `Time`'s events, then the manager's update.
+		pub fn at(&self, ms: u32) {
+			self.time.tick(&self.vm, f64::from(ms - self.time.real_ms()));
+			self.m().update();
+		}
+	}
+
+	pub fn manager(length: u32) -> (Rig, Rc<RefCell<Log>>, Rc<RefCell<Vec<Voice>>>) {
 		let log = Rc::new(RefCell::new(Log::default()));
 		let ended = Rc::new(RefCell::new(Vec::new()));
 		let out = TestOut {
@@ -444,12 +483,15 @@ pub(crate) mod tests {
 			length,
 			ended: ended.clone(),
 		};
-		(SoundManager::new(Box::new(out), EngineRng::seeded(1)), log, ended)
+		let time = TimeService::new();
+		let m = Rc::new_cyclic(|me| RefCell::new(SoundManager::new(Box::new(out), EngineRng::seeded(1), time.clone(), me.clone())));
+		(Rig { m, time, vm: SQVM::new(1024) }, log, ended)
 	}
 
 	#[test]
 	fn a_silent_sound_stays_paused_until_it_is_audible() {
-		let (mut m, log, _) = manager(1000);
+		let (r, log, _) = manager(1000);
+		let mut m = r.m();
 		let id = m.start("a.wav", None, EFFECTS, true).unwrap();
 		m.set_volume(id, 0.0);
 		m.play(id);
@@ -461,20 +503,21 @@ pub(crate) mod tests {
 
 	#[test]
 	fn fades_run_on_the_real_clock() {
-		let (mut m, log, _) = manager(10_000);
-		let id = m.start("a.wav", None, EFFECTS, true).unwrap();
-		m.update(1000);
-		m.fade_in(id, 400);
-		m.play(id);
-		m.update(1100);
-		assert_eq!(m.instance(id).unwrap().vol, 0.25);
-		m.update(1400);
-		assert_eq!(m.instance(id).unwrap().vol, 1.0);
-		m.fade_out(id, 200, None);
-		m.update(1500);
-		assert_eq!(m.instance(id).unwrap().vol, 0.5);
-		m.update(1600);
+		let (r, log, _) = manager(10_000);
+		let id = r.m().start("a.wav", None, EFFECTS, true).unwrap();
+		let vol = || r.m().instance(id).unwrap().vol;
+		r.at(1000);
+		r.m().fade_in(id, 400);
+		r.m().play(id);
+		r.at(1100);
+		assert_eq!(vol(), 0.25);
+		r.at(1400);
+		assert_eq!(vol(), 1.0);
+		r.m().fade_out(id, 200, None);
+		r.at(1500);
+		assert_eq!(vol(), 0.5);
+		r.at(1600);
 		assert_eq!(log.borrow().stopped, [1], "stopped at the end, its volume back");
-		assert!(m.instance(id).is_none(), "and gone once its stop came");
+		assert!(r.m().instance(id).is_none(), "and gone once its stop came");
 	}
 }
