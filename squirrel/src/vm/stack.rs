@@ -50,35 +50,38 @@ impl SQVM {
 		Ok(value)
 	}
 
-	/// Read a numeric argument as an integer, accepting an integer *or* a float
-	/// (truncating the float). BB script routinely passes floats where a native
-	/// wants an integer — loop variables seeded from float expressions such as
-	/// `_rect.Y + _rect.H * 0.2` stay floats across `++`, and the resulting
-	/// coordinate flows into integer natives like `getTileSquare`. Squirrel's own
-	/// array indexing and `sq_getinteger` coerce the same way; we mirror that here
-	/// instead of relying on a permissive type mask. Errors if the value is neither
-	/// an integer nor a float.
-	pub(crate) fn get_int_coerced(&self, idx: i64) -> Result<i64, String> {
+	/// Read a native's integer argument the way the original's Sqrat bindings do: an
+	/// integer as-is, a float truncated, and **any other value (null, bool, string,
+	/// table, …) as `0`, without raising**.
+	///
+	/// BB script passes floats where a native wants an integer (a loop variable seeded
+	/// from `_rect.Y + _rect.H * 0.2` stays a float across `++`), and it passes
+	/// non-numbers too: vanilla's loot tooltip calls `Tactical.getEntityByID(null)`.
+	/// The original's `Var<int>` (disassembled, e.g. the `getEntityByID` thunk at
+	/// `0x4d8360`) inlines `sq_getinteger` and ignores its failure, so a non-number
+	/// leaves the C++ local uninitialised: the native runs with stack garbage (in most
+	/// thunks the VM pointer's bits; probed: `Math.abs(null)`, `Math.rand(true, true)`
+	/// and `Math.min("5", "5")` all return the same 40976472, `getEntityByID(null)`
+	/// returns null). No original native that goes through Sqrat raises on it. `0` is
+	/// our deterministic stand-in (listed in docs/differences.md: the garbage can't be
+	/// reproduced). The width stays 64-bit.
+	pub(crate) fn get_int_lenient(&self, idx: i64) -> i64 {
 		match self.get_type(idx) {
-			SqObjectType::Integer => self.get_integer(idx),
-			SqObjectType::Float => Ok(self.get_float(idx)? as i64),
-			other => Err(format!(
-				"expected an integer or float at parameter {} (got {other:?})",
-				idx - 1
-			)),
+			SqObjectType::Integer => self.get_integer(idx).unwrap_or(0),
+			SqObjectType::Float => self.get_float(idx).map_or(0, |f| f as i64),
+			_ => 0,
 		}
 	}
 
-	/// Read a numeric argument as a float, accepting a float *or* an integer
-	/// (widening the integer). The float counterpart to [`get_int_coerced`].
-	pub(crate) fn get_float_coerced(&self, idx: i64) -> Result<f64, String> {
+	/// Read a native's float argument the way the original's Sqrat bindings do: a
+	/// float as-is, an integer widened, and any other value as `0.0` without raising
+	/// (the original reads uninitialised memory there, typically a pointer's bits as a
+	/// tiny f32). The float counterpart to [`get_int_lenient`](Self::get_int_lenient).
+	pub(crate) fn get_float_lenient(&self, idx: i64) -> f64 {
 		match self.get_type(idx) {
-			SqObjectType::Float => self.get_float(idx),
-			SqObjectType::Integer => Ok(self.get_integer(idx)? as f64),
-			other => Err(format!(
-				"expected an integer or float at parameter {} (got {other:?})",
-				idx - 1
-			)),
+			SqObjectType::Float => self.get_float(idx).unwrap_or(0.0),
+			SqObjectType::Integer => self.get_integer(idx).map_or(0.0, |n| n as f64),
+			_ => 0.0,
 		}
 	}
 

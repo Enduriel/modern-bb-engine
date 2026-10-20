@@ -50,9 +50,14 @@ fn vec_distance_and_direction() {
 }
 
 #[test]
-fn vec_rejects_non_numbers() {
-	vm().run_script(r#"createVec("a", 1);"#, "vec_bad")
-		.expect_err("a string is not a number");
+fn vec_reads_non_numbers_as_zero() {
+	// The original's createVec thunk (0x516730) reads its floats through Sqrat's
+	// unchecked `Var<float>`: a non-number never raises. Ours reads it as 0.
+	vm().run_script(
+		r#"local v = createVec("a", 1); assert(v.X == 0.0 && v.Y == 1.0);"#,
+		"vec_bad",
+	)
+	.expect("a string reads as 0");
 }
 
 #[test]
@@ -116,12 +121,13 @@ fn vec_dir_of_coincident_points_is_zero() {
 #[test]
 fn color_set_errors_are_recoverable_and_assignment_yields_the_value() {
 	let vm = vm();
-	// A non-number assigned to a numeric channel errors via _set.
+	// A non-number assigned to a numeric channel reads as 0, as a Sqrat setter's
+	// unchecked `Var<T>` doesn't raise either.
 	vm.run_script(
-		r##"local c = createColor("#ffffff"); c.R = "x";"##,
+		r##"local c = createColor("#ffffff"); c.R = "x"; assert(c.R == 0);"##,
 		"set_wrong_type",
 	)
-	.expect_err("a string is not a valid channel value");
+	.expect("a string channel value reads as 0");
 	// Assigning an unknown property errors via _set.
 	vm.run_script(
 		r##"local c = createColor("#ffffff"); c.Z = 5;"##,

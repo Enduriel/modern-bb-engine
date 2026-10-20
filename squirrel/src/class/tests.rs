@@ -74,6 +74,32 @@ fn rejects_wrong_argument_types() {
 }
 
 #[test]
+fn numeric_property_setter_reads_a_non_number_as_zero() {
+	// Sqrat's property setters read the value through the same `Var<T>` as native
+	// arguments: a non-number writes 0 instead of raising.
+	let mut vm = SQVM::new(1024);
+	let point = ClassBuilder::<Point>::new("Point")
+		.property("X", |p| p.x, |p, x| p.x = x)
+		.build(&mut vm);
+	vm.register("makePoint", move |vm: &SQVM, x: f64| point.instantiate(vm, Point { x, y: 0.0 }));
+
+	vm.run_script(
+		r#"
+		local p = makePoint(3.0);
+		p.X = 2;
+		assert(p.X == 2.0);
+		p.X = null;
+		assert(p.X == 0.0);
+		p.X = 5.0;
+		p.X = "7";
+		assert(p.X == 0.0);
+		"#,
+		"lenient_setter",
+	)
+	.expect("a non-number property write reads as zero");
+}
+
+#[test]
 fn native_arg_rejects_a_different_native_class() {
 	// Two native classes share one typetag but have distinct payload TypeIds.
 	// Passing a B where an A is expected must be rejected by the TypeId check —

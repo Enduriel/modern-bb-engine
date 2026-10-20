@@ -156,10 +156,48 @@ fn numeric_args_coerce_between_int_and_float() {
 	)
 	.expect("numeric coercion should succeed");
 
-	// A non-numeric argument is still rejected — now inside `from_sq` rather than by
-	// the (now permissive `.`) type mask.
-	vm.execute_squirrel_script(r#"takes_int("nope");"#)
-		.expect_err("non-numeric argument should be rejected");
+}
+
+#[test]
+fn non_numeric_args_read_as_zero_like_sqrat() {
+	let mut vm = SQVM::new(1024);
+
+	// The original's Sqrat `Var<int>`/`Var<float>` ignore `sq_getinteger`'s failure:
+	// a null, bool, string, table or array argument never raises, the native runs
+	// with an uninitialised value. Ours reads it as a deterministic 0 / 0.0
+	// (vanilla's loot tooltip calls `Tactical.getEntityByID(null)`).
+	vm.register("takes_int", |i: i64| i);
+	vm.register("takes_float", |f: f64| f);
+	vm.register("takes_number", |n: super::Number| n.0);
+	vm.register("takes_dyn", |n: super::DynNumber| n);
+	vm.register("takes_opt", |n: Option<i64>| n.map_or(-1, |n| n));
+
+	vm.execute_squirrel_script(
+		r#"
+		foreach (v in [null, true, false, "5", {}, [1], @() 1])
+		{
+			assert(takes_int(v) == 0 && typeof takes_int(v) == "integer");
+			assert(takes_float(v) == 0.0 && typeof takes_float(v) == "float");
+			assert(takes_number(v) == 0.0);
+			assert(takes_dyn(v) == 0 && typeof takes_dyn(v) == "integer");
+		}
+		// numbers keep their kind and value
+		assert(takes_dyn(2.5) == 2.5);
+		assert(takes_dyn(-7) == -7);
+		assert(takes_number(3) == 3.0);
+		// an explicitly optional parameter still sees null as absent
+		assert(takes_opt(null) == -1);
+		assert(takes_opt(4.9) == 4);
+		assert(takes_opt("x") == 0);
+		"#,
+	)
+	.expect("non-numeric arguments should read as zero");
+
+	// Arity is still enforced by the type mask's length, as in the original.
+	vm.execute_squirrel_script(r#"takes_int();"#)
+		.expect_err("a missing argument should still be rejected");
+	vm.execute_squirrel_script(r#"takes_int(1, 2);"#)
+		.expect_err("an extra argument should still be rejected");
 }
 
 #[test]
@@ -184,10 +222,10 @@ fn register_variadic_collects_trailing_args() {
 		.expect_err("below minimum arity should be rejected");
 	vm.execute_squirrel_script(r#"sum(42);"#)
 		.expect_err("wrong fixed-param type should be rejected");
-	// The type mask only covers the fixed params, so a bad variadic element
-	// is caught Rust-side during conversion.
-	vm.execute_squirrel_script(r#"sum("nums", 1, "x");"#)
-		.expect_err("non-integer trailing arg should be rejected");
+	// A variadic element converts like a fixed parameter: a non-number integer
+	// element reads as 0, as the original's Sqrat bindings do.
+	vm.execute_squirrel_script(r#"assert(sum("nums", 1, "x", null, 2.5) == 3);"#)
+		.expect("non-numeric trailing args should read as zero");
 }
 
 #[test]

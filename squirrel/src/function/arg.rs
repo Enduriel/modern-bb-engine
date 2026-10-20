@@ -26,25 +26,25 @@ pub trait SqArg {
 impl SqArg for i64 {
 	type Item<'a> = i64;
 	fn push_typemask(mask: &mut String) {
-		// Accept any value at the VM level (like `SqRef`); `from_sq` validates it is
-		// numeric and coerces float -> int, matching how BB passes floats to integer
-		// natives. A strict `'i'` mask would reject those calls before we can coerce.
+		// Accept any value at the VM level (like `SqRef`); `from_sq` converts it as the
+		// original's Sqrat bindings do (float -> truncated, non-number -> 0, never an
+		// error). A strict `'i'` mask would reject calls the original accepts.
 		mask.push('.');
 	}
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<i64, String> {
-		vm.get_int_coerced(idx)
+		Ok(vm.get_int_lenient(idx))
 	}
 }
 
 impl SqArg for f64 {
 	type Item<'a> = f64;
 	fn push_typemask(mask: &mut String) {
-		// As with `i64`: accept any value, then validate/coerce (int -> float) in
-		// `from_sq`, so an integer argument satisfies a float parameter.
+		// As with `i64`: accept any value, then convert in `from_sq` (int -> widened,
+		// non-number -> 0.0), so an integer argument satisfies a float parameter.
 		mask.push('.');
 	}
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<f64, String> {
-		vm.get_float_coerced(idx)
+		Ok(vm.get_float_lenient(idx))
 	}
 }
 

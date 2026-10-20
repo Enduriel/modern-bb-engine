@@ -36,8 +36,11 @@ impl FieldValue for f64 {
 	fn push_field(self, vm: &SQVM) {
 		vm.push_float(self);
 	}
+	// A Sqrat property setter reads its value through the same `Var<float>` as a
+	// native's argument (e.g. the sprite `Scale` setter thunk at `0x4c1e90`), so a
+	// non-number is written as `0.0` instead of raising.
 	fn read_field(vm: &SQVM, idx: i64) -> Option<f64> {
-		vm.get_float(idx).ok()
+		Some(vm.get_float_lenient(idx))
 	}
 }
 
@@ -45,8 +48,9 @@ impl FieldValue for i64 {
 	fn push_field(self, vm: &SQVM) {
 		vm.push_integer(self);
 	}
+	// As for `f64`: a float truncates and a non-number is written as `0`.
 	fn read_field(vm: &SQVM, idx: i64) -> Option<i64> {
-		vm.get_integer(idx).ok()
+		Some(vm.get_int_lenient(idx))
 	}
 }
 

@@ -6,25 +6,21 @@ use crate::{SQVM, SqObjectType};
 /// A numeric argument accepting either an integer or a float, yielded as `f64`.
 ///
 /// Squirrel is loose with numbers — scripts pass integer literals to float
-/// parameters freely (`createVec(0, -1)` alongside `createVec(0.0, -1.0)`). A
-/// plain `f64` parameter uses the strict `f` type mask and would reject the
-/// integer form; `Number` uses the `n` (number) mask and converts either to
-/// `f64`, matching that leniency.
+/// parameters freely (`createVec(0, -1)` alongside `createVec(0.0, -1.0)`). As an
+/// argument it reads like an `f64` parameter: any value is accepted (mask `.`) and a
+/// non-number reads as `0.0` without raising, as the original's Sqrat bindings do
+/// (see `SQVM::get_float_lenient`).
 pub struct Number(pub f64);
 
 impl SqArg for Number {
 	type Item<'a> = Number;
 
 	fn push_typemask(mask: &mut String) {
-		mask.push('n');
+		mask.push('.');
 	}
 
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<Number, String> {
-		match vm.get_type(idx) {
-			SqObjectType::Integer => vm.get_integer(idx).map(|n| Number(n as f64)),
-			SqObjectType::Float => vm.get_float(idx).map(Number),
-			other => Err(format!("expected a number, got {other:?}")),
-		}
+		Ok(Number(vm.get_float_lenient(idx)))
 	}
 }
 
@@ -38,7 +34,12 @@ impl crate::SqValue for Number {
 		vm.push_float(self.0);
 	}
 	fn read<'a>(vm: &'a SQVM, idx: i64) -> Option<Number> {
-		<Number as SqArg>::from_sq(vm, idx).ok()
+		// Strict, unlike the argument read: a non-number element is not a `Number`.
+		match vm.get_type(idx) {
+			SqObjectType::Integer => vm.get_integer(idx).ok().map(|n| Number(n as f64)),
+			SqObjectType::Float => vm.get_float(idx).ok().map(Number),
+			_ => None,
+		}
 	}
 }
 
@@ -47,8 +48,9 @@ impl crate::SqValue for Number {
 /// Unlike [`Number`] (which always yields `f64`), `DynNumber` remembers the kind,
 /// so a function like `Math.abs` can return an integer for an integer input and a
 /// float for a float input — matching how Squirrel scripts expect numeric type to
-/// flow through. As an argument it accepts either (mask `n`); as a return it
-/// pushes the matching type. Use [`as_i64`](Self::as_i64) / [`as_f64`](Self::as_f64)
+/// flow through. As an argument it accepts any value (mask `.`): a non-number reads
+/// as `Int(0)` without raising, as the original's Sqrat bindings do (see
+/// `SQVM::get_int_lenient`); as a return it pushes the matching type. Use [`as_i64`](Self::as_i64) / [`as_f64`](Self::as_f64)
 /// to coerce when a fixed type is needed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DynNumber {
@@ -78,15 +80,14 @@ impl SqArg for DynNumber {
 	type Item<'a> = DynNumber;
 
 	fn push_typemask(mask: &mut String) {
-		mask.push('n');
+		mask.push('.');
 	}
 
 	fn from_sq<'a>(vm: &'a SQVM, idx: i64) -> Result<DynNumber, String> {
-		match vm.get_type(idx) {
-			SqObjectType::Integer => vm.get_integer(idx).map(DynNumber::Int),
-			SqObjectType::Float => vm.get_float(idx).map(DynNumber::Float),
-			other => Err(format!("expected a number, got {other:?}")),
-		}
+		Ok(match vm.get_type(idx) {
+			SqObjectType::Float => DynNumber::Float(vm.get_float_lenient(idx)),
+			_ => DynNumber::Int(vm.get_int_lenient(idx)),
+		})
 	}
 }
 
