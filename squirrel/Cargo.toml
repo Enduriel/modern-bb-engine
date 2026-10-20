@@ -3,6 +3,11 @@ name = "squirrel"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# The heap census's access tracking (SQVM::census_track), for the script_memory tool: it
+# hooks every table access, so normal builds leave it out.
+census = ["squirrel-sys/census"]
+
 [dependencies]
 # "double" => SQUSEDOUBLE => SQFloat=f64 (full 64-bit; SQInteger=i64 is unconditional).
 # BB's bytecode is 32-bit float; the transcode (bb-engine) widens f32->f64, including

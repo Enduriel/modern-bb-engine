@@ -3,6 +3,10 @@ name = "bb-engine"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# The heap census's access tracking, for the script_memory example.
+census = ["squirrel/census"]
+
 [dependencies]
 squirrel = { path = "../squirrel" }
 squirrel-bb = { path = "../squirrel-bb" }
@@ -24,3 +28,7 @@ harness = false
 [[bench]]
 name = "script_cache"
 harness = false
+
+[[example]]
+name = "script_memory"
+required-features = ["census"]

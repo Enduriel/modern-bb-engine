@@ -3,7 +3,7 @@
 //! world run, then write a census of the Squirrel VM's heap for
 //! `parity/perf/script_memory.py`, and print the C heap in use.
 //!
-//! Run: `cargo run --release -p bb-engine --example script_memory -- [--mods]
+//! Run: `cargo run --release -p bb-engine --features census --example script_memory -- [--mods]
 //! [--saves DIR --save NAME] [--frames N] [--census FILE] [--track] [--play] [--dump FILE]
 //! [--script FILE]`
 //!

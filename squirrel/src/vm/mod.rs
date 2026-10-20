@@ -134,15 +134,22 @@ impl SQVM {
 
 	/// Track which tables scripts read, write, iterate and clone, by key, and which
 	/// closures table reads hand out, for the next [`write_census`](Self::write_census).
-	/// Measurement only: it slows every table access while on.
+	/// Measurement only: built with the `census` feature (it hooks every table access);
+	/// without it this does nothing. The tracking is the process's, so track one VM at a
+	/// time.
 	pub fn census_track(&self, track: CensusTrack) {
-		let mode = match track {
-			CensusTrack::Start => 1,
-			CensusTrack::Stop => 0,
-			CensusTrack::Pause => 2,
-			CensusTrack::Resume => 3,
-		};
-		unsafe { squirrel_sys::sq_censustrack(self.ptr, mode) }
+		#[cfg(feature = "census")]
+		{
+			let mode = match track {
+				CensusTrack::Start => 1,
+				CensusTrack::Stop => 0,
+				CensusTrack::Pause => 2,
+				CensusTrack::Resume => 3,
+			};
+			unsafe { squirrel_sys::sq_censustrack(self.ptr, mode) }
+		}
+		#[cfg(not(feature = "census"))]
+		let _ = track;
 	}
 
 	/// The objects that only reference cycles keep alive, as an array, without freeing

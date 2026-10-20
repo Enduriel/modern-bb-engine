@@ -3,7 +3,7 @@
 heap (`SQVM::write_census`, written by the `script_memory` example):
 
     cd modern_bb_engine
-    cargo run --release -p bb-engine --example script_memory -- --mods \\
+    cargo run --release -p bb-engine --features census --example script_memory -- --mods \\
         --saves DIR --save NAME --census census.txt
     python3 ../parity/perf/script_memory.py census.txt
 
