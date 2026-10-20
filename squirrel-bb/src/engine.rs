@@ -76,6 +76,9 @@ pub struct Engine<S: ScriptSource> {
 	audio: crate::native::audio::Audio,
 	/// The keys the host reported, dispatched each frame (see [`crate::key_queue`]).
 	keys: crate::key_queue::KeyQueue,
+	/// The key events each frame dispatched, kept for a UI page to take
+	/// ([`forward_keys`](Self::forward_keys)), or `None` without one.
+	page_keys: RefCell<Option<Vec<crate::key_queue::QueuedInput>>>,
 	/// The mouse cursor the scripts chose (no VM handles).
 	ui_cursor: crate::native::ui_cursor::UiCursor,
 	time: TimeService,
@@ -247,6 +250,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			user_stats: natives.user_stats.clone(),
 			audio,
 			keys: Default::default(),
+			page_keys: RefCell::new(None),
 			ui_cursor,
 			time,
 			collector,
@@ -434,6 +438,28 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.keys.push(key, down, modifier);
 	}
 
+	/// A key typed `c` with the `modifier` mask held (each of the system's repeats
+	/// again): the UI gets it from the next frame, after the key (see [`queue_key`]).
+	///
+	/// [`queue_key`]: Self::queue_key
+	pub fn queue_text(&self, c: char, modifier: i64) {
+		self.keys.push_text(c, modifier);
+	}
+
+	/// Keep each frame's key events for a UI page ([`take_page_keys`]): the original's UI
+	/// gets every one, a held key's press each frame as the states do, and what keys
+	/// type.
+	///
+	/// [`take_page_keys`]: Self::take_page_keys
+	pub fn forward_keys(&self) {
+		self.page_keys.borrow_mut().get_or_insert_with(Vec::new);
+	}
+
+	/// The key events dispatched since the last call, in order, for the UI page.
+	pub fn take_page_keys(&self) -> Vec<crate::key_queue::QueuedInput> {
+		self.page_keys.borrow_mut().as_mut().map(std::mem::take).unwrap_or_default()
+	}
+
 	/// The mouse cursor to show: the sprite the scripts chose, and where they last put
 	/// it (`UI.setCursorPosition`, screen pixels), see [`crate::native::ui_cursor`].
 	pub fn cursor(&self) -> (crate::CursorLook, (i64, i64)) {
@@ -477,8 +503,14 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// [`queue_key`]: Self::queue_key
 	pub fn frame(&self, real_delta_ms: f64) -> Result<(), String> {
 		self.time.tick(&self.vm, real_delta_ms);
-		for key in self.keys.take_frame() {
-			self.root_state.key_input(&self.vm, key)?;
+		for input in self.keys.take_frame() {
+			// The UI's listener first (it never keeps a key from the states).
+			if let Some(page) = self.page_keys.borrow_mut().as_mut() {
+				page.push(input);
+			}
+			if let crate::key_queue::QueuedInput::Key(key) = input {
+				self.root_state.key_input(&self.vm, key)?;
+			}
 		}
 		self.root_state.update(&self.vm)?;
 		self.move_cameras(real_delta_ms);

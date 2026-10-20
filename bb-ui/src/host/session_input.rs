@@ -18,6 +18,24 @@ const INPUT_TIMEOUT: Duration = Duration::from_secs(5);
 const FIELD_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl UiSession {
+	/// Hand the page the key events the game's frames dispatched since the last call, as
+	/// the original's UI got them from its key queue: each key's press (again every frame
+	/// while it's held) and release by Coherent's code for it, and what keys typed.
+	pub(super) fn forward_keys(&self) {
+		let host = self.host();
+		for input in self.engine().take_page_keys() {
+			match input {
+				squirrel_bb::QueuedInput::Key(key) => {
+					let code = super::coherent_key_code(key.key);
+					host.key(code, key.state != 0, super::modifiers_of_mask(key.modifier));
+				}
+				squirrel_bb::QueuedInput::Text(c, modifier) => {
+					host.character(c, super::modifiers_of_mask(modifier));
+				}
+			}
+		}
+	}
+
 	/// Send input with `send`, which returns how many `event`s (a DOM event type) the
 	/// page will see from it, and pump until the page has seen them.
 	fn input(&self, event: &str, send: impl FnOnce(&UiHost) -> usize) -> Result<(), String> {

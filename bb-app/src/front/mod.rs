@@ -41,8 +41,6 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 pub struct Key {
 	/// The engine's code (what the states see), if the scripts can see the key.
 	pub engine: Option<i64>,
-	/// The Windows virtual-key code (what the page sees), if it has one.
-	pub windows: Option<i32>,
 	/// What the press typed, if anything.
 	pub text: Option<String>,
 	pub down: bool,

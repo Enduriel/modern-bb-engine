@@ -16,8 +16,9 @@
 //! Repeated). The modifier is the `KeyModifier` mask: Shift 1, Ctrl 2, Alt 4 (the
 //! original's enums, disassembled).
 //!
-//! The UI page gets the same keys, by the Windows virtual-key code the original's UI
-//! gives each engine code ([`windows_code`]).
+//! The UI page gets the same keys from the engine's key queue, by the Windows
+//! virtual-key code the original's UI gives each engine code
+//! (`bb_ui::host::coherent_key_code`).
 
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey};
 
@@ -138,49 +139,20 @@ pub fn toggles_fps(key: KeyCode, modifiers: ModifiersState) -> bool {
 	key == KeyCode::KeyF && modifiers == ModifiersState::CONTROL | ModifiersState::SHIFT
 }
 
+/// The `KeyModifier` bit of the engine's key `code`, if it's a modifier key: Shift 96,
+/// Ctrl 95, Alt 97.
+pub fn modifier_bit(code: i64) -> Option<i64> {
+	match code {
+		96 => Some(1),
+		95 => Some(2),
+		97 => Some(4),
+		_ => None,
+	}
+}
+
 /// The modifier mask for `getModifier()`.
 pub fn modifier(state: ModifiersState) -> i64 {
 	i64::from(state.shift_key()) | i64::from(state.control_key()) << 1 | i64::from(state.alt_key()) << 2
-}
-
-/// The Windows virtual-key code the page gets for the engine's `code` (its `keyCode`),
-/// if any: the original's UI looks it up in its own table (built at `0x56cbe0`, read by
-/// `0x56d8c0`; disassembled 2026-10-20). The function keys aren't in it (Coherent gets
-/// -1 for them), so the page sees no key event for them here, nor for the keys the
-/// engine has no code for; what they type still reaches it.
-pub fn windows_code(code: i64) -> Option<i32> {
-	Some(match code {
-		1..=9 => 0x30 + code as i32,
-		10 => 0x30,
-		11..=36 => 0x41 + (code - 11) as i32,
-		37 => 0x08,
-		38 => 0x09,
-		39 => 0x0D,
-		40 => 0x20,
-		41 => 0x1B,
-		42 => 0x13,
-		43 => 0x14,
-		44 => 0x23,
-		45 => 0x24,
-		46 => 0x21,
-		47 => 0x22,
-		48 => 0x25,
-		49 => 0x26,
-		50 => 0x27,
-		51 => 0x28,
-		53 => 0x2D,
-		54 => 0x2E,
-		55..=64 => 0x60 + (code - 55) as i32,
-		66 => 0x6A,
-		67 => 0x6B,
-		68 => 0x6D,
-		69 => 0x6E,
-		70 => 0x6F,
-		95 => 0x11,
-		96 => 0x10,
-		97 => 0x12,
-		_ => return None,
-	})
 }
 
 #[cfg(test)]
@@ -246,26 +218,7 @@ mod tests {
 		assert_eq!(modifier(ModifiersState::SHIFT), 1);
 		assert_eq!(modifier(ModifiersState::CONTROL), 2);
 		assert_eq!(modifier(ModifiersState::ALT | ModifiersState::SHIFT), 5);
-	}
-
-	#[test]
-	fn windows_codes_for_the_page() {
-		// What vanilla's text fields accept (`ui/controls/input.js`): `0`-`Z` by code.
-		assert_eq!(windows_code(12), Some(66));
-		assert_eq!(windows_code(10), Some(0x30));
-		assert_eq!(windows_code(41), Some(0x1B));
-		assert_eq!(windows_code(39), Some(0x0D));
-		assert_eq!(windows_code(46), Some(0x21));
-		assert_eq!(windows_code(66), Some(0x6A));
-		assert_eq!(windows_code(97), Some(0x12));
-		// The function keys have none.
-		assert_eq!(windows_code(75), None);
-		// Every code the keys make has its own (but the function keys).
-		let mut seen = std::collections::HashSet::new();
-		for engine in (1..=70).chain(95..=97) {
-			if let Some(vk) = windows_code(engine) {
-				assert!(seen.insert(vk), "{engine} shares {vk:#x}");
-			}
-		}
+		assert_eq!(modifier_bit(95), Some(2));
+		assert_eq!(modifier_bit(13), None);
 	}
 }

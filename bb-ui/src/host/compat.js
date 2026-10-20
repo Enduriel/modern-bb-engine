@@ -92,6 +92,24 @@
 		e.preventDefault();
 	}, true);
 
+	// The keys Coherent's table has no code for (the function keys) came to the page as
+	// keyCode -1 (probed). The host sends -1 too, which Chromium keeps as 16 bits.
+	['keyCode', 'which'].forEach(function (name) {
+		var native = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, name) ||
+			Object.getOwnPropertyDescriptor(UIEvent.prototype, name);
+		if (!native || !native.get) {
+			return;
+		}
+		Object.defineProperty(KeyboardEvent.prototype, name, {
+			configurable: true,
+			enumerable: native.enumerable,
+			get: function () {
+				var code = native.get.call(this);
+				return code === 0xFFFF ? -1 : code;
+			}
+		});
+	});
+
 	// Absolutely positioned boxes centred between their top and bottom insets by `auto`
 	// margins. When the insets leave less room than the box (the world top bar's time
 	// buttons: `top: 13.8rem; bottom: 0` in a 7.3rem box), CSS 2.1, which old WebKit

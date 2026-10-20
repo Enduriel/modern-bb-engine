@@ -48,7 +48,7 @@ impl MouseInput {
 }
 
 /// A key event.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyInput {
 	pub key: i64,
 	pub state: i64,

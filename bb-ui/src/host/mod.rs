@@ -79,7 +79,7 @@ pub use damage::PaintRect;
 pub use frame::FrameBuffer;
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
 use ipc::Arg;
-pub use live_input::{Modifiers, MouseButton};
+pub use live_input::{Modifiers, MouseButton, coherent_key_code, modifiers_of_mask};
 pub use bridge_server::RequestKind;
 pub use responder::Responder;
 pub use page_frames::PageFrames;

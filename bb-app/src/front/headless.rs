@@ -3,7 +3,6 @@
 use bb_engine::harness::{self, GameEngine};
 use bb_render::{Gpu, RenderTarget};
 
-use super::Key;
 use crate::game::{Boot, Start};
 
 pub struct Front {
@@ -113,8 +112,6 @@ impl Front {
 	/// The modifier keys held now: there is no page to carry them.
 	pub fn set_modifier(&mut self, _modifier: i64) {}
 
-	/// Give `key` to the page: there is none.
-	pub fn key(&mut self, _key: &Key, _modifier: i64) {}
 
 	/// Answer the page's procedural images: there is no page.
 	pub fn serve_procedural(&self, _compose: impl FnMut(&GameEngine, &str) -> Option<Vec<u8>>) {}

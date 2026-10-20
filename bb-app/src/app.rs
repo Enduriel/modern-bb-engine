@@ -692,6 +692,13 @@ impl Running {
 						.remove(&code)
 						.unwrap_or_else(|| keys::code_for(code, &event.logical_key))
 				};
+				// A modifier key's own event carries the mask as it is after it, as the
+				// original reads the keys held as it queues one (`0x5b6790`): Ctrl's press
+				// has Ctrl, its release not (probed). winit may report the change after it.
+				if let Some(bit) = engine.and_then(keys::modifier_bit) {
+					let mask = keys::modifier(self.modifiers);
+					self.game.set_modifier(if down { mask | bit } else { mask & !bit });
+				}
 				// The FPS display's key; the game gets it too, as any other (nothing in
 				// vanilla or the mods surveyed binds it).
 				if down && !event.repeat && keys::toggles_fps(code, self.modifiers) {
@@ -700,7 +707,6 @@ impl Running {
 				}
 				self.game.key(&Key {
 					engine,
-					windows: engine.and_then(keys::windows_code),
 					text: if down { event.text.as_ref().map(|t| t.to_string()) } else { None },
 					down,
 					repeat: event.repeat,

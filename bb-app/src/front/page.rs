@@ -2,9 +2,8 @@
 
 use bb_engine::harness::GameEngine;
 use bb_render::{Gpu, RenderTarget, UiLayer, UiRegion};
-use bb_ui::host::{Echo, HostConfig, Modifiers, MouseButton, PageFrames, UiSession};
+use bb_ui::host::{Echo, HostConfig, MouseButton, PageFrames, UiSession};
 
-use super::Key;
 use crate::game::{Boot, Start};
 
 /// How often the page makes frames a second while a session waits on it without game
@@ -211,25 +210,7 @@ impl Front {
 	/// The modifier keys held now (the `KeyModifier` mask): the page's mouse events
 	/// carry them.
 	pub fn set_modifier(&mut self, modifier: i64) {
-		self.session.host().set_modifiers(modifiers(modifier));
-	}
-
-	/// Give `key` to the page with `modifier` (the `KeyModifier` mask) held. The states
-	/// get it too, whatever has the page's focus: the original's UI hands every key to
-	/// Coherent and never keeps one from the states (its key listener `0x56cb40` always
-	/// answers "not handled"; disassembled 2026-10-20), so typing a `c` in a text field
-	/// toggles the character screen, as MSU's `blockSQInput` setting describes.
-	pub fn key(&mut self, key: &Key, modifier: i64) {
-		let host = self.session.host();
-		let modifiers = modifiers(modifier);
-		if let Some(code) = key.windows {
-			host.key(code, key.down, modifiers);
-		}
-		if key.down {
-			for c in key.text.iter().flat_map(|t| t.chars()) {
-				host.character(c, modifiers);
-			}
-		}
+		self.session.host().set_modifiers(bb_ui::host::modifiers_of_mask(modifier));
 	}
 
 	/// Answer the procedural images (portraits) the page asked for with `compose`, given
@@ -277,11 +258,3 @@ impl Front {
 	}
 }
 
-/// The page's modifier keys for the `KeyModifier` mask `modifier`.
-fn modifiers(modifier: i64) -> Modifiers {
-	Modifiers {
-		shift: modifier & 1 != 0,
-		control: modifier & 2 != 0,
-		alt: modifier & 4 != 0,
-	}
-}

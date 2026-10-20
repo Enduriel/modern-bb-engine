@@ -264,7 +264,6 @@ fn escape(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), Strin
 	for down in [true, false] {
 		let key = Key {
 			engine: Some(41),
-			windows: Some(0x1B),
 			text: None,
 			down,
 			repeat: false,
@@ -350,7 +349,6 @@ fn keys_reach_the_states_while_typing(game: &mut Game, gpu: &Gpu, target: &Rende
 		for down in [true, false] {
 			let key = Key {
 				engine: Some(13),
-				windows: Some(0x43),
 				text: down.then(|| "c".to_string()),
 				down,
 				repeat: false,

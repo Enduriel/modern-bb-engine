@@ -256,6 +256,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	right_clicks_reach_the_page(&session)?;
 	modifiers_reach_the_pages_mouse_events(&session)?;
 	images_dont_drag_away_clicks(&session)?;
+	keys_come_to_the_page_from_the_frames(&session)?;
 	page_tasks_run_between_scripts(&session)?;
 	inserted_scripts_run_in_coherents_order(&session)?;
 	fps_module_shows_when_asked(&session)?;
@@ -1082,6 +1083,52 @@ fn images_dont_drag_away_clicks(session: &UiSession) -> Result<(), String> {
 	ensure(
 		seen.as_str() == Some("click"),
 		format!("a press moved over an image button came to the page as {}", seen.to_text()),
+	)
+}
+
+/// The page gets the keys from the game's frames, as the original's UI got them from
+/// its key queue (probed 2026-10-21): a held key's keydown every frame, what it typed
+/// once after it, its keyup; a function key with keyCode -1 (Coherent's table has
+/// none for it).
+fn keys_come_to_the_page_from_the_frames(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		"window.__bbKeys = [];
+		['keydown', 'keypress', 'keyup'].forEach(function (type) {
+			window.addEventListener(type, function (e) {
+				window.__bbKeys.push(e.type + ':' + e.keyCode);
+				e.stopPropagation();
+			}, true);
+		});
+		true",
+	)?;
+	let engine = session.engine();
+	// K (21), held for 15 frames.
+	engine.queue_key(21, true, 0);
+	engine.queue_text('k', 0);
+	session.run_frames(0.25)?;
+	engine.queue_key(21, false, 0);
+	// F5 (75), a frame.
+	engine.queue_key(75, true, 0);
+	session.run_frames(1.0 / 60.0)?;
+	engine.queue_key(75, false, 0);
+	session.run_frames(0.3)?;
+	let seen = session.eval("window.__bbKeys.join(' ')")?;
+	let seen = seen.as_str().unwrap_or_default().to_string();
+	let events: Vec<&str> = seen.split(' ').collect();
+	let held = events.iter().filter(|&&e| e == "keydown:75").count();
+	let expected_tail = ["keypress:107", "keyup:75"];
+	let k: Vec<&str> = events.iter().copied().filter(|e| !e.starts_with("keydown")).collect();
+	ensure(
+		(14..=16).contains(&held)
+			&& events.first() == Some(&"keydown:75")
+			&& k.starts_with(&expected_tail)
+			&& events.iter().any(|e| e.starts_with("keydown:") && *e != "keydown:75"),
+		format!("the page got the frames' keys as {seen:?}"),
+	)?;
+	let function_key: Vec<&&str> = events.iter().skip_while(|e| **e != "keyup:75").skip(1).collect();
+	ensure(
+		function_key.first() == Some(&&"keydown:-1"),
+		format!("F5 came to the page as {function_key:?}"),
 	)
 }
 

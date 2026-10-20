@@ -49,6 +49,7 @@ pub use native::{
 };
 pub use source::{LoadedScript, ScriptSource};
 pub use input_events::{KeyInput, MouseInput};
+pub use key_queue::QueuedInput;
 pub use state_stack::RootState;
 pub use native::user_stats::{OfflineStats, UserStats, UserStatsHandle};
 pub use native::{EngineRng, FOG_MASK_SIZE, FogPatch, FogStamp, Sprites, VideoMode, VideoSettings};
