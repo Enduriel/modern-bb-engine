@@ -25,7 +25,9 @@ use super::world_layout;
 use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
 
+mod access;
 mod original;
+pub(crate) use access::GridAccess;
 pub(crate) use original::brush_name;
 
 /// Axial neighbour deltas `(dq, dr)` indexed by `Const.Direction`: N, NE, SE, S, SW, NW.

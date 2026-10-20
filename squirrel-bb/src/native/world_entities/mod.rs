@@ -16,7 +16,8 @@
 //!
 //! Rendering is deliberately stubbed: `addSprite`/`addLabel` return live-but-inert
 //! [`SpriteData`]/[`LabelData`] objects (readable/writable props, zero rendering).
-//! `getTile` delegates to the existing `World.getTile` grid native.
+//! `getTile`, `getPos`, `setPos` and `move` read the grid and make vectors directly
+//! ([`WorldAccess`]), not through `World.getTile` and `createVec`.
 //!
 //! Host-owned (holds [`SqStrongRef`]s): **[`clear`](WorldEntities::clear) before VM
 //! close** ([`Engine`](crate::Engine) does it).
@@ -25,10 +26,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable};
+use squirrel::{ClassBuilder, IdentityMap, Number, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable};
 
 use super::inject::{Natives, inject_natives};
 use super::overload::{make_dispatcher, overload_key, single_overload};
+use super::vec::VecClass;
+use super::world_grid::GridAccess;
 use super::world_layout;
 use super::world_query::{self, QueryEntity};
 use crate::module::Instantiator;
@@ -223,9 +226,9 @@ struct EntityMachine {
 	ids: EntityIds,
 	entities: Vec<EntityRecord>,
 	/// Every class-level identity of every entity → its record index in `entities`.
-	by_identity: HashMap<i64, usize>,
+	by_identity: IdentityMap<usize>,
 	/// Entity id → its record index in `entities` (`getEntityByID`); the living only.
-	by_id: HashMap<i64, usize>,
+	by_id: IdentityMap<usize>,
 	/// The slots of dead entities, oldest first, to take for new ones once their script
 	/// objects are gone.
 	dead: Vec<usize>,
@@ -240,6 +243,30 @@ struct EntityMachine {
 	sprites: Sprites,
 	/// The entities whose sprites may change on their own (see `moving_sprites`).
 	moving: Moving<Owner>,
+	/// The map and the vector class, as the natives read and make them (set by the host
+	/// before any entity moves).
+	world: Option<WorldAccess>,
+}
+
+/// What the entities' natives read the map with and make vectors from: the grid
+/// directly and the `vec2f` class, as the original's natives use their C++ objects, not
+/// the script-visible `World.getTile`, `World.worldToTile` and `createVec`.
+#[derive(Clone)]
+pub(crate) struct WorldAccess {
+	pub(crate) grid: GridAccess,
+	pub(crate) vec2f: VecClass,
+}
+
+impl WorldAccess {
+	/// A new `vec2f` at `(x, y)`.
+	fn vec(&self, vm: &SQVM, x: f64, y: f64) -> SqStrongRef {
+		self.vec2f.instantiate(vm, crate::native::vec::Vec2f { x, y })
+	}
+}
+
+/// The host's [`WorldAccess`], or an error naming `what` if it was never set.
+fn world_access(m: &Rc<RefCell<EntityMachine>>, what: &str) -> Result<WorldAccess, String> {
+	m.borrow().world.clone().ok_or_else(|| format!("{what}: the world grid isn't attached"))
 }
 
 impl EntityMachine {
@@ -686,8 +713,8 @@ impl WorldEntities {
 				label_class: None,
 				ids: EntityIds::default(),
 				entities: Vec::new(),
-				by_identity: HashMap::new(),
-				by_id: HashMap::new(),
+				by_identity: IdentityMap::default(),
+				by_id: IdentityMap::default(),
 				dead: Vec::new(),
 				walking: 0,
 				natives: Rc::default(),
@@ -696,6 +723,7 @@ impl WorldEntities {
 				thinkers: think::Thinkers::default(),
 				sprites: Sprites::default(),
 				moving: Moving::default(),
+				world: None,
 			})),
 		}
 	}
@@ -704,6 +732,12 @@ impl WorldEntities {
 	/// The entity id counter, to share with the battle's units.
 	pub fn ids(&self) -> EntityIds {
 		self.machine.borrow().ids.clone()
+	}
+
+	/// Read the map from `grid` and make vectors of `vec2f` (see [`WorldAccess`]). Call
+	/// before any entity moves.
+	pub(crate) fn set_world(&self, grid: GridAccess, vec2f: VecClass) {
+		self.machine.borrow_mut().world = Some(WorldAccess { grid, vec2f });
 	}
 
 	pub fn set_sprites(&self, sprites: Sprites) {
@@ -728,7 +762,7 @@ impl WorldEntities {
 				m.borrow().record(vm.this_identity()).map_or(0, |r| r.id)
 			})
 		};
-		// getTile delegates to the existing World.getTile grid native (axial coords).
+		// getTile: the tile at the entity's axial coords, as `World.getTile(q, r)` gives it.
 		let get_tile = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
@@ -737,18 +771,16 @@ impl WorldEntities {
 					.record(vm.this_identity())
 					.map(|rec| (rec.q, rec.r))
 					.ok_or("getTile: entity not registered")?;
-				let world = SqTable::root(vm)
-					.get::<SqStrongRef>("World")
-					.ok_or("getTile: World table missing")?;
-				world.call_method_ret::<SqStrongRef, _>(vm, "getTile", (q, r))
+				Ok(world_access(&m, "getTile")?.grid.tile(vm, q, r))
 			})
 		};
 		// setPos(vec): move to a world pixel position; the entity's tile follows.
 		let set_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<(), String> {
-				let xy = vec_xy(vm, &pos.0);
-				let (q, r) = tile_under(vm, &pos.0)?;
+				let world = world_access(&m, "setPos")?;
+				let xy = crate::native::vec::xy(vm, &world.vec2f, &pos.0);
+				let (q, r) = world.grid.world_to_tile(xy.0, xy.1);
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.pos = xy;
 					(rec.q, rec.r) = (q, r);
@@ -762,10 +794,7 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM| -> Result<Option<SqStrongRef>, String> {
 				let (x, y) = m.borrow().record(vm.this_identity()).map_or((0.0, 0.0), |rec| rec.pos);
-				let create_vec = SqTable::root(vm)
-					.get::<SqStrongRef>("createVec")
-					.ok_or("getRelativePos: createVec missing")?;
-				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
+				Ok(Some(world_access(&m, "getRelativePos")?.vec(vm, x, y)))
 			})
 		};
 		// getPos: the entity's world pixel position.
@@ -777,10 +806,7 @@ impl WorldEntities {
 					.record(vm.this_identity())
 					.map(|rec| rec.pos)
 					.ok_or("getPos: entity not registered")?;
-				let create_vec = SqTable::root(vm)
-					.get::<SqStrongRef>("createVec")
-					.ok_or("getPos: createVec missing")?;
-				create_vec.call_ret::<SqStrongRef, _>(vm, (x, y))
+				Ok(Some(world_access(&m, "getPos")?.vec(vm, x, y)))
 			})
 		};
 		// addSprite(name): a new sprite on top of the others; a name already there gets
@@ -1307,5 +1333,6 @@ impl WorldEntities {
 		m.sprite_class = None;
 		m.label_class = None;
 		m.moving.clear();
+		m.world = None;
 	}
 }

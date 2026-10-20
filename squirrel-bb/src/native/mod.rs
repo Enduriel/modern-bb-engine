@@ -221,7 +221,7 @@ impl NativeConfig {
 		// (0x55efed; the world's value is the `d4` its saves keep, 41 from seed 1).
 		crt.rand_default();
 		crt.rand_default();
-		vec::install(vm);
+		let vec2f = vec::install(vm);
 		color::install(vm, prng.clone());
 		math::install(vm, prng);
 		// The texts' random choices have a stream of their own, as the original's.
@@ -237,7 +237,7 @@ impl NativeConfig {
 		execute::install(vm);
 		identity::install(vm);
 		install_logging(vm, log::default_handler);
-		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_camera_callbacks, world_particles, tactical, sprites, engine_rng, video, user_stats }
+		InstalledNatives { world_clock, clouds, birds, waves, world_camera, world_camera_callbacks, world_particles, tactical, sprites, engine_rng, video, user_stats, vec2f }
 	}
 }
 
@@ -258,6 +258,8 @@ pub struct InstalledNatives {
 	pub(crate) video: VideoSettings,
 	/// The achievements' and stats' service (no VM handles).
 	pub(crate) user_stats: user_stats::UserStatsHandle,
+	/// The `vec2f` class, for natives that make vectors.
+	pub(crate) vec2f: vec::VecClass,
 }
 
 /// Install all native globals with the [default](NativeConfig::default) config.

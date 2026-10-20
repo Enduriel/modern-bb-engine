@@ -6,7 +6,7 @@
 //! instances to native engine methods. `vec2i` is the integer vector returned by
 //! `getMapSize()` (registered here so it exists; instances come from the engine).
 
-use squirrel::{ClassBuilder, Native, Number, SQVM};
+use squirrel::{ClassBuilder, Native, Number, SQVM, SqClass, SqStrongRef};
 
 /// A 2D float vector — the payload behind a `vec2f` instance.
 #[derive(Clone, Copy)]
@@ -22,8 +22,21 @@ pub struct Vec2i {
 	pub y: i64,
 }
 
-/// Register `vec2f`/`vec2i` and the vector root functions.
-pub(crate) fn install(vm: &mut SQVM) {
+/// The `vec2f` class, for natives that hand back a vector (as `createVec` makes one).
+pub(crate) type VecClass = SqClass<Vec2f>;
+
+/// The `X` and `Y` of a script vector: a `vec2f`'s straight from its payload, anything
+/// else's read as members (a number each, else 0).
+pub(crate) fn xy(vm: &SQVM, class: &VecClass, v: &SqStrongRef) -> (f64, f64) {
+	class.with_payload(vm, v, |p| (p.x, p.y)).unwrap_or_else(|| {
+		let x = v.get_member::<Number>(vm, "X").map_or(0.0, |n| n.0);
+		let y = v.get_member::<Number>(vm, "Y").map_or(0.0, |n| n.0);
+		(x, y)
+	})
+}
+
+/// Register `vec2f`/`vec2i` and the vector root functions; the `vec2f` class.
+pub(crate) fn install(vm: &mut SQVM) -> VecClass {
 	let vec2f = ClassBuilder::<Vec2f>::new("vec2f")
 		.property("X", |v| v.x, |v, x| v.x = x)
 		.property("Y", |v| v.y, |v, y| v.y = y)
@@ -51,7 +64,7 @@ pub(crate) fn install(vm: &mut SQVM) {
 
 	// getVecDir(a, b) -> unit vector pointing from a toward b (zero vector if the
 	// points coincide).
-	let dir_factory = vec2f;
+	let dir_factory = vec2f.clone();
 	vm.register(
 		"getVecDir",
 		move |vm: &SQVM, a: Native<Vec2f>, b: Native<Vec2f>| {
@@ -69,4 +82,5 @@ pub(crate) fn install(vm: &mut SQVM) {
 			dir_factory.instantiate(vm, dir)
 		},
 	);
+	vec2f
 }

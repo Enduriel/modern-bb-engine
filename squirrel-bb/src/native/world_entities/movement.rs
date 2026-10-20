@@ -11,32 +11,24 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
+use squirrel::{Number, Retained, SQVM, SqStrongRef};
 
-use super::{EntityMachine, tile_under, vec_xy};
+use super::{EntityMachine, WorldAccess, world_access};
 
 /// The highest terrain type an entity can't enter (`Impassable` = 0, `Ocean` = 1).
 const BLOCKING_TERRAIN: i64 = 1;
 
 type Machine = Rc<RefCell<EntityMachine>>;
 
-/// The terrain type of axial tile `(q, r)` (`World.getTile(q, r).Type`).
-fn terrain_at(vm: &SQVM, q: i64, r: i64) -> Result<i64, String> {
-	let world = SqTable::root(vm).get::<SqStrongRef>("World").ok_or("World table missing")?;
-	let tile = world
-		.call_method_ret::<SqStrongRef, _>(vm, "getTile", (q, r))?
-		.ok_or("move: no tile there")?;
-	tile.get_member::<i64>(vm, "Type").ok_or_else(|| "move: tile has no Type".to_string())
+/// The terrain type of axial tile `(q, r)` (its `Type`).
+fn terrain_at(world: &WorldAccess, q: i64, r: i64) -> Result<i64, String> {
+	world.grid.terrain(q, r).ok_or_else(|| "move: no tile there".to_string())
 }
 
 /// The terrain type under a world pixel position.
-fn terrain_under(vm: &SQVM, x: f32, y: f32) -> Result<i64, String> {
-	let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("createVec missing")?;
-	let pos = create_vec
-		.call_ret::<SqStrongRef, _>(vm, (f64::from(x), f64::from(y)))?
-		.ok_or("createVec returned null")?;
-	let (q, r) = tile_under(vm, &pos)?;
-	terrain_at(vm, q, r)
+fn terrain_under(world: &WorldAccess, x: f32, y: f32) -> Result<i64, String> {
+	let (q, r) = world.grid.world_to_tile(f64::from(x), f64::from(y));
+	terrain_at(world, q, r)
 }
 
 /// Where one call of `move` puts the entity, or `None` if it doesn't move.
@@ -76,21 +68,22 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 				let rec = machine.record(vm.this_identity()).ok_or("move: entity not registered")?;
 				(rec.pos, (rec.q, rec.r), rec.ignore_collision)
 			};
+			let world = world_access(&m, "move")?;
 			let pos = (pos.0 as f32, pos.1 as f32);
-			let (dx, dy) = vec_xy(vm, &dest.0);
-			let on_blocking_tile = !ignore_collision && terrain_at(vm, tile.0, tile.1)? <= BLOCKING_TERRAIN;
+			let (dx, dy) = crate::native::vec::xy(vm, &world.vec2f, &dest.0);
+			let on_blocking_tile = !ignore_collision && terrain_at(&world, tile.0, tile.1)? <= BLOCKING_TERRAIN;
 			let blocked = |x: f32, y: f32| -> Result<bool, String> {
-				Ok(!ignore_collision && terrain_under(vm, x, y)? <= BLOCKING_TERRAIN)
+				Ok(!ignore_collision && terrain_under(&world, x, y)? <= BLOCKING_TERRAIN)
 			};
 			let (to, moving) = step(pos, (dx as f32, dy as f32), speed.0 as f32, on_blocking_tile, blocked)?;
 			if let Some((x, y)) = to {
-				let entity = m.borrow().record(vm.this_identity()).and_then(|rec| rec.entity.clone());
-				let create_vec = SqTable::root(vm).get::<SqStrongRef>("createVec").ok_or("createVec missing")?;
-				let new_pos = create_vec
-					.call_ret::<SqStrongRef, _>(vm, (f64::from(x), f64::from(y)))?
-					.ok_or("createVec returned null")?;
-				if let Some(e) = entity {
-					e.call_method(vm, "setPos", (new_pos,))?;
+				// The entity's `setPos`: the position and the tile under it.
+				let at = (f64::from(x), f64::from(y));
+				let (q, r) = world.grid.world_to_tile(at.0, at.1);
+				let mut machine = m.borrow_mut();
+				if let Some(rec) = machine.record_mut(vm.this_identity()).filter(|rec| rec.entity.is_some()) {
+					rec.pos = at;
+					(rec.q, rec.r) = (q, r);
 				}
 			}
 			Ok(moving)

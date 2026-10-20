@@ -113,9 +113,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		world_grid.set_engine_rng(natives.engine_rng.clone());
 		world_grid.set_camera(natives.world_camera.clone());
 		world_grid.install(&mut vm);
-		// After the grid natives (entity `getTile` delegates to `World.getTile`).
+		// After the grid natives.
 		let world_entities = WorldEntities::new(modules.instantiator());
 		world_entities.set_sprites(natives.sprites.clone());
+		world_entities.set_world(world_grid.access(), natives.vec2f.clone());
 		world_entities.install(&mut vm);
 		// Details take their ids from the counter every entity shares.
 		world_grid.set_entity_ids(world_entities.ids());
