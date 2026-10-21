@@ -21,7 +21,11 @@ and the camera zoomed to 0.5), what the night's light doesn't reach (a skill's i
 beside the same brush as an attack effect, the blocked-tile marks) with a brother on
 a tile raised under him, and the results screen and its loot. A step can poll a scene until it returns true (`until`) before its
 shot, and click a page button after it. Ours (bb-app's `frame_scenes`) walks the same
-list.
+list. A step that clicks also names what the click brings about (`clicked`, a JS
+expression on the page; ours only, the original's page clicks with jQuery): ours checks
+it once the 3 s after the click have run, since the page seeing a click doesn't say the
+button's handler ran. A click that didn't take is logged with the button events it made
+and what they hit, and made again once; a second miss fails the run with both.
 
 A probe with fewer steps before the battle gets a different battle map in each engine:
 the map is drawn from `Math.rand` where `tactical_state.initMap` runs, and draws made
