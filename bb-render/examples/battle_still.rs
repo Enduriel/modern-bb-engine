@@ -62,6 +62,7 @@ fn main() {
 		engine.set_scene_steps(Some(1.0));
 	}
 	let mut doublings: BTreeMap<u32, usize> = BTreeMap::new();
+	let mut scene_time = std::time::Duration::ZERO;
 	let mut last = engine.tactical_scene();
 	// The quads `bb` would draw at 2560x1358 (zoom 1 on the map's centre): how many stay
 	// the same, place by place, from frame to frame.
@@ -85,7 +86,9 @@ fn main() {
 	for _ in 0..frames {
 		engine.frame(1000.0 / hz).expect("frame");
 		engine.pump_ui().expect("ui");
+		let started = std::time::Instant::now();
 		let scene = engine.tactical_scene();
+		scene_time += started.elapsed();
 		if let Some(k) = engine.scene_step_doublings() {
 			*doublings.entry(k).or_default() += 1;
 		}
@@ -145,6 +148,7 @@ fn main() {
 	if ground_quads > 0 {
 		println!("the ground alone: {:.0} quads, built in {:.3} ms", ground_quads as f64 / frames as f64, ground_build.as_secs_f64() * 1000.0 / frames as f64);
 	}
+	println!("the scene built in {:.3} ms a frame", scene_time.as_secs_f64() * 1000.0 / frames as f64);
 	if !doublings.is_empty() {
 		println!("steps (frames at each step of 1/60 s doubled k times): {doublings:?}");
 	}
