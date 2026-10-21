@@ -103,9 +103,12 @@ impl UiSession {
 	/// Whether the game's screen pixel `(x, y)` is over the UI: the painted page isn't
 	/// transparent there. Coherent answered `UI.setCursorPosition` the same way, from
 	/// the last frame (its click-through query). The page is painted at the
-	/// screen's resolution, so its pixel is the screen's.
+	/// frame's resolution, so its pixel is the screen's times the frame scale
+	/// ([`set_frame_scale`](Self::set_frame_scale)).
 	pub fn is_over_ui(&self, x: i64, y: i64) -> bool {
-		let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
+		let scale = self.frame_scale();
+		let painted = |n: i64| (n as f64 * scale) as i64;
+		let (Ok(x), Ok(y)) = (i32::try_from(painted(x)), i32::try_from(painted(y))) else {
 			return false;
 		};
 		self.host().alpha_at(x, y) > 0

@@ -42,6 +42,9 @@ pub struct Game {
 	/// rather than drawn; and its pictures.
 	system_cursor: bool,
 	cursor_pictures: CursorPictures,
+	/// Frame pixels per pixel of the drawn cursor's picture (see
+	/// [`set_cursor_scale`](Self::set_cursor_scale)).
+	cursor_scale: f32,
 	/// The modifier keys held (`KeyModifier` mask), sent with every event.
 	modifier: i64,
 	/// What the last frame drawn showed (see [`Game::draw_if_changed`]).
@@ -192,6 +195,7 @@ impl Game {
 			cursor: (0, 0),
 			system_cursor: false,
 			cursor_pictures: CursorPictures::new(files),
+			cursor_scale: 1.0,
 			modifier: 0,
 			shown: Shown::default(),
 			fps: None,
@@ -419,10 +423,12 @@ impl Game {
 			.serve_procedural(|engine, path| crate::procedural::answer(renderer, gpu, engine, path));
 		drop(procedural);
 		let drawn_cursor = self.cursor_show() == CursorShow::Drawn;
-		let engine = self.front.engine();
 		let (width, height) = (target.width, target.height);
-		// The screen the scripts think in maps onto the frame.
+		// The screen the scripts think in maps onto the frame. The page is painted at the
+		// frame's pixels (see `Front::set_frame_scale`).
 		let fit = width as f32 / self.screen().0 as f32;
+		self.front.set_frame_scale(f64::from(fit));
+		let engine = self.front.engine();
 		let (tactical, world) = (tactical_visible(engine), world_visible(engine));
 		// A campaign's map, made or loaded: its water and fog load before it shows (the
 		// loading screen), not with its first frame.
@@ -461,6 +467,7 @@ impl Game {
 			let view = WorldView {
 				center: [camera.pos.0, camera.pos.1],
 				zoom: fit / camera.zoom,
+				fit,
 				width,
 				height,
 			};
@@ -518,6 +525,7 @@ impl Game {
 		let stats = if let Under::Battle { scene, view: (center, zoom), .. } = &look.under {
 			let _span = bb_render::frame_timing::span("battle draw");
 			let view = WorldView {
+				fit,
 				center: *center,
 				zoom: *zoom,
 				width,
@@ -540,6 +548,7 @@ impl Game {
 				engine.world_scene_where(|_| false)
 			};
 			let view = WorldView {
+				fit,
 				center: *center,
 				zoom: *zoom,
 				width,
@@ -604,6 +613,7 @@ impl Game {
 		Some(CursorLook {
 			brush,
 			at: cursor_at(target, fit, x, y),
+			scale: self.cursor_scale,
 			frame,
 		})
 	}
@@ -669,7 +679,16 @@ impl Game {
 		let Some(brush) = look.brush.filter(|_| !look.hardware) else { return FrameStats::default() };
 		let since = engine.time().virtual_seconds() as f32 - look.since;
 		let at = cursor_at(target, fit, x, y);
-		engine.sprites().with(|registry| self.renderer.draw_cursor(gpu, target, registry, &brush, since, at))
+		let scale = self.cursor_scale;
+		engine.sprites().with(|registry| self.renderer.draw_cursor(gpu, target, registry, &brush, since, at, scale))
+	}
+
+	/// Draw the game's cursor at `scale` frame pixels per pixel of its picture: 1, or a
+	/// Retina display's backing factor, where the game's screen is in points (see
+	/// `screen_scale`), so it is the size it is on a display without Retina, as the
+	/// system's shows it ([`crate::system_cursor`]).
+	pub fn set_cursor_scale(&mut self, scale: f32) {
+		self.cursor_scale = scale;
 	}
 
 	/// Show the game's cursor as the system's where it can be, rather than draw it

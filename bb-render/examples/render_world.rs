@@ -128,6 +128,7 @@ fn main() {
 	shores.sort_by_key(|s| s.0);
 	eprintln!("nearest shore tiles: {:?}", &shores[..shores.len().min(5)]);
 	let view = WorldView {
+		fit: 1.0,
 		center,
 		zoom: 1.0 / camera_zoom,
 		width,

@@ -813,6 +813,7 @@ mod tests {
 	fn quads_of(scene: &TacticalScene) -> Vec<Quad> {
 		let registry = registry();
 		let view = WorldView {
+			fit: 1.0,
 			center: [120.0, 0.0],
 			zoom: 1.0,
 			width: 800,

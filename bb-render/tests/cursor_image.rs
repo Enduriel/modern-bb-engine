@@ -81,7 +81,7 @@ fn cursor_pictures_show_what_the_software_cursor_draws() {
 			let at = [AT.0 as f32 - SIZE as f32 * 0.5, SIZE as f32 * 0.5 - AT.1 as f32];
 			let drawn = loop {
 				target.clear(&gpu);
-				let stats = renderer.draw_cursor(&gpu, &target, &registry, name, since, at);
+				let stats = renderer.draw_cursor(&gpu, &target, &registry, name, since, at, 1.0);
 				if stats.waiting == 0 {
 					break target.read(&gpu).expect("read back");
 				}

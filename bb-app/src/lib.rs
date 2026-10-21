@@ -17,6 +17,7 @@ pub mod pacing;
 pub mod platform;
 pub mod procedural;
 pub mod requirements;
+pub mod screen_scale;
 pub mod script_profile;
 pub mod settings;
 pub mod shown;

@@ -120,6 +120,9 @@ impl Front {
 	/// The modifier keys held now: there is no page to carry them.
 	pub fn set_modifier(&mut self, _modifier: i64) {}
 
+	/// Nothing is painted headless.
+	pub fn set_frame_scale(&mut self, _scale: f64) {}
+
 
 	/// Answer the page's procedural images: there is no page.
 	pub fn serve_procedural(&self, _compose: impl FnMut(&GameEngine, &str) -> crate::procedural::Procedural) {}

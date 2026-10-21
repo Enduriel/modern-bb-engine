@@ -1,8 +1,9 @@
 //! macOS: the cursor as an `NSCursor` made here, shown over winit's view by a view of
 //! our own.
 //!
-//! The picture's pixels go into a bitmap whose size in points is pixels / scale, so the
-//! display shows each pixel once (and the hotspot is in points too). Its alpha is
+//! The picture's pixels (enlarged by the backing factor first, see [`super`]) go into a
+//! bitmap whose size in points is pixels / scale, so the display shows each pixel once
+//! (and the hotspot is in points too). Its alpha is
 //! straight, not premultiplied, as the pictures are.
 //!
 //! winit sets its own cursor from its view's cursor rectangle (`resetCursorRects`), and
@@ -216,6 +217,32 @@ mod tests {
 				assert_eq!((wide, high), (32, 32));
 				assert_eq!(std::slice::from_raw_parts(rep.bitmapData(), 4), [200, 100, 50, 128]);
 			}
+		}
+	}
+
+	/// The game's screen is in points on a Retina display: the picture enlarged by the
+	/// backing factor (each pixel copied, `super::enlarged`) shows at its own size in
+	/// points, every display pixel its own: 32 points of 64x64 pixels at 2x.
+	#[test]
+	fn an_enlarged_picture_is_its_size_in_points() {
+		let image = CursorImage {
+			width: 32,
+			height: 32,
+			hotspot: (6, 10),
+			rgba: vec![255; 32 * 32 * 4],
+		};
+		let cursor = cursor(&super::super::enlarged(&image, 2), 2.0).expect("a cursor");
+		// SAFETY: as in the test above.
+		unsafe {
+			let picture: Retained<NSImage> = msg_send![&cursor, image];
+			let size: Size = msg_send![&picture, size];
+			assert_eq!((size.width, size.height), (32.0, 32.0));
+			let hotspot: Point = msg_send![&cursor, hotSpot];
+			assert_eq!((hotspot.x, hotspot.y), (6.0, 10.0));
+			let reps: Retained<NSObject> = msg_send![&picture, representations];
+			let rep: Retained<NSBitmapImageRep> = msg_send![&reps, firstObject];
+			let (wide, high): (isize, isize) = (msg_send![&rep, pixelsWide], msg_send![&rep, pixelsHigh]);
+			assert_eq!((wide, high), (64, 64));
 		}
 	}
 }

@@ -2,7 +2,7 @@
 //! the [`Engine`](squirrel_bb::Engine), its `ui/` in a [`UiHost`], joined by the
 //! [`UiProtocol`]. What the examples and integration tests drive.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -40,6 +40,8 @@ pub struct UiSession {
 	/// Whether the page has opened, registered its screens and painted
 	/// ([`UiSession::wait_page`]).
 	page_ready: std::cell::Cell<bool>,
+	/// Frame pixels per pixel of the game's screen (see [`UiSession::set_frame_scale`]).
+	frame_scale: Cell<f64>,
 }
 
 impl UiSession {
@@ -109,6 +111,7 @@ impl UiSession {
 			procedural: RefCell::new(None),
 			fonts: RefCell::default(),
 			page_ready: std::cell::Cell::new(false),
+			frame_scale: Cell::new(1.0),
 		};
 		squirrel_bb::startup::mark("engine opened");
 		Ok(session)
@@ -353,15 +356,31 @@ impl UiSession {
 	/// Lay the page out at the video mode's size divided by its UI scale, as the original
 	/// does when the scripts set a video mode (`Settings.setVideoMode`, e.g. the Options
 	/// screen's UI scale): the page sees a smaller window, and is drawn
-	/// at the screen's resolution.
+	/// at the frame's resolution (the screen's, times the frame scale).
 	pub(super) fn follow_ui_scale(&self) {
 		let (width, height) = self.engine.video().ui_size();
 		let (_, _, scale) = self.engine.video().screen();
-		let scale = if scale > 0.0 { scale } else { 1.0 };
+		let scale = if scale > 0.0 { scale } else { 1.0 } * self.frame_scale.get();
 		let size = (width as i32, height as i32);
 		if self.host().size() != size || self.host().scale() != scale {
 			self.host().resize(size.0, size.1, scale);
 		}
+	}
+
+	/// Paint the page at `scale` pixels per pixel of the game's screen from the next
+	/// frame on: the frame's, which a Retina display draws at 2 (the screen being in
+	/// points there) and a screen scaled to the window at its scale. The layout stays
+	/// the screen's (the UI scale's alone); only the paint is sharper. 1 by default.
+	pub fn set_frame_scale(&self, scale: f64) {
+		if scale.is_finite() && scale > 0.0 {
+			self.frame_scale.set(scale);
+		}
+	}
+
+	/// Pixels of the page's paint per pixel of the game's screen (see
+	/// [`set_frame_scale`](Self::set_frame_scale)).
+	pub fn frame_scale(&self) -> f64 {
+		self.frame_scale.get()
 	}
 
 	/// Give the page the fonts mods registered since it last looked (`registerFont`), as

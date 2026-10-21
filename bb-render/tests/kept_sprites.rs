@@ -208,6 +208,7 @@ fn the_kept_moving_layer_draws_what_the_frame_built_draws() {
 		for t in 0..8 {
 			let zoom = if t < 6 { 2.0 } else { 1.0 };
 			let view = WorldView {
+				fit: 1.0,
 				center: [t as f32 * 0.5, 0.0],
 				zoom,
 				width,

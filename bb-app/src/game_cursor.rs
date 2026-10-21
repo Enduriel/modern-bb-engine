@@ -14,8 +14,10 @@
 //! the scripts do (or haven't followed the mouse, as behind the loading screen), the
 //! game draws its cursor there until it is at the mouse again.
 //!
-//! The software cursor is drawn unscaled, in the window's pixels, and the system's shows
-//! the same pixels at any display scale (see `system_cursor`).
+//! The software cursor is drawn a pixel of its picture to a pixel of the game's screen
+//! (`screen_scale`): unscaled in the window's pixels where the screen is in pixels, and
+//! each pixel doubled on a Retina display, where it is in points. The system's shows
+//! the same at any display scale (see `system_cursor`).
 
 use std::collections::HashMap;
 use std::rc::Rc;

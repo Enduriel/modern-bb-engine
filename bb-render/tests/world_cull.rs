@@ -48,6 +48,7 @@ fn views_draw_the_same(size: Option<(i64, i64)>) {
 	engine.sprites().with(|registry| {
 		for (i, (center, zoom)) in views.into_iter().enumerate() {
 			let view = WorldView {
+				fit: 1.0,
 				center,
 				zoom,
 				width: 2560,

@@ -540,7 +540,7 @@ mod tests {
 	#[test]
 	fn items_that_stay_the_same_keep_their_places() {
 		let registry = registry();
-		let view = WorldView { center: [0.0, 0.0], zoom: 1.0, width: 800, height: 600 };
+		let view = WorldView { fit: 1.0, center: [0.0, 0.0], zoom: 1.0, width: 800, height: 600 };
 		let built = Built { sheets: 1, fonts: 0 };
 		let mut kept = KeptSprites::default();
 		let mut scene = WorldScene {

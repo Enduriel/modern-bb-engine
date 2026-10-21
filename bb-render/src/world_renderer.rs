@@ -1134,8 +1134,10 @@ impl WorldRenderer {
 	/// Draw the mouse cursor's sprite `brush` over what `target` holds, its frame `since`
 	/// seconds into its animation, at `at`: screen pixels from the centre, y up, as the
 	/// original draws its software cursor (last, over the UI, unscaled; see
-	/// `squirrel_bb::native::ui_cursor`). An unknown brush, or an atlas still loading,
-	/// draws nothing.
+	/// `squirrel_bb::native::ui_cursor`), `scale` frame pixels to a pixel of its picture
+	/// (1, or a Retina display's backing factor). An unknown brush, or an atlas still
+	/// loading, draws nothing.
+	#[allow(clippy::too_many_arguments)]
 	pub fn draw_cursor(
 		&mut self,
 		gpu: &Gpu,
@@ -1144,8 +1146,9 @@ impl WorldRenderer {
 		brush: &str,
 		since: f32,
 		at: [f32; 2],
+		scale: f32,
 	) -> FrameStats {
-		let Some(map) = crate::cursor::cursor_quads(registry, brush, since, at) else {
+		let Some(map) = crate::cursor::cursor_quads(registry, brush, since, at, scale) else {
 			return FrameStats::default();
 		};
 		let uniforms = SceneUniforms::centered([0.0, 0.0], target.width as f32, target.height as f32);

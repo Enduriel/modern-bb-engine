@@ -24,7 +24,7 @@ use bb_app::steam::SteamStats;
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
 use bb_app::pacing::Pacer;
-use bb_app::{keys, platform};
+use bb_app::{keys, platform, screen_scale};
 use squirrel_bb::VideoMode;
 
 use crate::window_mode::{self, Monitor};
@@ -335,8 +335,9 @@ impl App {
 			game.show_fps(true)?;
 		}
 		let size = window.inner_size();
+		let units = if screen_scale::IN_POINTS { "points" } else { "pixels" };
 		eprintln!(
-			"video: {}x{} {placement:?} on a {}x{} monitor, the window {}x{} (scale {})",
+			"video: {}x{} {placement:?} on a {}x{} monitor ({units}), the window {}x{} pixels (scale {})",
 			mode.width, mode.height, monitor.size.0, monitor.size.1, size.width, size.height, window.scale_factor()
 		);
 		let capabilities = gpu.surface_capabilities(&surface).ok_or("no surface capabilities")?;
@@ -471,6 +472,12 @@ impl Running {
 		}
 	}
 
+	/// Window pixels per pixel of the game's screen where the screen follows the window
+	/// (see `bb_app::screen_scale`): the backing factor on macOS, 1 elsewhere.
+	fn screen_scale(&self) -> f64 {
+		screen_scale::of(self.window.scale_factor())
+	}
+
 	/// Window pixels to the game's screen pixels.
 	fn to_screen(&self, x: f64, y: f64) -> (i64, i64) {
 		let (w, h) = self.game.screen();
@@ -480,7 +487,8 @@ impl Running {
 		(((x - f64::from(left)) * sx) as i64, ((y - f64::from(top)) * sy) as i64)
 	}
 
-	/// The window is `size` now; in a window, the game's screen is too.
+	/// The window is `size` (pixels) now; in a window, the game's screen is too, in its
+	/// own units (points on macOS).
 	fn resize(&mut self, size: PhysicalSize<u32>) {
 		if size.width == 0 || size.height == 0 {
 			return;
@@ -491,7 +499,8 @@ impl Running {
 		// The new surface shows nothing yet.
 		self.game.forget_shown();
 		if self.placement.follows_window() {
-			self.game.video().set_screen_size(i64::from(size.width), i64::from(size.height));
+			let (width, height) = screen_scale::to_screen((size.width, size.height), self.screen_scale());
+			self.game.video().set_screen_size(i64::from(width), i64::from(height));
 		}
 	}
 
@@ -629,8 +638,10 @@ impl Running {
 		let cursor_span = bb_render::frame_timing::span("follow cursor");
 		self.follow_cursor(event_loop);
 		drop(cursor_span);
-		// The frame at the size it shows at in the window.
+		// The frame at the size it shows at in the window, the drawn cursor at the
+		// screen's scale.
 		self.frame_rect = display::frame_rect((self.config.width, self.config.height), self.game.screen());
+		self.game.set_cursor_scale(self.screen_scale() as f32);
 		let (_, _, width, height) = self.frame_rect;
 		if (self.target.width, self.target.height) != (width, height) {
 			self.target = RenderTarget::new(&self.gpu, width, height);
@@ -881,9 +892,22 @@ impl ApplicationHandler for App {
 			}
 			// What the system shows of the window may be gone: draw it again. It may be on
 			// another monitor, with another refresh.
-			WindowEvent::Occluded(false) | WindowEvent::ScaleFactorChanged { .. } => {
+			WindowEvent::Occluded(false) => {
 				running.game.forget_shown();
 				running.follow_monitor_refresh();
+				Ok(false)
+			}
+			// On another monitor, of another scale: the same as above, and the Options
+			// screen lists that monitor's resolutions (on macOS in its points). The window
+			// keeps its size in points (winit's suggestion), and its resize follows: the
+			// game's screen stays the same size there, drawn at the new scale's pixels
+			// (see `bb_app::screen_scale`); the cursors are made anew for it
+			// (`follow_cursor`).
+			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+				eprintln!("display: the window's scale is {scale_factor} now");
+				running.game.forget_shown();
+				running.follow_monitor_refresh();
+				running.game.video().set_monitor_modes(Monitor::of_window(&running.window).resolutions());
 				Ok(false)
 			}
 			WindowEvent::RedrawRequested => return self.redraw(event_loop),

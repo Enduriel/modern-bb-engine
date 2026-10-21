@@ -133,6 +133,7 @@ fn main() {
 		}
 	}
 	let view = WorldView {
+		fit: 1.0,
 		center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
 		zoom: 1.0 / camera_zoom,
 		width,

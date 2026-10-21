@@ -194,6 +194,7 @@ fn draw(
 	});
 	let camera = engine.world_camera();
 	let view = WorldView {
+		fit: 1.0,
 		center: [camera.pos.0, camera.pos.1],
 		zoom: 1.0 / camera.zoom,
 		width: target.width,
@@ -279,6 +280,7 @@ fn draw_battle(
 		engine.tactical_scene()
 	};
 	let view = WorldView {
+		fit: 1.0,
 		center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
 		zoom: 1.0 / scene.camera.zoom as f32,
 		width: target.width,
@@ -311,6 +313,7 @@ fn compare_views(engine: &harness::GameEngine, gpu: &Gpu, renderer: &mut WorldRe
 		twin.set_clock(clock);
 		let camera = engine.world_camera();
 		let view = WorldView {
+			fit: 1.0,
 			center: [camera.pos.0, camera.pos.1],
 			zoom: 1.0 / camera.zoom,
 			width: target.width,

@@ -67,6 +67,7 @@ fn main() {
 	// The quads `bb` would draw at 2560x1358 (zoom 1 on the map's centre): how many stay
 	// the same, place by place, from frame to frame.
 	let view = |scene: &TacticalScene| bb_render::world::WorldView {
+		fit: 1.0,
 		center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
 		zoom: 1.0 / scene.camera.zoom as f32,
 		width: 2560,

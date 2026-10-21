@@ -62,8 +62,13 @@ pub(crate) const REGION_TEXT_SCALE: f32 = 0.4;
 pub struct WorldView {
 	/// The world point at the centre of the screen.
 	pub center: [f32; 2],
-	/// Screen pixels per world unit.
+	/// Frame pixels per world unit.
 	pub zoom: f32,
+	/// Frame pixels per pixel of the game's screen: 1, or more where the frame is drawn
+	/// at more pixels than the screen has (a Retina display, whose screen is in points;
+	/// a screen scaled to its window). What keeps its screen size (labels, the
+	/// settlement banners) is drawn this many frame pixels a pixel.
+	pub fit: f32,
 	pub width: u32,
 	pub height: u32,
 }
@@ -502,6 +507,7 @@ mod tests {
 			..WorldScene::default()
 		};
 		let view = WorldView {
+			fit: 1.0,
 			center: [0.0, 0.0],
 			zoom: 1.0,
 			width: 800,
@@ -516,6 +522,52 @@ mod tests {
 		let ((s_at, s_width), (b_at, b_width)) = (middle_and_width(shadow), middle_and_width(bird));
 		assert_eq!(s_width, b_width * BIRD_SHADOW_SCALE);
 		assert_eq!(s_at[1], b_at[1] - BIRD_SHADOW_DROP * BIRD_SHADOW_SCALE, "below it, the offset scaled");
+	}
+
+	/// A sprite that keeps its screen size (the settlement banner) covers as many of the
+	/// game's screen pixels at any frame scale: on a Retina display (fit 2, the frame
+	/// zoomed twice as far) it is as large in the world as at fit 1.
+	#[test]
+	fn a_sprite_that_keeps_its_screen_size_follows_the_fit() {
+		use squirrel_bb::scene::{SceneEntity, SceneSprite};
+		let banner = |scaling| SceneEntity {
+			id: 1,
+			pos: (0.0, 0.0),
+			shown: true,
+			sprites: vec![SceneSprite {
+				name: "banner".into(),
+				brush: "rock".into(),
+				color: 0xffff_ffff,
+				scale: 1.0,
+				visible: true,
+				offset: (0.0, 0.0),
+				flipped: false,
+				rotation: 0.0,
+				ignore_ambient: false,
+				scaling,
+				colorization: true,
+				frame: 0,
+			}],
+			labels: Vec::new(),
+		};
+		let width = |scaling, fit: f32| {
+			let scene = WorldScene {
+				entities: vec![banner(scaling)],
+				..WorldScene::default()
+			};
+			// The camera at zoom 2: fit / 2 frame pixels a world unit.
+			let view = WorldView {
+				fit,
+				center: [0.0, 0.0],
+				zoom: fit / 2.0,
+				width: 800,
+				height: 600,
+			};
+			middle_and_width(&world_quads(&scene, &registry(), &view, WorldFonts::default()).quads[0]).1
+		};
+		assert_eq!(width(false, 1.0), 4.0, "a screen pixel is 2 world units");
+		assert_eq!(width(false, 2.0), 4.0, "the same at fit 2");
+		assert_eq!(width(true, 2.0), 2.0, "a sprite that scales is its world size");
 	}
 
 	#[test]
@@ -545,6 +597,7 @@ mod tests {
 			..WorldScene::default()
 		};
 		let view = WorldView {
+			fit: 1.0,
 			center: [0.0, 0.0],
 			zoom: 1.0,
 			width: 800,
@@ -585,6 +638,7 @@ mod tests {
 			..WorldScene::default()
 		};
 		let view = WorldView {
+			fit: 1.0,
 			center: [0.0, 0.0],
 			zoom: 1.0,
 			width: 800,

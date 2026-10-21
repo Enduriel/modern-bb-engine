@@ -63,7 +63,7 @@ fn scene() -> WorldScene {
 }
 
 fn view() -> WorldView {
-	WorldView { center: [0.0, 0.0], zoom: 1.0, width: 640, height: 480 }
+	WorldView { fit: 1.0, center: [0.0, 0.0], zoom: 1.0, width: 640, height: 480 }
 }
 
 #[test]

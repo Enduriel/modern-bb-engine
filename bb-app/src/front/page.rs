@@ -184,6 +184,13 @@ impl Front {
 		self.session.host().release_memory();
 	}
 
+	/// Paint the page at `scale` frame pixels per pixel of the game's screen (the
+	/// renderer's `fit`), from the next step on: sharp on a Retina display or a screen
+	/// scaled to its window.
+	pub fn set_frame_scale(&mut self, scale: f64) {
+		self.session.set_frame_scale(scale);
+	}
+
 	/// The cursor moved to the screen pixel `(x, y)`: the page's mouse follows, and
 	/// whether it's over the UI is what the page shows there.
 	pub fn cursor(&mut self, x: i64, y: i64) {

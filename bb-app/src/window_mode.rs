@@ -1,8 +1,10 @@
 //! The game's video mode put on the window: the monitor it's on, and the window set to
-//! a [`Placement`] (see `bb_app::display`).
+//! a [`Placement`] (see `bb_app::display`). Sizes here are the game's screen's, in the
+//! system's units (`bb_app::screen_scale`: points on macOS, pixels elsewhere).
 
 use bb_app::display::{MIN_WINDOW, MonitorMode, Placement};
-use winit::dpi::PhysicalSize;
+use bb_app::screen_scale;
+use winit::dpi::{LogicalSize, PhysicalSize, Size};
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::{MonitorHandle, VideoModeHandle};
 use winit::window::{Fullscreen, Window, WindowAttributes};
@@ -10,7 +12,16 @@ use winit::window::{Fullscreen, Window, WindowAttributes};
 /// The size a game starts in without a monitor to go by.
 const NO_MONITOR: (u32, u32) = (1920, 1080);
 
-/// A monitor and its modes.
+/// A size of the game's screen as the window's: points on macOS, pixels elsewhere.
+fn window_size(width: u32, height: u32) -> Size {
+	if screen_scale::IN_POINTS {
+		LogicalSize::new(f64::from(width), f64::from(height)).into()
+	} else {
+		PhysicalSize::new(width, height).into()
+	}
+}
+
+/// A monitor and its modes, in the game's screen's units.
 pub struct Monitor {
 	handle: Option<MonitorHandle>,
 	pub size: (u32, u32),
@@ -33,19 +44,26 @@ impl Monitor {
 	}
 
 	fn of(handle: Option<MonitorHandle>) -> Monitor {
+		// winit's sizes are pixels: a mode's is its pixels too, so on macOS each is in
+		// points at the monitor's present scale (a HiDPI mode's points; the list only
+		// sizes windows there, fullscreen being borderless).
+		let scale = screen_scale::of(handle.as_ref().map_or(1.0, |m| m.scale_factor()));
 		let handles: Vec<VideoModeHandle> = handle.iter().flat_map(|m| m.video_modes()).collect();
 		let modes = handles
 			.iter()
-			.map(|m| MonitorMode {
-				width: m.size().width,
-				height: m.size().height,
-				bits: m.bit_depth(),
-				refresh_millihertz: m.refresh_rate_millihertz(),
+			.map(|m| {
+				let (width, height) = screen_scale::to_screen((m.size().width, m.size().height), scale);
+				MonitorMode {
+					width,
+					height,
+					bits: m.bit_depth(),
+					refresh_millihertz: m.refresh_rate_millihertz(),
+				}
 			})
 			.collect();
 		let size = handle.as_ref().map(|m| m.size()).filter(|s| s.width > 0 && s.height > 0);
 		Monitor {
-			size: size.map_or(NO_MONITOR, |s| (s.width, s.height)),
+			size: size.map_or(NO_MONITOR, |s| screen_scale::to_screen((s.width, s.height), scale)),
 			handle,
 			modes,
 			handles,
@@ -74,7 +92,8 @@ impl Monitor {
 	}
 }
 
-/// A new window's attributes for `placement` on `monitor`, for a screen of `size`. A
+/// A new window's attributes for `placement` on `monitor`, for a screen of `size` (in
+/// the screen's units). A
 /// fullscreen window asks for the screen's size too, for a system that leaves its size
 /// to it (gamescope does).
 pub fn attributes(placement: Placement, monitor: &Monitor, size: (u32, u32)) -> WindowAttributes {
@@ -82,16 +101,16 @@ pub fn attributes(placement: Placement, monitor: &Monitor, size: (u32, u32)) -> 
 	match placement {
 		Placement::Window { decorated, width, height } => attributes
 			.with_decorations(decorated)
-			.with_min_inner_size(PhysicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1))
-			.with_inner_size(PhysicalSize::new(width, height)),
+			.with_min_inner_size(window_size(MIN_WINDOW.0, MIN_WINDOW.1))
+			.with_inner_size(window_size(width, height)),
 		_ => attributes
-			.with_inner_size(PhysicalSize::new(size.0, size.1))
+			.with_inner_size(window_size(size.0, size.1))
 			.with_fullscreen(monitor.fullscreen(placement)),
 	}
 }
 
-/// Put `window` in `placement` on `monitor`, for a screen of `size`; the size it took
-/// at once, if it did (the system reports it later otherwise, as a resize). Going
+/// Put `window` in `placement` on `monitor`, for a screen of `size` (in the screen's
+/// units); the size it took at once (in pixels), if it did (the system reports it later otherwise, as a resize). Going
 /// fullscreen, it asks for the screen's size first, as [`attributes`] does.
 pub fn apply(window: &Window, placement: Placement, monitor: &Monitor, size: (u32, u32)) -> Option<PhysicalSize<u32>> {
 	match placement {
@@ -99,12 +118,12 @@ pub fn apply(window: &Window, placement: Placement, monitor: &Monitor, size: (u3
 			window.set_fullscreen(None);
 			window.set_decorations(decorated);
 			window.set_resizable(true);
-			window.set_min_inner_size(Some(PhysicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1)));
-			window.request_inner_size(PhysicalSize::new(width, height))
+			window.set_min_inner_size(Some(window_size(MIN_WINDOW.0, MIN_WINDOW.1)));
+			window.request_inner_size(window_size(width, height))
 		}
 		_ => {
-			window.set_min_inner_size(None::<PhysicalSize<u32>>);
-			let took = window.request_inner_size(PhysicalSize::new(size.0, size.1));
+			window.set_min_inner_size(None::<Size>);
+			let took = window.request_inner_size(window_size(size.0, size.1));
 			window.set_fullscreen(monitor.fullscreen(placement));
 			took
 		}

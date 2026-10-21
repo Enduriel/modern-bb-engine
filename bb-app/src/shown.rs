@@ -34,6 +34,8 @@ pub struct Look {
 pub struct CursorLook {
 	pub brush: String,
 	pub at: [f32; 2],
+	/// Frame pixels per pixel of its picture.
+	pub scale: f32,
 	/// The animation frame's picture (`BrushFrame` uv and rect), the same for a still
 	/// cursor at any time.
 	pub frame: Option<([f32; 4], [f32; 4])>,

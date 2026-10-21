@@ -204,7 +204,9 @@ impl Item {
 /// the particles, the birds, then the shown entities' visible labels. Labels and
 /// region names are listed only when `fonts` has their font.
 pub(crate) fn items<'s>(scene: &'s WorldScene, view: &WorldView, fonts: WorldFonts<'_>) -> impl Iterator<Item = Item> + 's {
-	let zoom = view.zoom;
+	// World units per pixel of the game's screen: what keeps its screen size is drawn a
+	// screen pixel (`view.fit` frame pixels) a pixel at any zoom.
+	let zoom = view.zoom / view.fit.max(f32::MIN_POSITIVE);
 	let pixel = 1.0 / zoom;
 	let (label_font, region_font) = (fonts.label.is_some(), fonts.region.is_some());
 	let shown = || scene.entities.iter().filter(|e| e.shown);

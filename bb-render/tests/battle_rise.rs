@@ -35,6 +35,7 @@ fn unit_quads(engine: &harness::GameEngine, id: i64, tile: (f64, f64)) -> (Vec<(
 	let mut without = scene.clone();
 	without.entities.retain(|e| e.id != id);
 	let view = WorldView {
+		fit: 1.0,
 		center: [tile.0 as f32, tile.1 as f32],
 		zoom: 1.0,
 		width: 800,

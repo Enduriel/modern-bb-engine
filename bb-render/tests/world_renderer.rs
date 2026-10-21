@@ -117,6 +117,7 @@ fn atlases_load_on_first_use() {
 	};
 	let registry = registry();
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 4,
@@ -172,6 +173,7 @@ fn a_hinted_atlas_goes_to_the_gpu_when_drawn_and_leaves_when_unused() {
 	renderer.draw_whole_atlases();
 	let registry = registry();
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 4,
@@ -239,6 +241,7 @@ fn a_missing_atlas_draws_the_texture_missing_picture() {
 	};
 	let registry = registry();
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 4,
@@ -278,6 +281,7 @@ fn flipped_tiles_mirror_their_picture_in_place() {
 	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
 	let registry = registry();
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 4,
@@ -323,6 +327,7 @@ fn details_draw_with_their_colour_and_saturation() {
 	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
 	let registry = registry();
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 4,
@@ -387,6 +392,7 @@ fn fog_covers_what_the_mask_keeps() {
 		..WorldScene::default()
 	};
 	let view = WorldView {
+		fit: 1.0,
 		center: [2.0, 2.0],
 		zoom: 1.0,
 		width: 4,
@@ -485,6 +491,7 @@ fn a_frame_from_a_page_draws_as_from_its_atlas() {
 	let registry = registry();
 	for zoom in [1.0, 4.0, 0.5] {
 		let view = WorldView {
+			fit: 1.0,
 			center: [0.0, 0.0],
 			zoom,
 			width: 8,
@@ -509,6 +516,7 @@ fn a_frame_from_a_page_draws_as_from_its_atlas() {
 	// or more later), then draws; leaving the campaign drops it.
 	let mut renderer = WorldRenderer::new(&gpu, files(), 1);
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 8,
@@ -600,6 +608,7 @@ fn an_animations_frames_load_together() {
 		..WorldScene::default()
 	};
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 8,
@@ -634,7 +643,7 @@ fn the_cursor_draws_from_a_page_as_from_its_atlas() {
 		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
 		loop {
 			renderer.begin_frame();
-			let stats = renderer.draw_cursor(&gpu, &target, &registry, "dot", 0.0, [0.0, 0.0]);
+			let stats = renderer.draw_cursor(&gpu, &target, &registry, "dot", 0.0, [0.0, 0.0], 1.0);
 			if stats.quads == 1 {
 				break;
 			}
@@ -669,6 +678,7 @@ fn a_kept_map_redraws_only_what_changed() {
 	let mut renderer = WorldRenderer::new(&gpu, Arc::new(files), 1);
 	let registry = registry();
 	let view = WorldView {
+		fit: 1.0,
 		center: [0.0, 0.0],
 		zoom: 1.0,
 		width: 8,
