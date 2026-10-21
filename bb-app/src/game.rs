@@ -358,13 +358,15 @@ impl Game {
 	/// rate, not the system's key repeat. What the key typed goes to the UI after it,
 	/// each repeat again; Tab types nothing there, nor does a key with Alt held (Windows
 	/// makes that a system character, which SFML doesn't take; probed 2026-10-21).
-	/// AltGr, which Windows reports as Ctrl+Alt, types.
+	/// AltGr, which Windows reports as Ctrl+Alt, types. Nor does a key with the Mac's
+	/// Command held (a shortcut there, as Cmd+C; `KEY_MODIFIER_COMMAND`).
 	pub fn key(&mut self, key: &Key) -> Result<(), String> {
 		if let Some(code) = key.engine {
 			self.engine().queue_key(code, key.down, self.modifier);
 		}
 		let alt_only = self.modifier & 4 != 0 && self.modifier & 2 == 0;
-		if key.down && !alt_only {
+		let command = self.modifier & squirrel_bb::KEY_MODIFIER_COMMAND != 0;
+		if key.down && !alt_only && !command {
 			for c in key.text.iter().flat_map(|t| t.chars()).filter(|&c| c != '\t') {
 				self.engine().queue_text(c, self.modifier);
 			}

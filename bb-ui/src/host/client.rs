@@ -401,6 +401,7 @@ wrap_client! {
 		lifetime: LifeSpanHandler,
 		requests: RequestHandler,
 		menu: ContextMenuHandler,
+		keys: Option<KeyboardHandler>,
 	}
 
 	impl Client {
@@ -426,6 +427,10 @@ wrap_client! {
 
 		fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
 			Some(self.menu.clone())
+		}
+
+		fn keyboard_handler(&self) -> Option<KeyboardHandler> {
+			self.keys.clone()
 		}
 
 		fn on_process_message_received(
@@ -459,5 +464,6 @@ pub(super) fn page_client(shared: Arc<Shared>) -> Client {
 		Lifetime::new(shared.clone()),
 		CrashRelay::new(shared),
 		NoContextMenu::new(),
+		super::edit_keys::keyboard_handler(),
 	)
 }

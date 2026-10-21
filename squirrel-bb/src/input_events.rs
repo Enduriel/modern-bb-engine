@@ -11,8 +11,21 @@
 //! key is released and scroll while one is held (a held key comes every frame, see
 //! `key_queue`); `KeyModifier` (`getModifier()`), a mask: 1 `Shift`, 2 `Control`, 4
 //! `Alt`; `getFire()`, which the original fills with the same as the state.
+//!
+//! The host may add [`KEY_MODIFIER_COMMAND`] to an event's mask for the UI page; the
+//! scripts never see it.
 
 use squirrel::{ClassBuilder, SQVM, SqClass, SqStrongRef};
+
+/// The Mac's Command key in a `KeyModifier` mask: `bb` sets it on macOS so the UI page
+/// gets it (`metaKey`, and Cmd+C and the other editing keys). The original had no such
+/// key, so `getModifier()` leaves it out and the scripts see Shift, Ctrl and Alt only.
+pub const KEY_MODIFIER_COMMAND: i64 = 8;
+
+/// The mask the scripts see: Shift, Ctrl and Alt.
+fn script_modifier(modifier: i64) -> i64 {
+	modifier & !KEY_MODIFIER_COMMAND
+}
 
 /// A mouse event: what button or motion, its state, and the cursor's screen position.
 #[derive(Clone, Copy, Debug)]
@@ -81,12 +94,12 @@ impl InputClasses {
 			.method("getState", |e: &mut MouseInput| e.state)
 			.method("getX", |e: &mut MouseInput| e.x)
 			.method("getY", |e: &mut MouseInput| e.y)
-			.method("getModifier", |e: &mut MouseInput| e.modifier)
+			.method("getModifier", |e: &mut MouseInput| script_modifier(e.modifier))
 			.build(vm);
 		let key = ClassBuilder::<KeyInput>::new("KeyEvent")
 			.method("getKey", |e: &mut KeyInput| e.key)
 			.method("getState", |e: &mut KeyInput| e.state)
-			.method("getModifier", |e: &mut KeyInput| e.modifier)
+			.method("getModifier", |e: &mut KeyInput| script_modifier(e.modifier))
 			.method("getFire", |e: &mut KeyInput| e.fire)
 			.build(vm);
 		InputClasses { mouse, key }
@@ -98,5 +111,17 @@ impl InputClasses {
 
 	pub(crate) fn key(&self, vm: &SQVM, input: KeyInput) -> SqStrongRef {
 		self.key.instantiate(vm, input)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn the_scripts_never_see_command() {
+		assert_eq!(script_modifier(KEY_MODIFIER_COMMAND), 0);
+		assert_eq!(script_modifier(KEY_MODIFIER_COMMAND | 2), 2);
+		assert_eq!(script_modifier(7), 7);
 	}
 }

@@ -150,9 +150,15 @@ pub fn modifier_bit(code: i64) -> Option<i64> {
 	}
 }
 
-/// The modifier mask for `getModifier()`.
+/// The modifier mask for `getModifier()`, and on macOS the Command key for the UI page
+/// ([`squirrel_bb::KEY_MODIFIER_COMMAND`], which the scripts don't see). Elsewhere the
+/// Super (Windows) key stays out, as in the original.
 pub fn modifier(state: ModifiersState) -> i64 {
-	i64::from(state.shift_key()) | i64::from(state.control_key()) << 1 | i64::from(state.alt_key()) << 2
+	let command = cfg!(target_os = "macos") && state.super_key();
+	i64::from(state.shift_key())
+		| i64::from(state.control_key()) << 1
+		| i64::from(state.alt_key()) << 2
+		| if command { squirrel_bb::KEY_MODIFIER_COMMAND } else { 0 }
 }
 
 #[cfg(test)]
@@ -218,6 +224,8 @@ mod tests {
 		assert_eq!(modifier(ModifiersState::SHIFT), 1);
 		assert_eq!(modifier(ModifiersState::CONTROL), 2);
 		assert_eq!(modifier(ModifiersState::ALT | ModifiersState::SHIFT), 5);
+		let command = if cfg!(target_os = "macos") { 8 } else { 0 };
+		assert_eq!(modifier(ModifiersState::SUPER | ModifiersState::CONTROL), 2 | command);
 		assert_eq!(modifier_bit(95), Some(2));
 		assert_eq!(modifier_bit(13), None);
 	}

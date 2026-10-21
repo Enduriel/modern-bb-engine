@@ -49,7 +49,7 @@ pub use native::{
 	WorldGrid, install_logging, install_natives, installed_dlc,
 };
 pub use source::{LoadedScript, ScriptSource};
-pub use input_events::{KeyInput, MouseInput};
+pub use input_events::{KEY_MODIFIER_COMMAND, KeyInput, MouseInput};
 pub use key_queue::QueuedInput;
 pub use state_stack::RootState;
 pub use native::user_stats::{OfflineStats, UserStats, UserStatsHandle};

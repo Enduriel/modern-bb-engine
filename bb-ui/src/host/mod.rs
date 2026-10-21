@@ -42,6 +42,7 @@ mod click_count;
 mod client;
 mod damage;
 mod display;
+mod edit_keys;
 #[cfg(target_os = "linux")]
 mod fonts;
 mod frame;

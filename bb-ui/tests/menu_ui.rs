@@ -266,6 +266,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	fps_module_shows_when_asked(&session)?;
 	scroll_bars_follow_their_content(&session)?;
 	copy_and_paste_use_the_games_clipboard(&session, &clipboard)?;
+	editing_keys_work_with_ctrl_and_cmd(&session, &clipboard)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -514,6 +515,115 @@ fn copy_and_paste_use_the_games_clipboard(session: &UiSession, clipboard: &Memor
 		format!("navigator.clipboard.writeText put {:?} on the clipboard", clipboard.read_text()),
 	)?;
 	eval("['bbClipA', 'bbClipB', 'bbClipP'].forEach(function (id) { var e = document.getElementById(id); e.parentNode.removeChild(e); }); 0")?;
+	Ok(())
+}
+
+/// The editing keys in a field: Ctrl+A, X, V, Z and Shift+Z everywhere, and on macOS
+/// the same with Cmd (there `bb_ui` runs them itself, see `edit_keys`). The page's
+/// keydown shows the modifier held (`ctrlKey` or `metaKey`) and the key's code, and a
+/// keydown the page cancels runs no command; none runs twice. Elsewhere Cmd (the
+/// Windows key's `metaKey`) edits nothing, as before.
+fn editing_keys_work_with_ctrl_and_cmd(session: &UiSession, clipboard: &MemoryClipboard) -> Result<(), String> {
+	let eval = |code: &str| session.eval(code).map_err(|e| format!("{e}\nin: {code}"));
+	let value = || -> Result<String, String> {
+		Ok(eval("document.getElementById('bbEdit').value")?.as_str().unwrap_or("").to_string())
+	};
+	eval(
+		"var i = document.createElement('input'); i.type = 'text'; i.id = 'bbEdit'; document.body.appendChild(i); \
+		 window.__bbEditKeys = []; window.__bbEditCancel = false; \
+		 window.__bbEditListener = function (e) { \
+			window.__bbEditKeys.push(e.keyCode + ':' + (e.ctrlKey ? 'c' : '') + (e.metaKey ? 'm' : '') + (e.shiftKey ? 's' : '')); \
+			if (window.__bbEditCancel) e.preventDefault(); }; \
+		 window.addEventListener('keydown', window.__bbEditListener, true); 0",
+	)?;
+	let host = session.host();
+	// One press of `code` with `held`, its modifier keys (but Cmd, which has no key code
+	// in the game) going down first, as the game sends them.
+	let press = |code: i32, held: Modifiers| {
+		if held.control {
+			host.key(0x11, true, Modifiers { shift: false, ..held });
+		}
+		if held.shift {
+			host.key(0x10, true, held);
+		}
+		host.key(code, true, held);
+		host.key(code, false, held);
+		if held.shift {
+			host.key(0x10, false, Modifiers { shift: false, ..held });
+		}
+		if held.control {
+			host.key(0x11, false, Modifiers::default());
+		}
+	};
+	let keys_seen = || eval("window.__bbEditKeys.length").ok().and_then(|n| n.as_i64()).unwrap_or(0);
+	// Press and wait until the page has had the keydown, then for `done`.
+	let edit = |code: i32, held: Modifiers, what: &str, done: &dyn Fn() -> bool| -> Result<(), String> {
+		let before = keys_seen();
+		press(code, held);
+		ensure(session.pump_until(Duration::from_secs(5), |_| keys_seen() > before), format!("the page didn't see {what}"))?;
+		ensure(session.pump_until(Duration::from_secs(5), |_| done()), format!("{what} left {:?}, clipboard {:?}", value(), clipboard.read_text()))
+	};
+	// Nothing more happens for `ms` (a command that would run twice, or one that
+	// shouldn't run at all, has had its time).
+	let settled = |ms: u64, what: &str, expected: &str| -> Result<(), String> {
+		session.pump_until(Duration::from_millis(ms), |_| false);
+		ensure(value()? == expected, format!("after {what} the field held {:?}, not {expected:?}", value()?))
+	};
+	let ctrl = Modifiers { control: true, ..Modifiers::default() };
+	let cmd = Modifiers { command: true, ..Modifiers::default() };
+	let mut kinds = vec![("Ctrl", ctrl)];
+	if cfg!(target_os = "macos") {
+		kinds.push(("Cmd", cmd));
+	}
+	for (name, held) in kinds {
+		let shifted = Modifiers { shift: true, ..held };
+		eval("var i = document.getElementById('bbEdit'); i.value = 'abc'; i.focus(); i.setSelectionRange(3, 3); window.__bbEditKeys = []; 0")?;
+		// Select all, cut: the field's text goes to the clipboard.
+		edit(0x41, held, &format!("{name}+A"), &|| {
+			eval("var i = document.getElementById('bbEdit'); i.selectionStart == 0 && i.selectionEnd == 3")
+				.is_ok_and(|v| v == Json::Bool(true))
+		})?;
+		edit(0x58, held, &format!("{name}+X"), &|| value().is_ok_and(|v| v.is_empty()) && clipboard.read_text().as_deref() == Some("abc"))?;
+		// Undo brings it back, redo cuts it again.
+		edit(0x5A, held, &format!("{name}+Z"), &|| value().is_ok_and(|v| v == "abc"))?;
+		edit(0x5A, shifted, &format!("{name}+Shift+Z"), &|| value().is_ok_and(|v| v.is_empty()))?;
+		// Paste once, not twice.
+		edit(0x56, held, &format!("{name}+V"), &|| value().is_ok_and(|v| v == "abc"))?;
+		settled(300, &format!("{name}+V"), "abc")?;
+		// A keydown the page cancels pastes nothing.
+		eval("window.__bbEditCancel = true; 0")?;
+		let before = keys_seen();
+		press(0x56, held);
+		ensure(session.pump_until(Duration::from_secs(5), |_| keys_seen() > before), format!("the page didn't see the cancelled {name}+V"))?;
+		eval("window.__bbEditCancel = false; 0")?;
+		settled(300, &format!("a cancelled {name}+V"), "abc")?;
+		// What the page saw: the key's code and the modifier held, nothing else.
+		let mark = if held.command { "m" } else { "c" };
+		let expected: Vec<String> = ["65", "88", "90", "90s", "86", "86"]
+			.iter()
+			.map(|k| {
+				let (code, shift) = k.split_at(2);
+				format!("{code}:{mark}{shift}")
+			})
+			.collect();
+		let seen = eval("window.__bbEditKeys.filter(function (k) { return k.indexOf('17:') != 0 && k.indexOf('16:') != 0; }).join(' ')")?;
+		ensure(
+			seen.as_str() == Some(expected.join(" ").as_str()),
+			format!("with {name} the page's keydowns were {}, not {:?}", seen.to_text(), expected.join(" ")),
+		)?;
+	}
+	if !cfg!(target_os = "macos") {
+		// Cmd isn't an editing key here.
+		eval("var i = document.getElementById('bbEdit'); i.value = ''; i.focus(); 0")?;
+		let before = keys_seen();
+		press(0x56, cmd);
+		ensure(session.pump_until(Duration::from_secs(5), |_| keys_seen() > before), "the page didn't see Cmd+V")?;
+		settled(300, "Cmd+V (not macOS)", "")?;
+	}
+	eval(
+		"window.removeEventListener('keydown', window.__bbEditListener, true); \
+		 var i = document.getElementById('bbEdit'); i.parentNode.removeChild(i); 0",
+	)?;
 	Ok(())
 }
 
@@ -1062,7 +1172,7 @@ fn modifiers_reach_the_pages_mouse_events(session: &UiSession) -> Result<(), Str
 		true",
 	)?;
 	let host = session.host();
-	let only = |control, alt, shift| Modifiers { control, alt, shift };
+	let only = |control, alt, shift| Modifiers { control, alt, shift, command: false };
 	host.set_modifiers(only(true, false, false));
 	host.mouse_move(7, 7);
 	host.mouse_button(7, 7, MouseButton::Left, true);

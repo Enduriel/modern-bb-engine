@@ -12,12 +12,14 @@ pub struct Modifiers {
 	pub shift: bool,
 	pub control: bool,
 	pub alt: bool,
+	/// The Mac's Command key (`metaKey`): only `bb` on macOS sends it.
+	pub command: bool,
 }
 
 impl Modifiers {
 	/// CEF's `EVENTFLAG_*` bits.
 	pub(super) fn flags(self) -> u32 {
-		u32::from(self.shift) << 1 | u32::from(self.control) << 2 | u32::from(self.alt) << 3
+		u32::from(self.shift) << 1 | u32::from(self.control) << 2 | u32::from(self.alt) << 3 | u32::from(self.command) << 7
 	}
 }
 
@@ -107,12 +109,14 @@ pub fn coherent_key_code(code: i64) -> i32 {
 	}
 }
 
-/// The modifier keys in the engine's `KeyModifier` mask (Shift 1, Ctrl 2, Alt 4).
+/// The modifier keys in the engine's `KeyModifier` mask (Shift 1, Ctrl 2, Alt 4), and
+/// the host's Command bit ([`squirrel_bb::KEY_MODIFIER_COMMAND`]).
 pub fn modifiers_of_mask(mask: i64) -> Modifiers {
 	Modifiers {
 		shift: mask & 1 != 0,
 		control: mask & 2 != 0,
 		alt: mask & 4 != 0,
+		command: mask & squirrel_bb::KEY_MODIFIER_COMMAND != 0,
 	}
 }
 
@@ -159,7 +163,8 @@ mod tests {
 		assert_eq!(coherent_key_code(97), 0x12);
 		// The function keys aren't in its table.
 		assert_eq!(coherent_key_code(75), -1);
-		assert_eq!(modifiers_of_mask(6), Modifiers { shift: false, control: true, alt: true });
+		assert_eq!(modifiers_of_mask(6), Modifiers { shift: false, control: true, alt: true, command: false });
+		assert_eq!(modifiers_of_mask(8), Modifiers { command: true, ..Modifiers::default() });
 	}
 
 	#[test]
@@ -169,8 +174,9 @@ mod tests {
 			shift: true,
 			control: true,
 			alt: true,
+			command: true,
 		};
-		assert_eq!(all.flags(), 0b1110);
+		assert_eq!(all.flags(), 0b1000_1110);
 		assert_eq!(MouseButton::Right.held_flag(), 1 << 6);
 	}
 }
