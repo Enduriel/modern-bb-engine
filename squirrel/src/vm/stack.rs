@@ -14,6 +14,12 @@ use std::ffi::{CString, c_char};
 use super::SQVM;
 use crate::{SQ_OK, SqObjectType};
 
+/// A number on the stack, as [`SQVM::stack_number`] reads it.
+enum StackNumber {
+	Integer(i64),
+	Float(f64),
+}
+
 impl SQVM {
 	/// Number of values currently on the stack. During a native call this
 	/// includes `this` (index 1), the call arguments, and any bound free
@@ -66,10 +72,10 @@ impl SQVM {
 	/// our deterministic stand-in (listed in docs/differences.md: the garbage can't be
 	/// reproduced). The width stays 64-bit.
 	pub(crate) fn get_int_lenient(&self, idx: i64) -> i64 {
-		match self.get_type(idx) {
-			SqObjectType::Integer => self.get_integer(idx).unwrap_or(0),
-			SqObjectType::Float => self.get_float(idx).map_or(0, |f| f as i64),
-			_ => 0,
+		match self.stack_number(idx) {
+			Some(StackNumber::Integer(n)) => n,
+			Some(StackNumber::Float(f)) => f as i64,
+			None => 0,
 		}
 	}
 
@@ -78,10 +84,27 @@ impl SQVM {
 	/// (the original reads uninitialised memory there, typically a pointer's bits as a
 	/// tiny f32). The float counterpart to [`get_int_lenient`](Self::get_int_lenient).
 	pub(crate) fn get_float_lenient(&self, idx: i64) -> f64 {
-		match self.get_type(idx) {
-			SqObjectType::Float => self.get_float(idx).unwrap_or(0.0),
-			SqObjectType::Integer => self.get_integer(idx).map_or(0.0, |n| n as f64),
-			_ => 0.0,
+		match self.stack_number(idx) {
+			Some(StackNumber::Float(f)) => f,
+			Some(StackNumber::Integer(n)) => n as f64,
+			None => 0.0,
+		}
+	}
+
+	/// The integer or float at `idx`, read from the stack once (a native's numeric
+	/// arguments are its most common ones), or `None` for any other value.
+	fn stack_number(&self, idx: i64) -> Option<StackNumber> {
+		let mut raw = std::mem::MaybeUninit::<squirrel_sys::HSQOBJECT>::uninit();
+		// SAFETY: on success `sq_getstackobj` initializes `raw`, and the union field read
+		// is the one its type tag names.
+		if unsafe { squirrel_sys::sq_getstackobj(self.as_ptr(), idx, raw.as_mut_ptr()) } < 0 {
+			return None;
+		}
+		let raw = unsafe { raw.assume_init() };
+		match SqObjectType::try_from(raw._type) {
+			Ok(SqObjectType::Integer) => Some(StackNumber::Integer(unsafe { raw._unVal.nInteger })),
+			Ok(SqObjectType::Float) => Some(StackNumber::Float(unsafe { raw._unVal.fFloat })),
+			_ => None,
 		}
 	}
 

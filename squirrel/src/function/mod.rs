@@ -40,7 +40,7 @@ pub(crate) use strong_ref::CallArgs;
 
 use std::ffi::CString;
 
-use crate::{SQ_ERROR, SQ_OK, SQVM};
+use crate::{SQ_ERROR, SQVM};
 
 /// A native function callable from Squirrel.
 ///
@@ -87,19 +87,15 @@ pub trait SqFunction {
 unsafe extern "C" fn trampoline(vm: squirrel_sys::HSQUIRRELVM) -> squirrel_sys::SQInteger {
 	let vm = unsafe { SQVM::from_raw(vm) };
 
-	// The boxed `SqFunction` is the single free variable bound by
-	// `sq_newclosure`, so it sits at the very top of the stack (above `this`
-	// and the call arguments).
-	let top = unsafe { squirrel_sys::sq_gettop(vm.as_ptr()) };
-	let mut ptr = std::ptr::null_mut();
-	let res =
-		unsafe { squirrel_sys::sq_getuserdata(vm.as_ptr(), top, &mut ptr, std::ptr::null_mut()) };
-	if res != SQ_OK {
+	// The boxed `SqFunction` is the single free variable bound by `sq_newclosure`, which
+	// owns it; the closure also carries its address (see `push_closure`).
+	let ptr = unsafe { squirrel_sys::sq_getnativeclosureup(vm.as_ptr()) };
+	if ptr.is_null() {
 		return SQ_ERROR;
 	}
 
 	let func = unsafe { &mut *(ptr as *mut Box<dyn SqFunction>) };
-	let Some(depth) = crate::profile::native_enter(func.label()) else { return func.invoke(&vm) };
+	let Some(depth) = crate::profile::native_enter(|| func.label()) else { return func.invoke(&vm) };
 	let result = func.invoke(&vm);
 	crate::profile::native_exit(depth);
 	result
@@ -118,10 +114,13 @@ impl SQVM {
 			.typemask()
 			.map(|mask| CString::new(mask).expect("typemask contained an interior NUL byte"));
 
-		self.squirrel_alloc(func);
+		let up = self.squirrel_alloc(func);
 		unsafe {
-			// 1 free variable: the boxed `SqFunction` allocated just above.
+			// 1 free variable: the boxed `SqFunction` allocated just above, which keeps it
+			// alive; the closure (and any clone of it) carries its address for the
+			// trampoline. (The free variable still sits above the call's arguments.)
 			squirrel_sys::sq_newclosure(self.as_ptr(), Some(trampoline), 1);
+			squirrel_sys::sq_setnativeclosureup(self.as_ptr(), -1, up);
 
 			// Apply the schema to the native closure now sitting on top of the
 			// stack. Squirrel compiles and copies the typemask, so the temporary

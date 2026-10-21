@@ -75,14 +75,16 @@ unsafe extern "C" fn debug_hook(
 	}
 }
 
-/// A native function labelled `label` is called (each label a function's own string,
+/// A native function labelled `label()` is called (each label a function's own string,
 /// or a type's name, shared by the functions of that type): the open-call depth to hand
-/// [`native_exit`] when it returns, or `None` when not profiling.
+/// [`native_exit`] when it returns, or `None` when not profiling. The label is only
+/// asked for while profiling.
 #[inline]
-pub(crate) fn native_enter(label: &str) -> Option<usize> {
+pub(crate) fn native_enter<'a>(label: impl FnOnce() -> &'a str) -> Option<usize> {
 	if ATTACHED.load(Ordering::Relaxed) == 0 {
 		return None;
 	}
+	let label = label();
 	let key = Key { a: label.as_ptr() as usize, b: label.len(), line: -1 };
 	event(|r, now| {
 		r.enter(now, key, None, || FunctionInfo {
