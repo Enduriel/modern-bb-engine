@@ -99,6 +99,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		saves: None,
 		cef_log: None,
 		store: Default::default(),
+
+		display: None,
 	};
 	// The saves (and MSU's storages) stay in memory: the player's are never touched.
 	let mut game = Game::start(gpu, &boot)?;

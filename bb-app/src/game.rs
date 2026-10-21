@@ -86,6 +86,10 @@ pub struct Boot<'a> {
 	pub cef_log: Option<std::path::PathBuf>,
 	/// The store the install is from, and the achievements' service.
 	pub store: Store,
+	/// The game window's display, whose clipboard the page's copy and paste use (on
+	/// Wayland, served through the window's connection); the system's clipboard
+	/// programs without one (the page's front only).
+	pub display: Option<winit::event_loop::OwnedDisplayHandle>,
 }
 
 /// The store the install is from (the scripts' `isSteamBuild()`), and the service the
@@ -158,6 +162,7 @@ impl Game {
 			saves: None,
 			cef_log: None,
 			store: Store::default(),
+			display: None,
 		};
 		Game::start(gpu, &boot)
 	}

@@ -357,6 +357,8 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 		saves: None,
 		cef_log: None,
 		store: Store::default(),
+
+		display: None,
 	};
 	let game = Game::start(&gpu, &boot)?;
 	let (w, h) = game.screen();

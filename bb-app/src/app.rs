@@ -287,6 +287,8 @@ impl App {
 				steam_build: options.steam_build,
 				user_stats: options.steam.clone().map(|s| s as Rc<dyn squirrel_bb::UserStats>),
 			},
+	
+			display: Some(event_loop.owned_display_handle()),
 		};
 		let mut game = Game::start(&gpu, &boot)?;
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());

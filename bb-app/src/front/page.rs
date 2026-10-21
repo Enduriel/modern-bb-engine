@@ -47,7 +47,10 @@ impl Front {
 			steam_build: boot.store.steam_build,
 			cef_log: boot.cef_log.clone(),
 			// Copy and paste reach the player's other programs, as the original's do.
-			clipboard: std::sync::Arc::new(crate::clipboard::SystemClipboard::new()),
+			clipboard: std::sync::Arc::new(match &boot.display {
+				Some(display) => crate::clipboard::SystemClipboard::for_window(display),
+				None => crate::clipboard::SystemClipboard::new(),
+			}),
 			sink: Some(super::gpu_page::sink(page.clone())),
 			..HostConfig::default()
 		};
