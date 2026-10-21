@@ -92,6 +92,8 @@ impl Session<'_> {
 		self.day_now = day;
 		self.next_save_day = day + self.o.save_every_days;
 		self.world.contract = None;
+		// A company to fight with from the start (some origins begin with very few).
+		self.keep_alive();
 		let state = self.eval("state", "::__soakState(false)");
 		self.action(&format!("campaign {k} started: seed {seed}, {}: {state}", self.o.scenario));
 		Json::new("campaign_start").str("campaign_seed", &seed).str("scenario", &self.o.scenario).str("state", &state).emit();
@@ -208,7 +210,7 @@ impl Session<'_> {
 	}
 
 	/// Top up what the company needs to go on (recorded: it changes the game).
-	fn keep_alive(&mut self) {
+	pub fn keep_alive(&mut self) {
 		let note = self.eval("keep alive", "::__soakKeepAlive()");
 		if !note.is_empty() {
 			self.stats.keep_alive += 1;

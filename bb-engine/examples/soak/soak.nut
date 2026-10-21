@@ -52,6 +52,145 @@
 	return [null, 1, "?"];
 };
 
+// While set (from a save/load check's "before" snapshot to its "after"), the world part
+// of the autoplay does nothing: an event it answered in between (a contract popup that
+// fires right after a load, paying a bribe) would show as a difference the load didn't
+// make.
+::__soakHold <- false;
+
+// A unit's fighting strength: hit points plus head and body armour.
+::__soakStrength <- function( _e )
+{
+	return _e.getHitpoints() + _e.getArmor(::Const.BodyPart.Head) + _e.getArmor(::Const.BodyPart.Body);
+};
+
+// The battle's two sides' strength: [ours, theirs, our units, their units].
+::__soakSides <- function()
+{
+	local r = [0.0, 0.0, 0, 0];
+	foreach (faction in ::Tactical.Entities.getAllInstances())
+		foreach (e in faction)
+			if (e != null && e.isAlive() && !e.isDying() && !e.isNonCombatant())
+			{
+				local i = e.isAlliedWithPlayer() ? 0 : 1;
+				r[i] += ::__soakStrength(e);
+				r[i + 2]++;
+			}
+	return r;
+};
+
+// Cut a unit's armour (its armour items' and its own) to `_scale`.
+::__soakScaleArmor <- function( _e, _scale )
+{
+	local items = _e.getItems();
+	foreach (slot in [::Const.ItemSlot.Head, ::Const.ItemSlot.Body])
+	{
+		local it = items.getItemAtSlot(slot);
+		if (it != null) try { it.setArmor((it.getArmor() * _scale).tointeger()); } catch (e) {}
+	}
+	local b = _e.getBaseProperties();
+	foreach (part in [::Const.BodyPart.Head, ::Const.BodyPart.Body]) b.Armor[part] = (b.Armor[part] * _scale).tointeger();
+	_e.getSkills().update();
+};
+
+// When the enemy's strength (hit points and armour, more units counting for more)
+// outweighs under half the company's, every enemy's hit points and armour are cut to
+// match: the AI fights for the company, worse than a player, and a player would have
+// fled; the run is to go on. "" or what it did.
+::__soakEvenOdds <- function()
+{
+	local sides = ::__soakSides();
+	local ours = sides[0], theirs = sides[1];
+	if (ours == 0 || theirs == 0) return "";
+	// Outnumbered, the company is surrounded: their strength counts for more.
+	local weight = sides[3] > sides[2] ? ::Math.minf(2.0, sides[3] * 1.0 / ::Math.max(1, sides[2])) : 1.0;
+	local target = 0.45 * ours;
+	if (theirs * weight <= target) return "";
+	local scale = target / (theirs * weight);
+	foreach (faction in ::Tactical.Entities.getAllInstances())
+		foreach (e in faction)
+			if (e != null && e.isAlive() && !e.isAlliedWithPlayer())
+			{
+				e.setHitpoints(::Math.max(1, (e.getHitpoints() * scale).tointeger()));
+				::__soakScaleArmor(e, scale);
+			}
+	return "the enemy's hit points and armour cut to " + (scale * 100).tointeger() + "% (theirs " + theirs.tointeger() + " in " + sides[3]
+		+ " units, ours " + ours.tointeger() + " in " + sides[2] + ")";
+};
+
+// Retreat, once, from a battle that is lost anyway (from the second round on, the
+// company at less than half the enemy's strength), as a player presses Flee: the
+// brothers walk off the field, so the campaign goes on. "" or what it did.
+::__soakMaybeRetreat <- function()
+{
+	local st = ::Tactical.State;
+	if (st.isBattleEnded() || st.m.IsAutoRetreat || st.m.IsFleeing) return "";
+	local d = st.m.TacticalDialogScreen;
+	// The Flee button was pressed: once its dialog is up, Retreat in it.
+	if ("__soakRetreat" in st.m)
+	{
+		if (st.m.__soakRetreat == 1 && d != null && d.isVisible() && !d.isAnimating())
+		{
+			st.m.__soakRetreat = 2;
+			st.tactical_flee_screen_onFleePressed();
+		}
+		return "";
+	}
+	if (st.m.StrategicProperties != null && st.m.StrategicProperties.IsFleeingProhibited) return "";
+	if (::Tactical.TurnSequenceBar.getCurrentRound() < 2 || st.m.MenuStack.hasBacksteps()) return "";
+	local sides = ::__soakSides();
+	if (sides[2] == 0 || sides[0] * 2 >= sides[1]) return "";
+	// The brothers are the player's again, as in a battle a player fights (the AI's
+	// retreat then counts as the company's), and the autoplay leaves their turns to the
+	// retreat (until the battle is over).
+	foreach (bro in ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player))
+	{
+		if (!("__autoplayHanded" in bro.m)) continue;
+		delete bro.m.__autoplayHanded;
+		bro.m.IsControlledByPlayer = true;
+		local agent = ::new("scripts/ai/tactical/player_agent");
+		agent.setActor(bro);
+		bro.setAIAgent(agent);
+		if (bro.rawin("kill")) delete bro.kill;
+		if (bro.isTurnStarted()) agent.onTurnStarted();
+	}
+	::__autoplayFight = false;
+	::__autoplayPlayer = function() {};
+	st.m.__soakRetreat <- 1;
+	st.topbar_options_onFleeButtonClicked();
+	return "battle: retreat (ours " + sides[0].tointeger() + " in " + sides[2] + " units, theirs " + sides[1].tointeger() + " in " + sides[3] + ")";
+};
+
+// Put brothers from the reserve rows into the battle line while it has room (vanilla
+// never moves one there: once the line dies, one brother fights alone), the
+// healthiest first. "" or what it did.
+::__soakFillFormation <- function()
+{
+	local a = ::World.Assets, max = a.getBrothersMaxInCombat(), inLine = 0, reserves = [];
+	foreach (b in ::World.getPlayerRoster().getAll())
+		if (b.getPlaceInFormation() <= 17) inLine++; else reserves.push(b);
+	if (inLine >= max || reserves.len() == 0) return "";
+	reserves.sort(function( _a, _b ) { return _b.getHitpoints() <=> _a.getHitpoints(); });
+	local moved = 0;
+	foreach (b in reserves)
+	{
+		if (inLine + moved >= max) break;
+		b.setPlaceInFormation(255);
+		moved++;
+	}
+	a.updateFormation();
+	return " formation+" + moved;
+};
+
+// The hostile parties' strength around the company, against the company's.
+::__soakWorldOdds <- function()
+{
+	local p = ::World.State.getPlayer(), theirs = 0.0;
+	foreach (e in ::World.getAllEntitiesAtPos(p.getPos(), ::Const.World.CombatSettings.CombatPlayerDistance * 2))
+		if (e.isParty() && e.getID() != p.getID() && !e.isAlliedWithPlayer()) theirs += e.getStrength();
+	return [p.getStrength(), theirs];
+};
+
 ::__soakAutoplayBase <- ::__autoplay;
 ::__autoplay = function()
 {
@@ -77,10 +216,15 @@
 				+ ::Tactical.Entities.getHostilesNum() + " hostile; " + retreated + " retreated, fleeing " + st.m.IsFleeing);
 		}
 		::__soakAutoplayBase();
-		// The brothers the autoplay handed to the AI stay and fight: in the player's
-		// faction the AI's retreat has no odds check (it is the player's auto-retreat), so
-		// they would all walk off the field at once.
-		if (!st.isBattleEnded())
+		if (!st.isBattleEnded() && ::Tactical.TurnSequenceBar.getActiveEntity() != null)
+		{
+			local note = ::__soakMaybeRetreat();
+			if (note != "") ::__soakNote(note);
+		}
+		// The brothers the autoplay handed to the AI stay and fight (unless retreating):
+		// in the player's faction the AI's retreat has no odds check (it is the player's
+		// auto-retreat), so they would all walk off the field at once.
+		if (!st.isBattleEnded() && !st.m.IsAutoRetreat)
 			foreach (bro in ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player))
 				if ("__autoplayHanded" in bro.m)
 				{
@@ -89,7 +233,9 @@
 				}
 		return;
 	}
-	if (!("State" in ::World) || ::World.State == null) return;
+	if (!("State" in ::World) || ::World.State == null || ::__soakHold) return;
+	// Back from a battle the company retreated from: the next one is fought again.
+	if (!::__autoplayFight) { ::__autoplayFight = true; ::__autoplayPlayer = null; }
 	local state = ::World.State;
 	local screen = state.getEventScreen();
 	if (screen != null && screen.isVisible() && !screen.isAnimating())
@@ -107,7 +253,17 @@
 	else if (::__autoplayEngage && !::__autoplayEngaged && !dialog.isAnimating())
 	{
 		::__autoplayEngaged = true;
-		::__soakNote("engage");
+		// A fight the company may fall back from (it attacked, or escorts) and would lose:
+		// fall back, as a player would.
+		local odds = ::__soakWorldOdds();
+		if ((state.m.EngageByPlayer || state.m.EscortedEntity != null) && odds[1] > odds[0] * 1.5)
+		{
+			::__soakNote("fall back (strength ours " + odds[0].tointeger() + ", theirs " + odds[1].tointeger() + ")");
+			dialog.onCancelButtonPressed();
+			return;
+		}
+		local formation = ::__soakFillFormation();
+		::__soakNote("engage" + (formation == "" ? "" : " (keep alive:" + formation + ")"));
 		dialog.onEngageButtonPressed();
 	}
 };
@@ -145,7 +301,9 @@
 			towns.push([t.getDistanceTo(p), t]);
 	if (towns.len() == 0) return "";
 	towns.sort(function( _a, _b ) { return _a[0] <=> _b[0]; });
-	local pool = ::__soakRand(10) < 7 ? ::Math.min(6, towns.len()) : towns.len();
+	// Mostly a near one; in the first ten days always (far through hostile land, a new
+	// company dies on the way).
+	local pool = ::__soakRand(10) < 7 || ::World.getTime().Days < 10 ? ::Math.min(6, towns.len()) : towns.len();
 	for (local tries = 0; tries < 6; tries++)
 	{
 		local t = towns[::__soakRand(pool)][1];
@@ -278,6 +436,7 @@
 			local name = e.getName();
 			local r = mod.onHireRosterEntry(e.getID());
 			s = town.getName() + ": hire " + name + " -> " + (r.Result == 0 ? "hired" : "refused " + r.Result);
+			if (r.Result == 0) s += ::__soakFillFormation();
 		}
 		mod.onLeaveButtonPressed();
 		return s;
@@ -321,7 +480,17 @@
 	foreach (bro in roster.getAll())
 		if (bro.getHitpoints() < bro.getHitpointsMax() * 0.5) { bro.setHitpoints(bro.getHitpointsMax()); healed++; }
 	if (healed != 0) s += " healed " + healed;
+	s += ::__soakFillFormation();
 	return s;
+};
+
+// Whether the world is quiet enough to save and load as a player can (from the menu,
+// which a player reaches only with no screen open over the map).
+::__soakQuiet <- function()
+{
+	local w = ::World.State;
+	return !w.m.EventScreen.isVisible() && !w.m.MenuStack.hasBacksteps() && !w.m.WorldTownScreen.isVisible()
+		&& (w.m.CombatDialog == null || !w.m.CombatDialog.isVisible()) && !::LoadingScreen.isVisible() && !w.m.IsGameOver;
 };
 
 // What must survive a save and load: the clock, money, the company and the stash.

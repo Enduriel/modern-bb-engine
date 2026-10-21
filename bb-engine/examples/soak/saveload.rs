@@ -11,11 +11,25 @@ const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 
 impl Session<'_> {
 	pub fn save_and_load(&mut self) -> Result<(), End> {
+		// As a player saves and loads: from the menu, which needs the map without a screen
+		// over it, and pauses the world. Not now if a screen is up (the next tick tries).
+		if !self.holds("quiet", "::__soakQuiet()") {
+			return self.frames(10);
+		}
 		self.next_save_day = self.day_now + self.o.save_every_days;
 		self.save_count += 1;
 		let k = self.save_count;
 		let name = format!("bb_probe_soak_{}_{k}", self.n);
 		self.context("save");
+		// Paused, and the autoplay held, until the loaded campaign is compared.
+		let _ = self.script("pause", "::__soakHold = true; ::World.State.setPause(true);");
+		let result = self.save_and_load_paused(k, &name);
+		let _ = self.script("release", "::__soakHold = false;");
+		result
+	}
+
+	fn save_and_load_paused(&mut self, k: u32, name: &str) -> Result<(), End> {
+		let name = name.to_string();
 		let before = self.eval("invariants", "::__soakInvariants()");
 		let saved = self.script("save", &format!("::World.State.saveCampaign(\"{name}\");"));
 		let file = self.save_dir.join(format!("{name}.sav"));
@@ -76,7 +90,8 @@ impl Session<'_> {
 
 	/// Quit to the main menu, and load from its Load Campaign page.
 	fn load_from_menu(&mut self, name: &str) -> Result<bool, End> {
-		let _ = self.script("quit", "::World.State.exitGame();");
+		// The menu closes before quitting, as the window's quit does.
+		let _ = self.script("quit", "::World.State.m.MenuStack.popAll(true); ::World.State.exitGame();");
 		if !self.until(6000, AT_MENU)? {
 			return Ok(false);
 		}

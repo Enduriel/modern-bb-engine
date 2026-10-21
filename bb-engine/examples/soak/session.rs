@@ -25,6 +25,9 @@ pub const FRAME_MS: f64 = 1000.0 / 60.0;
 const STALL_FRAMES: i64 = 1800;
 /// A frame error repeated this many frames in a row ends the session.
 const FRAME_ERRORS_IN_A_ROW: u32 = 600;
+/// Frames of progress after a stall before the stall ladder starts again from its
+/// first step (four times a stall's length).
+const STALL_RESET_FRAMES: i64 = 4 * STALL_FRAMES;
 
 /// Where the game is, as the main loop sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +64,8 @@ pub struct Stats {
 	pub battles: i64,
 	pub battles_won: i64,
 	pub battles_weakened: i64,
+	/// Battles the company fought with at most one brother on the field (of more).
+	pub battles_lone: i64,
 	pub events_answered: i64,
 	pub contracts_offered: i64,
 	pub contracts_taken: i64,
@@ -82,13 +87,14 @@ pub struct Stats {
 impl Stats {
 	fn line(&self) -> String {
 		format!(
-			"campaigns={} games_over={} days={} battles={} battles_won={} battles_weakened={} events_answered={} contracts_offered={} contracts_taken={} contracts_ended={} towns_entered={} sold={} bought={} hired={} saves={} loads={} save_failures={} load_failures={} invariant_mismatches={} keep_alive={} stalls={} frames={}",
+			"campaigns={} games_over={} days={} battles={} battles_won={} battles_weakened={} battles_lone={} events_answered={} contracts_offered={} contracts_taken={} contracts_ended={} towns_entered={} sold={} bought={} hired={} saves={} loads={} save_failures={} load_failures={} invariant_mismatches={} keep_alive={} stalls={} frames={}",
 			self.campaigns,
 			self.games_over,
 			self.days,
 			self.battles,
 			self.battles_won,
 			self.battles_weakened,
+			self.battles_lone,
 			self.events_answered,
 			self.contracts_offered,
 			self.contracts_taken,
@@ -134,6 +140,9 @@ pub struct Session<'a> {
 	still_ticks: u32,
 	still_since: i64,
 	pub stall_level: u32,
+	/// The frame of the last stall: the ladder steps back down only after
+	/// [`STALL_RESET_FRAMES`] of progress since (a nudge's own stir is not a way out).
+	last_stall: i64,
 	last_beat: Instant,
 	last_stat: Instant,
 	last_stubs: Instant,
@@ -226,6 +235,7 @@ fn run(o: &Options, n: u32) -> Result<End, String> {
 		still_ticks: 0,
 		still_since: 0,
 		stall_level: 0,
+		last_stall: 0,
 		last_beat: Instant::now(),
 		last_stat: Instant::now(),
 		last_stubs: Instant::now(),
@@ -451,7 +461,9 @@ impl Session<'_> {
 			self.fingerprint = print;
 			self.still_ticks = 0;
 			self.still_since = self.stats.frames;
-			self.stall_level = 0;
+			if self.stats.frames - self.last_stall >= STALL_RESET_FRAMES {
+				self.stall_level = 0;
+			}
 			return Ok(());
 		}
 		self.still_ticks += 1;
@@ -461,6 +473,7 @@ impl Session<'_> {
 		}
 		self.still_ticks = 0;
 		self.still_since = self.stats.frames;
+		self.last_stall = self.stats.frames;
 		self.stall_level += 1;
 		self.stats.stalls += 1;
 		let detail = self.eval("stall state", "::__soakState(true)");

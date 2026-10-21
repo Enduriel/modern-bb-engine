@@ -10,6 +10,8 @@ const TICK: u32 = 30;
 /// and between weakenings after that.
 const LONG_BATTLE: u32 = 7200;
 const WEAKEN_EVERY: u32 = 1200;
+/// Battle frames between progress lines in the action log.
+const PROGRESS_EVERY: u32 = 6000;
 
 const RESULTS: [&str; 5] = ["none", "enemy retreated", "enemy destroyed", "player retreated", "player destroyed"];
 
@@ -30,31 +32,20 @@ foreach (faction in ::Tactical.Entities.getAllInstances())
 		}
 "#;
 
-/// At a battle's start, when the enemy's hit points outweigh the company's: every enemy's
-/// cut so theirs come to 80% of the company's. The AI fights for the company, worse than
-/// a player, and a player would have fled; the run is to go on. "" or what it did.
-const EVEN_ODDS: &str = r#"(function() {
-	local ours = 0.0, theirs = 0.0;
-	foreach (faction in ::Tactical.Entities.getAllInstances())
-		foreach (e in faction)
-			if (e != null && e.isAlive() && !e.isNonCombatant())
-			{
-				if (e.isAlliedWithPlayer()) ours += e.getHitpoints(); else theirs += e.getHitpoints();
-			}
-	if (ours == 0 || theirs <= ours) return "";
-	local scale = 0.8 * ours / theirs;
-	foreach (faction in ::Tactical.Entities.getAllInstances())
-		foreach (e in faction)
-			if (e != null && e.isAlive() && !e.isAlliedWithPlayer())
-				e.setHitpoints(::Math.max(1, (e.getHitpoints() * scale).tointeger()));
-	return "the enemy's hit points cut to " + (scale * 100).tointeger() + "% (theirs " + theirs.tointeger() + ", ours " + ours.tointeger() + ")";
-})()"#;
+/// How many of the company stand on the field, of how many on the roster.
+const DEPLOYED: &str = "::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player).len() + \" of \" + ::World.getPlayerRoster().getSize()";
 
 #[derive(Default)]
 pub struct BattlePlay {
 	frames: u32,
 	weakened: bool,
 	start: String,
+	/// The enemy's odds were evened this many times (`__soakEvenOdds`).
+	evened: u32,
+	/// Hostiles on the field at the last tick: more arriving get evened too.
+	hostiles: i64,
+	/// "n of m": the company on the field, of the roster.
+	deployed: String,
 }
 
 impl Session<'_> {
@@ -62,17 +53,36 @@ impl Session<'_> {
 		self.context("battle");
 		if started {
 			let state = self.eval("battle state", "::__soakState(true)");
-			self.battle = BattlePlay { frames: 0, weakened: false, start: state.clone() };
+			let deployed = self.eval("deployed", DEPLOYED);
+			self.battle = BattlePlay { start: state.clone(), deployed: deployed.clone(), ..Default::default() };
 			let _ = self.script("battle start", "if (\"__lastCombatResult\" in getroottable()) delete ::__lastCombatResult;");
-			self.action(&format!("battle starts: {state}"));
-			let odds = self.eval("even odds", EVEN_ODDS);
+			self.action(&format!("battle starts ({deployed} of the company on the field): {state}"));
+			// A company that keeps fielding a lone brother isn't playing the game.
+			let mut n = deployed.split(" of ").map(|x| x.trim().parse::<i64>().unwrap_or(0));
+			if let (Some(field), Some(roster)) = (n.next(), n.next())
+				&& field <= 1 && roster >= 2
+			{
+				self.stats.battles_lone += 1;
+			}
+		}
+		// The odds, at the start and whenever more enemies arrive.
+		let hostiles = self.eval_i64("hostiles", "::Tactical.Entities.getHostilesNum()").unwrap_or(0);
+		if started || hostiles > self.battle.hostiles {
+			let odds = self.eval("even odds", "::__soakEvenOdds()");
 			if !odds.is_empty() {
+				self.battle.evened += 1;
 				self.stats.keep_alive += 1;
 				self.action(&format!("keep alive: {odds}"));
 				Json::new("keep_alive").str("did", &odds).int("day", self.day_now).emit();
 			}
 		}
+		self.battle.hostiles = hostiles;
 		self.battle.frames += TICK;
+		if self.battle.frames % PROGRESS_EVERY < TICK {
+			self.observe();
+			let state = self.eval("battle state", "::__soakState(true)");
+			self.action(&format!("battle at {} frames: {state}", self.battle.frames));
+		}
 		if self.battle.frames >= LONG_BATTLE && (self.battle.frames - LONG_BATTLE) % WEAKEN_EVERY < TICK {
 			self.weaken();
 		}
@@ -106,6 +116,8 @@ impl Session<'_> {
 			.int("result", result)
 			.str("result_name", name)
 			.int("weakened", self.battle.weakened as i64)
+			.int("evened", self.battle.evened as i64)
+			.str("deployed", &self.battle.deployed)
 			.int("roster_after", roster)
 			.int("day", self.day_now)
 			.str("start", &self.battle.start)
