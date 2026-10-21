@@ -267,3 +267,23 @@ fn each_change_moves_the_key() {
 		last = now;
 	}
 }
+
+/// On the main menu, before any campaign, there is no map: nothing the world draws
+/// changes as time passes, so the key stays (the menu's frames are left undrawn).
+#[test]
+fn the_main_menu_s_key_stays_while_time_passes() {
+	let dir = Path::new(harness::STEAM_DATA_DIR);
+	if !dir.exists() {
+		eprintln!("skipping: {} not present", dir.display());
+		return;
+	}
+	let engine = harness::open_install(dir).expect("open install");
+	harness::boot_menu(&engine).expect("boot the menu");
+	frame(&engine);
+	let key = engine.world_scene_key();
+	assert_eq!((key.extent.0, key.extent.1), (0.0, 0.0), "no map on the menu");
+	for _ in 0..60 {
+		frame(&engine);
+	}
+	assert_eq!(engine.world_scene_key(), key, "a second of the menu moved the key");
+}

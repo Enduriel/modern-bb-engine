@@ -349,9 +349,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// count of changes moves whenever something the scene shows was set or moved on its
 	/// own (see `world_scene_changes`); the rest is compared as it is.
 	pub fn world_scene_key(&self) -> crate::scene::WorldSceneKey {
+		let extent = self.world_grid.extent();
 		crate::scene::WorldSceneKey {
 			changes: crate::native::world_scene_changes::count(),
-			extent: self.world_grid.extent(),
+			extent,
 			fog_of_war: self.world_grid.fog_of_war(),
 			light: {
 				let (color, saturation) = self.world_clock.borrow().ambient();
@@ -359,7 +360,9 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			},
 			camera: self.world_camera(),
 			tracking: crate::native::WorldEntities::tracking(&self.vm),
-			virtual_time: self.time.virtual_seconds() as f32,
+			// Without a map (the main menu) there are no footprints to fade: the clock
+			// running on there changes nothing drawn.
+			virtual_time: if extent.0 > 0.0 && extent.1 > 0.0 { self.time.virtual_seconds() as f32 } else { 0.0 },
 		}
 	}
 

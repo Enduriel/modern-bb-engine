@@ -58,7 +58,7 @@ pub struct WorldSceneKey {
 	pub camera: SceneWorldCamera,
 	/// Footprints show (the gameplay setting `ShowTracking`).
 	pub tracking: bool,
-	/// The virtual clock, which the footprints fade on.
+	/// The virtual clock, which the footprints fade on (0 without a map).
 	pub virtual_time: f32,
 }
 
