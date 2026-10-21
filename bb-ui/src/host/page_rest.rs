@@ -353,7 +353,7 @@ mod tests {
 		rest.called(r#"{"busy":null,"timer":200}"#, t1);
 		assert!(!rest.decide(t1 + Duration::from_millis(10), 0, 0));
 		assert!(rest.decide(t1 + Duration::from_millis(198), 0, 0));
-		let t2 = t1 + SETTLE * 3;
+		let t2 = t1 + Duration::from_millis(198) + SETTLE * 3;
 		rest.reported(quiet(None));
 		assert!(!rest.decide(t2, 0, 0));
 		// One that changed the page, then one that didn't: the change still needs a frame.
