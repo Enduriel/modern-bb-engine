@@ -6,33 +6,34 @@ use std::collections::HashMap;
 pub use crate::native::tactical::TileTransition as SceneTransition;
 
 /// The battle map as last set by the scripts.
-#[derive(Clone, Debug, Default)]
+///
+/// Its fields are in the order a comparison (`PartialEq`, which `bb` uses to leave
+/// unchanged frames undrawn) is cheapest in: what changes from frame to frame first,
+/// the map's tiles last.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TacticalScene {
-	/// Square size of the map.
-	pub width: i64,
-	pub height: i64,
-	/// Every tile, row by row (`col` fastest).
-	pub tiles: Vec<SceneTacticalTile>,
-	/// Each terrain brush's transition set (`Tactical.setTransitions`), by brush name.
-	pub transitions: HashMap<String, SceneTransition>,
 	pub camera: SceneCamera,
-	/// The units and map objects (trees, rocks, …) standing on tiles, in creation order.
-	pub entities: Vec<SceneTacticalEntity>,
 	/// The battle's light (`Tactical.getWeather().setAmbientLighting*`).
 	pub light: crate::scene::SceneLight,
-	/// The clouds or fog drifting over the battle (`Tactical.getWeather().buildCloudCover`).
-	pub clouds: Vec<crate::scene::SceneCloud>,
 	/// Tree tops are hidden (`Settings.getTempGameplaySettings().HideTrees`, the `T` key;
 	/// a battle starts with `AlwaysHideTrees`).
 	pub hide_trees: bool,
+	/// The units' orientation overlays the camera drew this frame (its `render()`,
+	/// from the battle state's `onRender`): in screen space, over the whole battle and
+	/// under the UI.
+	pub orientation: Vec<SceneOrientationOverlay>,
+	/// The rain's drops (or snow's, or leaves'), in the effects layer: white sprites
+	/// falling through the camera's view.
+	pub rain: Vec<SceneRainDrop>,
+	/// The rain's splats on the ground, each drawn with its tile's entities.
+	pub rain_splats: Vec<SceneRainSplat>,
+	/// The clouds or fog drifting over the battle (`Tactical.getWeather().buildCloudCover`).
+	pub clouds: Vec<crate::scene::SceneCloud>,
 	/// Particle effects (`Tactical.spawnParticleEffect`), effect by effect.
 	pub particles: Vec<crate::scene::SceneParticle>,
 	/// The other effects over the battle (icons, attacks, sprite effects,
 	/// projectiles), in the order they began.
 	pub effects: Vec<SceneEffect>,
-	/// What lies on the ground from effects, oldest first: pools
-	/// (`Tactical.spawnPoolEffect`) and landed heads with their blood.
-	pub pools: Vec<ScenePool>,
 	/// The highlighter's icons over tiles (an area attack's, a blocked shot's), drawn in
 	/// the effects layer, over the units.
 	pub overlay_icons: Vec<SceneOverlayIcon>,
@@ -44,15 +45,18 @@ pub struct TacticalScene {
 	/// alpha 0xa8, without the battle's light: `0x4cfedd` sets their
 	/// `IgnoreAmbientColor` bit).
 	pub blocked_tiles: Vec<SceneOverlayIcon>,
-	/// The rain's drops (or snow's, or leaves'), in the effects layer: white sprites
-	/// falling through the camera's view.
-	pub rain: Vec<SceneRainDrop>,
-	/// The rain's splats on the ground, each drawn with its tile's entities.
-	pub rain_splats: Vec<SceneRainSplat>,
-	/// The units' orientation overlays the camera drew this frame (its `render()`,
-	/// from the battle state's `onRender`): in screen space, over the whole battle and
-	/// under the UI.
-	pub orientation: Vec<SceneOrientationOverlay>,
+	/// What lies on the ground from effects, oldest first: pools
+	/// (`Tactical.spawnPoolEffect`) and landed heads with their blood.
+	pub pools: Vec<ScenePool>,
+	/// The units and map objects (trees, rocks, …) standing on tiles, in creation order.
+	pub entities: Vec<SceneTacticalEntity>,
+	/// Square size of the map.
+	pub width: i64,
+	pub height: i64,
+	/// Every tile, row by row (`col` fastest).
+	pub tiles: Vec<SceneTacticalTile>,
+	/// Each terrain brush's transition set (`Tactical.setTransitions`), by brush name.
+	pub transitions: HashMap<String, SceneTransition>,
 }
 
 /// A unit's orientation overlay: the round portrait of a unit the map doesn't show
@@ -160,7 +164,7 @@ pub struct ScenePool {
 }
 
 /// A unit or map object on the battle map.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneTacticalEntity {
 	pub id: i64,
 	/// Its position in world units, its tile's level included.
@@ -224,7 +228,7 @@ pub struct SceneTacticalSprite {
 }
 
 /// One battle tile.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SceneTacticalTile {
 	pub col: i64,
 	pub row: i64,

@@ -8,6 +8,10 @@
 //! script's `::probeSteps` are walked as the probe's page walks them: each step's scene
 //! set up, its `until` polled, 3 s to settle, its shot taken, its button clicked. The
 //! drawn cursor is left out: the original's screenshots have none.
+//!
+//! Frames are drawn as `bb` draws them: one that would show what the last did is left
+//! undrawn ([`Game::draw_if_changed`]). So each shot is the frame left up, and is checked
+//! to be pixel for pixel what drawing it again draws.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -78,20 +82,36 @@ fn scene(game: &Game, name: &str) -> Result<bool, String> {
 	Ok(SqTable::root(engine.vm()).get::<bool>("__scene") == Some(true))
 }
 
-/// Run `seconds` of frames at 60 a second, as the game loop does, drawing each; `paced`,
-/// each takes at least a 60th of a second of the clock too (the page's animations run on
-/// it), else they come as fast as they're drawn.
-fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64, paced: bool) -> Result<(), String> {
+/// Run `seconds` of frames at 60 a second, as the game loop does, drawing each that
+/// shows something new; `paced`, each takes at least a 60th of a second of the clock
+/// too (the page's animations run on it), else they come as fast as they're drawn. How
+/// many were left undrawn.
+fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64, paced: bool) -> Result<u32, String> {
 	let frame = Duration::from_micros(16_667);
+	let mut undrawn = 0;
 	for _ in 0..(seconds * 60.0) as u32 {
 		let start = Instant::now();
 		game.step(1000.0 / 60.0)?;
-		game.draw(gpu, target);
+		if game.draw_if_changed(gpu, target).is_none() {
+			undrawn += 1;
+		}
 		if let Some(rest) = frame.checked_sub(start.elapsed()).filter(|_| paced) {
 			game.front().session().host().idle(rest);
 		}
 	}
-	Ok(())
+	Ok(undrawn)
+}
+
+/// What `target` holds (the frame left up), checked against the frame drawn again.
+fn shot_checked(game: &mut Game, gpu: &Gpu, target: &RenderTarget, name: &str) -> Result<Image, String> {
+	let left = target.read(gpu)?;
+	game.draw(gpu, target);
+	let drawn = target.read(gpu)?;
+	let differ = left.rgba.chunks(4).zip(drawn.rgba.chunks(4)).filter(|(a, b)| a != b).count();
+	if differ > 0 {
+		return Err(format!("{name}: the frame left up differs from the one drawn again in {differ} pixels"));
+	}
+	Ok(left)
 }
 
 /// Walk the scenes on a `screen` of the given size (the original's video mode: a probe
@@ -161,9 +181,10 @@ pub fn shoot_scenes(
 				waited += 0.5;
 			}
 		}
-		play(&mut game, gpu, &target, 3.0, true)?;
+		let undrawn = play(&mut game, gpu, &target, 3.0, true)?;
 		if let Some(name) = &step.shot {
-			shot(name, target.read(gpu)?)?;
+			println!("{name}: {undrawn} of 180 frames left undrawn before the shot");
+			shot(name, shot_checked(&mut game, gpu, &target, name)?)?;
 		}
 		if let Some(label) = &step.click {
 			let session = game.front().session();

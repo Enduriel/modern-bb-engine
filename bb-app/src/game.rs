@@ -411,12 +411,23 @@ impl Game {
 		}
 		let virtual_time = engine.time().virtual_seconds() as f32;
 		let real_time = engine.time().real_seconds() as f32;
-		// A battle looks different every frame, and so does a world map whose fog of war
-		// just changed.
-		let mut comparable = !tactical;
+		// A world map whose fog of war just changed looks different every frame.
+		let mut comparable = true;
 		let mut detail_changes = Vec::new();
 		let mut map_edits = Vec::new();
-		let under = if !tactical && world {
+		let depth_of_field = engine.video().mode().depth_of_field;
+		let under = if tactical {
+			// What the battle draws is all in its scene (see `crate::shown`).
+			let scene_span = bb_render::frame_timing::span("battle scene");
+			let scene = engine.tactical_scene();
+			drop(scene_span);
+			Under::Battle {
+				view: ([scene.camera.pos.0 as f32, scene.camera.pos.1 as f32], fit / scene.camera.zoom as f32),
+				scene: Box::new(scene),
+				fit,
+				depth_of_field,
+			}
+		} else if world {
 			if let Some(patch) = engine.world_grid().take_fog_patch() {
 				self.renderer.update_fog(gpu, &patch);
 				comparable = false;
@@ -466,7 +477,10 @@ impl Game {
 			fonts: self.fonts,
 			under,
 		};
-		if compare && comparable && self.shown.same(Some(&look)) {
+		let compare_span = bb_render::frame_timing::span("compare");
+		let same = compare && comparable && self.shown.same(Some(&look));
+		drop(compare_span);
+		if same {
 			return None;
 		}
 		self.renderer.begin_frame();
@@ -475,20 +489,17 @@ impl Game {
 			real: real_time,
 			virtual_time,
 		});
-		self.renderer.set_depth_of_field(engine.video().mode().depth_of_field);
-		let stats = if tactical {
-			let scene_span = bb_render::frame_timing::span("battle scene");
-			let scene = engine.tactical_scene();
-			drop(scene_span);
+		self.renderer.set_depth_of_field(depth_of_field);
+		let stats = if let Under::Battle { scene, view: (center, zoom), .. } = &look.under {
 			let _span = bb_render::frame_timing::span("battle draw");
 			let view = WorldView {
-				center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
-				zoom: fit / scene.camera.zoom as f32,
+				center: *center,
+				zoom: *zoom,
 				width,
 				height,
 			};
 			engine.sprites().with(|registry| {
-				let battle = self.renderer.draw_tactical(gpu, target, &scene, registry, &view, Atlases::DrawReady);
+				let battle = self.renderer.draw_tactical(gpu, target, scene, registry, &view, Atlases::DrawReady);
 				// The camera's orientation overlays, over the battle and under the UI.
 				let overlays =
 					self.renderer.draw_orientation(gpu, target, registry, &scene.orientation, fit, Atlases::DrawReady);
