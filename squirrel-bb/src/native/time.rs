@@ -228,6 +228,12 @@ impl TimeService {
 		self.state.borrow().virtual_time / 1000.0
 	}
 
+	/// How fast the virtual clock runs against the real one (`Time.getVirtualSpeed()`;
+	/// 0 while the game is paused).
+	pub fn virtual_speed(&self) -> f64 {
+		self.state.borrow().virtual_speed
+	}
+
 	/// The clocks' share of a save: virtual time and the round. (Real time keeps
 	/// running; scheduled events hold script callbacks and are cleared on load by the
 	/// world state.)

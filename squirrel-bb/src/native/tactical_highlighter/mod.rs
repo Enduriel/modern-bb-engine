@@ -136,8 +136,12 @@ impl TacticalHighlighter {
 	}
 
 	/// The overlay icons as drawn at real time `now` (seconds); faded-out ones go.
-	pub(crate) fn scene_icons(&self, now: f32) -> Vec<SceneOverlayIcon> {
-		self.0.borrow_mut().icons.scene(now)
+	pub(crate) fn scene_icons(&self, now: f32, steps: &crate::scene::steps::SceneSteps) -> Vec<SceneOverlayIcon> {
+		let mut st = self.0.borrow_mut();
+		if st.icons.fading(now) {
+			steps.need_finest();
+		}
+		st.icons.scene(now)
 	}
 
 	/// The blocked-tile highlights as drawn now (none while hidden).

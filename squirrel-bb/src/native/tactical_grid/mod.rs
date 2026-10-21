@@ -509,8 +509,10 @@ impl TacticalGrid {
 		(0..g.tiles.len()).filter(|&i| g.tiles[i].is_containing_items).collect()
 	}
 
-	/// The battle map as a renderer reads it (`transitions` aside), at real time `now`.
-	pub(crate) fn scene(&self, now: f32) -> crate::scene::tactical::TacticalScene {
+	/// The battle map as a renderer reads it (`transitions` aside), at real time `now`,
+	/// `in_steps` the details turned as at the scene clock's last step (see
+	/// `scene::steps`): their fades noted in `steps`.
+	pub(crate) fn scene(&self, now: f32, in_steps: bool, steps: &crate::scene::steps::SceneSteps) -> crate::scene::tactical::TacticalScene {
 		let g = self.grid.borrow();
 		let tiles = g
 			.tiles
@@ -541,10 +543,15 @@ impl TacticalGrid {
 							flags: d.flags,
 							mirrored: d.mirrored,
 							offset: d.offset,
-							rotation: d.rotation,
+							rotation: if in_steps { d.drawn_rotation() } else { d.rotation },
 							scale: d.scale,
 							saturation: d.saturation,
-							color: d.color.shown(now),
+							color: {
+								if d.color.is_fading(now) {
+									steps.need_finest();
+								}
+								d.color.shown(now)
+							},
 							frame: d.anim.frame(),
 						}
 					})
@@ -824,6 +831,11 @@ impl TacticalGrid {
 		}
 	}
 
+	/// The battle camera's zoom: world units a pixel of the game's screen.
+	pub(crate) fn camera_zoom(&self) -> f64 {
+		self.grid.borrow().camera.zoom()
+	}
+
 	/// Mirror the battle camera's view, or not (its `IsFlipped`, which scripts only read:
 	/// in the original the engine flips it).
 	pub(crate) fn set_camera_flipped(&self, flipped: bool) {
@@ -836,8 +848,13 @@ impl TacticalGrid {
 	/// fade (see `SpriteColor`), which may hide the detail. Only the tiles noted as
 	/// having details that may change are visited (see `moving_sprites`), and forgotten
 	/// once none may.
-	pub(crate) fn turn(&self, now: f32, now_ms: u32, real: f32) {
+	///
+	/// At a step of the scene's clock (`stepped`, see `scene::steps`) the rotations drawn
+	/// are taken again. Returns how fast the fastest turning detail shown moves, in world
+	/// units a virtual second, when asked to `measure` (else 0).
+	pub(crate) fn turn(&self, now: f32, now_ms: u32, real: f32, stepped: bool, measure: bool) -> f32 {
 		let g = self.grid.borrow();
+		let mut fastest = 0.0f32;
 		g.moving.retain(|tile| {
 			let Some(t) = g.tiles.get(tile) else { return false };
 			let seen = t.vis_mask.contains(visibility::PLAYER);
@@ -846,7 +863,13 @@ impl TacticalGrid {
 				let mut d = d.borrow_mut();
 				let d = &mut *d;
 				if d.turns() {
-					d.rotation = d.spin.turn(d.rotation, now);
+					d.turn(now, stepped);
+					if measure && d.visible && d.spin.torque != 0.0 {
+						let looks = g.sprites.with(|r| r.get(&d.brush).map(|(_, s)| ((s.width as f32, s.height as f32), (f32::from(s.offset_x), f32::from(s.offset_y)))));
+						if let Some((size, offset)) = looks {
+							fastest = fastest.max(d.spin_speed(size, offset));
+						}
+					}
 					if let Some(scale) = d.anim.step_on(&g.sprites, &d.brush, now_ms) {
 						d.scale = scale;
 					}
@@ -858,6 +881,7 @@ impl TacticalGrid {
 			}
 			moves
 		});
+		fastest
 	}
 
 	/// The details that may change on their own though their tile isn't noted as moving

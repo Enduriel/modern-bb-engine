@@ -39,6 +39,11 @@ impl Icons {
 		}
 	}
 
+	/// Whether one fades at real time `now`.
+	pub fn fading(&self, now: f32) -> bool {
+		self.0.iter().any(|i| i.color.is_fading(now))
+	}
+
 	/// The icons as drawn at real time `now`; the faded-out ones go.
 	pub fn scene(&mut self, now: f32) -> Vec<SceneOverlayIcon> {
 		self.0.retain_mut(|i| {

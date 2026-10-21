@@ -115,6 +115,9 @@ pub struct CloudCover {
 	/// The wind, normalised.
 	wind: (f32, f32),
 	clouds: Vec<SceneCloud>,
+	/// Counts the covers built and cleared (for a scene holding the clouds, see
+	/// `scene::steps`).
+	generation: u64,
 }
 
 /// A shared handle (the weather natives and the world update both use it).
@@ -130,7 +133,22 @@ impl CloudCover {
 			span: None,
 			wind: (-k, -0.5 * k),
 			clouds: Vec::new(),
+			generation: 0,
 		}
+	}
+
+	/// A new one for each cover built or cleared.
+	pub fn generation(&self) -> u64 {
+		self.generation
+	}
+
+	/// How fast the fastest cloud drifts, in world units a second of the game's clock
+	/// (none without a map).
+	pub fn fastest(&self) -> f32 {
+		if self.span.is_none() {
+			return 0.0;
+		}
+		self.clouds.iter().map(|c| c.velocity.abs()).fold(0.0, f32::max)
 	}
 
 	/// The clouds, in no particular order.
@@ -141,6 +159,7 @@ impl CloudCover {
 	/// `buildCloudCover`: replace the clouds with a new cover over `span`.
 	pub fn build(&mut self, settings: CloudSettings, span: MapSpan) {
 		super::world_scene_changes::note();
+		self.generation += 1;
 		self.clouds.clear();
 		let count = self.rng.range(settings.min_clouds, settings.max_clouds);
 		self.settings = settings;
@@ -165,6 +184,7 @@ impl CloudCover {
 	/// No clouds (a cover built without a map).
 	pub fn clear(&mut self) {
 		super::world_scene_changes::note();
+		self.generation += 1;
 		self.clouds.clear();
 		self.span = None;
 	}

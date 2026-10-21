@@ -109,6 +109,9 @@ struct State {
 	splats: Vec<Splat>,
 	/// The weather table (its `IsRaining`), once installed.
 	weather: Option<SqStrongRef>,
+	/// Counts the rains built and cleared (for a scene holding the rain, see
+	/// `scene::steps`).
+	generation: u64,
 }
 
 /// What the camera shows and how much rain it gets.
@@ -173,6 +176,7 @@ impl State {
 	}
 
 	fn clear(&mut self) {
+		self.generation += 1;
 		self.settings = Settings::default();
 		self.chosen = 0;
 		self.drops.clear();
@@ -287,7 +291,15 @@ impl TacticalRain {
 			drops: Vec::new(),
 			splats: Vec::new(),
 			weather: None,
+			generation: 0,
 		})))
+	}
+
+	/// Whether it rains (or splats are still fading), and the rain's generation: a new one
+	/// for each rain built or cleared.
+	pub(crate) fn state(&self) -> (bool, u64) {
+		let s = self.0.borrow();
+		(!s.drops.is_empty() || !s.splats.is_empty(), s.generation)
 	}
 
 	/// Make the battle weather's rain natives real, and run the rain at the end of
@@ -354,6 +366,7 @@ impl TacticalRain {
 				let mut settings_now = s.settings.clone();
 				read_settings(vm, &settings.0, &mut settings_now);
 				s.settings = settings_now;
+				s.generation += 1;
 				s.drops.clear();
 				s.splats.clear();
 				let (min, max) = (s.settings.min_drops, s.settings.max_drops);

@@ -82,16 +82,16 @@ fn scene(game: &Game, name: &str) -> Result<bool, String> {
 	Ok(SqTable::root(engine.vm()).get::<bool>("__scene") == Some(true))
 }
 
-/// Run `seconds` of frames at 60 a second, as the game loop does, drawing each that
-/// shows something new; `paced`, each takes at least a 60th of a second of the clock
+/// Run `seconds` of frames at `hz` a second, as the game loop does, drawing each that
+/// shows something new; `paced`, each takes at least its share of a second of the clock
 /// too (the page's animations run on it), else they come as fast as they're drawn. How
 /// many were left undrawn.
-fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64, paced: bool) -> Result<u32, String> {
-	let frame = Duration::from_micros(16_667);
+fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64, hz: f64, paced: bool) -> Result<u32, String> {
+	let frame = Duration::from_secs_f64(1.0 / hz);
 	let mut undrawn = 0;
-	for _ in 0..(seconds * 60.0) as u32 {
+	for _ in 0..(seconds * hz).round() as u32 {
 		let start = Instant::now();
-		game.step(1000.0 / 60.0)?;
+		game.step(1000.0 / hz)?;
 		if game.draw_if_changed(gpu, target).is_none() {
 			undrawn += 1;
 		}
@@ -177,20 +177,28 @@ pub fn shoot_scenes(
 				if waited >= STEP.as_secs_f64() {
 					return Err(format!("{until} never came true in {waited} s of game time"));
 				}
-				play(&mut game, gpu, &target, 0.5, !step.unpaced)?;
+				play(&mut game, gpu, &target, 0.5, 60.0, !step.unpaced)?;
 				waited += 0.5;
 			}
 		}
-		let undrawn = play(&mut game, gpu, &target, 3.0, true)?;
+		// A battle's last second at 180 frames a second, as on a 180 Hz display: its
+		// animations step at 60 a second (see `squirrel_bb::scene::steps`), so the frame
+		// left up for the shot is most likely one drawn a frame or two before.
+		let battle = game.in_battle();
+		let (hz, frames) = if battle { (180.0, 300) } else { (60.0, 180) };
+		let mut undrawn = play(&mut game, gpu, &target, if battle { 2.0 } else { 3.0 }, 60.0, true)?;
+		if battle {
+			undrawn += play(&mut game, gpu, &target, 1.0, hz, true)?;
+		}
 		if let Some(name) = &step.shot {
-			println!("{name}: {undrawn} of 180 frames left undrawn before the shot");
+			println!("{name}: {undrawn} of {frames} frames left undrawn before the shot");
 			shot(name, shot_checked(&mut game, gpu, &target, name)?)?;
 		}
 		if let Some(label) = &step.click {
 			let session = game.front().session();
 			session.click_when_ready(label, STEP)?;
 			session.move_away()?;
-			play(&mut game, gpu, &target, 3.0, true)?;
+			play(&mut game, gpu, &target, 3.0, 60.0, true)?;
 		}
 	}
 	Ok(())

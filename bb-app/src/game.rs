@@ -48,6 +48,9 @@ pub struct Game {
 	shown: Shown,
 	/// While the FPS display shows, what measures the frame rate for it.
 	fps: Option<FpsMeter>,
+	/// Battles are drawn in steps (see `squirrel_bb::scene::steps`); `BB_SCENE_STEPS=0`
+	/// draws them at the clocks as they are.
+	scene_steps: bool,
 }
 
 /// Where the game starts.
@@ -192,6 +195,7 @@ impl Game {
 			modifier: 0,
 			shown: Shown::default(),
 			fps: None,
+			scene_steps: std::env::var_os("BB_SCENE_STEPS").is_none_or(|v| v != "0"),
 		};
 		// What the boot hinted (worldgen's brushes) starts decoding before the first frame.
 		game.follow_scenes();
@@ -434,6 +438,9 @@ impl Game {
 		let mut detail_changes = Vec::new();
 		let mut map_edits = Vec::new();
 		let depth_of_field = engine.video().mode().depth_of_field;
+		// A battle's animations move in steps (see `squirrel_bb::scene::steps`): of a
+		// pixel of this frame, from the next frame on.
+		engine.set_scene_steps(self.scene_steps.then_some(fit));
 		let under = if tactical {
 			// What the battle draws is all in its scene (see `crate::shown`).
 			let scene_span = bb_render::frame_timing::span("battle scene");
@@ -571,6 +578,11 @@ impl Game {
 		// A frame drawn without what was still loading is drawn again.
 		self.shown.drawn((comparable && stats.waiting == 0).then_some(look));
 		Some(stats)
+	}
+
+	/// A battle shows (`Tactical.isVisible()`).
+	pub fn in_battle(&self) -> bool {
+		tactical_visible(self.front.engine())
 	}
 
 	/// The next frame is drawn, whatever it shows (the window's surface was replaced).

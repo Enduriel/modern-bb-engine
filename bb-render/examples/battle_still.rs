@@ -4,12 +4,14 @@
 //! leave a frame undrawn, see `bb_app::shown`) against the last.
 //!
 //! ```text
-//! cargo run --release -p bb-render --example battle_still -- [FRAMES] [--mods] [--rain] [--fog] [--pause] [--menu]
+//! cargo run --release -p bb-render --example battle_still -- [FRAMES] [--mods] [--rain] [--fog] [--pause] [--menu] [--hz N] [--steps]
 //! ```
 //!
 //! `--rain` builds a storm's rain over the battle first, `--fog` leaves the fog of war
 //! on (the screenshots' camera turns it off), `--pause` pauses the battle (as its menus
-//! do), `--menu` opens its menu.
+//! do), `--menu` opens its menu. `--hz` steps the frames at N a second (60), `--steps`
+//! draws the battle in steps as `bb` does (`squirrel_bb::scene::steps`, a frame pixel to
+//! a pixel of the game's screen).
 //!
 //! `GROUND=1` also times building the ground alone (the tiles without their details,
 //! nothing on them); `SHOW_POS=1` prints each entity that moved between frames.
@@ -27,6 +29,8 @@ fn main() {
 	let fog = take_flag(&mut args, "--fog");
 	let pause = take_flag(&mut args, "--pause");
 	let menu = take_flag(&mut args, "--menu");
+	let steps = take_flag(&mut args, "--steps");
+	let hz: f64 = take_value(&mut args, "--hz").map_or(60.0, |n| n.parse().expect("--hz N"));
 	let frames: usize = args.first().map_or(600, |n| n.parse().expect("FRAMES"));
 
 	let dir = Path::new(STEAM_DATA_DIR);
@@ -54,6 +58,10 @@ fn main() {
 	if menu {
 		engine.run_script("::Tactical.State.toggleMenuScreen();", "menu").expect("menu");
 	}
+	if steps {
+		engine.set_scene_steps(Some(1.0));
+	}
+	let mut doublings: BTreeMap<u32, usize> = BTreeMap::new();
 	let mut last = engine.tactical_scene();
 	// The quads `bb` would draw at 2560x1358 (zoom 1 on the map's centre): how many stay
 	// the same, place by place, from frame to frame.
@@ -75,9 +83,12 @@ fn main() {
 	let mut runs = Vec::new();
 	let mut run = 0;
 	for _ in 0..frames {
-		engine.frame(1000.0 / 60.0).expect("frame");
+		engine.frame(1000.0 / hz).expect("frame");
 		engine.pump_ui().expect("ui");
 		let scene = engine.tactical_scene();
+		if let Some(k) = engine.scene_step_doublings() {
+			*doublings.entry(k).or_default() += 1;
+		}
 		let started = std::time::Instant::now();
 		let now = quads_of(&scene);
 		build += started.elapsed();
@@ -133,6 +144,9 @@ fn main() {
 	);
 	if ground_quads > 0 {
 		println!("the ground alone: {:.0} quads, built in {:.3} ms", ground_quads as f64 / frames as f64, ground_build.as_secs_f64() * 1000.0 / frames as f64);
+	}
+	if !doublings.is_empty() {
+		println!("steps (frames at each step of 1/60 s doubled k times): {doublings:?}");
 	}
 	println!("what changed, in how many frames:");
 	for (what, n) in changed {
@@ -270,6 +284,12 @@ fn start_battle(engine: &harness::GameEngine, fog: bool) {
 	for _ in 0..10 {
 		frame(engine);
 	}
+}
+
+fn take_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
+	let i = args.iter().position(|a| a == flag)?;
+	args.remove(i);
+	(i < args.len()).then(|| args.remove(i))
 }
 
 fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {

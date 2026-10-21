@@ -230,6 +230,9 @@ struct TacticalMachine {
 	effects: Option<crate::native::battle_effects::BattleEffectsHandle>,
 	/// The units shaking now, in the order they started (see `shaker`).
 	shakes: Vec<shaker::Shake>,
+	/// The shakes that ended since the scene's clock last stepped: a battle drawn in steps
+	/// still draws them as at that step (see `shaker::drawn_at`).
+	ended_shakes: Vec<shaker::Shake>,
 	/// The placed units whose sprites may change on their own (see `moving_sprites`),
 	/// as their [`owner`](Self::owner) keys.
 	moving: Moving<i64>,
@@ -713,6 +716,7 @@ impl TacticalEntities {
 				sprites: Sprites::default(),
 				effects: None,
 				shakes: Vec::new(),
+				ended_shakes: Vec::new(),
 				moving: Moving::default(),
 			})),
 		}
@@ -1323,8 +1327,17 @@ impl TacticalEntities {
 			.filter(|l| !l.brush.is_empty())
 	}
 
-	pub(crate) fn scene_entities(&self, vm: &SQVM) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
-		let now = real_time(vm);
+	///
+	/// Drawn at real time `now`, the shaking units where their shakes put them at
+	/// `shaken_at`'s virtual time, if given, the virtual clock running at its speed (see
+	/// `scene::steps`); what moves or fades is noted in `steps`.
+	pub(crate) fn scene_entities(
+		&self,
+		vm: &SQVM,
+		now: f32,
+		shaken_at: Option<(f32, f32)>,
+		steps: &crate::scene::steps::SceneSteps,
+	) -> Vec<crate::scene::tactical::SceneTacticalEntity> {
 		let shown = overlay::Shown {
 			always: crate::native::temp_gameplay_flag(vm, "ShowOverlayStats"),
 			// Gameplay byte 3, which scripts can't see (see `overlay`): on.
@@ -1332,17 +1345,35 @@ impl TacticalEntities {
 		};
 		let m = self.machine.borrow();
 		let Some(class) = m.sprite_class.clone() else { return Vec::new() };
+		let shaken = shaken_at.map(|(at, speed)| {
+			let (drawn, fastest) = shaker::drawn_at(&m, at);
+			steps.need(fastest * speed);
+			drawn
+		});
+		let local = |i: usize| shaken.as_ref().and_then(|s| s.iter().find(|(unit, _)| *unit == i)).map(|(_, local)| *local);
 		m.units
 			.iter()
-			.filter(|u| !u.dead && u.tile.is_some())
-			.map(|u| crate::scene::tactical::SceneTacticalEntity {
+			.enumerate()
+			.filter(|(_, u)| !u.dead && u.tile.is_some())
+			.map(|(i, u)| crate::scene::tactical::SceneTacticalEntity {
 				id: u.id,
-				pos: m.world_pos(u),
+				pos: match local(i) {
+					Some(local) => {
+						let origin = m.pos_origin(u);
+						(origin.0 + local.0, origin.1 + local.1)
+					}
+					None => m.world_pos(u),
+				},
 				tile: u.tile,
 				flying: u.flying,
 				visible_in_fog: u.visible_in_fog,
 				is_actor: u.is_actor,
-				overlay: u.overlay.as_ref().and_then(|o| o.scene(now, shown)),
+				overlay: u.overlay.as_ref().and_then(|o| {
+					if o.changes(now) {
+						steps.need_finest();
+					}
+					o.scene(now, shown)
+				}),
 				sprites: u
 					.sprites
 					.iter()
@@ -1350,7 +1381,12 @@ impl TacticalEntities {
 						class.with_payload(vm, handle, |s| crate::scene::tactical::SceneTacticalSprite {
 							name: name.to_string(),
 							brush: s.brush.clone(),
-							color: s.color.shown(now),
+							color: {
+								if s.color.is_fading(now) {
+									steps.need_finest();
+								}
+								s.color.shown(now)
+							},
 							scale: s.scale as f32,
 							rotation: s.rotation as f32,
 							saturation: s.saturation as f32,
@@ -1422,6 +1458,15 @@ impl TacticalEntities {
 		shaker::install(&self.machine, vm);
 	}
 
+	/// The scene's clock stepped (see `scene::steps`): the shakes that ended before are
+	/// drawn ended.
+	pub(crate) fn scene_stepped(&self) {
+		let mut m = self.machine.borrow_mut();
+		if !m.ended_shakes.is_empty() {
+			m.ended_shakes.clear();
+		}
+	}
+
 	/// Total units created (host/test inspection).
 	pub fn unit_count(&self) -> usize {
 		self.machine.borrow().units.len()
@@ -1437,6 +1482,7 @@ impl TacticalEntities {
 	pub fn clear(&self) {
 		let mut m = self.machine.borrow_mut();
 		m.shakes.clear();
+		m.ended_shakes.clear();
 		m.rosters.clear();
 		m.units.clear();
 		m.by_identity.clear();

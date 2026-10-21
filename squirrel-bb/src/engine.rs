@@ -79,6 +79,17 @@ pub struct Engine<S: ScriptSource> {
 	/// The mouse cursor the scripts chose (no VM handles).
 	ui_cursor: crate::native::ui_cursor::UiCursor,
 	time: TimeService,
+	/// The clocks a battle is drawn at (see [`crate::scene::steps`]), and what its scene
+	/// holds from step to step: the clouds and the rain.
+	scene_steps: crate::scene::steps::SceneSteps,
+	held_clouds: RefCell<crate::scene::steps::Held<u64, Vec<crate::scene::SceneCloud>>>,
+	#[allow(clippy::type_complexity)]
+	held_rain: RefCell<
+		crate::scene::steps::Held<
+			u64,
+			(Vec<crate::scene::tactical::SceneRainDrop>, Vec<crate::scene::tactical::SceneRainSplat>),
+		>,
+	>,
 	/// Frees reference cycles where the game discards object graphs (see `collect`).
 	collector: crate::collect::Collector,
 	modules: ModuleSystem<S>,
@@ -249,6 +260,9 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			keys: Default::default(),
 			ui_cursor,
 			time,
+			scene_steps: Default::default(),
+			held_clouds: Default::default(),
+			held_rain: Default::default(),
 			collector,
 			modules,
 			vm,
@@ -406,7 +420,56 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.tactical_grid.set_camera_flipped(flipped);
 	}
 
+	/// Draw battles in steps (see [`crate::scene::steps`]) for a frame of `fit` pixels to
+	/// a pixel of the game's screen, or (`None`, the default) at the clocks as they are.
+	pub fn set_scene_steps(&self, fit: Option<f32>) {
+		self.scene_steps.set_fit(fit);
+	}
+
+	/// The step battles are drawn in now, in doublings of 1/60 s (see
+	/// [`crate::scene::steps`]), while they are.
+	pub fn scene_step_doublings(&self) -> Option<u32> {
+		self.scene_steps.on().then(|| self.scene_steps.doublings_now())
+	}
+
+	/// The battle map as the scripts have set it up, for a renderer: what moves with time
+	/// as it is at the scene's clock (see [`crate::scene::steps`]).
 	pub fn tactical_scene(&self) -> crate::scene::tactical::TacticalScene {
+		self.tactical_scene_in_steps(true)
+	}
+
+	/// The battle map at the clocks as they are, whether battles are drawn in steps or
+	/// not (what [`tactical_scene`](Self::tactical_scene) shows at a step). For tests.
+	pub fn tactical_scene_as_is(&self) -> crate::scene::tactical::TacticalScene {
+		self.tactical_scene_in_steps(false)
+	}
+
+	/// The number of steps the scene's clocks were taken at (see
+	/// [`crate::scene::steps`]): a new one each frame while battles aren't drawn in steps.
+	pub fn scene_steps_taken(&self) -> u64 {
+		self.scene_steps.generation()
+	}
+
+	fn tactical_scene_in_steps(&self, in_steps: bool) -> crate::scene::tactical::TacticalScene {
+		use crate::native::sprite_color::real_time;
+		let steps = &self.scene_steps;
+		let (on, generation) = (in_steps && steps.on(), steps.generation());
+		let held = if on { steps.clock(self.clocks()) } else { self.clocks() };
+		// Off, the clocks as the scripts read them.
+		let real = if on { held.real as f32 } else { real_time(&self.vm) };
+		let speed = self.time.virtual_speed() as f32;
+		let (raining, rain_generation) = self.tactical_rain.state();
+		if raining {
+			steps.need_finest();
+		}
+		let (rain, rain_splats) =
+			self.held_rain.borrow_mut().get(on, generation, rain_generation, || self.tactical_rain.scene(real));
+		let clouds = {
+			let cover = self.tactical_clouds.borrow();
+			// They drift with the real clock while the game's runs.
+			steps.need(if speed != 0.0 { cover.fastest() } else { 0.0 });
+			self.held_clouds.borrow_mut().get(on, generation, cover.generation(), || cover.clouds().to_vec())
+		};
 		let (effects, pools) = self
 			.battle_effects
 			.borrow_mut()
@@ -415,25 +478,29 @@ impl<S: ScriptSource + 'static> Engine<S> {
 				|tile| self.tactical_grid.tile_world_pos(tile),
 				|sprite| self.tactical_entities.sprite_look(&self.vm, sprite),
 			);
-		let (rain, rain_splats) = self.tactical_rain.scene(crate::native::sprite_color::real_time(&self.vm));
 		let mut scene = crate::scene::tactical::TacticalScene {
 			effects,
 			pools,
 			rain,
 			rain_splats,
 			transitions: self.transitions.borrow().clone(),
-			entities: self.tactical_entities.scene_entities(&self.vm),
+			entities: self.tactical_entities.scene_entities(
+				&self.vm,
+				real,
+				on.then_some((held.virtual_secs as f32, speed)),
+				steps,
+			),
 			light: {
 				let (color, saturation) = self.tactical_light.get();
 				crate::scene::SceneLight { color, saturation }
 			},
-			clouds: self.tactical_clouds.borrow().clouds().to_vec(),
+			clouds,
 			hide_trees: crate::native::temp_gameplay_flag(&self.vm, "HideTrees"),
 			particles: self.tactical_particles.borrow().scene(),
-			overlay_icons: self.tactical_highlighter.scene_icons(crate::native::sprite_color::real_time(&self.vm)),
+			overlay_icons: self.tactical_highlighter.scene_icons(real, steps),
 			path: self.tactical_navigator.scene_path(),
 			blocked_tiles: self.tactical_highlighter.scene_blocked(),
-			..self.tactical_grid.scene(crate::native::sprite_color::real_time(&self.vm))
+			..self.tactical_grid.scene(real, on, steps)
 		};
 		crate::native::tactical_unveil::mark(
 			&mut scene,
@@ -543,7 +610,20 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn begin_frame(&self, real_delta_ms: f64) -> Vec<crate::key_queue::QueuedInput> {
 		let _clock = crate::frame_timing::span("engine clock+keys");
 		self.time.tick(&self.vm, real_delta_ms);
+		// The battle's scene clock steps (see `scene::steps`).
+		let zoom = self.tactical_grid.camera_zoom();
+		if self.scene_steps.sample(self.clocks(), if zoom > 0.0 { (1.0 / zoom) as f32 } else { 1.0 }) {
+			self.tactical_entities.scene_stepped();
+		}
 		self.keys.take_frame()
+	}
+
+	/// The real and virtual clocks now.
+	fn clocks(&self) -> crate::scene::steps::HeldClock {
+		crate::scene::steps::HeldClock {
+			real: self.time.real_seconds(),
+			virtual_secs: self.time.virtual_seconds(),
+		}
 	}
 
 	/// The rest of a frame begun with [`begin_frame`](Self::begin_frame): `keys` to the
@@ -612,7 +692,10 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let real = self.time.real_seconds() as f32;
 		self.world_grid.turn(now, now_ms, real);
 		self.world_entities.turn(&self.vm, now, now_ms);
-		self.tactical_grid.turn(now, now_ms, real);
+		// The details' turns are drawn in the scene's steps (see `scene::steps`).
+		let steps = &self.scene_steps;
+		let fastest = self.tactical_grid.turn(now, now_ms, real, steps.stepped(), steps.on());
+		steps.need(fastest * self.time.virtual_speed() as f32);
 		self.tactical_entities.turn(&self.vm, now, now_ms);
 	}
 

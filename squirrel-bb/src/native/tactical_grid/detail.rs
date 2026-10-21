@@ -56,6 +56,38 @@ pub(crate) struct DetailData {
 	pub highlight_factor: f64,
 	pub ignore_ambient: bool,
 	pub ignore_camera_flip: bool,
+	/// While a battle is drawn in steps (see `scene::steps`): its rotation after the
+	/// last turn, and the rotation drawn, taken at a step. Only the drawing reads it.
+	pub held_rotation: Option<(f32, f32)>,
+}
+
+impl DetailData {
+	/// Turn it to virtual time `now` (see `spin`); at a step (`stepped`), the rotation
+	/// drawn is taken again, else it holds unless a script turned it since.
+	pub fn turn(&mut self, now: f32, stepped: bool) {
+		let before = self.rotation;
+		self.rotation = self.spin.turn(before, now);
+		let shown = match self.held_rotation {
+			Some((after, shown)) if !stepped && after == before => shown,
+			_ => self.rotation,
+		};
+		self.held_rotation = Some((self.rotation, shown));
+	}
+
+	/// The rotation drawn: the held one, unless a script turned it since its last turn.
+	pub fn drawn_rotation(&self) -> f32 {
+		match self.held_rotation {
+			Some((after, shown)) if after == self.rotation => shown,
+			_ => self.rotation,
+		}
+	}
+
+	/// How far its corners move in a virtual second, in world units (0 without a
+	/// torque): the corner furthest from its anchor, of `size` and `offset`.
+	pub fn spin_speed(&self, size: (f32, f32), offset: (f32, f32)) -> f32 {
+		let reach = (offset.0.abs() + size.0 / 2.0).hypot(offset.1.abs() + size.1 / 2.0) * self.scale;
+		self.spin.torque.abs().to_radians() * reach
+	}
 }
 
 /// A detail, shared between its tile and the handles scripts hold.
@@ -137,6 +169,7 @@ pub(super) fn spawn(
 		highlight_factor: 0.0,
 		ignore_ambient: false,
 		ignore_camera_flip: false,
+		held_rotation: None,
 	}));
 	details.push(detail.clone());
 	Some(detail)

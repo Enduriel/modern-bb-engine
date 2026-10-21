@@ -158,7 +158,10 @@ impl SpriteColor {
 }
 
 fn progress(f: Fade, now: f32) -> f32 {
-	((now - f.start) / f.length).min(1.0)
+	// Not below 0: a scene drawn at a step's time may be before the fade began (see
+	// `scene::steps`).
+	// (`min` first: a zero-length fade's 0 / 0 is done.)
+	((now - f.start) / f.length).min(1.0).max(0.0)
 }
 
 /// `from` blended `t` of the way to `to`, per channel in `f32`, truncated.

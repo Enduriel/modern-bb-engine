@@ -30,6 +30,7 @@ use crate::native::tactical_grid;
 type Machine = Rc<RefCell<TacticalMachine>>;
 
 /// A shake in progress (the original's 0x50-byte record).
+#[derive(Clone)]
 pub(super) struct Shake {
 	/// The unit's record.
 	unit: usize,
@@ -399,6 +400,59 @@ pub(super) fn install(m: &Machine, vm: &mut SQVM) {
 	}
 }
 
+/// Where the shaking units are drawn at virtual time `at` (a step's, see
+/// `scene::steps`), by record: each one's local position as [`update`] puts it at that
+/// time (where it started, before it started); and how fast the fastest of them moves,
+/// in world units a virtual second. Only the drawing reads it: the units' positions stay
+/// as the frames' updates put them.
+///
+/// A shake that ended since the clock's last step is drawn too, as at the step, while
+/// its unit stands where the shake left it (or shakes again from there): of a unit's
+/// shakes, the last that started by `at`, else the first.
+pub(super) fn drawn_at(m: &TacticalMachine, at: f32) -> (Vec<(usize, (f64, f64))>, f32) {
+	let fastest = m
+		.shakes
+		.iter()
+		.map(|s| (s.dir.0 * s.amp.0).hypot(s.dir.1 * s.amp.1) / s.out.min(s.back))
+		.filter(|v| v.is_finite())
+		.fold(0.0f32, f32::max);
+	let active = |unit: usize| m.shakes.iter().find(|a| a.unit == unit);
+	let ended = m.ended_shakes.iter().filter(|s| match active(s.unit) {
+		Some(a) => a.orig == s.orig,
+		None => m.units.get(s.unit).is_some_and(|u| u.local == (f64::from(s.orig.0), f64::from(s.orig.1))),
+	});
+	// Each unit's shake to draw.
+	let mut chosen: Vec<&Shake> = Vec::new();
+	for s in m.shakes.iter().chain(ended) {
+		match chosen.iter_mut().find(|c| c.unit == s.unit) {
+			None => chosen.push(s),
+			Some(c) => {
+				let better = if s.start <= at { c.start > at || s.start > c.start } else { c.start > at && s.start < c.start };
+				if better {
+					*c = s;
+				}
+			}
+		}
+	}
+	let drawn = chosen
+		.into_iter()
+		.filter_map(|s| {
+			let out = (at - s.start) / s.out;
+			let t = if out < 1.0 {
+				out.max(0.0)
+			} else {
+				let back = (at - (s.start + s.out)) / s.back;
+				if back >= 1.0 { 0.0 } else { 1.0 - back }
+			};
+			t.is_finite().then(|| {
+				let local = (f64::from(s.orig.0 + s.dir.0 * s.amp.0 * t), f64::from(s.orig.1 + s.dir.1 * s.amp.1 * t));
+				(s.unit, local)
+			})
+		})
+		.collect();
+	(drawn, fastest)
+}
+
 /// `cancel(entity)`.
 pub(super) fn cancel(m: &Machine, vm: &SQVM, identity: i64) {
 	let mut machine = m.borrow_mut();
@@ -412,6 +466,7 @@ pub(super) fn cancel(m: &Machine, vm: &SQVM, identity: i64) {
 /// `Tactical.clearScene()`'s share: every shaking unit back, no shakes.
 pub(super) fn clear(m: &Machine, vm: &SQVM) {
 	let mut machine = m.borrow_mut();
+	machine.ended_shakes.clear();
 	for s in std::mem::take(&mut machine.shakes) {
 		end(&mut machine, vm, &s);
 	}
@@ -438,6 +493,7 @@ pub(super) fn update(m: &Machine, vm: &SQVM) -> Result<(), String> {
 			let t = (now - (s.start + s.out)) / s.back;
 			if t >= 1.0 {
 				end(&mut machine, vm, s);
+				machine.ended_shakes.push(s.clone());
 				return false;
 			}
 			apply(&mut machine, vm, s, 1.0 - t);

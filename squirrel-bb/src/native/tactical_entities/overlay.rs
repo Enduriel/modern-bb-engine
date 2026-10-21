@@ -79,13 +79,21 @@ impl Overlay {
 		}
 	}
 
+	/// Whether how it shows changes with time at real time `now`: it shows after a change
+	/// (fading in, then out), or a lost-value twin fades.
+	pub fn changes(&self, now: f32) -> bool {
+		now < self.until || self.lost.iter().flatten().any(|(_, color)| color.is_fading(now))
+	}
+
 	/// How it shows at real time `now`, if at all.
 	pub fn scene(&self, now: f32, shown: Shown) -> Option<SceneOverlay> {
 		let alpha = if shown.always {
 			1.0
 		} else if shown.after_change && now < self.until {
 			let left = self.until - now;
-			if left <= SHOW_FADE { left / SHOW_FADE } else { ((now - self.shown_at) / SHOW_FADE).min(1.0) }
+			// Not below 0: a scene drawn at a step's time may be before the change (see
+			// `scene::steps`).
+			if left <= SHOW_FADE { left / SHOW_FADE } else { ((now - self.shown_at) / SHOW_FADE).clamp(0.0, 1.0) }
 		} else {
 			return None;
 		};

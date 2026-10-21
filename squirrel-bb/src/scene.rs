@@ -4,6 +4,7 @@
 //! sprites; [`Engine::world_scene`](crate::Engine::world_scene) copies it into these
 //! plain values once per frame, so a renderer never touches the VM.
 
+pub mod steps;
 pub mod tactical;
 
 pub use crate::native::world_camera::CameraView as SceneWorldCamera;
