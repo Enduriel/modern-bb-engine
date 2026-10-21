@@ -44,6 +44,10 @@ name = "frame_scenes"
 required-features = ["ui"]
 
 [[example]]
+name = "held_key"
+required-features = ["ui"]
+
+[[example]]
 name = "load_times"
 required-features = ["ui"]
 

@@ -13,7 +13,10 @@
 //! it waits for an animation frame, runs a CSS animation or transition, edits text (the
 //! caret blinks) or loads fonts, and when its next timer is due. The game adds what
 //! only it sees: its calls into the page, the input it sent, `coui://` loads finished,
-//! a resize, paints that landed. The page gets a turn while any of those says so, and
+//! a resize, paints that landed. A frame's keys are the exception: their hand-off
+//! unparks the page until it has seen them, which is their turn; after it, a key the
+//! browser does nothing visible with by default (W held to scroll the map, a modifier)
+//! gives the page no more turns unless its listeners did something (`page_work.js`). The page gets a turn while any of those says so, and
 //! for [`SETTLE`] after the last; then it rests until one does again (a timer coming
 //! due, input, a call from the scripts).
 //!
@@ -49,13 +52,15 @@ pub(super) struct Report {
 	pub busy: bool,
 	/// When its next timer is due.
 	pub timer: Option<Instant>,
+	/// How many keydown and keyup events it has seen, if it said.
+	pub keys: Option<i64>,
 }
 
 impl Report {
 	/// Read the park request's body (`{"busy": reason | null, "timer": ms | null}`),
 	/// received at `now`. Anything else is busy: a page we can't read never rests.
 	pub fn parse(body: &str, now: Instant) -> Report {
-		let busy = Report { busy: true, timer: None };
+		let busy = Report { busy: true, timer: None, keys: None };
 		let Ok(json) = Json::parse(body) else { return busy };
 		let Some(reason) = json.get("busy") else { return busy };
 		let timer = match json.get("timer") {
@@ -63,7 +68,8 @@ impl Report {
 			Some(Json::Float(ms)) if ms.is_finite() => Some(now + Duration::from_secs_f64(ms.max(0.0) / 1000.0)),
 			_ => None,
 		};
-		Report { busy: !matches!(reason, Json::Null), timer }
+		let keys = json.get("keys").and_then(Json::as_i64);
+		Report { busy: !matches!(reason, Json::Null), timer, keys }
 	}
 }
 
@@ -103,7 +109,7 @@ impl PageRest {
 		PageRest {
 			enabled,
 			woken: Cell::new(true),
-			report: Cell::new(Report { busy: true, timer: None }),
+			report: Cell::new(Report { busy: true, timer: None, keys: None }),
 			paints: Cell::new(0),
 			loads: Cell::new(0),
 			active: Cell::new(None),
@@ -160,7 +166,8 @@ impl PageRest {
 			self.note_reason(body);
 			self.woken.set(true);
 		}
-		self.report.set(Report { busy: self.report.get().busy, timer: report.timer });
+		let last = self.report.get();
+		self.report.set(Report { busy: last.busy, timer: report.timer, keys: report.keys.or(last.keys) });
 	}
 
 	fn note_reason(&self, body: &str) {
@@ -168,6 +175,11 @@ impl PageRest {
 			let reason = Json::parse(body).ok().and_then(|j| j.get("busy").and_then(|r| r.as_str().map(str::to_string)));
 			*self.reason.borrow_mut() = reason.unwrap_or_else(|| "?".into());
 		}
+	}
+
+	/// How many keydown and keyup events the page had seen when it last said, if it did.
+	pub fn keys_seen(&self) -> Option<i64> {
+		self.report.get().keys
 	}
 
 	pub fn resting(&self) -> bool {
@@ -270,7 +282,7 @@ mod tests {
 	use super::*;
 
 	fn quiet(timer: Option<Instant>) -> Report {
-		Report { busy: false, timer }
+		Report { busy: false, timer, keys: None }
 	}
 
 	#[test]
@@ -279,7 +291,8 @@ mod tests {
 		assert_eq!(Report::parse(r#"{"busy":null,"timer":null}"#, now), quiet(None));
 		assert_eq!(Report::parse(r#"{"busy":null,"timer":250}"#, now), quiet(Some(now + Duration::from_millis(250))));
 		assert_eq!(Report::parse(r#"{"busy":null,"timer":1.5}"#, now), quiet(Some(now + Duration::from_micros(1500))));
-		assert_eq!(Report::parse(r#"{"busy":"frames","timer":null}"#, now), Report { busy: true, timer: None });
+		assert_eq!(Report::parse(r#"{"busy":"frames","timer":null}"#, now), Report { busy: true, timer: None, keys: None });
+		assert_eq!(Report::parse(r#"{"busy":null,"timer":null,"keys":7}"#, now).keys, Some(7));
 		assert!(Report::parse("", now).busy, "a page that says nothing never rests");
 		assert!(Report::parse(r#"{"timer":5}"#, now).busy);
 	}
@@ -321,7 +334,7 @@ mod tests {
 		assert!(rest.decide(later + Duration::from_millis(1), 1, 1), "the game gave it work");
 		let later = later + SETTLE * 3;
 		assert!(!rest.decide(later, 1, 1));
-		rest.reported(Report { busy: true, timer: None });
+		rest.reported(Report { busy: true, timer: None, keys: None });
 		assert!(rest.decide(later + Duration::from_millis(1), 1, 1), "it said it's busy");
 	}
 

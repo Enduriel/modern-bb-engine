@@ -415,7 +415,7 @@ fn an_idle_page_rests(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Resu
 	for (context, name, code) in TIMER_CONTEXTS {
 		a_timer_fires_on_time(game, gpu, target, context, name, code)?;
 	}
-	Ok(())
+	a_held_key_lets_the_page_rest(game, gpu, target)
 }
 
 /// How long the timers [`TIMER_CONTEXTS`] set wait.
@@ -496,6 +496,50 @@ fn a_timer_fires_on_time(
 		return Err(format!("the page rested {rested} frames while a timer set from {context} waited"));
 	}
 	println!("  idle, the page rests: a {TIMER_MS} ms timer set from {context} fired after {after:.1} ms");
+	Ok(())
+}
+
+/// A key held: the page gets its keydown every frame, as the original's (handed over
+/// before the states), yet rests between, since nothing it does with them shows: W
+/// (which scrolls the map), and Alt alone. It used to get a turn every frame for them,
+/// and Alt held after Alt+Tab kept it from ever resting. The window losing the
+/// keyboard forgets the keys held, releasing none, as the original does.
+fn a_held_key_lets_the_page_rest(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	let seen = |game: &Game| game.front().session().eval("window.__bbKeysSeen").ok().and_then(|n| n.as_i64()).unwrap_or(-1);
+	for (name, code, text) in [("W", 33, Some("w")), ("Alt", 97, None)] {
+		let before = seen(game);
+		let rested = game.front().page_rested();
+		game.key(&Key { engine: Some(code), text: text.map(str::to_string), down: true, repeat: false })?;
+		for _ in 0..60 {
+			frame_in_real_time(game, gpu, target)?;
+		}
+		let keydowns = seen(game) - before;
+		let rests = game.front().page_rested() - rested;
+		game.key(&Key { engine: Some(code), text: None, down: false, repeat: false })?;
+		for _ in 0..10 {
+			frame_in_real_time(game, gpu, target)?;
+		}
+		if keydowns < 60 {
+			return Err(format!("{name} held 60 frames: the page saw {keydowns} keydowns"));
+		}
+		if rests < 30 {
+			return Err(format!("{name} held 60 frames: the page rested through {rests}"));
+		}
+		println!("  {name} held: {keydowns} keydowns to the page, which rested through {rests} of 60 frames");
+	}
+	// Alt+Tab: Alt down, then the window loses the keyboard; Alt's release comes
+	// elsewhere.
+	game.key(&Key { engine: Some(97), text: None, down: true, repeat: false })?;
+	frame_in_real_time(game, gpu, target)?;
+	game.keyboard_focus(false);
+	let before = seen(game);
+	for _ in 0..10 {
+		frame_in_real_time(game, gpu, target)?;
+	}
+	game.keyboard_focus(true);
+	if seen(game) != before {
+		return Err(format!("the window without the keyboard: the page saw {} more key events", seen(game) - before));
+	}
 	Ok(())
 }
 

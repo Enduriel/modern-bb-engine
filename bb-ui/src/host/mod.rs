@@ -650,6 +650,12 @@ impl UiHost {
 		self.rest.resting()
 	}
 
+	/// How many keydown and keyup events the page had seen when it last parked (or
+	/// answered a call), if it said (`page_work.js`).
+	pub fn keys_seen(&self) -> Option<i64> {
+		self.rest.keys_seen()
+	}
+
 	/// How many game frames so far the page rested through.
 	pub fn rested_frames(&self) -> u64 {
 		self.rest.rests()
@@ -916,16 +922,18 @@ impl UiHost {
 	}
 
 	/// Key `code` (a Windows virtual-key code) went down or up in the focused element.
+	/// The page sees it in the game's hand-off of a frame's keys, which unparks it
+	/// (`UiSession::keys_to_page`): it gets no turn after it for that alone; what its
+	/// listeners do gives it one, as the page says when it parks (`page_work.js`).
 	pub fn key(&self, code: i32, down: bool, modifiers: Modifiers) {
-		self.rest.wake();
 		if let Some(host) = self.browser_host() {
 			live_input::key(&host, code, down, modifiers);
 		}
 	}
 
-	/// The keys typed `c` in the focused element (after the key went down).
+	/// The keys typed `c` in the focused element (after the key went down); as with
+	/// [`key`](Self::key), the hand-off is the page's turn for it.
 	pub fn character(&self, c: char, modifiers: Modifiers) {
-		self.rest.wake();
 		if let Some(host) = self.browser_host() {
 			live_input::character(&host, c, modifiers);
 		}

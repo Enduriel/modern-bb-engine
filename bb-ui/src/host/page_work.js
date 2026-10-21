@@ -4,7 +4,7 @@
 // across the game's frames, with no turn and no frame begun (host/page_rest.rs).
 // bootstrap.js sends `__bbWork()` with each park:
 //
-//   {"busy": reason | null, "timer": ms | null}
+//   {"busy": reason | null, "timer": ms | null, "keys": count}
 //
 // `busy` names why the page needs its next turn: "ran" (one of its own tasks ran since
 // it last parked: a timer, an animation frame, an event; what it changed may still need
@@ -14,7 +14,9 @@
 // "editing" (a text field has the focus: its caret blinks), "fonts" (fonts are
 // loading), "animations" (a CSS animation or transition runs). `timer` is how long
 // until its next timer is due. The page's timers and animation frames are wrapped to
-// keep that count; what they do is unchanged.
+// keep that count; what they do is unchanged. `keys` counts the keydown and keyup events
+// it has seen (also `window.__bbKeysSeen`): the game hands a frame's keys over and
+// waits until the page has seen them (host/session_input.rs).
 (function () {
 	'use strict';
 
@@ -121,10 +123,59 @@
 	[
 		'load', 'error', 'scroll', 'message',
 		'mousemove', 'mousedown', 'mouseup', 'click', 'dblclick', 'contextmenu', 'wheel',
-		'keydown', 'keyup', 'keypress', 'input', 'change', 'focusin', 'focusout',
+		'input', 'change', 'focusin', 'focusout',
 		'animationstart', 'animationiteration', 'animationend', 'transitionrun', 'transitionend'
 	].forEach(function (type) {
 		window.addEventListener(type, mark, { capture: true, passive: true });
+	});
+
+	// A key's events, which the game hands over every frame while it's held (as the
+	// original's queue does), are a task of the page's like the others, except where
+	// what the browser does with them by default shows nothing: a key that types, or a
+	// function or modifier key, outside a form control, with no shortcut modifier held
+	// (Ctrl+A selects all). For those Chromium neither scrolls, edits, activates nor
+	// moves the focus; what the page's own listeners change counts as ever (the
+	// document's changes, timers, animation frames). So holding W to scroll the map, or
+	// a modifier, doesn't keep a page with nothing to do from resting.
+	var keys = 0;
+	function control(target) {
+		return !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName || ''));
+	}
+	function quietKey(e) {
+		if (control(e.target)) {
+			return false;
+		}
+		var code = e.keyCode;
+		// The modifier keys themselves (their own events carry their flag).
+		if (code === 16 || code === 17 || code === 18) {
+			return true;
+		}
+		if (e.ctrlKey || e.altKey || e.metaKey) {
+			return false;
+		}
+		if (e.type === 'keypress') {
+			// What it typed: Space scrolls and Enter activates on their keypress.
+			return e.charCode > 32;
+		}
+		// Digits, letters, the function keys (those Coherent has no code for as -1,
+		// which Chromium holds as 65535).
+		return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 112 && code <= 135) || code === -1 || code === 65535;
+	}
+	['keydown', 'keyup', 'keypress'].forEach(function (type) {
+		window.addEventListener(type, function (e) {
+			if (type !== 'keypress') {
+				keys++;
+			}
+			if (!quietKey(e)) {
+				ran = true;
+			}
+		}, { capture: true, passive: true });
+	});
+	Object.defineProperty(window, '__bbKeysSeen', {
+		get: function () {
+			return keys;
+		},
+		enumerable: false
 	});
 
 	// Changes to the document since the page last said what it has to do: taken as
@@ -214,7 +265,7 @@
 					next = due;
 				}
 			});
-			return JSON.stringify({ busy: reason, timer: next === Infinity ? null : Math.max(0, next - now) });
+			return JSON.stringify({ busy: reason, timer: next === Infinity ? null : Math.max(0, next - now), keys: keys });
 		},
 		enumerable: false
 	});

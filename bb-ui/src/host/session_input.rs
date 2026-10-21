@@ -39,21 +39,16 @@ impl UiSession {
 	/// come, as in the original, where the UI's listener ran first), then is parked
 	/// again. What's typed comes after its key; a keypress isn't waited for (a keydown
 	/// the page cancels has none).
+	///
+	/// How many it has seen comes with each park (`page_work.js`), so a held key costs
+	/// the page's turn and nothing more: no call into the page to count them (a page
+	/// that doesn't say, still loading, is asked).
 	fn keys_to_page(&self, keys: &[squirrel_bb::QueuedInput]) {
-		let Ok(before) = self.eval(
-			"(function () {
-	if (window.__bbKeysSeen === undefined) {
-		window.__bbKeysSeen = 0;
-		var count = function () { window.__bbKeysSeen++; };
-		window.addEventListener('keydown', count, true);
-		window.addEventListener('keyup', count, true);
-	}
-	return window.__bbKeysSeen;
-})()",
-		) else {
-			return;
+		let seen = || match self.host().keys_seen() {
+			Some(seen) => Some(seen),
+			None => self.eval("window.__bbKeysSeen").ok().and_then(|n| n.as_i64()),
 		};
-		let before = before.as_i64().unwrap_or(0);
+		let Some(before) = seen() else { return };
 		let host = self.host();
 		let mut expected = before;
 		for input in keys {
@@ -69,16 +64,21 @@ impl UiSession {
 			}
 		}
 		let deadline = Instant::now() + KEYS_TIMEOUT;
+		// The page has usually seen them by the time it parks again; if not, it gets
+		// a while longer each round.
+		let mut first = true;
 		loop {
 			self.unpark();
 			for event in self.host().poll() {
 				self.handle(event);
 			}
-			if let Some(event) = self.host().next_event(Duration::from_millis(1)) {
-				self.handle(event);
+			if !std::mem::take(&mut first) {
+				if let Some(event) = self.host().next_event(Duration::from_millis(1)) {
+					self.handle(event);
+				}
 			}
 			self.park();
-			let seen = self.eval("window.__bbKeysSeen").ok().and_then(|n| n.as_i64()).unwrap_or(0);
+			let seen = seen().unwrap_or(before);
 			if seen >= expected {
 				return;
 			}
