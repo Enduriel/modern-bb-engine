@@ -14,6 +14,8 @@ mod runtime_error;
 mod script;
 mod stack;
 #[cfg(test)]
+mod bindenv_tests;
+#[cfg(test)]
 mod close_tests;
 #[cfg(test)]
 mod float_format_tests;
