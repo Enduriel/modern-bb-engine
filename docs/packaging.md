@@ -50,8 +50,12 @@ already built for the target), `--no-archive`. It needs `curl` and `tar` on the 
 Checked on Linux (2026-10-19) by running the packaged `bb` with the system locale set to
 German and recording every shared object its processes mapped:
 - `chrome-sandbox`: the host runs CEF without its sandbox.
-- `libvk_swiftshader.so`, `libvulkan.so.1`, `vk_swiftshader_icd.json`: the host turns
-  CEF's GPU off, and no `bb` process mapped them. Leaving `libvulkan.so.1` out also
+- `libvk_swiftshader.so`, `libvulkan.so.1`, `vk_swiftshader_icd.json`: Chromium's GPU
+  work (in the game's process) runs through ANGLE on the system's EGL, and
+  the game refuses software GPUs at start (`bb_app::requirements`), so SwiftShader is
+  never needed. Rechecked 2026-10-21 with the GPU on (the dev build at the main menu,
+  not the package): no `bb` process mapped `libvk_swiftshader.so`; the GPU libraries
+  mapped were the system's EGL/Mesa and Vulkan drivers. Leaving `libvulkan.so.1` out also
   matters: with `$ORIGIN` as `bb`'s run path, wgpu would otherwise load CEF's Vulkan
   loader instead of the system's.
 - Every locale but `en-US`: the page is the game's own, and CEF falls back to `en-US`
