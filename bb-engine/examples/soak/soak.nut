@@ -118,8 +118,9 @@
 		+ " units, ours " + ours.tointeger() + " in " + sides[2] + ")";
 };
 
-// Retreat, once, from a battle that is lost anyway (from the second round on, the
-// company at less than half the enemy's strength), as a player presses Flee: the
+// Retreat, once, from a battle that is lost anyway (from the second round on: the
+// company at less than half the enemy's strength, or half of it down against as many
+// enemies), as a player presses Flee: the
 // brothers walk off the field, so the campaign goes on. "" or what it did.
 ::__soakMaybeRetreat <- function()
 {
@@ -137,9 +138,13 @@
 		return "";
 	}
 	if (st.m.StrategicProperties != null && st.m.StrategicProperties.IsFleeingProhibited) return "";
-	if (::Tactical.TurnSequenceBar.getCurrentRound() < 2 || st.m.MenuStack.hasBacksteps()) return "";
 	local sides = ::__soakSides();
-	if (sides[2] == 0 || sides[0] * 2 >= sides[1]) return "";
+	if (!("__soakStartUnits" in st.m)) st.m.__soakStartUnits <- sides[2];
+	if (::Tactical.TurnSequenceBar.getCurrentRound() < 2 || st.m.MenuStack.hasBacksteps() || sides[2] == 0) return "";
+	// Losing: under half the enemy's strength, or half the company down while the enemy
+	// still has as many units (cut enemies' strength says little about their blows).
+	local losing = sides[0] * 2 < sides[1] || sides[2] * 2 <= st.m.__soakStartUnits && sides[3] >= sides[2];
+	if (!losing) return "";
 	// The brothers are the player's again, as in a battle a player fights (the AI's
 	// retreat then counts as the company's), and the autoplay leaves their turns to the
 	// retreat (until the battle is over).
