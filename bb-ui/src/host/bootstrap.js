@@ -260,12 +260,23 @@
 	window.addEventListener('copy', onCopy, false);
 	window.addEventListener('cut', onCopy, false);
 	// Put `text` where the caret is in `element`, over its selection, as a paste
-	// does. Not through execCommand('insertText'): inside execCommand('paste') a
-	// second command doesn't run.
+	// does: no more of it than the field's `maxlength` leaves room for (vanilla's name
+	// fields have one). Not through execCommand('insertText'): inside
+	// execCommand('paste') a second command doesn't run.
 	function insertText(element, text) {
 		if (element && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT')) {
 			try {
-				element.setRangeText(text, element.selectionStart, element.selectionEnd, 'end');
+				var start = element.selectionStart, end = element.selectionEnd;
+				if (element.maxLength >= 0) {
+					var room = Math.max(0, element.maxLength - (element.value.length - (end - start)));
+					// Not half a surrogate pair.
+					var code = text.charCodeAt(room - 1);
+					text = text.slice(0, code >= 0xd800 && code <= 0xdbff ? room - 1 : room);
+					if (text.length === 0) {
+						return;
+					}
+				}
+				element.setRangeText(text, start, end, 'end');
 			} catch (e) {
 				return; // No caret in this kind of input (type=number, ...).
 			}
@@ -293,6 +304,14 @@
 			return;
 		}
 		event.preventDefault();
+		// The page's own listeners read the game's text, as Coherent's saw Windows'
+		// (the event's own clipboardData is Chromium's internal clipboard).
+		try {
+			var data = new DataTransfer();
+			data.setData('text/plain', text);
+			Object.defineProperty(event, 'clipboardData', { value: data });
+		} catch (e) {
+		}
 		var target = document.activeElement;
 		if (target && (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
 			insertText(target, text);

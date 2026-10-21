@@ -476,6 +476,17 @@ fn copy_and_paste_use_the_games_clipboard(session: &UiSession, clipboard: &Memor
 	clipboard.write_text("from élsewhere");
 	eval("var b = $('#bbClipB'); b.val('old'); b.select(); document.execCommand('paste'); 0")?;
 	ensure(value("bbClipB")? == "from élsewhere", format!("execCommand('paste') left {:?}", value("bbClipB")?))?;
+	// No more than a field's maxlength leaves room for (a paste took it all); and the
+	// page's own paste listeners read the game's text.
+	eval(
+		"var s = document.createElement('input'); s.type = 'text'; s.id = 'bbClipS'; s.maxLength = 5; s.value = 'ab'; document.body.appendChild(s); 		 window.__bbPasted = null; window.__bbOnPaste = function (e) { window.__bbPasted = e.clipboardData.getData('text/plain'); }; 		 document.addEventListener('paste', window.__bbOnPaste); 0",
+	)?;
+	clipboard.write_text("0123456789");
+	eval("var s = document.getElementById('bbClipS'); s.focus(); s.setSelectionRange(1, 1); document.execCommand('paste'); 0")?;
+	ensure(value("bbClipS")? == "a012b", format!("a paste into a field of 5 left {:?}", value("bbClipS")?))?;
+	let heard = eval("window.__bbPasted")?;
+	ensure(heard.as_str() == Some("0123456789"), format!("the page's paste listener read {heard:?}"))?;
+	eval("document.removeEventListener('paste', window.__bbOnPaste); var s = document.getElementById('bbClipS'); s.parentNode.removeChild(s); 0")?;
 	// The keys: Ctrl+C copies the selection, Ctrl+V pastes at the caret.
 	let ctrl = Modifiers { control: true, ..Modifiers::default() };
 	let keys = |code: i32| {
