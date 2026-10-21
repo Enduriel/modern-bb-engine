@@ -156,6 +156,10 @@ pub(super) fn remove_object(m: &Machine, vm: &SQVM, tile: usize) -> Result<(), S
 		return Ok(());
 	};
 	unplace(m, idx);
+	// Already gone from the battle while its onFinish runs (probed 2026-10-21: in it,
+	// getEntityByID finds it no more and it isn't placed). Whether die()'s onFinish
+	// sees the same isn't probed; it keeps its order.
+	m.borrow_mut().units[idx].dead = true;
 	destroy(m, vm, idx)
 }
 

@@ -79,6 +79,8 @@ fn a_removed_object_is_gone_from_the_map_and_the_battle() {
 		   local t = ::Tactical.getTileSquare(x, y); if (t.IsEmpty) tile = t; } \
 		 ::__tile <- tile; \
 		 ::__boulder <- tile.spawnObject(\"entity/tactical/objects/boulder\"); \
+		 ::__seen <- null; local id = ::__boulder.getID(); \
+		 ::__boulder.onFinish <- function () { ::__seen = [this.isPlacedOnMap(), ::Tactical.getEntityByID(id) != null]; }; \
 		 ::__out <- [tile.SquareCoords.X, tile.SquareCoords.Y, ::__boulder.getID(), tile.IsEmpty];",
 	);
 	let boulder: i64 = out[2].parse().expect("id");
@@ -99,6 +101,9 @@ fn a_removed_object_is_gone_from_the_map_and_the_battle() {
 	assert_eq!(out[0], boulder.to_string());
 	assert_eq!(out[1..4], ["true", "false", "false"], "the tile is free; the boulder is off the map and out of the battle");
 	assert_eq!(out[5], "true", "the stump stands on the tile");
+	// Its onFinish ran, off the map and out of the battle already (probed).
+	let seen = answers(&engine, "::__out <- ::__seen == null ? [\"not run\"] : ::__seen;");
+	assert_eq!(seen, ["false", "false"], "onFinish saw [placed, found by id]");
 	let stump: i64 = out[4].parse().expect("id");
 	assert!(!drawn(boulder), "the removed boulder isn't drawn");
 	assert!(drawn(stump), "the stump is drawn");
