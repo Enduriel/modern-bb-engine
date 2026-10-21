@@ -563,7 +563,12 @@ impl Running {
 		// A frame that would show just what the last did is neither drawn nor presented:
 		// the last stays up, and the next frame comes a refresh of the display after it
 		// (`pacing`), which is measured from presented frames: until it is, all are.
-		if self.pacer.measuring() || self.present_every.is_some_and(|n| self.frames % n < 2) {
+		// The test's unpresented frame is drawn whatever it shows (under load, the frames
+		// around it have all been unchanged).
+		if self.pacer.measuring()
+			|| self.present_every.is_some_and(|n| self.frames % n < 2)
+			|| self.unpresented == Some(self.frames)
+		{
 			self.game.forget_shown();
 		}
 		let drawn = self.game.draw_if_changed(&self.gpu, &self.target);
