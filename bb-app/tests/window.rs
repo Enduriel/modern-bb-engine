@@ -1,24 +1,20 @@
 //! `bb`'s window, run in a headless gamescope (muted, so nothing shows or sounds): it
 //! starts at the main menu, exits cleanly, and the scripts' video mode is put on it as they set it. Skips
 //! cleanly without gamescope or the Steam install, or when gamescope can't start (no
-//! display, no runtime folder). The first run waits its turn behind the probes' games
-//! ([`bb_engine::game_queue`]), and the tests keep the display until their process ends.
-//! Every run logs into its own folder (`--logs`).
+//! display, no runtime folder). Each run waits its turn behind the probes' games
+//! ([`bb_engine::game_queue`]) and gives the display up when it ends (a runner that
+//! queued once hands its turn down, `BB_GAME_QUEUE_TURN`). Every run logs into its own
+//! folder (`--logs`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
 
 /// One gamescope at a time.
 static GAMESCOPE: Mutex<()> = Mutex::new(());
-
-/// The display's turn in the probes' queue, taken by the first run and kept until the
-/// process ends (the queue drops a dead process's ticket): one wait behind the queue for
-/// all the runs, not one each.
-static TURN: OnceLock<bb_engine::game_queue::Ticket> = OnceLock::new();
 
 /// What a run left: its exit status and what it printed.
 struct Run {
@@ -60,7 +56,7 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 	let _one = GAMESCOPE.lock().unwrap_or_else(|e| e.into_inner());
 	// Behind the probes' games, which run in a headless gamescope too: two at once can
 	// hang one's teardown.
-	TURN.get_or_init(|| bb_engine::game_queue::Ticket::wait(Duration::from_secs(3600)).expect("a turn for gamescope"));
+	let _turn = bb_engine::game_queue::Ticket::wait(Duration::from_secs(3600)).expect("a turn for gamescope");
 	let (started, status, stderr) = (dir.join("started"), dir.join("status"), dir.join("stderr"));
 	let log = std::fs::File::create(dir.join("gamescope.log")).expect("gamescope's log");
 	// gamescope doesn't pass its child's status on: the shell writes it, and first that
