@@ -184,6 +184,8 @@ pub fn main(o: &Options, n: u32) -> ExitCode {
 }
 
 /// Let the supervisor's `eu-stack` attach (Yama's ptrace scope 1 lets only ancestors).
+/// Linux only: Yama and `prctl` are Linux's.
+#[cfg(target_os = "linux")]
 fn allow_stack_dumps() {
 	unsafe extern "C" {
 		fn prctl(option: std::ffi::c_int, ...) -> std::ffi::c_int;
@@ -195,6 +197,9 @@ fn allow_stack_dumps() {
 		prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY);
 	}
 }
+
+#[cfg(not(target_os = "linux"))]
+fn allow_stack_dumps() {}
 
 fn run(o: &Options, n: u32) -> Result<End, String> {
 	let io = |e: std::io::Error| e.to_string();
