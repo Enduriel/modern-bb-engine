@@ -42,7 +42,10 @@ impl Storage {
 			Storage::Dir(dir) => {
 				std::fs::create_dir_all(dir).map_err(|e| format!("save directory: {e}"))?;
 				let temp = write_temp(dir, name, &bytes).map_err(|e| format!("writing save {name}: {e}"))?;
-				commit(dir, &temp, &Self::path(dir, name)).map_err(|e| format!("writing save {name}: {e}"))
+				commit(dir, &temp, &Self::path(dir, name)).map_err(|e| {
+					let _ = std::fs::remove_file(&temp);
+					format!("writing save {name}: {e}")
+				})
 			}
 		}
 	}
@@ -103,13 +106,24 @@ impl Storage {
 }
 
 /// Save `name`'s bytes in a temporary file in `dir` (not a `.sav`, so not listed),
-/// flushed to the disk; its path.
+/// flushed to the disk; its path. The file is this write's own: two processes saving
+/// under one name at once (two runs sharing a savegames folder) would otherwise write
+/// into one file, and publish a mix of both saves or fail to find it to rename.
 fn write_temp(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
 	use std::io::Write;
-	let temp = dir.join(format!("{name}.sav.writing"));
-	let mut file = std::fs::File::create(&temp)?;
-	file.write_all(bytes)?;
-	file.sync_all()?;
+	use std::sync::atomic::{AtomicU64, Ordering};
+	static WRITES: AtomicU64 = AtomicU64::new(0);
+	let n = WRITES.fetch_add(1, Ordering::Relaxed);
+	let temp = dir.join(format!("{name}.sav.{}-{n}.writing", std::process::id()));
+	let written = (|| {
+		let mut file = std::fs::File::create_new(&temp)?;
+		file.write_all(bytes)?;
+		file.sync_all()
+	})();
+	if let Err(e) = written {
+		let _ = std::fs::remove_file(&temp);
+		return Err(e);
+	}
 	Ok(temp)
 }
 
@@ -255,6 +269,37 @@ mod tests {
 		// The next save goes through over the leftover.
 		storage.write("bb_probe_slot1", b"the new save".to_vec()).unwrap();
 		assert_eq!(storage.read("bb_probe_slot1").unwrap(), b"the new save");
+	}
+
+	#[test]
+	fn writers_saving_one_name_at_once_each_publish_a_whole_save() {
+		// Two runs sharing a savegames folder (here: threads) once wrote into one temporary
+		// file: mixed saves, or a rename that found no file.
+		let folder = Folder::new("concurrent");
+		std::fs::create_dir_all(&folder.0).unwrap();
+		let payload = |w: u8| vec![w; 256 * 1024];
+		std::thread::scope(|scope| {
+			for w in 0..4u8 {
+				let dir = folder.0.clone();
+				scope.spawn(move || {
+					let storage = Storage::Dir(dir);
+					for _ in 0..10 {
+						storage.write("bb_probe_slot1", payload(w)).unwrap();
+						let back = Storage::Dir(storage_dir(&storage)).read("bb_probe_slot1").unwrap();
+						assert!(back.iter().all(|&b| b == back[0]) && back.len() == 256 * 1024, "a mixed save");
+					}
+				});
+			}
+		});
+		let files: Vec<_> = std::fs::read_dir(&folder.0).unwrap().flatten().map(|e| e.file_name()).collect();
+		assert_eq!(files, ["bb_probe_slot1.sav"]);
+	}
+
+	fn storage_dir(storage: &Storage) -> PathBuf {
+		match storage {
+			Storage::Dir(dir) => dir.clone(),
+			Storage::Memory(_) => unreachable!(),
+		}
 	}
 
 	#[test]
