@@ -1035,7 +1035,7 @@ impl WorldRenderer {
 				list.index_of(path);
 			}
 			let map = crate::world::WorldQuads {
-				quads: self.kept.shown_quads(shown).copied().collect(),
+				quads: self.kept.shown_quads(shown).collect(),
 				atlases: list,
 				labels_from: 0,
 				details_end: 0,
@@ -1069,7 +1069,7 @@ impl WorldRenderer {
 			else {
 				continue;
 			};
-			if self.kept.whole_quads(shown, atlas).any(|quad| samples_mips(quad, zoom, size, None)) {
+			if self.kept.whole_quads(shown, atlas).any(|quad| samples_mips(&quad, zoom, size, None)) {
 				let (mips, textures) = (&self.mips, &mut self.textures);
 				textures.update(&path, |texture| Some(mips.with_mips(gpu, texture)));
 			}

@@ -406,6 +406,9 @@ impl SpriteRenderer {
 			}
 		}
 		kept.bytes.clear();
+		// A whole map's writes (megabytes) are once in a while; a frame's changed details
+		// are kilobytes. The room for the first isn't kept for the next.
+		kept.bytes.shrink_to(KEPT_WRITES_ROOM);
 		let instances = streams.instances.upload(gpu, &self.instances_layout, encoder, &mut streams.vertices.belt);
 		let kept_quads = parts
 			.iter()
@@ -766,6 +769,10 @@ impl Streams {
 
 /// The kept quads' room grows in steps of this many quads (~850 KB).
 const KEPT_STEP: u64 = 4096;
+
+/// The bytes of kept quads' writes [`Kept::bytes`] keeps room for between draws: a few
+/// thousand quads, the details changed in a running world's frame.
+const KEPT_WRITES_ROOM: usize = 1 << 20;
 
 /// The staging memory's unit: a zoomed-out world map's quads are about 7 MB.
 const STAGING_CHUNK: u64 = 8 << 20;

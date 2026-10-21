@@ -42,6 +42,7 @@ use bb_assets::SpriteRegistry;
 use squirrel_bb::scene::{MapEdit, SceneDetail, SceneTile};
 
 use crate::fast_hash::FastMap;
+use crate::map_quad::MapQuad;
 use crate::pages::{FramePages, Located};
 use crate::residency::Drawer;
 use crate::sprite::{Quad, SLOTS, SpriteRenderer};
@@ -87,9 +88,10 @@ struct Order {
 
 /// One kept quad.
 struct Item {
-	/// In its atlas's coordinates, its `texture` indexing `atlases`; `None` draws
-	/// nothing (hidden, or an unknown brush).
-	quad: Option<Quad>,
+	/// In its atlas's coordinates, its `texture` indexing `atlases`; none draws nothing
+	/// (hidden, or an unknown brush). Kept on the CPU to be located again (see
+	/// [`MapQuad`]).
+	quad: MapQuad,
 	order: Order,
 	/// Its detail's id, or for terrain its tile's [`terrain_id`].
 	id: i64,
@@ -148,8 +150,8 @@ impl Segment {
 	/// Its bounds, measured again.
 	fn measure(&mut self) {
 		self.bounds = EMPTY;
-		for quad in self.items.iter().filter_map(|i| i.quad.as_ref()) {
-			grow(&mut self.bounds, quad);
+		for quad in self.items.iter().filter_map(|i| i.quad.get()) {
+			grow(&mut self.bounds, &quad);
 		}
 	}
 
@@ -290,7 +292,7 @@ impl KeptMap {
 			.map(|&i| {
 				let entry = &entries[i as usize];
 				Item {
-					quad: entry.quad.map(|(texture, quad)| {
+					quad: MapQuad::of(entry.quad.map(|(texture, quad)| {
 						let atlas = &mut index[texture];
 						if *atlas == usize::MAX {
 							*atlas = atlases.index_of(ids.paths[texture]);
@@ -299,7 +301,7 @@ impl KeptMap {
 							texture: *atlas,
 							..quad
 						}
-					}),
+					})),
 					order: entry.order,
 					id: entry.id,
 				}
@@ -362,7 +364,7 @@ impl KeptMap {
 							..quad
 						};
 						self.insert(Item {
-							quad: Some(quad),
+							quad: MapQuad::of(Some(quad)),
 							order: Order {
 								layer: Layer::Terrain,
 								key: Reverse(key),
@@ -385,7 +387,7 @@ impl KeptMap {
 		let nth = self.next[tile];
 		self.next[tile] += 1;
 		let item = Item {
-			quad: self.detail_quad(detail, sprites),
+			quad: MapQuad::of(self.detail_quad(detail, sprites)),
 			order: Order {
 				layer: Layer::Details,
 				key: Reverse(i64::from(detail.z)),
@@ -489,11 +491,12 @@ impl KeptMap {
 				continue;
 			};
 			let quad = self.detail_quad(detail, sprites);
+			let kept = MapQuad::of(quad);
 			let segment = &mut self.segments[s];
-			if quad == segment.items[at].quad {
+			if kept == segment.items[at].quad {
 				continue;
 			}
-			segment.items[at].quad = quad;
+			segment.items[at].quad = kept;
 			if let Some(quad) = &quad {
 				grow(&mut segment.bounds, quad);
 			}
@@ -574,7 +577,7 @@ impl KeptMap {
 
 	/// Where quad `at` of segment `s` is drawn from.
 	fn locate(&mut self, s: usize, at: usize, cx: &mut Placing) -> At {
-		let Some(quad) = self.segments[s].items[at].quad else {
+		let Some(quad) = self.segments[s].items[at].quad.get() else {
 			return At::Nothing;
 		};
 		let path = &self.atlases.paths[quad.texture];
@@ -752,7 +755,7 @@ impl KeptMap {
 		&'a self,
 		shown: &'a Shown,
 		atlas: usize,
-	) -> impl Iterator<Item = &'a Quad> + 'a {
+	) -> impl Iterator<Item = Quad> + 'a {
 		self.shown_quads(shown).filter(move |q| q.texture == atlas)
 	}
 
@@ -760,11 +763,11 @@ impl KeptMap {
 	pub(crate) fn shown_quads<'a>(
 		&'a self,
 		shown: &'a Shown,
-	) -> impl Iterator<Item = &'a Quad> + 'a {
+	) -> impl Iterator<Item = Quad> + 'a {
 		shown
 			.segments
 			.iter()
-			.flat_map(|&s| self.segments[s].items.iter().filter_map(|i| i.quad.as_ref()))
+			.flat_map(|&s| self.segments[s].items.iter().filter_map(|i| i.quad.get()))
 	}
 
 	/// Give each call of the segments `shown` its bind group, made again if the views its
@@ -866,7 +869,7 @@ mod tests {
 			.iter()
 			.flat_map(|&s| {
 				let segment = &map.segments[s];
-				segment.items.iter().map(|i| (i.quad, i.id, segment.before))
+				segment.items.iter().map(|i| (i.quad.get(), i.id, segment.before))
 			})
 			.collect()
 	}

@@ -29,6 +29,7 @@ mod gpu_timing;
 mod kept_map;
 mod kept_sprites;
 pub mod labels;
+mod map_quad;
 mod memory;
 mod mips;
 pub mod orientation;
