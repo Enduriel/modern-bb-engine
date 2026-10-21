@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""Run the whole test suite: what `cargo test --workspace`, `cargo test -p bb-ui --features
+cef` and `cargo test -p bb-app --features ui` run, the same test binaries, side by side.
+
+Run it inside a resource-limited scope, from anywhere, e.g.:
+
+    systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=10G \
+        modern_bb_engine/scripts/test_all.py --release
+
+Two builds, both workspace-wide so that every crate below bb-ui and bb-app keeps one
+feature set (`-p bb-ui --features cef` resolves features differently and rebuilds
+squirrel-bb and bb-engine): the plain one, and one with `bb-ui/cef,bb-app/ui`, from
+which only bb-ui's and bb-app's test binaries run (the old cef and ui suites). Then the
+binaries run, each as cargo runs it (its package folder, cargo's environment), in three
+lanes:
+
+- cpu: the CPU-bound binaries, longest first, `--cpu` at a time;
+- ui: the browser host's test binaries (paced in real time, mostly idle), `--ui` at a
+  time, longest first;
+- window: bb-app's window.rs in a headless gamescope, the plain build's and then the ui
+  build's. The runner queues for the game display at once (so the wait overlaps the
+  cpu lane) and hands its turn to both (`BB_GAME_QUEUE_TURN`): one wait, not one per
+  binary. It keeps the display until both are done, idle if the ui build's has to wait
+  for the cpu lane.
+
+The ui lane and the ui build's window.rs (its frame-rate test is load-sensitive) start
+once the cpu lane is done. Not alongside it: the scope's CPU quota throttles every process in it once the
+cpu lane uses it up, and their real-time checks then fail (seen: a page collecting
+garbage early, CEF's shutdown trapping). window.rs runs the bb of its own build
+(`BB_TEST_BIN`): the second build replaces the first's `target/…/bb`.
+
+Each binary's output goes to its own log in `--logs`; a summary follows, and the exit
+status is nonzero if any binary failed. Wall times are kept in the target folder and
+order the next run's lanes longest first.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+WORKSPACE = Path(__file__).resolve().parent.parent
+UI_FEATURES = "bb-ui/cef,bb-app/ui"
+# The packages whose ui-build binaries run (the old `-p bb-ui --features cef` and
+# `-p bb-app --features ui` suites); every other crate's are the plain build's.
+UI_PACKAGES = {"bb-ui", "bb-app"}
+# Wall seconds measured on 2026-10-20, for the order of a first run.
+SEED_TIMES = {
+	"play_session_ui": 176, "frame_regression": 168, "ui_parity": 75, "combat_scenarios": 46,
+	"world_lifetime": 30, "campaign_ui": 26, "dlc_subsets": 26, "parity": 21, "ui_window": 18,
+	"reload_memory": 16, "world_size_settings": 16, "second_campaign": 14,
+	"reload_combat_memory": 14, "menu_ui": 11, "world_sizes": 11, "smoke": 10, "mods_ui": 9,
+	"mods_start_input": 9, "world_cull": 9, "ai_time_slicing": 8,
+}
+
+
+def build(profile_args, features):
+	"""Build the workspace's tests; return (test binaries, build-script outputs, a copy of
+	this build's bb)."""
+	cmd = ["cargo", "test", "--workspace", *profile_args, "--no-run", "--message-format=json-render-diagnostics"]
+	if features:
+		cmd += ["--features", features]
+	print("$", " ".join(cmd), flush=True)
+	proc = subprocess.run(cmd, cwd=WORKSPACE, stdout=subprocess.PIPE, text=True)
+	if proc.returncode != 0:
+		sys.exit(f"build failed: {' '.join(cmd)}")
+	tests, scripts, kept = [], {}, None
+	for line in proc.stdout.splitlines():
+		msg = json.loads(line)
+		if msg.get("reason") == "compiler-artifact" and msg.get("executable") and msg["profile"]["test"]:
+			tests.append(msg)
+		elif msg.get("reason") == "compiler-artifact" and msg["target"]["name"] == "bb" and msg.get("executable"):
+			# The next build replaces target/…/bb: keep this build's beside it (its
+			# libraries are found there too) for window.rs (`BB_TEST_BIN`).
+			bb = Path(msg["executable"])
+			kept = bb.with_name(f"bb-test-{'ui' if features else 'plain'}")
+			shutil.copy2(bb, kept)
+		elif msg.get("reason") == "build-script-executed":
+			scripts[msg["package_id"]] = msg
+	return tests, scripts, str(kept)
+
+
+def run_env(artifact, scripts, sysroot_lib, target_dir):
+	"""The environment cargo runs a test binary in."""
+	manifest = Path(artifact["manifest_path"])
+	package = artifact["package_id"]
+	name, version = package_name_version(artifact)
+	env = dict(os.environ)
+	major, minor, patch = (version.split("-")[0].split(".") + ["0", "0"])[:3]
+	env.update({
+		"CARGO_MANIFEST_DIR": str(manifest.parent),
+		"CARGO_MANIFEST_PATH": str(manifest),
+		"CARGO_PKG_NAME": name,
+		"CARGO_PKG_VERSION": version,
+		"CARGO_PKG_VERSION_MAJOR": major,
+		"CARGO_PKG_VERSION_MINOR": minor,
+		"CARGO_PKG_VERSION_PATCH": patch,
+	})
+	env.setdefault("CARGO", "cargo")
+	paths = []
+	for script in scripts.values():
+		for linked in script.get("linked_paths", []):
+			path = linked.split("=", 1)[-1]
+			if path not in paths:
+				paths.append(path)
+	paths += [str(target_dir), str(target_dir / "deps"), sysroot_lib]
+	if env.get("LD_LIBRARY_PATH"):
+		paths.append(env["LD_LIBRARY_PATH"])
+	env["LD_LIBRARY_PATH"] = ":".join(paths)
+	if package in scripts and scripts[package].get("out_dir"):
+		env["OUT_DIR"] = scripts[package]["out_dir"]
+	return env
+
+
+def package_name_version(artifact):
+	"""The package's name and version, from its id (`path+file:///…/bb-ui#0.1.0` or
+	`path+file:///…#name@0.1.0`)."""
+	tail = artifact["package_id"].rsplit("#", 1)[-1]
+	if "@" in tail:
+		return tail.split("@", 1)
+	return Path(artifact["manifest_path"]).parent.name, tail
+
+
+QUEUE = Path("/tmp/bb-probe-queue")
+
+
+class Turn:
+	"""A place in the game queue (bb-engine's game_queue, the probe runner's), held for the
+	window lane: its binaries take it over (`BB_GAME_QUEUE_TURN`), so they wait once."""
+
+	def __init__(self):
+		QUEUE.mkdir(exist_ok=True)
+		self.path = QUEUE / f"{time.time_ns():020d}-{os.getpid()}"
+		self.path.touch()
+		self.checked = 0.0
+		self.held = False
+		self.queued = time.monotonic()
+
+	def ready(self):
+		"""First in line? (looked at twice a second at most)"""
+		if not self.held and time.monotonic() - self.checked >= 0.5:
+			self.checked = time.monotonic()
+			live = []
+			for ticket in sorted(QUEUE.iterdir()):
+				try:
+					pid = int(ticket.name.split("-")[1])
+				except (IndexError, ValueError):
+					continue
+				if Path(f"/proc/{pid}").exists():
+					live.append(ticket)
+				else:
+					ticket.unlink(missing_ok=True)
+			self.held = bool(live) and live[0] == self.path
+			if self.held:
+				print(f"game queue: the display is ours after {time.monotonic() - self.queued:.0f} s", flush=True)
+		return self.held
+
+	def give_up(self):
+		self.path.unlink(missing_ok=True)
+
+
+def run_lanes(waiting, running, finished, limits, logs, turn, run_began):
+	"""Start the waiting jobs as their lanes allow (the ui lane and the ui build's window.rs
+	once the cpu lane is done, window.rs once the game queue's turn is ours), until all
+	have finished."""
+	while waiting or running:
+		for job in list(running):
+			if job.proc.poll() is not None:
+				job.rc, job.wall = job.proc.returncode, time.monotonic() - job.start
+				job.log.close()
+				running.remove(job)
+				finished.append(job)
+				status = "ok" if job.rc == 0 else f"FAILED ({job.rc})"
+				print(f"{time.monotonic() - run_began:7.1f}  {job.label}: {status} in {job.wall:.1f} s", flush=True)
+		cpu_left = any(j.lane == "cpu" for j in waiting + running)
+		for job in list(waiting):
+			if sum(1 for r in running if r.lane == job.lane) >= limits[job.lane]:
+				continue
+			if job.after_cpu and cpu_left:
+				continue
+			if job.lane == "window":
+				if not turn.ready():
+					continue
+				job.env["BB_GAME_QUEUE_TURN"] = str(turn.path)
+			job.log = open(logs / log_name(job), "w")
+			job.start = time.monotonic()
+			job.proc = subprocess.Popen(job.cmd, cwd=job.cwd, env=job.env, stdout=job.log, stderr=subprocess.STDOUT)
+			waiting.remove(job)
+			running.append(job)
+		if turn and not any(j.lane == "window" for j in waiting + running):
+			turn.give_up()
+		time.sleep(0.1)
+
+
+RESULT = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
+
+
+def log_name(job):
+	return job.label.replace(":", "-").replace("/", "_") + ".log"
+
+
+class Job:
+	def __init__(self, label, lane, cmd, cwd, env, est, after_cpu):
+		self.label, self.lane, self.cmd, self.cwd, self.env = label, lane, cmd, cwd, env
+		self.est, self.after_cpu = est, after_cpu
+		self.proc = self.log = None
+		self.start = self.wall = None
+		self.rc = None
+
+
+def main():
+	ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+	ap.add_argument("--release", action="store_true", help="the release profile (as the suites are run)")
+	ap.add_argument("-j", "--jobs", type=int, default=4, help="cargo's build jobs (default 4)")
+	ap.add_argument("--cpu", type=int, default=4, help="CPU-bound binaries at once (default 4)")
+	ap.add_argument("--ui", type=int, default=2, help="browser-host binaries at once (default 2)")
+	ap.add_argument("--logs", type=Path, help="folder for the binaries' logs (default: target/test_all_logs)")
+	ap.add_argument("--only", nargs="*", default=None, help="run only the binaries with these target names")
+	args = ap.parse_args()
+
+	profile_args = (["--release"] if args.release else []) + [f"-j{args.jobs}"]
+	meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version=1", "--no-deps"], cwd=WORKSPACE,
+		stdout=subprocess.PIPE, text=True, check=True).stdout)
+	target_dir = Path(meta["target_directory"]) / ("release" if args.release else "debug")
+	logs = args.logs or Path(meta["target_directory"]) / "test_all_logs"
+	logs.mkdir(parents=True, exist_ok=True)
+	times_file = Path(meta["target_directory"]) / "test_all_times.json"
+	try:
+		times = {**SEED_TIMES, **json.loads(times_file.read_text())}
+	except (OSError, ValueError):
+		times = dict(SEED_TIMES)
+	sysroot = subprocess.run(["rustc", "--print", "sysroot"], cwd=WORKSPACE, stdout=subprocess.PIPE, text=True,
+		check=True).stdout.strip()
+	sysroot_lib = str(Path(sysroot) / "lib")
+
+	began = time.monotonic()
+	plain, plain_scripts, plain_bb = build(profile_args, None)
+	ui, ui_scripts, ui_bb = build(profile_args, UI_FEATURES)
+	built = time.monotonic() - began
+
+	jobs = []
+	seen = set()
+	for variant, artifacts, scripts, bb in (("", plain, plain_scripts, plain_bb), ("+ui", ui, ui_scripts, ui_bb)):
+		for artifact in artifacts:
+			path = artifact["executable"]
+			name, _ = package_name_version(artifact)
+			if path in seen or (variant and name not in UI_PACKAGES):
+				continue
+			seen.add(path)
+			target = artifact["target"]["name"]
+			if args.only is not None and target not in args.only:
+				continue
+			kind = artifact["target"]["kind"][0]
+			label = f"{name}:{kind}:{target}{variant}"
+			env = run_env(artifact, scripts, sysroot_lib, target_dir)
+			cwd = Path(artifact["manifest_path"]).parent
+			est = times.get(label, times.get(target, 0))
+			if target == "window":
+				env["BB_TEST_BIN"] = bb
+				jobs.append(Job(label, "window", [path], cwd, env, est, after_cpu=bool(variant)))
+			elif variant and kind == "test":
+				jobs.append(Job(label, "ui", [path], cwd, env, est, after_cpu=True))
+			else:
+				jobs.append(Job(label, "cpu", [path], cwd, env, est, after_cpu=False))
+	if args.only is None:
+		doc = ["cargo", "test", "--workspace", *profile_args, "--doc"]
+		jobs.append(Job("doctests", "cpu", doc, WORKSPACE, dict(os.environ), times.get("doctests", 30), after_cpu=False))
+
+	limits = {"cpu": args.cpu, "ui": args.ui, "window": 1}
+	waiting = sorted(jobs, key=lambda j: -j.est)
+	running = []
+	finished = []
+	print(f"built in {built:.0f} s; running {len(jobs)} binaries (logs in {logs})", flush=True)
+	run_began = time.monotonic()
+	turn = Turn() if any(j.lane == "window" for j in jobs) else None
+	try:
+		run_lanes(waiting, running, finished, limits, logs, turn, run_began)
+	finally:
+		if turn:
+			turn.give_up()
+	total = time.monotonic() - began
+
+	try:
+		times_file.write_text(json.dumps({j.label: round(j.wall, 1) for j in finished}, indent=1, sort_keys=True))
+	except OSError:
+		pass
+	failed = [j for j in finished if j.rc != 0]
+	counts = [0, 0, 0]
+	for job in finished:
+		for m in RESULT.finditer((logs / log_name(job)).read_text(errors="replace")):
+			for i in range(3):
+				counts[i] += int(m.group(i + 1))
+	print(f"\n{len(finished) - len(failed)} of {len(finished)} binaries passed; libtest counted {counts[0]} passed, "
+		f"{counts[1]} failed, {counts[2]} ignored; build {built:.0f} s, tests {total - built:.0f} s, total {total:.0f} s")
+	for job in failed:
+		log = logs / log_name(job)
+		print(f"\n--- {job.label} FAILED ({job.rc}); the end of {log}:")
+		print("".join(log.read_text(errors="replace").splitlines(keepends=True)[-40:]))
+	return 1 if failed else 0
+
+
+if __name__ == "__main__":
+	sys.exit(main())

@@ -7,6 +7,10 @@
 //! The runner's semantics: a ticket is a file named `<nanoseconds, 20 digits>-<pid>`;
 //! the first live one (its process still running) holds the display until its file
 //! goes; tickets of dead processes are dropped.
+//!
+//! A process can hand its turn to the processes it starts: with `BB_GAME_QUEUE_TURN`
+//! naming its ticket, theirs is that one while it is first in line (a test runner that
+//! runs several gamescope test binaries one after another waits once, not once each).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,13 +20,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const QUEUE: &str = "/tmp/bb-probe-queue";
 
 /// A place in the queue; dropping it gives the display up, and so does the process's end
-/// (a ticket kept in a static stays until then).
-pub struct Ticket(PathBuf);
+/// (a ticket kept in a static stays until then). A turn handed down
+/// (`BB_GAME_QUEUE_TURN`) stays the parent's to give up.
+pub struct Ticket(Option<PathBuf>);
 
 impl Ticket {
 	/// Queue up and wait until first in line, for up to `max_wait`.
 	pub fn wait(max_wait: Duration) -> Result<Ticket, String> {
 		let dir = Path::new(QUEUE);
+		if let Some(held) = std::env::var_os("BB_GAME_QUEUE_TURN") {
+			if live_tickets(dir).first().is_some_and(|first| first.as_os_str() == held) {
+				return Ok(Ticket(None));
+			}
+		}
 		fs::create_dir_all(dir).map_err(|e| format!("{QUEUE}: {e}"))?;
 		let ns = SystemTime::now()
 			.duration_since(UNIX_EPOCH)
@@ -30,9 +40,9 @@ impl Ticket {
 			.as_nanos();
 		let path = dir.join(format!("{ns:020}-{}", std::process::id()));
 		fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-		let ticket = Ticket(path);
+		let ticket = Ticket(Some(path.clone()));
 		let deadline = Instant::now() + max_wait;
-		while live_tickets(dir).first() != Some(&ticket.0) {
+		while live_tickets(dir).first() != Some(&path) {
 			if Instant::now() >= deadline {
 				return Err(format!(
 					"the game display stayed busy for {max_wait:?} ({QUEUE})"
@@ -48,7 +58,9 @@ impl Ticket {
 
 impl Drop for Ticket {
 	fn drop(&mut self) {
-		let _ = fs::remove_file(&self.0);
+		if let Some(path) = &self.0 {
+			let _ = fs::remove_file(path);
+		}
 	}
 }
 

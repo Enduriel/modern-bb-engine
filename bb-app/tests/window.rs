@@ -76,7 +76,7 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 			"-c",
 			r#": > "$BB_TEST_STARTED"; "$0" "$@" 2>"$BB_TEST_STDERR"; echo $? > "$BB_TEST_STATUS""#,
 		])
-		.arg(env!("CARGO_BIN_EXE_bb"))
+		.arg(bb_binary())
 		.arg("--mute")
 		// Tests never start Steam, even with its library beside the test's bb.
 		.arg("--no-steam")
@@ -130,6 +130,13 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 		status: std::fs::read_to_string(&status).expect("bb's exit status").trim().to_string(),
 		stderr: std::fs::read_to_string(&stderr).unwrap_or_default(),
 	})
+}
+
+/// The `bb` to run: the one `BB_TEST_BIN` names, else this build's. A runner that builds
+/// the workspace with and without the `ui` feature names the matching one, since the
+/// second build replaces the first's `target/…/bb`.
+fn bb_binary() -> PathBuf {
+	std::env::var_os("BB_TEST_BIN").map_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_bb")), PathBuf::from)
 }
 
 /// Kill gamescope and what's under it (bb, its browser processes, gamescope's Xwayland),
