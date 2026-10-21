@@ -496,6 +496,22 @@ fn vec_xy(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
 	crate::native::vec::xy(vm, v)
 }
 
+/// The centre a spatial query (`getAllEntitiesAtPos`, `getAllEntitiesVisibleAtPos`)
+/// reads from its argument. The original takes any class instance unchecked
+/// (0x587010) and reads its native object's first two f32s (0x4f8467): a vector's `X`
+/// and `Y`, but a world tile's are its bridge's pointer bits, a centre at the map's
+/// origin in practice (probed 2026-10-21: Reforged's
+/// `getAllEntitiesAtPos(World.getTileSquare(70, 85), 25000)` finds the 171 entities
+/// `createVec(0, 0)` finds, not the 172 around the tile's own `X`/`Y`). A tile is told
+/// from a vector by its `Pos`.
+fn query_center(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
+	if v.get_member::<SqStrongRef>(vm, "Pos").is_some() {
+		(0.0, 0.0)
+	} else {
+		vec_xy(vm, v)
+	}
+}
+
 /// The axial tile under a world pixel position (`World.worldToTile`).
 fn tile_under(vm: &SQVM, pos: &SqStrongRef) -> Result<(i64, i64), String> {
 	let world = SqTable::root(vm)
@@ -1035,7 +1051,7 @@ impl WorldEntities {
 		let all_at_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
-				let center = vec_xy(vm, &pos.0);
+				let center = query_center(vm, &pos.0);
 				let machine = m.borrow();
 				entity_array(vm, &machine.entities, world_query::all_at_pos(center, radius.0, &machine.entities))
 			})
@@ -1055,7 +1071,7 @@ impl WorldEntities {
 		let all_visible_at_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
-				let center = vec_xy(vm, &pos.0);
+				let center = query_center(vm, &pos.0);
 				let machine = m.borrow();
 				let hits = world_query::all_visible_at_pos(center, radius.0, &machine.entities);
 				entity_array(vm, &machine.entities, hits)

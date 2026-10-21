@@ -1,6 +1,7 @@
 //! World natives built from the original's disassembly, on a new campaign:
 //! `World.move`, `getPlayerPos`, `getAllTilesOfRegion`, `getAllRosters` and `roster.get`, the world tile's
 //! `getTileBetweenThisAnd`/`getPosBetweenThisAnd`, and `presave`/`canLoad` around a save.
+//! `getAllEntitiesAtPos` given a world tile (the origin, probed).
 //! Then the Sqrat overloads probed on 2026-10-14: `getDistanceTo(x, y)`, `getEntityAtPos`,
 //! and `spawnEntity(script)` at the tile under the mouse; and `IO.enumerateFiles` over
 //! the real data folder.
@@ -43,6 +44,23 @@ fn world_natives_from_the_disassembly() {
 		// f32 along the normalized direction, so not exactly 3,4.
 		m = ::World.move(::createVec(0, 0), ::createVec(30, 40), 5.0);
 		if (::fabs(m.X - 3) > 0.00001 || ::fabs(m.Y - 4) > 0.00001) wrong.push("a step of 5: " + m.X + "," + m.Y);
+		"#,
+	);
+	// A world tile as the position (Reforged's "next objective" button): the original
+	// reads pointer bits as the centre, the map's origin in practice (probed
+	// 2026-10-21), not the tile's X/Y or Pos.
+	check(
+		&engine,
+		"getAllEntitiesAtPos(tile)",
+		r#"
+		local tile = ::World.State.getPlayer().getTile();
+		foreach (r in [400, 5000, 25000])
+		{
+			local n = ::World.getAllEntitiesAtPos(tile, r).len();
+			local origin = ::World.getAllEntitiesAtPos(::createVec(0, 0), r).len();
+			if (n != origin) wrong.push("radius " + r + ": " + n + " around the tile, " + origin + " around the origin");
+		}
+		if (::World.getAllEntitiesAtPos(tile.Pos, 400).len() == 0) wrong.push("nothing around the player's own position");
 		"#,
 	);
 	check(
