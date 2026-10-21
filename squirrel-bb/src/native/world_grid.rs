@@ -520,7 +520,8 @@ impl WorldGrid {
 							continue;
 						}
 						if let Some(tile) = tile_at(&g, vm, q, r + q / 2) {
-							callback.call(vm, (tile, userdata.0.clone()))?;
+							// A throw is reported and the walk goes on (probed).
+							drop(callback.call(vm, (tile, userdata.0.clone())));
 						}
 					}
 					Ok(())

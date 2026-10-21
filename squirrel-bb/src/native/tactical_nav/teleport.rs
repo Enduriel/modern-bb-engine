@@ -13,8 +13,10 @@
 //! two calls. The unit counts as travelling (`isTravelling`) until both calls are done.
 //!
 //! `switchEntities(a, b, onDone, tag, speed)` swaps two units the same way: both start
-//! moving, and if the player sees neither tile they swap at once and `onDone(tag)` runs;
-//! otherwise both leave their tiles and fly as two teleports.
+//! moving, and if the player sees neither tile they swap at once and `onDone(tag)` runs
+//! once; otherwise both leave their tiles and fly as two teleports, each landing calling
+//! `onDone(unit, tag)`. A callback written for the landings therefore fails out of sight,
+//! silently, as in the original (probed; see `on_done`); mods depend on it.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -119,7 +121,7 @@ pub(super) fn start(
 		return Ok(true);
 	}
 	units.move_to(identity, dest)?;
-	land(vm, &grid, &mover, dest, callback.as_ref())?;
+	land(nav, vm, &grid, &mover, dest, callback.as_ref())?;
 	Ok(true)
 }
 
@@ -156,8 +158,9 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 		units.move_to(b, ta)?;
 		movement_finish(vm, &ea, tile(&grid, vm, tb)?)?;
 		movement_finish(vm, &eb, tile(&grid, vm, ta)?)?;
+		// `onDone(tag)`, where the landings hand `onDone(unit, tag)`; see `on_done`.
 		if let Some(f) = &callback {
-			f.call(vm, (tag.clone(),)).map_err(|e| format!("switchEntities callback: {e}"))?;
+			on_done(nav, |this| f.call_with_this(vm, this, (tag.clone(),)));
 		}
 		return Ok(true);
 	}
@@ -172,8 +175,24 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 	Ok(true)
 }
 
-/// The landing calls: `onMovementFinish(tile)`, then `onDone(unit, tag)`.
+/// Run `onDone` as the original's Sqrat callbacks do (`0x4cc010`, `0x4cc160`): `this` is
+/// the navigator, and an error in it is reported and goes no further (probed). A
+/// callback that takes other arguments than it is handed can't even be called, which
+/// Squirrel doesn't report with script on the stack: so `switchEntities` out of the
+/// player's sight, which hands `onDone(tag)` only, silently never runs a callback of
+/// `(unit, tag)`, and still swaps and answers true. Mods depend on this quirk: Reforged
+/// passes null there and calls its callback from `onMovementFinish` itself.
+fn on_done(nav: &Rc<RefCell<NavState>>, call: impl FnOnce(&SqStrongRef) -> Result<(), String>) {
+	// The navigator calls these, so it is installed.
+	let this = nav.borrow().instance.clone();
+	if let Some(this) = this {
+		drop(call(&this));
+	}
+}
+
+/// The landing calls: `onMovementFinish(tile)`, then `onDone(unit, tag)` (see `on_done`).
 fn land(
+	nav: &Rc<RefCell<NavState>>,
 	vm: &SQVM,
 	grid: &tactical_grid::Grid,
 	mover: &SqStrongRef,
@@ -182,7 +201,7 @@ fn land(
 ) -> Result<(), String> {
 	movement_finish(vm, mover, tile(grid, vm, here)?)?;
 	if let Some((f, tag)) = callback {
-		f.call(vm, (mover.clone(), tag.clone())).map_err(|e| format!("teleport callback: {e}"))?;
+		on_done(nav, |this| f.call_with_this(vm, this, (mover.clone(), tag.clone())));
 	}
 	Ok(())
 }
@@ -259,7 +278,7 @@ fn advance(nav: &Rc<RefCell<NavState>>, vm: &SQVM, identity: i64) -> Result<(), 
 			};
 			let here = units.info(identity).and_then(|u| u.tile).unwrap_or(dest);
 			units.set_pos(identity, grid.borrow().tiles[here].world_pos());
-			let landed = land(vm, &grid, &entity, here, callback.as_ref());
+			let landed = land(nav, vm, &grid, &entity, here, callback.as_ref());
 			nav.borrow_mut().teleports.retain(|t| t.identity != identity);
 			landed?;
 		}

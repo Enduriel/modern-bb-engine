@@ -339,10 +339,10 @@ impl<T: Transport> UiProtocol<T> {
 		match result {
 			Ok(value) => Reply::Value(value.map_or(Json::Null, |v| to_json(&v))),
 			Err(error) if error.starts_with("no method") => Reply::Value(Json::Null),
-			Err(error) => {
-				(self.log)(&format!("ui: script error in {method}: {error}"));
-				Reply::NoValue
-			}
+			// The VM's error handler has reported it (a `Script Error` row with its
+			// stack), the original's only trace of it: no line of the bridge's own
+			// (probed 2026-10-21). The page's callback runs with nothing.
+			Err(_) => Reply::NoValue,
 		}
 	}
 }
@@ -615,7 +615,7 @@ mod tests {
 		.unwrap();
 		let reply = protocol.handle_message(&vm, &bridge, &message(r#"["callSQ",3,1,"boom"]"#));
 		assert_eq!(reply, Reply::NoValue);
-		assert_eq!(log.borrow().len(), 1);
+		assert!(log.borrow().is_empty(), "only the VM's error handler reports it");
 		bridge.clear();
 	}
 

@@ -9,7 +9,8 @@
 //!   `callback(tile, userdata)`.
 //!
 //! The centre is never included. No map borrow is held across a callback (it runs
-//! script, which may touch the map).
+//! script, which may touch the map). A callback's error is reported and the walk goes
+//! on; the query returns normally (probed 2026-10-21).
 
 use squirrel::{Native, Retained, SQVM, SqArray, SqStrongRef};
 
@@ -67,7 +68,7 @@ pub(super) fn query_actors(
 			}
 		};
 		if let Some(actor) = actor {
-			callback.call(vm, (actor, userdata.clone()))?;
+			drop(callback.call(vm, (actor, userdata.clone())));
 		}
 	}
 	Ok(())
@@ -96,7 +97,7 @@ pub(super) fn query_tiles(
 		};
 		if take {
 			let tile = tile_handle(g, vm, id).ok_or("queryTilesInRange: no tile class")?;
-			callback.call(vm, (tile, userdata.clone()))?;
+			drop(callback.call(vm, (tile, userdata.clone())));
 		}
 	}
 	Ok(())
