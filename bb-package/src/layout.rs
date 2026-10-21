@@ -5,8 +5,8 @@
 //! `v8_context_snapshot.bin`), the English locale only (the page is the game's own, and
 //! CEF falls back to `en-US` for any other system locale), Steam's library, and the
 //! notices. Left out: `chrome-sandbox` (the host runs CEF without its sandbox) and CEF's
-//! SwiftShader/Vulkan files (the host turns the GPU off; see `docs/packaging.md` for the
-//! check that nothing loads them).
+//! SwiftShader/Vulkan files (Chromium's GPU work runs on the system's EGL, and the game
+//! refuses software GPUs; see `docs/packaging.md` for the check that nothing loads them).
 //!
 //! Windows (not yet built or run): every DLL and resource at the top of CEF's folder,
 //! the same locale.
