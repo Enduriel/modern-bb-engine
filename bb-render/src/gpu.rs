@@ -19,6 +19,8 @@ pub struct Gpu {
 	pub adapter: String,
 	/// Whether the GPU has memory of its own, shares the system's, or is software.
 	pub device_type: wgpu::DeviceType,
+	/// The graphics API wgpu drives it through (Vulkan, Metal, GL…).
+	pub backend: wgpu::Backend,
 	/// The adapter, kept when opened for a window (to query its surface).
 	surface_adapter: Option<wgpu::Adapter>,
 	/// With `BB_GPU_TIMES=1` (and timestamps on the adapter), the named submissions'
@@ -36,6 +38,16 @@ impl Gpu {
 	/// [`Gpu::headless`] with the device `features` on (e.g.
 	/// [`UiPage::FEATURES`](crate::UiPage::FEATURES)); fails if the adapter lacks them.
 	pub fn headless_with(features: wgpu::Features) -> Result<Gpu, String> {
+		Gpu::open(Gpu::headless_adapter()?, features, wgpu::Features::empty(), false)
+	}
+
+	/// [`Gpu::headless`] with those of `features` on that the adapter has (see
+	/// `Gpu::device.features()` for which).
+	pub fn headless_preferring(features: wgpu::Features) -> Result<Gpu, String> {
+		Gpu::open(Gpu::headless_adapter()?, wgpu::Features::empty(), features, false)
+	}
+
+	fn headless_adapter() -> Result<wgpu::Adapter, String> {
 		let instance =
 			wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
 		let options = wgpu::RequestAdapterOptions {
@@ -43,9 +55,7 @@ impl Gpu {
 				.unwrap_or(wgpu::PowerPreference::HighPerformance),
 			..Default::default()
 		};
-		let adapter = block_on(instance.request_adapter(&options))
-			.map_err(|e| format!("no GPU adapter: {e}"))?;
-		Gpu::open(adapter, features, false)
+		block_on(instance.request_adapter(&options)).map_err(|e| format!("no GPU adapter: {e}"))
 	}
 
 	/// Open an adapter that can present to `surface` (made from `instance`).
@@ -56,21 +66,33 @@ impl Gpu {
 	/// [`Gpu::for_surface`] with the device `features` on; fails if the adapter lacks
 	/// them.
 	pub fn for_surface_with(instance: &wgpu::Instance, surface: &wgpu::Surface, features: wgpu::Features) -> Result<Gpu, String> {
+		Gpu::open(Gpu::surface_adapter(instance, surface)?, features, wgpu::Features::empty(), true)
+	}
+
+	/// [`Gpu::for_surface`] with those of `features` on that the adapter has (see
+	/// `Gpu::device.features()` for which): the caller decides what a missing one means.
+	pub fn for_surface_preferring(instance: &wgpu::Instance, surface: &wgpu::Surface, features: wgpu::Features) -> Result<Gpu, String> {
+		Gpu::open(Gpu::surface_adapter(instance, surface)?, wgpu::Features::empty(), features, true)
+	}
+
+	fn surface_adapter(instance: &wgpu::Instance, surface: &wgpu::Surface) -> Result<wgpu::Adapter, String> {
 		let options = wgpu::RequestAdapterOptions {
 			power_preference: wgpu::PowerPreference::from_env()
 				.unwrap_or(wgpu::PowerPreference::HighPerformance),
 			compatible_surface: Some(surface),
 			..Default::default()
 		};
-		let adapter = block_on(instance.request_adapter(&options))
-			.map_err(|e| format!("no GPU adapter for the window: {e}"))?;
-		Gpu::open(adapter, features, true)
+		block_on(instance.request_adapter(&options)).map_err(|e| format!("no GPU adapter for the window: {e}"))
 	}
 
-	fn open(adapter: wgpu::Adapter, features: wgpu::Features, for_surface: bool) -> Result<Gpu, String> {
+	/// Open `adapter` with the features `required` (failing without them) and those of
+	/// `wanted` it has.
+	fn open(adapter: wgpu::Adapter, required: wgpu::Features, wanted: wgpu::Features, for_surface: bool) -> Result<Gpu, String> {
+		squirrel_bb::startup::mark("gpu adapter");
 		let info = adapter.get_info();
 		let name = format!("{} ({:?})", info.name, info.backend);
-		let missing = features - adapter.features();
+		let missing = required - adapter.features();
+		let features = required | (wanted & adapter.features());
 		if !missing.is_empty() {
 			return Err(format!("the GPU {name} lacks features the game needs: {missing:?}"));
 		}
@@ -83,6 +105,7 @@ impl Gpu {
 		};
 		let (device, queue) = block_on(adapter.request_device(&descriptor))
 			.map_err(|e| format!("no GPU device: {e}"))?;
+		squirrel_bb::startup::mark("gpu device");
 		let pass_timer = timed.then(|| PassTimer::new(&device, &queue));
 		Ok(Gpu {
 			device,
@@ -90,6 +113,7 @@ impl Gpu {
 			adapter: name,
 			pass_timer,
 			device_type: info.device_type,
+			backend: info.backend,
 			surface_adapter: for_surface.then_some(adapter),
 		})
 	}

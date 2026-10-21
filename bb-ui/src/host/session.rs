@@ -20,7 +20,7 @@ use crate::json::Json;
 /// What [`UiSession::wait_page`]'s error says when the page never painted: Chromium
 /// couldn't paint it on the GPU (it says why only in its log, "Unable to allocate
 /// frame").
-pub const NO_PAINTS: &str = "the UI page never painted";
+pub const NO_PAINTS: &str = "the UI page never painted on the GPU";
 
 /// The game and its UI page, running together on this thread.
 pub struct UiSession {
@@ -129,12 +129,18 @@ impl UiSession {
 		}
 		// The page is painted on the GPU only: without paints nothing of it would ever
 		// show, and Chromium fails that silently ("Unable to allocate frame" in its log).
-		if !session.pump_until(Duration::from_secs(10), |s| s.host().paints() > 0) {
-			let why = session.host().paint_error().map_or_else(|| "none arrived".to_string(), |e| format!("the last couldn't be taken: {e}"));
-			return Err(format!(
-				"{NO_PAINTS} ({why}): Chromium's GPU process didn't hand over its paints; \
-				its log is CEF's (cef.log, or the game's log folder)"
-			));
+		// A paint in memory means its GPU compositing already failed: no use waiting.
+		let painted = |s: &Self| s.host().paints() > 0 || s.host().painted_in_memory();
+		if !session.pump_until(Duration::from_secs(10), painted) || session.host().paints() == 0 {
+			let why = if session.host().painted_in_memory() {
+				"Chromium's GPU compositing failed and it fell back to software".to_string()
+			} else {
+				session.host().paint_error().map_or_else(
+					|| "none arrived within 10 s".to_string(),
+					|e| format!("the last couldn't be taken: {e}"),
+				)
+			};
+			return Err(format!("{NO_PAINTS}: {why}; CEF's log (cef.log, in the game's log folder) says more"));
 		}
 		squirrel_bb::startup::mark("page painted");
 		self.page_ready.set(true);

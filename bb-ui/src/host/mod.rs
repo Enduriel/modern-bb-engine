@@ -339,6 +339,7 @@ impl UiHost {
 			sink,
 			frame: Mutex::new(Default::default()),
 			paint_error: Mutex::new(None),
+			painted_in_memory: Default::default(),
 			size: Mutex::new((config.width as i32, config.height as i32)),
 			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
@@ -1002,6 +1003,12 @@ impl UiHost {
 	/// How many frames have been painted so far.
 	pub fn paints(&self) -> u64 {
 		self.shared.frame.lock().unwrap_or_else(|e| e.into_inner()).paints
+	}
+
+	/// Whether Chromium painted the page in memory: its GPU compositing failed, so it
+	/// won't paint on the GPU (where the page is shown) either.
+	pub fn painted_in_memory(&self) -> bool {
+		self.shared.painted_in_memory.load(std::sync::atomic::Ordering::Relaxed)
 	}
 
 	/// Why the last paint the page's sink couldn't take couldn't, if one couldn't.

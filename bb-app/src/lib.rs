@@ -16,6 +16,7 @@ pub mod logs;
 pub mod pacing;
 pub mod platform;
 pub mod procedural;
+pub mod requirements;
 pub mod script_profile;
 pub mod settings;
 pub mod shown;

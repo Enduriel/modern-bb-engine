@@ -68,6 +68,9 @@ pub(super) struct Shared {
 	pub frame: Mutex<PaintState>,
 	/// Why the last paint that couldn't be taken couldn't.
 	pub paint_error: Mutex<Option<String>>,
+	/// Whether Chromium painted the page in memory (`OnPaint`): its GPU compositing
+	/// failed and it fell back to software, which nothing here can show.
+	pub painted_in_memory: std::sync::atomic::AtomicBool,
 	/// The view's width and height (CSS pixels); see [`UiHost::resize`](super::UiHost::resize).
 	pub size: Mutex<(i32, i32)>,
 	/// Screen pixels per CSS pixel: the UI scale, which the page is drawn at (see
@@ -187,7 +190,7 @@ wrap_render_handler! {
 			let e = "Chromium painted the page in memory, not on the GPU (its GPU process failed?); \
 				the page can't be shown"
 				.to_string();
-			if self.shared.paint_counters.failed() <= 3 {
+			if !self.shared.painted_in_memory.swap(true, std::sync::atomic::Ordering::Relaxed) {
 				eprintln!("bb-ui: {e}");
 			}
 			*self.shared.paint_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);

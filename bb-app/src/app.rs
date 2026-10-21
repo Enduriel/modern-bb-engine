@@ -264,9 +264,14 @@ impl App {
 			.instance
 			.create_surface(window.clone())
 			.map_err(|e| format!("no surface for the window: {e}"))?;
-		let gpu = Gpu::for_surface_with(&self.instance, &surface, bb_app::front::GPU_FEATURES)?;
+		// Opened with what the front wants if the adapter has it; whether that's enough is
+		// the requirements' call, which says what is missing.
+		let gpu = Gpu::for_surface_preferring(&self.instance, &surface, bb_app::front::GPU_FEATURES)
+			.map_err(|e| bb_app::requirements::unsupported(format!("no GPU could draw to the game's window ({e})")))?;
 		eprintln!("GPU: {}", gpu.adapter);
 		squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Info, "Renderer", format!("Device: {}", gpu.adapter));
+		#[cfg(feature = "ui")]
+		bb_app::requirements::check_gpu(&gpu)?;
 		let options = &self.options;
 		let saves = options.saves.clone().or_else(squirrel_bb::platform::saves_dir);
 		match &saves {

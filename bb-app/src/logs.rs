@@ -37,6 +37,11 @@ impl Logs {
 		Ok(Logs { files })
 	}
 
+	/// The folder of the logs.
+	pub fn dir(&self) -> Option<&Path> {
+		self.files.html.parent()
+	}
+
 	/// Where CEF writes its log.
 	pub fn cef_log(&self) -> PathBuf {
 		self.files.cef.clone()

@@ -85,6 +85,8 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 		.env("BB_SAVES_DIR", dir.join("saves"))
 		// So a run that hangs can have its stacks read (`dump_stacks`).
 		.env("BB_ALLOW_TRACE", "1")
+		// No message box that nobody is there to close, unless the run asks for one.
+		.env("BB_ERROR_DIALOG", "0")
 		.envs(env.iter().copied())
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
@@ -513,4 +515,62 @@ fn the_game_steps_at_the_displays_rate_whichever_frames_are_presented() {
 			assert!((undrawn_rate - expected).abs() < expected * 0.08, "undrawn frames at {undrawn_rate:.1} a second on a {refresh} Hz display");
 		}
 	}
+}
+
+/// Where the GPU can't run the game with its UI, `bb` exits at once and says what is
+/// missing: on stderr, in log.html, and in a message box (here a stand-in `zenity`
+/// that writes down what it was asked to show). wgpu on GL stands for a GPU without a
+/// Vulkan driver.
+#[cfg(feature = "ui")]
+#[test]
+fn bb_says_what_it_lacks_on_a_gpu_without_vulkan() {
+	let dir = run_dir("no_vulkan");
+	let (bin, shown) = (dir.join("bin"), dir.join("dialog.txt"));
+	std::fs::create_dir_all(&bin).unwrap();
+	let zenity = bin.join("zenity");
+	std::fs::write(&zenity, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", shown.display())).unwrap();
+	std::fs::set_permissions(&zenity, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+	let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+	let env = [("WGPU_BACKEND", "gl"), ("PATH", path.as_str()), ("BB_ERROR_DIALOG", "1")];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &[], &env) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	let what = "can't start on this computer: the GPU has no usable Vulkan driver";
+	assert!(run.stderr.contains(what), "{}", run.stderr);
+	assert!(run.stderr.contains("requirements.md"), "{}", run.stderr);
+	let html = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
+	assert!(html.contains(what), "{html}");
+	let dialog = std::fs::read_to_string(&shown).expect("the message box was shown");
+	assert!(dialog.contains("--error") && dialog.contains(what), "{dialog}");
+}
+
+/// A software GPU (lavapipe) is refused at once with a message, not left to Chromium.
+#[cfg(feature = "ui")]
+#[test]
+fn bb_refuses_a_software_gpu_with_a_message() {
+	let dir = run_dir("software_gpu");
+	let lavapipe = "/usr/share/vulkan/icd.d/lvp_icd.json";
+	if !Path::new(lavapipe).exists() {
+		eprintln!("skipping: no lavapipe");
+		return;
+	}
+	let env = [("VK_DRIVER_FILES", lavapipe), ("VK_ICD_FILENAMES", lavapipe), ("WGPU_BACKEND", "vulkan")];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &[], &env) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	assert!(run.stderr.contains("can't start on this computer: no hardware GPU was found, only the software renderer"), "{}", run.stderr);
+}
+
+/// Chromium's GPU compositing failing (here turned off with `--disable-gpu`): it paints
+/// the page in memory instead, which can't be shown, and `bb` says so (at once, not
+/// after the 10 s it waits for a first paint on the GPU).
+#[cfg(feature = "ui")]
+#[test]
+fn bb_says_so_when_chromium_cant_paint_on_the_gpu() {
+	let dir = run_dir("no_gpu_paints");
+	let Some(run) = run_bb_with(&dir, (1280, 720), &[], &[("BB_UI_SWITCHES", "disable-gpu")]) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	assert!(
+		run.stderr.contains("can't start on this computer: Chromium couldn't draw the UI on the GPU (Chromium's GPU compositing failed"),
+		"{}",
+		run.stderr
+	);
 }

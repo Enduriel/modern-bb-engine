@@ -55,7 +55,7 @@ impl Front {
 			..HostConfig::default()
 		};
 		// The page opens and loads while the scripts' preload runs (`boot_menu`).
-		let session = UiSession::open(boot.data_dir, config, Echo::Problems)?;
+		let session = UiSession::open(boot.data_dir, config, Echo::Problems).map_err(crate::requirements::page_error)?;
 		// Before the scripts boot to the menu.
 		boot.store.attach(session.engine());
 		// The page's links (`openURL`: mods' pages, the version label) open in the
@@ -77,7 +77,7 @@ impl Front {
 		if boot.sound {
 			super::play_on_device(session.engine(), boot.data_dir, boot.mods);
 		}
-		session.boot_menu()?;
+		session.boot_menu().map_err(crate::requirements::page_error)?;
 		// The boot is behind us as a scene discarded is (`discarded`): the page gives
 		// back what running every screen's and mod's setup left (-45 MB at the main menu),
 		// and the allocator its free pages. `BB_BOOT_RELEASE=0` keeps them, to compare.

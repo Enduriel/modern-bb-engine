@@ -187,13 +187,21 @@ fn main() -> ExitCode {
 		app.error.take().map_or(Ok(()), Err)
 	};
 	let result = run();
+	// A machine that can't run the game is told so in words, with the requirements.
+	let explained = result.as_ref().err().and_then(|e| {
+		bb_app::requirements::explain(e, logs.as_ref().and_then(bb_app::logs::Logs::dir))
+	});
 	if let Some(logs) = logs {
-		logs.close(result.as_ref().err().map(String::as_str));
+		logs.close(explained.as_deref().or(result.as_ref().err().map(String::as_str)));
 	}
 	match result {
 		Ok(()) => ExitCode::SUCCESS,
 		Err(e) => {
 			eprintln!("error: {e}");
+			if let Some(text) = explained {
+				eprintln!("\n{text}");
+				bb_app::requirements::dialog::show("Battle Brothers can't start", &text);
+			}
 			ExitCode::FAILURE
 		}
 	}
