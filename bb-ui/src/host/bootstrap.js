@@ -12,8 +12,9 @@
 // Calls run inline both ways, as in the original. An `engine.call` blocks (a `call`
 // request through the renderer's native __bbRequest, host/bridge_client.rs) until the
 // game has run it. If the game calls into the page meanwhile, the answer is
-// {"nested": entry}: the page runs the entry and reports back in a `resume` request,
-// then keeps waiting. The final answer
+// {"nested": entry}: the page runs the entry and reports back in a `resume` request
+// (what it has to do now, page_work.js, a newline, then the entry's result), then keeps
+// waiting. The final answer
 // is {"done": true, ...}. A `callSQ` result reaches its promise in a later task
 // (`_Result`), as in the original; the other calls are never answered (their promises
 // stay pending, also as in the original). A call made by one of the page's own tasks
@@ -23,7 +24,9 @@
 // While the game runs its scripts, the page is parked: it waits the same way in a
 // `park` request that the game answers when it's done, and the game's calls
 // arrive as that request's answers. The page's own tasks then run only between the
-// game's scripts, as in the original, whose UI runs on the game's thread.
+// game's scripts, as in the original, whose UI runs on the game's thread. A park says
+// what the page has to do (page_work.js), so the game can leave a page with nothing
+// to do parked across its frames (host/page_rest.rs).
 //
 // The game reaches the page with:
 //   __bbCall(entryJson)  run one entry now, returning its result as JSON
@@ -138,12 +141,22 @@
 		}
 	}
 
+	// What the page has to do (page_work.js): sent with each park, and after each of
+	// the game's calls into a waiting page, so the game can leave a page with nothing to
+	// do parked across its frames (host/page_rest.rs).
+	var work = window.__bbWork;
+
+	function workNow() {
+		return typeof work === 'function' ? work() : '';
+	}
+
 	// Wait in request `kind` until the game answers it, running the game's calls into
 	// the page that arrive meanwhile.
 	function wait(kind, payload) {
 		var reply = request(kind, payload);
 		while (reply.nested !== undefined) {
-			reply = request('resume', toJson(runReporting(reply.nested)));
+			var result = toJson(runReporting(reply.nested));
+			reply = request('resume', workNow() + '\n' + result);
 		}
 		return reply;
 	}
@@ -298,7 +311,7 @@
 
 	define('__bbPark', function () {
 		try {
-			wait('park', '');
+			wait('park', workNow());
 		} catch (e) {
 			reportError('parking', e);
 		}

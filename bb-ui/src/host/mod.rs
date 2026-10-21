@@ -27,7 +27,8 @@
 //! on the game's thread, between the game's scripts. So the page is **parked** while
 //! the game runs scripts ([`UiHost::park`]): it waits in a bridge request
 //! (`park`) that the game answers when it lets it go on, and the game's calls
-//! reach it as that request's answers, as while it waits in a call.
+//! reach it as that request's answers, as while it waits in a call. A page with nothing
+//! to do stays parked across the game's frames ([`page_rest`]).
 //!
 //! A page that doesn't answer in time makes the call fail (and the game carry on)
 //! instead of hanging. Every process runs the same binary: call [`run_subprocess`]
@@ -55,6 +56,7 @@ mod mac_keys;
 mod memory;
 mod page_frames;
 mod page_log;
+mod page_rest;
 mod paint_sink;
 mod paint_stats;
 mod pump_schedule;
@@ -297,6 +299,8 @@ pub struct UiHost {
 	modifiers: Cell<u32>,
 	/// When the page's frames begin (see [`PageFrames`]).
 	frame_clock: page_frames::FrameClock,
+	/// Whether the page gets a turn this frame, or rests ([`page_rest`]).
+	rest: page_rest::PageRest,
 	cache_dir: PathBuf,
 	_args: Args,
 }
@@ -378,6 +382,7 @@ impl UiHost {
 			size: Mutex::new((config.width as i32, config.height as i32)),
 			scale: Mutex::new(1.0),
 			images_served: AtomicU64::new(0),
+			loads_finished: AtomicU64::new(0),
 			paint_counters: Default::default(),
 			clipboard: config.clipboard.clone(),
 		});
@@ -401,6 +406,10 @@ impl UiHost {
 			)),
 			modifiers: Cell::new(0),
 			frame_clock: page_frames::FrameClock::new(config.frames),
+			rest: page_rest::PageRest::new(page_rest::PageRest::wanted(
+				config.frames.external(),
+				config.devtools_port.is_some(),
+			)),
 			cache_dir: config.cache_dir,
 			_args: args,
 		};
@@ -577,8 +586,9 @@ impl UiHost {
 				Event::Request {
 					kind: RequestKind::Park,
 					responder,
-					..
+					body,
 				} => {
+					self.rest.reported_text(&body, Instant::now());
 					self.pending.replace(Some(responder));
 					self.parked.set(true);
 					return Ok(());
@@ -607,6 +617,7 @@ impl UiHost {
 
 	/// Let the parked page go on (see [`park`](Self::park)).
 	pub fn unpark(&self) {
+		self.rest.ran();
 		if self.parked.replace(false) {
 			if let Some(responder) = self.pending.take() {
 				responder.respond(r#"{"done":true}"#.into());
@@ -619,9 +630,45 @@ impl UiHost {
 		self.parked.get()
 	}
 
+	/// At the end of a game frame's step, the page parked: let it go on until the next
+	/// frame parks it if it has work, or leave it resting, parked across the frames with
+	/// none begun until it has work again ([`page_rest`]: what counts as work). Returns
+	/// whether it goes on. A page that isn't parked (still loading) goes on.
+	pub fn let_page_run(&self) -> bool {
+		let paints = self.paints();
+		let loads = self.shared.loads_finished.load(Ordering::Relaxed);
+		let turn = !self.parked.get() || self.rest.decide(Instant::now(), paints, loads);
+		if turn {
+			self.unpark();
+		}
+		turn
+	}
+
+	/// Whether the page rests (see [`let_page_run`](Self::let_page_run)).
+	pub fn is_resting(&self) -> bool {
+		self.rest.resting()
+	}
+
+	/// How many game frames so far the page rested through.
+	pub fn rested_frames(&self) -> u64 {
+		self.rest.rests()
+	}
+
+	/// The game gave the page work it must see promptly (a click, the wheel): a resting
+	/// page goes on now, as it would have between frames had it not rested. Other work
+	/// (a move, a call from the scripts) waits for the next frame's turn.
+	fn wake_now(&self) {
+		self.rest.wake();
+		if self.rest.resting() {
+			self.unpark();
+		}
+	}
+
 	/// The game discarded a scene (a battle's end, the campaign left, a save loaded):
 	/// the page gives back what it kept for it ([`memory`]).
 	pub fn release_memory(&self) {
+		// The renderer's part runs on its main thread.
+		self.rest.wake();
 		if let Some(host) = self.browser_host() {
 			let frame = host.browser().and_then(|b| b.main_frame());
 			memory::release(&host, frame.as_ref());
@@ -666,6 +713,9 @@ impl UiHost {
 		};
 		let id = self.next_id();
 		if !nested {
+			// A page that isn't waiting isn't resting either; what the call changed
+			// may need its next frame.
+			self.rest.wake();
 			self.send(kind, &[Arg::Int(id), Arg::Str(text)])?;
 		}
 
@@ -683,7 +733,11 @@ impl UiHost {
 					responder,
 				} if nested => {
 					self.pending.replace(Some(responder));
-					return Ok(body);
+					// What the page has to do after the call (whether it may go on
+					// resting), a newline, then the call's result.
+					let (work, result) = body.split_once('\n').unwrap_or(("", body.as_str()));
+					self.rest.called(work, Instant::now());
+					return Ok(result.to_string());
 				}
 				Event::Request {
 					kind: kind @ (RequestKind::Call | RequestKind::Task),
@@ -742,6 +796,7 @@ impl UiHost {
 	/// the screen's resolution, laid out on its pixels (the scale is the browser's device
 	/// scale factor here).
 	pub fn resize(&self, width: i32, height: i32, scale: f64) {
+		self.rest.wake();
 		*self.shared.size.lock().unwrap_or_else(|e| e.into_inner()) = (width, height);
 		let rescaled = {
 			let mut current = self.shared.scale.lock().unwrap_or_else(|e| e.into_inner());
@@ -781,6 +836,7 @@ impl UiHost {
 
 	/// Move the mouse to `(x, y)` (view pixels).
 	pub fn mouse_move(&self, x: i32, y: i32) {
+		self.rest.wake();
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
 			self.update_clicks(|c| c.moved((x, y)));
@@ -791,6 +847,7 @@ impl UiHost {
 
 	/// Move the mouse out of the view, if it's in it (hover ends).
 	pub fn mouse_leave(&self) {
+		self.rest.wake();
 		if let (Some((x, y)), Some(host)) = (self.pointer.take(), self.browser_host()) {
 			self.update_clicks(|c| c.reset());
 			let modifiers = self.mouse_flags();
@@ -802,6 +859,7 @@ impl UiHost {
 	/// in the same place continues its run (a double click, a triple click), as a
 	/// player's would.
 	pub fn click(&self, x: i32, y: i32) {
+		self.wake_now();
 		let Some(host) = self.browser_host() else {
 			return;
 		};
@@ -832,6 +890,7 @@ impl UiHost {
 	/// `button` went down or up at `(x, y)` (view pixels), as a player's mouse does it.
 	/// Moves carry the buttons held, so the page sees drags.
 	pub fn mouse_button(&self, x: i32, y: i32, button: MouseButton, down: bool) {
+		self.wake_now();
 		let Some(host) = self.browser_host() else {
 			return;
 		};
@@ -857,6 +916,7 @@ impl UiHost {
 
 	/// Key `code` (a Windows virtual-key code) went down or up in the focused element.
 	pub fn key(&self, code: i32, down: bool, modifiers: Modifiers) {
+		self.rest.wake();
 		if let Some(host) = self.browser_host() {
 			live_input::key(&host, code, down, modifiers);
 		}
@@ -864,6 +924,7 @@ impl UiHost {
 
 	/// The keys typed `c` in the focused element (after the key went down).
 	pub fn character(&self, c: char, modifiers: Modifiers) {
+		self.rest.wake();
 		if let Some(host) = self.browser_host() {
 			live_input::character(&host, c, modifiers);
 		}
@@ -871,6 +932,7 @@ impl UiHost {
 
 	/// Press and release `key` in the focused element.
 	pub fn press_key(&self, key: Key) {
+		self.wake_now();
 		if let Some(host) = self.browser_host() {
 			input::press_key(&host, key);
 		}
@@ -878,6 +940,7 @@ impl UiHost {
 
 	/// Type `text` into the focused element, a key press per character.
 	pub fn type_text(&self, text: &str) {
+		self.wake_now();
 		if let Some(host) = self.browser_host() {
 			input::type_text(&host, text);
 		}
@@ -885,6 +948,7 @@ impl UiHost {
 
 	/// Turn the mouse wheel `notches` times at `(x, y)`; positive scrolls up.
 	pub fn wheel(&self, x: i32, y: i32, notches: i32) {
+		self.wake_now();
 		if let Some(host) = self.browser_host() {
 			self.pointer.set(Some((x, y)));
 			self.update_clicks(|c| c.moved((x, y)));
@@ -961,7 +1025,8 @@ impl UiHost {
 	/// now (and paints what changed by the next game frame). Nothing to do on Chromium's
 	/// clock.
 	pub fn begin_frame(&self) {
-		if !self.frame_clock.external() {
+		// A resting page has nothing to make a frame of (and couldn't: it's parked).
+		if !self.frame_clock.external() || self.rest.resting() {
 			return;
 		}
 		if let Some(host) = self.browser_host() {

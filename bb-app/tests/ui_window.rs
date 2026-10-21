@@ -6,7 +6,7 @@
 //! Quitting from the in-game menu (Escape, then Quit) leads back to the main menu, and
 //! Escape there ends the game, as in the original. The FPS display is off until
 //! asked for, then shows the frame rate. Keys typed into a page text field reach the
-//! states too.
+//! states too. An idle page rests between frames, its calls and timers on time.
 //!
 //! Skips if there is no Steam install or no GPU.
 //!
@@ -17,7 +17,7 @@
 
 use std::path::Path;
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bb_app::front::Key;
 use bb_app::game::Game;
@@ -258,11 +258,81 @@ fn unchanged_frames_are_left_undrawn(game: &mut Game, gpu: &Gpu, target: &Render
 	}
 	println!("  idle in a town: frames left undrawn, the same as drawn");
 	system_cursor_moves_draw_nothing(game, gpu, target)?;
+	an_idle_page_rests(game, gpu, target)?;
 	game.front().engine().run_script(
 		"::World.State.town_screen_main_dialog_module_onLeaveButtonClicked();",
 		"leave the town",
 	)?;
 	play(game, gpu, target, 1.0)
+}
+
+/// A 60th of a second of the game as the window runs it: stepped, drawn if changed, then
+/// the rest of the frame's time waited out.
+fn frame_in_real_time(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	let start = Instant::now();
+	game.step(1000.0 / 60.0)?;
+	game.draw_if_changed(gpu, target);
+	std::thread::sleep(Duration::from_micros(16_667).saturating_sub(start.elapsed()));
+	Ok(())
+}
+
+/// Idle in a town, the page comes to rest: parked across the frames, none of its frames
+/// begun. The scripts' calls still reach it at once, and a timer it sets fires on time,
+/// the page resting until it's due and again after.
+fn an_idle_page_rests(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	let resting = |game: &Game| game.front().session().host().is_resting();
+	let mut frames = 0;
+	while !resting(game) {
+		frames += 1;
+		if frames > 600 {
+			return Err("idle in a town, the page never came to rest".into());
+		}
+		frame_in_real_time(game, gpu, target)?;
+	}
+	let rested = game.front().page_rested();
+	for _ in 0..30 {
+		frame_in_real_time(game, gpu, target)?;
+	}
+	if game.front().page_rested() < rested + 30 || !resting(game) {
+		return Err("idle in a town, the page didn't stay at rest".into());
+	}
+	let sum = game.front().session().eval("6 * 7")?;
+	if sum.as_i64() != Some(42) {
+		return Err(format!("a call into the resting page answered {sum:?}"));
+	}
+	// A timer: the page rests while it waits, gets a turn as it comes due, and rests
+	// again after.
+	game.front().session().eval(
+		"window.__bbFired = null; (function (set) { setTimeout(function () { window.__bbFired = performance.now() - set; }, 400); })(performance.now()); 0",
+	)?;
+	let (mut rested_waiting, mut rested_after) = (0, 0);
+	let start = Instant::now();
+	while start.elapsed() < Duration::from_millis(900) {
+		frame_in_real_time(game, gpu, target)?;
+		let elapsed = start.elapsed();
+		if resting(game) {
+			if elapsed < Duration::from_millis(380) {
+				rested_waiting += 1;
+			} else if elapsed > Duration::from_millis(700) {
+				rested_after += 1;
+			}
+		}
+	}
+	let fired = game.front().session().eval("window.__bbFired")?;
+	let Json::Float(after) = fired else {
+		return Err(format!("the page's 400 ms timer never fired ({fired:?})"));
+	};
+	// It fires in the frame its due time falls in, as it did without resting.
+	if !(400.0..=400.0 + 2.0 * 16.7 + 10.0).contains(&after) {
+		return Err(format!("the page's 400 ms timer fired after {after:.1} ms"));
+	}
+	if rested_waiting < 5 || rested_after < 5 {
+		return Err(format!(
+			"the page rested {rested_waiting} frames while its timer waited and {rested_after} after it fired"
+		));
+	}
+	println!("  idle, the page rests: calls answered, a 400 ms timer fired after {after:.1} ms");
+	Ok(())
 }
 
 /// `seconds` of 60th-of-a-second frames, stepped and drawn.

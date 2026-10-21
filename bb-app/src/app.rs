@@ -49,6 +49,8 @@ pub struct Options {
 	pub settings: Option<PathBuf>,
 	/// Squirrel to run after so many frames (`--at FRAMES CODE`).
 	pub at: Vec<(u64, String)>,
+	/// JS to run in the UI page after so many frames (`--at-page FRAMES JS`).
+	pub at_page: Vec<(u64, String)>,
 	/// Where saves go (`--saves DIR`); the system's place for them otherwise
 	/// (`squirrel_bb::platform::saves_dir`), or memory without one.
 	pub saves: Option<PathBuf>,
@@ -108,6 +110,8 @@ struct Running {
 	stats_frames: (u32, Duration),
 	/// Since the last log, the frames left undrawn because they showed what the last did.
 	stats_unchanged: u32,
+	/// The frames the UI page had rested through at the last log.
+	stats_rested: u64,
 	/// Since the last log, the frames that drew sprites without their atlas (still
 	/// loading), and those sprites.
 	stats_waiting: (u32, usize),
@@ -351,6 +355,7 @@ impl App {
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
+			stats_rested: 0,
 			stats_waiting: (0, 0),
 			shown_cursor: None,
 			system_cursor: !self.settings.software_cursor(),
@@ -557,10 +562,13 @@ impl Running {
 				let ms = work.as_secs_f64() * 1000.0 / f64::from(frames);
 				let (waited, sprites) = std::mem::take(&mut self.stats_waiting);
 				let unchanged = std::mem::take(&mut self.stats_unchanged);
+				let rested_now = self.game.front().page_rested();
+				let rested = rested_now - std::mem::replace(&mut self.stats_rested, rested_now);
 				eprintln!(
 					"frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting); \
 					{unchanged} showed what the last did (not drawn); \
-					{waited} drew without {sprites} sprites whose frame or atlas was still loading"
+					{waited} drew without {sprites} sprites whose frame or atlas was still loading; \
+					the UI page rested through {rested}"
 				);
 			}
 			self.next_stats = Some(now + Duration::from_secs(5));
@@ -757,6 +765,9 @@ impl App {
 			.and_then(|frames| {
 				for (_, code) in self.options.at.iter().filter(|(at, _)| *at == frames) {
 					running.game.run_script(code)?;
+				}
+				for (_, code) in self.options.at_page.iter().filter(|(at, _)| *at == frames) {
+					running.game.run_page_script(code)?;
 				}
 				running.follow_video(&mut self.settings);
 				Ok(frames)

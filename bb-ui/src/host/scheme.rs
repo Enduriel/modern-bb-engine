@@ -101,7 +101,10 @@ wrap_resource_handler! {
 					1
 				}
 				// A failed load (the original's "Unable to open file").
-				None => 0,
+				None => {
+					self.shared.loads_finished.fetch_add(1, Ordering::Relaxed);
+					0
+				}
 			}
 		}
 
@@ -147,6 +150,9 @@ wrap_resource_handler! {
 				*read = n as i32;
 			}
 			// 0 with 0 bytes read means the response is complete.
+			if n == 0 {
+				self.shared.loads_finished.fetch_add(1, Ordering::Relaxed);
+			}
 			(n > 0) as i32
 		}
 

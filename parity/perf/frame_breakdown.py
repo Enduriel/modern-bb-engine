@@ -97,13 +97,17 @@ class Timeline:
     """The `--at` scripts and the phases' frame ranges."""
 
     def __init__(self, rate):
-        self.rate, self.frame, self.at, self.phases = rate, 0, [], []
+        self.rate, self.frame, self.at, self.at_page, self.phases = rate, 0, [], [], []
 
     def f(self, secs):
         return int(secs * self.rate)
 
     def run(self, code, after=0.0):
         self.at.append((self.frame + self.f(after), code))
+
+    def run_page(self, code):
+        """Run `code` (JS) in the page at this frame (bb's `--at-page`)."""
+        self.at_page.append((self.frame, code))
 
     def wait(self, secs):
         self.frame += self.f(secs)
@@ -177,10 +181,10 @@ def build(args, rate):
         t.run("::World.State.getMenuStack().popAll(true); ::World.State.setPause(true);")
         t.wait(2)
     if want("ui fade"):
-        t.run('::logInfo("FADE on");')
+        t.run_page(FADE_ON)
         t.wait(0.5)
         t.phase("ui fade", secs)
-        t.run('::logInfo("FADE off");')
+        t.run_page(FADE_OFF)
         t.wait(1)
     if want("battle"):
         t.run(ENGAGE)
@@ -252,14 +256,6 @@ def take_ticket():
     return ticket
 
 
-def cdp_eval(expression):
-    from cdp_memory import WS, http_json
-    targets = http_json(DEVTOOLS, "/json/list")
-    page = next(t for t in targets if t.get("type") == "page")
-    ws = WS(page["webSocketDebuggerUrl"])
-    return ws.call("Runtime.evaluate", {"expression": expression, "returnByValue": True})
-
-
 def main():
     global AUTOPLAY_DRIVER
     args = sys.argv[1:]
@@ -290,11 +286,17 @@ def main():
     t = build(args, rate)
     with open(os.path.join(out, "phases.json"), "w") as f:
         json.dump(t.phases, f)
-    bb = [binary, "--mute", "--no-steam", "--settings", settings, "--saves", saves, "--logs", logs, "--devtools", str(DEVTOOLS)]
+    bb = [binary, "--mute", "--no-steam", "--settings", settings, "--saves", saves, "--logs", logs]
+    # DevTools only for what reads the page through them: a page served to DevTools never
+    # rests between frames (bb's `BB_PAGE_REST`), so it would change what's measured.
+    if "--trace" in args or "--cdp-memory" in args:
+        bb += ["--devtools", str(DEVTOOLS)]
     if not vanilla:
         bb.append("--mods")
     for frame, code in t.at:
         bb += ["--at", str(frame), code]
+    for frame, code in t.at_page:
+        bb += ["--at-page", str(frame), code]
     env = dict(os.environ, BB_FRAME_TIMES=os.path.join(out, "frames.txt"), BB_STATS="1")
     if "--gpu-times" in args:
         env.update(BB_GPU_TIMES="1")
@@ -352,16 +354,6 @@ def main():
         for line in p.stdout:
             err.write(line)
             m = re.search(r"PHASE (.+?) t=", line) or re.search(r"PHASE (end)", line)
-            if "FADE on" in line:
-                try:
-                    cdp_eval(FADE_ON)
-                except Exception as e:  # noqa: BLE001
-                    err.write(f"fade: {e}\n")
-            if "FADE off" in line:
-                try:
-                    cdp_eval(FADE_OFF)
-                except Exception as e:  # noqa: BLE001
-                    err.write(f"fade: {e}\n")
             if m:
                 name = m.group(1)
                 if name == "end":

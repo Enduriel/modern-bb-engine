@@ -54,7 +54,9 @@ impl UiSession {
 	/// where [`step`](Self::step) and [`unpark`](Self::unpark) park it twice: what it
 	/// calls on its own turn is answered as the next frame parks it (`park` serves calls
 	/// while it waits), before that frame's scripts, as the original's UI runs between
-	/// the game's frames.
+	/// the game's frames. A page with nothing to do rests instead: it stays parked into
+	/// the next frames, with none of its frames begun, until it has work
+	/// ([`UiHost::let_page_run`](super::UiHost::let_page_run)).
 	pub fn step_unparked(&self, ms: f64) -> Result<(), String> {
 		use squirrel_bb::frame_timing::span;
 		let park = span("page park");
@@ -68,7 +70,7 @@ impl UiSession {
 		self.follow_fonts();
 		drop(follow);
 		let _events = span("page unpark+events");
-		self.unpark();
+		self.host().let_page_run();
 		for event in self.host().poll() {
 			self.handle(event);
 		}

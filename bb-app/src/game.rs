@@ -231,6 +231,11 @@ impl Game {
 		self.engine().run_script(code, "script")
 	}
 
+	/// Run the JS `code` in the UI page (`--at-page`), as the scripts' calls into it run.
+	pub fn run_page_script(&mut self, code: &str) -> Result<(), String> {
+		self.front.run_page_script(code)
+	}
+
 	/// The bytes of textures kept on the GPU before the least recently drawn go (see
 	/// `bb_render::residency`).
 	pub fn set_texture_budget(&mut self, bytes: u64) {

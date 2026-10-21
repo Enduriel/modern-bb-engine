@@ -86,6 +86,11 @@ impl Front {
 	/// Before the scripts run outside a step: no page to hold.
 	pub fn park(&mut self) {}
 
+	/// Run JS in the page: there is none.
+	pub fn run_page_script(&mut self, _code: &str) -> Result<(), String> {
+		Err("--at-page needs bb built with --features ui".to_string())
+	}
+
 	/// Show the FPS display, or hide it: there is no page to show it on.
 	pub fn show_fps(&mut self, _shown: bool) -> Result<(), String> {
 		Ok(())
@@ -121,6 +126,11 @@ impl Front {
 
 	/// The page's paints: there is no page.
 	pub fn paints(&self) -> u64 {
+		0
+	}
+
+	/// The frames the page rested through: there is no page.
+	pub fn page_rested(&self) -> u64 {
 		0
 	}
 

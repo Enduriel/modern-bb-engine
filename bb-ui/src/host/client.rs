@@ -73,6 +73,9 @@ pub(super) struct Shared {
 	pub scale: Mutex<f64>,
 	/// How many images `coui://` has served from the game's files.
 	pub images_served: AtomicU64,
+	/// How many `coui://` loads have finished (answered in full, or failed): the page
+	/// has a response to take in at its next turn ([`super::page_rest`]).
+	pub loads_finished: AtomicU64,
 	/// What the paints cost on our side.
 	pub paint_counters: PaintCounters,
 	/// What the page copies to and pastes from (see [`crate::clipboard`]).

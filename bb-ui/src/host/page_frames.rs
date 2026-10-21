@@ -11,7 +11,8 @@
 //! it after the draw gives the page a whole frame's time to paint, where beginning it
 //! with the frame's step made a paint land sometimes before the draw and sometimes
 //! after (15% of frames at 180 Hz showed none or two; `page_paint` in bb-app). Nothing
-//! changed, nothing is painted: an idle page costs no more than on its own clock.
+//! changed, nothing is painted; and a page with nothing to do rests, with no frames
+//! begun at all until it has work again ([`page_rest`](super::page_rest)).
 //!
 //! A session waiting on the page with no game frames drawn (its pumps: tests and tools
 //! clicking through screens as they animate) begins the frames itself, at most

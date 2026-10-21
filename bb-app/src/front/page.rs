@@ -152,6 +152,12 @@ impl Front {
 		self.session.park();
 	}
 
+	/// Run the JS `code` in the page, parked as for the scripts' calls into it.
+	pub fn run_page_script(&mut self, code: &str) -> Result<(), String> {
+		self.session.park();
+		self.session.eval(code).map(|_| ())
+	}
+
 	/// Show the FPS display (vanilla's FPS module on the root screen), or hide it. Its
 	/// value starts empty until the first [`set_fps`](Self::set_fps).
 	pub fn show_fps(&mut self, shown: bool) -> Result<(), String> {
@@ -244,6 +250,11 @@ impl Front {
 	/// The bytes the page's texture takes on the GPU.
 	pub fn layer_bytes(&self) -> u64 {
 		self.layer.bytes()
+	}
+
+	/// How many game frames so far the page rested through (no turn, no frame begun).
+	pub fn page_rested(&self) -> u64 {
+		self.session.host().rested_frames()
 	}
 
 	/// How many times the page has painted: each paint is a new picture of it.

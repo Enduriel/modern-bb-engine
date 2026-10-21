@@ -4,6 +4,7 @@
 //! cargo run --release -p bb-app --features ui -- [--mods] [--new-campaign] [--seed SEED]
 //!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
+//!     [--at-page FRAMES JS]...
 //!     [--logs DIR] [--no-steam] [--steam-api PATH] [--fps]
 //! ```
 //!
@@ -24,7 +25,8 @@
 //! - `--world-size` makes the campaigns' maps that many tiles across and down instead of
 //!   vanilla's 140x170 (vanilla's worldgen needs more than 130x130).
 //! - `--shot` saves the frame after that many frames and quits; `--at` runs the Squirrel
-//!   `CODE` after that many frames (for scripted runs).
+//!   `CODE` after that many frames, and `--at-page` the `JS` in the UI page (for scripted
+//!   runs; the page's then runs after the frame's Squirrel).
 //! - `--settings` reads and keeps the settings in that file instead of the system's
 //!   place for them, and `--saves` keeps the saves in that folder instead of the
 //!   system's place for them (`battle-brothers-modern/savegames` in the user's data
@@ -84,6 +86,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 		devtools: None,
 		settings: None,
 		at: Vec::new(),
+		at_page: Vec::new(),
 		saves: None,
 		steam_build: false,
 		steam: None,
@@ -125,6 +128,10 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 			"--at" => {
 				let frames = value()?.parse().map_err(|_| "--at FRAMES CODE")?;
 				options.at.push((frames, value()?));
+			}
+			"--at-page" => {
+				let frames = value()?.parse().map_err(|_| "--at-page FRAMES JS")?;
+				options.at_page.push((frames, value()?));
 			}
 			"--shot" => {
 				let frames = value()?.parse().map_err(|_| "--shot FRAMES OUT.png")?;

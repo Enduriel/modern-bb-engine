@@ -10,12 +10,14 @@ use cef::*;
 
 use super::ipc::{self, Arg};
 
-/// The JS installed before any page script, in order: the bridge (see the file for the
-/// protocol), the order inserted scripts run in, the emulation of Coherent's layout and
+/// The JS installed before any page script, in order: what the page has to do (its
+/// timers and animation frames counted, for the game to tell when it may rest), the
+/// bridge (see the file for the protocol), the order inserted scripts run in, the emulation of Coherent's layout and
 /// style differences, scroll bars that follow their content instead of polling it, the
 /// emulation of how it draws tiled backgrounds, its image cache, then the unbinding of
 /// handlers the UI's plugins leave behind.
-const SCRIPTS: [(&str, &str); 7] = [
+const SCRIPTS: [(&str, &str); 8] = [
+	("bb://page_work.js", include_str!("page_work.js")),
 	("bb://bootstrap.js", include_str!("bootstrap.js")),
 	("bb://script_order.js", include_str!("script_order.js")),
 	("bb://compat.js", include_str!("compat.js")),
