@@ -362,7 +362,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			tracking: crate::native::WorldEntities::tracking(&self.vm),
 			// Without a map (the main menu) there are no footprints to fade: the clock
 			// running on there changes nothing drawn.
-			virtual_time: if extent.0 > 0.0 && extent.1 > 0.0 { self.time.virtual_seconds() as f32 } else { 0.0 },
+			virtual_time: if extent.0 > 0.0 && extent.1 > 0.0 { self.time.virtual_seconds() } else { 0.0 },
 		}
 	}
 

@@ -415,7 +415,7 @@ impl Game {
 		if !tactical && map_width > 0.0 && map_height > 0.0 && self.left_map != Some(grid.map_revision()) {
 			self.renderer.prefetch_world(gpu, grid.fog_of_war());
 		}
-		let virtual_time = engine.time().virtual_seconds() as f32;
+		let virtual_time = engine.time().virtual_seconds();
 		let real_time = engine.time().real_seconds() as f32;
 		// A world map whose fog of war just changed looks different every frame.
 		let mut comparable = true;
@@ -493,7 +493,7 @@ impl Game {
 		let engine = self.front.engine();
 		self.renderer.set_clock(Clock {
 			real: real_time,
-			virtual_time,
+			virtual_time: virtual_time as f32,
 		});
 		self.renderer.set_depth_of_field(depth_of_field);
 		let stats = if let Under::Battle { scene, view: (center, zoom), .. } = &look.under {

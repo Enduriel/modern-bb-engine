@@ -58,8 +58,10 @@ pub struct WorldSceneKey {
 	pub camera: SceneWorldCamera,
 	/// Footprints show (the gameplay setting `ShowTracking`).
 	pub tracking: bool,
-	/// The virtual clock, which the footprints fade on (0 without a map).
-	pub virtual_time: f32,
+	/// The virtual clock, which the footprints fade on (0 without a map). In full: as an
+	/// `f32` it stopped telling frames apart after about 2^16 s of a campaign (its step
+	/// longer than a 180 Hz frame).
+	pub virtual_time: f64,
 }
 
 /// Which kind of entity a procedural image shows, by the handler its path names. Each

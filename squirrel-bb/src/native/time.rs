@@ -235,8 +235,8 @@ impl TimeService {
 		Rc::new(TimePart(self.state.clone()))
 	}
 
-	/// Set the virtual time to `seconds` (a loaded save's).
-	pub(crate) fn set_virtual_seconds(&self, seconds: f64) {
+	/// Set the virtual time to `seconds` (a loaded save's; tests, a long campaign's).
+	pub fn set_virtual_seconds(&self, seconds: f64) {
 		self.state.borrow_mut().virtual_time = seconds * 1000.0;
 	}
 

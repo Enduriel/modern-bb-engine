@@ -82,7 +82,9 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 				let (q, r) = world.grid.world_to_tile(at.0, at.1);
 				let mut machine = m.borrow_mut();
 				if let Some(rec) = machine.record_mut(vm.this_identity()).filter(|rec| rec.entity.is_some()) {
-					rec.pos = at;
+					if std::mem::replace(&mut rec.pos, at) != at {
+						crate::native::world_scene_changes::note();
+					}
 					(rec.q, rec.r) = (q, r);
 				}
 			}

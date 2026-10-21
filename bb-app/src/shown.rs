@@ -54,7 +54,7 @@ pub enum Under {
 	World {
 		scene: WorldSceneKey,
 		view: ([f32; 2], f32),
-		virtual_time: f32,
+		virtual_time: f64,
 		fog: Option<f32>,
 		map_revision: u64,
 	},

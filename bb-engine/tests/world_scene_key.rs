@@ -244,6 +244,8 @@ fn each_change_moves_the_key() {
 		("a label added", "::__l <- ::__p.addLabel(\"bb_probe\");"),
 		("a label's text", "::__l.Text = \"probe text\";"),
 		("moved", "::__p.setPos(::createVec(::__p.getPos().X + 10, ::__p.getPos().Y));"),
+		// A party walking: its script `move`s it a step a frame.
+		("moved a step", "::__p.move(::createVec(::__p.getPos().X + 1, ::__p.getPos().Y), 0.5);"),
 		("the player's view", "::World.setPlayerPos(::createVec(::__p.getPos().X + 30, ::__p.getPos().Y));"),
 		("a footprint", "::World.spawnFootprint(::__p.getPos(), \"footprint_human_01\", 1.0, 5.0, 1.0, 0);"),
 		("a wave", "::World.spawnWaveSprite(\"waves_01\", ::__p.getPos(), ::createVec(-15, -15), 1.25);"),
@@ -286,4 +288,27 @@ fn the_main_menu_s_key_stays_while_time_passes() {
 		frame(&engine);
 	}
 	assert_eq!(engine.world_scene_key(), key, "a second of the menu moved the key");
+}
+
+/// Late in a long campaign (virtual time is saved), each frame still moves the key's
+/// virtual clock, which the footprints fade on: kept as an `f32`, from about 2^16 s on
+/// its step was longer than a 180 Hz frame, and frames running at 1x got equal keys.
+#[test]
+fn late_in_a_campaign_each_frame_moves_the_virtual_clock() {
+	let Some(engine) = open() else { return };
+	harness::install_autoplay(&engine).expect("autoplay");
+	engine.run_script("::World.State.m.IsAutosaving = false;", "no autosave").expect("no autosave");
+	harness::unpause_world(&engine).expect("unpause");
+	engine.run_script("::World.setSpeedMult(1.0);", "1x").expect("1x");
+	engine.time().set_virtual_seconds(f64::from(1u32 << 18));
+	let mut last = engine.world_scene_key().virtual_time;
+	let mut moved = 0;
+	for _ in 0..60 {
+		harness::run_frame(&engine, 1000.0 / 180.0).expect("frame");
+		let now = engine.world_scene_key().virtual_time;
+		assert!(now >= last, "the virtual clock went back");
+		moved += usize::from(now != last);
+		last = now;
+	}
+	assert_eq!(moved, 60, "frames at 1x whose virtual clock moved in the key");
 }
