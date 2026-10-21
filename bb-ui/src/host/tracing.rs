@@ -2,8 +2,10 @@
 //! break a page frame down by stage: every process's trace events, written as a Chrome
 //! JSON trace (open it in Perfetto or `chrome://tracing`).
 //!
-//! Both calls must run on CEF's UI thread, which is never the caller's
-//! (`multi_threaded_message_loop`): they are posted there and waited for.
+//! Both calls must run on CEF's UI thread: they are posted there and waited for. On
+//! Linux and Windows that thread is CEF's own (`multi_threaded_message_loop`); on macOS
+//! it is the caller's, which runs CEF's work while it waits (`super::recv`), or the
+//! posted task would never run.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -75,7 +77,7 @@ pub fn begin(categories: &str) -> Result<(), String> {
 	if post_task(ThreadId::UI, Some(&mut task)) != 1 {
 		return Err("could not post to CEF's UI thread".into());
 	}
-	started.recv_timeout(Duration::from_secs(10)).map_err(|_| "tracing did not start".to_string())
+	super::recv(&started, Duration::from_secs(10)).ok_or_else(|| "tracing did not start".to_string())
 }
 
 /// Ends tracing and writes what every process recorded to `path`; returns once written.
@@ -85,5 +87,5 @@ pub fn end(path: &std::path::Path) -> Result<(), String> {
 	if post_task(ThreadId::UI, Some(&mut task)) != 1 {
 		return Err("could not post to CEF's UI thread".into());
 	}
-	written.recv_timeout(Duration::from_secs(60)).map_err(|_| "the trace was not written".to_string())
+	super::recv(&written, Duration::from_secs(60)).ok_or_else(|| "the trace was not written".to_string())
 }
