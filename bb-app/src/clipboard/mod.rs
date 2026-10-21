@@ -14,7 +14,10 @@
 //!   take or read the selection).
 //!
 //! What the game copies is kept too: when the system's clipboard can't be reached (no
-//! clipboard program), a paste gets the game's last copy.
+//! clipboard program), a paste gets the game's last copy. With one, a clipboard
+//! holding no text (a picture: the program finds no text to give) pastes nothing, as
+//! the original's does (probed in the original: an image on the clipboard, Ctrl+V's paste
+//! event carried ""), not the game's earlier copy.
 
 #[cfg(unix)]
 mod command;
@@ -37,12 +40,9 @@ impl SystemClipboard {
 	}
 
 	/// The text on the system's clipboard (`None` if there is none), or the game's last
-	/// copy when the system's can't be reached.
+	/// copy when there is no system clipboard to reach.
 	pub fn read_text(&self) -> Option<String> {
-		match self.system.as_ref().map(System::read) {
-			Some(Ok(text)) => text.filter(|t| !t.is_empty()),
-			Some(Err(())) | None => self.own.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-		}
+		pasted(self.system.as_ref().map(System::read), || self.own.lock().unwrap_or_else(|e| e.into_inner()).clone())
 	}
 
 	/// Put `text` on the system's clipboard, and keep it.
@@ -53,6 +53,15 @@ impl SystemClipboard {
 				eprintln!("clipboard: the system's clipboard didn't take the copy ({})", system.name());
 			}
 		}
+	}
+}
+
+/// What a paste gets: what the system's clipboard gave (`Err`: no text it could give),
+/// or with no system clipboard (`None`) the game's own last copy.
+fn pasted(system: Option<Result<Option<String>, ()>>, own: impl FnOnce() -> Option<String>) -> Option<String> {
+	match system {
+		Some(read) => read.ok().flatten().filter(|t| !t.is_empty()),
+		None => own(),
 	}
 }
 
@@ -118,5 +127,21 @@ impl System {
 			#[cfg(windows)]
 			System::Windows => "Windows",
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::pasted;
+
+	/// With an image on the system's clipboard, its program finds no text and fails:
+	/// that pasted the game's earlier copy.
+	#[test]
+	fn the_games_own_copy_stands_in_only_without_a_system_clipboard() {
+		let own = || Some("earlier copy".to_string());
+		assert_eq!(pasted(Some(Ok(Some("theirs".into()))), own), Some("theirs".into()));
+		assert_eq!(pasted(Some(Err(())), own), None, "a clipboard without text");
+		assert_eq!(pasted(Some(Ok(None)), own), None);
+		assert_eq!(pasted(None, own), Some("earlier copy".into()), "no clipboard program");
 	}
 }
