@@ -1,7 +1,7 @@
 //! `bb`'s window, run in a headless gamescope (muted, so nothing shows or sounds): it
-//! starts at the main menu, exits cleanly, and the scripts' video mode is put on it as they set it. Skips
-//! cleanly without gamescope or the Steam install, or when gamescope can't start (no
-//! display, no runtime folder). Each run waits its turn behind the probes' games
+//! starts at the main menu, exits cleanly, and the scripts' video mode is put on it as they set it. Without
+//! gamescope or the Steam install the tests fail, unless `BB_ALLOW_SKIPS=1` lets them skip
+//! (machines without them); a gamescope that can't start fails them, with its log. Each run waits its turn behind the probes' games
 //! ([`bb_engine::game_queue`]) and gives the display up when it ends (a runner that
 //! queued once hands its turn down, `BB_GAME_QUEUE_TURN`). Every run logs into its own
 //! folder (`--logs`).
@@ -31,12 +31,14 @@ fn run_dir(name: &str) -> PathBuf {
 }
 
 /// Run `bb` with `args` (and `--mute`) in a headless gamescope of `width` × `height`,
-/// or `None` to skip: no install, no gamescope, or a gamescope that couldn't start.
+/// or `None` to skip (only with skips allowed, `BB_ALLOW_SKIPS`): no install or no
+/// gamescope.
 fn run_bb(dir: &Path, size: (u32, u32), args: &[&str]) -> Option<Run> {
 	run_bb_with(dir, size, args, &[])
 }
 
-/// [`run_bb`] with `env` set for `bb` too.
+/// [`run_bb`] with `env` set for `bb` (only: gamescope keeps the test's environment, so
+/// a variable that picks a GPU or driver for `bb` can't leave gamescope without one).
 fn run_bb_with(dir: &Path, size: (u32, u32), args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
 	run_bb_at(dir, size, None, args, env)
 }
@@ -45,18 +47,44 @@ fn run_bb_with(dir: &Path, size: (u32, u32), args: &[&str], env: &[(&str, &str)]
 /// default otherwise).
 fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
 	if !Path::new(STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return None;
 	}
 	let gamescope = Command::new("gamescope").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status();
-	if gamescope.is_err() {
-		eprintln!("skipping: no gamescope");
+	if let Err(e) = gamescope {
+		bb_engine::harness::skip(format!("no gamescope ({e})"));
 		return None;
 	}
 	let _one = GAMESCOPE.lock().unwrap_or_else(|e| e.into_inner());
 	// Behind the probes' games, which run in a headless gamescope too: two at once can
 	// hang one's teardown.
 	let _turn = bb_engine::game_queue::Ticket::wait(Duration::from_secs(3600)).expect("a turn for gamescope");
+	match start_bb(dir, (width, height), refresh, args, env) {
+		Started::Ran(run) => Some(run),
+		// Seen when a run's environment reached gamescope too: a software Vulkan driver
+		// chosen for `bb` (lavapipe) left gamescope no GPU it can drive. It no longer
+		// does, so this is unexplained: one more try, saying so, then a failure.
+		Started::NoBackend(log) => {
+			eprintln!("gamescope couldn't create its backend; trying once more. Its log:\n{log}");
+			match start_bb(dir, (width, height), refresh, args, env) {
+				Started::Ran(run) => Some(run),
+				Started::NoBackend(log) | Started::Failed(log) => panic!("gamescope couldn't start bb, twice; its log:\n{log}"),
+			}
+		}
+		Started::Failed(log) => panic!("gamescope couldn't start bb; its log:\n{log}"),
+	}
+}
+
+/// How a gamescope run went: `bb` ran, or gamescope didn't get as far as starting it
+/// (its log): it couldn't create its backend (no GPU it can drive), or anything else.
+enum Started {
+	Ran(Run),
+	NoBackend(String),
+	Failed(String),
+}
+
+/// One gamescope run of `bb` for [`run_bb_at`], which holds the turn.
+fn start_bb(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args: &[&str], env: &[(&str, &str)]) -> Started {
 	let (started, status, stderr) = (dir.join("started"), dir.join("status"), dir.join("stderr"));
 	let log = std::fs::File::create(dir.join("gamescope.log")).expect("gamescope's log");
 	// gamescope doesn't pass its child's status on: the shell writes it, and first that
@@ -72,6 +100,9 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 			"-c",
 			r#": > "$BB_TEST_STARTED"; "$0" "$@" 2>"$BB_TEST_STDERR"; echo $? > "$BB_TEST_STATUS""#,
 		])
+		// `bb`'s own environment, through `env`: gamescope's stays the test's.
+		.arg("env")
+		.args(env.iter().map(|(k, v)| format!("{k}={v}")))
 		.arg(bb_binary())
 		.arg("--mute")
 		// Tests never start Steam, even with its library beside the test's bb.
@@ -85,9 +116,9 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 		.env("BB_SAVES_DIR", dir.join("saves"))
 		// So a run that hangs can have its stacks read (`dump_stacks`).
 		.env("BB_ALLOW_TRACE", "1")
-		// No message box that nobody is there to close, unless the run asks for one.
+		// No message box that nobody is there to close, unless the run asks for one
+		// (its `env`, which bb's `env` sets over this).
 		.env("BB_ERROR_DIALOG", "0")
-		.envs(env.iter().copied())
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
 		.env("BB_TEST_STDERR", &stderr)
@@ -120,11 +151,11 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 	}
 	if !started.exists() {
 		let log = std::fs::read_to_string(dir.join("gamescope.log")).unwrap_or_default();
-		let last = log.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("nothing");
-		eprintln!("skipping: gamescope couldn't start bb (no display or runtime folder?); its last line: {last}");
-		return None;
+		// Its own lines, without the dozens about the scripts it loads.
+		let log: String = log.lines().filter(|l| !l.contains("scriptmgr:")).map(|l| format!("{l}\n")).collect();
+		return if log.contains("Failed to create backend") { Started::NoBackend(log) } else { Started::Failed(log) };
 	}
-	Some(Run {
+	Started::Ran(Run {
 		status: std::fs::read_to_string(&status).expect("bb's exit status").trim().to_string(),
 		stderr: std::fs::read_to_string(&stderr).unwrap_or_default(),
 	})
@@ -348,7 +379,7 @@ fn bb_starts_a_modded_campaign_at_once() {
 	let mods = bb_engine::harness::mod_archives(data).unwrap_or_default();
 	let has = |prefix: &str| mods.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix)));
 	if !has("mod_modern_hooks") || !has("mod_msu") {
-		eprintln!("skipping: Modern Hooks or MSU not installed");
+		bb_engine::harness::skip("Modern Hooks or MSU not installed");
 		return;
 	}
 	let dir = run_dir("modded_campaign");
@@ -470,11 +501,9 @@ fn bb_writes_its_log_and_keeps_the_last() {
 ///   after a presented one came at once (the display's queue had room): ~312 steps a
 ///   second at 180 Hz, ~114 at 60 Hz.
 #[test]
+#[cfg_attr(not(feature = "ui"), ignore = "needs the ui feature: without the page, the game starts a campaign, whose world map draws every frame")]
 fn the_game_steps_at_the_displays_rate_whichever_frames_are_presented() {
-	if !cfg!(feature = "ui") {
-		eprintln!("skipping: without the page, the game starts a campaign, whose world map draws every frame");
-		return;
-	}
+	assert!(cfg!(feature = "ui"), "needs the ui feature");
 	for (refresh, presented) in [(180u32, "2/7"), (60, "2/7"), (180, "1/2"), (60, "1/2")] {
 		let dir = run_dir(&format!("pace_{refresh}_{}", presented.replace('/', "_of_")));
 		let (settings, times) = (dir.join("settings.cfg"), dir.join("frame_times.txt"));
