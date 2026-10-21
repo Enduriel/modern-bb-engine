@@ -7,7 +7,10 @@
 //! class-level-sized table (40 methods, 10 data slots) to an instance, as every BB
 //! object creation does for each level of its class chain. `with_payload` reads the
 //! payloads of 1000 instances from the host, as the engine's per-frame passes over
-//! sprites do.
+//! sprites do. `bindenv`/`bindenv_call` bind a closure (and call it), as vanilla's
+//! `WeakTableRef._get` does per access. `native_retained_arg_full` is
+//! `native_retained_arg` with 20k other objects held, as a running game's reference
+//! table is.
 //!
 //! `cargo bench -p squirrel --bench glue -- --save-baseline before`, change the code,
 //! then `-- --baseline before`.
@@ -78,6 +81,8 @@ fn vm_with_tile() -> SQVM {
 	vm.register("take_retained", |_r: Retained| {});
 	let held = class.instantiate(&vm, Tile::default());
 	vm.register("give_held", move || held.clone());
+	// The same, measured with the reference table full (below).
+	vm.register("take_retained_full", |_r: Retained| {});
 
 	// Two overloaded `add(a, b)` dispatchers over the same `__sqrat_ol_ add_2` leaf.
 	let retained = vm.make_closure(|vm: &SQVM, this: This, args: Variadic<Retained>| {
@@ -144,6 +149,16 @@ fn bench(c: &mut Criterion) {
 			"local t = ::T, s = 0.0; for (local i = 0; i < 100000; i++) s += t.sum(); return s;",
 		),
 		(
+			"bindenv",
+			"local f = function() {}, t = {}; for (local i = 0; i < 100000; i++) f.bindenv(t);",
+		),
+		(
+			// Vanilla's `WeakTableRef._get`: a method bound to the table it was read from
+			// and called at once.
+			"bindenv_call",
+			"local t = { f = function() { return 1; } }, s = 0; for (local i = 0; i < 100000; i++) s += t.f.bindenv(t)(); return s;",
+		),
+		(
 			"forward_retained",
 			"local o = ::Ops, s = 0; for (local i = 0; i < 100000; i++) s += o.add_retained(i, 1); return s;",
 		),
@@ -160,6 +175,16 @@ fn bench(c: &mut Criterion) {
 		let script = vm.compile(src, name).expect("compile");
 		group.bench_function(name, |b| b.iter(|| script.call(&vm, ()).expect("run")));
 	}
+	// The reference table as full as a running game keeps it (tens of thousands of held
+	// objects: entity records, prototypes, UI handles).
+	let held: Vec<squirrel::SqStrongRef> = (0..20_000).map(|_| SqTable::new(&vm).to_strong()).collect();
+	let full = vm
+		.compile(
+			"local f = ::take_retained_full, t = ::T; for (local i = 0; i < 100000; i++) f(t);",
+			"native_retained_arg_full",
+		)
+		.expect("compile");
+	group.bench_function("native_retained_arg_full", |b| b.iter(|| full.call(&vm, ()).expect("run")));
 	let level = vm
 		.compile(
 			"local t = {}; for (local i = 0; i < 40; i++) t[\"m\" + i] <- function() { return i; };
@@ -188,6 +213,7 @@ fn bench(c: &mut Criterion) {
 		})
 	});
 	group.finish();
+	drop(held);
 }
 
 criterion_group!(benches, bench);
