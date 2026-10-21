@@ -10,6 +10,9 @@
 //! `--rain` builds a storm's rain over the battle first, `--fog` leaves the fog of war
 //! on (the screenshots' camera turns it off), `--pause` pauses the battle (as its menus
 //! do), `--menu` opens its menu.
+//!
+//! `GROUND=1` also times building the ground alone (the tiles without their details,
+//! nothing on them); `SHOW_POS=1` prints each entity that moved between frames.
 
 use std::collections::BTreeMap;
 use std::path::Path;

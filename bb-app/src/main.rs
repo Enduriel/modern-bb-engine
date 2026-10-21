@@ -57,6 +57,8 @@
 //!   queries; the frame then waits for the GPU). `BB_SCRIPT_PROFILE=REPORT.md` profiles the
 //!   scripts. Under a preloaded jemalloc with profiling on, `BB_HEAP_PROFILE_DIR=DIR` dumps a
 //!   heap profile every `BB_HEAP_PROFILE_SECS` (10) seconds (builds without `ui`).
+//! - Every environment variable, these and the ones for measuring, comparing and the
+//!   tests: `docs/environment.md`.
 
 mod app;
 mod window_mode;
