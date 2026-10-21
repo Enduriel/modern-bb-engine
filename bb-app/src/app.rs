@@ -67,6 +67,30 @@ pub struct Options {
 }
 
 /// Everything that exists once the window does.
+/// The window and its surface while the game starts on them. A start that fails leaves
+/// both to the process's end, as [`Running::close`] does and for the same reason: under
+/// gamescope's Vulkan layer, dropping them crashed in libwayland (seen when a machine's GPU
+/// couldn't paint the UI page).
+struct Unfinished(Option<(Arc<Window>, wgpu::Surface<'static>)>);
+
+impl Unfinished {
+	fn parts(&self) -> (&Arc<Window>, &wgpu::Surface<'static>) {
+		let (window, surface) = self.0.as_ref().expect("the window, until the start is done");
+		(window, surface)
+	}
+
+	/// The start is done: the running game owns them.
+	fn finish(mut self) -> (Arc<Window>, wgpu::Surface<'static>) {
+		self.0.take().expect("the window, until the start is done")
+	}
+}
+
+impl Drop for Unfinished {
+	fn drop(&mut self) {
+		std::mem::forget(self.0.take());
+	}
+}
+
 struct Running {
 	window: Arc<Window>,
 	surface: wgpu::Surface<'static>,
@@ -264,6 +288,9 @@ impl App {
 			.instance
 			.create_surface(window.clone())
 			.map_err(|e| format!("no surface for the window: {e}"))?;
+		// Left to the process's end if the start fails from here on (see `Unfinished`).
+		let unfinished = Unfinished(Some((window, surface)));
+		let (window, surface) = unfinished.parts();
 		// Opened with what the front wants if the adapter has it; whether that's enough is
 		// the requirements' call, which says what is missing.
 		let gpu = Gpu::for_surface_preferring(&self.instance, &surface, bb_app::front::GPU_FEATURES)
@@ -343,7 +370,8 @@ impl App {
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
 		let pacer = Pacer::new(None, config.present_mode == wgpu::PresentMode::Fifo);
 		let cursor_scale = window.scale_factor();
-		let cursor_shower = Shower::new(&window);
+		let cursor_shower = Shower::new(window);
+		let (window, surface) = unfinished.finish();
 		let mut running = Running {
 			window,
 			surface,
