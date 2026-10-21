@@ -372,11 +372,16 @@ fn bb_starts_borderless_and_draws() {
 /// new campaign shows first, used to throw "The screen 'null' does not have a
 /// JSHandle" at boot). Its Save, pressed as a player would, goes on with the start.
 /// Then back to the main menu and Quit. The saves (and the mods' storages) and the
-/// settings go to the run's own folder. Skips without the mods it needs.
+/// settings go to the run's own folder. Skips without the mods it needs; fails if the
+/// install's are not the pinned corpus (`bb_engine::mod_corpus`).
 #[test]
 fn bb_starts_a_modded_campaign_at_once() {
 	let data = Path::new(STEAM_DATA_DIR);
-	let mods = bb_engine::harness::mod_archives(data).unwrap_or_default();
+	let mods = match bb_engine::mod_corpus::installed(data) {
+		Ok(mods) => mods,
+		Err(bb_engine::mod_corpus::CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
+		Err(e) => panic!("{e}"),
+	};
 	let has = |prefix: &str| mods.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix)));
 	if !has("mod_modern_hooks") || !has("mod_msu") {
 		bb_engine::harness::skip("Modern Hooks or MSU not installed");

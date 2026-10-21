@@ -6,7 +6,8 @@
 //! MSU's mod settings screen match the original's with the same mods
 //! (`tests/goldens/modded_*.json`, `probes/modded_goldens.js`). The FPS display shows
 //! on it, though Modern Hooks replaces the root screen. Skips without a Steam
-//! install or without Modern Hooks.
+//! install or without mods; fails if they are not the pinned corpus
+//! (`bb_engine::mod_corpus`), which the goldens were taken with.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test mods_ui`
 //!
@@ -17,7 +18,8 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use bb_engine::harness::{self, STEAM_DATA_DIR};
+use bb_engine::harness::STEAM_DATA_DIR;
+use bb_engine::mod_corpus::CorpusError;
 use bb_engine::tactical_player as player;
 use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
@@ -143,22 +145,15 @@ fn fps_display_shows(session: &UiSession) -> Result<(), String> {
 	)
 }
 
-/// The original's savegames folder (in Proton's prefix), where mods keep their storages.
-const ORIGINAL_SAVES: &str = concat!(env!("HOME"), "/.local/share/Steam/steamapps/compatdata/365360/pfx/drive_c/users/steamuser/Documents/Battle Brothers/savegames");
-
-/// A fresh folder with copies of the mods' storages from the original's savegames (the
-/// `<mod>#<name>.sav` ones; not the saves), or an empty one where there are none.
+/// A fresh folder with copies of the installed mods' storages from the original's savegames
+/// (the `<mod>#<name>.sav` ones; not the saves; those a probe run holds aside, not its
+/// own), or an empty one where there are none.
 fn copy_mod_storages() -> Result<std::path::PathBuf, String> {
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("mods_ui_storages");
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-	if let Ok(entries) = std::fs::read_dir(ORIGINAL_SAVES) {
-		for entry in entries.flatten() {
-			let name = entry.file_name().to_string_lossy().to_string();
-			if name.contains('#') && name.ends_with(".sav") {
-				std::fs::copy(entry.path(), dir.join(&name)).map_err(|e| format!("{name}: {e}"))?;
-			}
-		}
+	if let Some(documents) = squirrel_bb::platform::original_documents_dir() {
+		bb_engine::probe_aside::copy_user_mod_storages(&documents, &dir).map_err(|e| format!("the mods' storages: {e}"))?;
 	}
 	Ok(dir)
 }
@@ -236,11 +231,13 @@ fn main() -> ExitCode {
 fn run_main() -> ExitCode {
 	let name = "mods_js_runs_on_the_real_ui";
 	let data_dir = Path::new(STEAM_DATA_DIR);
-	let has_mh = harness::mod_archives(data_dir).is_ok_and(|mods| {
-		mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks")))
-	});
-	if !has_mh {
-		return bb_engine::harness::skip_case(name, format!("no install with Modern Hooks at {}", data_dir.display()));
+	match bb_engine::mod_corpus::installed(data_dir) {
+		Ok(_) => {}
+		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip_case(name, why),
+		Err(e) => {
+			println!("test {name} ... FAILED\n{e}");
+			return ExitCode::FAILURE;
+		}
 	}
 	match mods_js_runs_on_the_real_ui(data_dir) {
 		Ok(()) => {

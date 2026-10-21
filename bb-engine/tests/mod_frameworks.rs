@@ -1,27 +1,18 @@
 //! The mod frameworks run unchanged. Each test mounts one framework from the
 //! install's mods over the vanilla archives, as the original loads them, and boots the
 //! main menu. Skips when the Steam install or the mod is missing (the mods are the
-//! user's, read-only; a running game probe holds them aside in
-//! `_bb_probe_held_mods/`, so that folder is searched too).
+//! installed ones, read-only, as `harness::mod_archives` lists them: a probe run's changes to
+//! `data/` don't count). The whole corpus is the pinned one (`bb_engine::mod_corpus`).
 
 use std::path::{Path, PathBuf};
 
+use bb_engine::mod_corpus::{self, CorpusError};
 use bb_engine::{harness, tactical_player as player};
 
 /// The installed mod archive whose name starts with `prefix`, if any.
 fn find_mod(prefix: &str) -> Option<PathBuf> {
-	let data = Path::new(harness::STEAM_DATA_DIR);
-	let held = data.parent()?.join("_bb_probe_held_mods");
-	[data.to_path_buf(), held].iter().find_map(|dir| {
-		let mut zips: Vec<PathBuf> = std::fs::read_dir(dir)
-			.ok()?
-			.flatten()
-			.map(|e| e.path())
-			.filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix)))
-			.collect();
-		zips.sort();
-		zips.pop()
-	})
+	let mods = harness::mod_archives(Path::new(harness::STEAM_DATA_DIR)).ok()?;
+	mods.into_iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix))).next_back()
 }
 
 /// An engine over the vanilla archives plus the mods named by `prefixes`, or `None` (and
@@ -69,18 +60,16 @@ fn modern_hooks_boots_the_menu() {
 
 /// The whole installed corpus (every mod in the data dir, as the original loads them):
 /// Modern Hooks registers every class it saw (3,614 for the pinned 32 mods, as in the
-/// original), and a new campaign starts through the menus and runs. Skips without mods.
+/// original), and a new campaign starts through the menus and runs. Skips without mods;
+/// fails if they are not the pinned corpus.
 #[test]
 fn the_installed_mods_boot_and_start_a_campaign() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
-	let Ok(mods) = harness::mod_archives(dir) else {
-		bb_engine::harness::skip(format!("{} not present", dir.display()));
-		return;
+	let mods = match mod_corpus::installed(dir) {
+		Ok(mods) => mods,
+		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
+		Err(e) => panic!("{e}"),
 	};
-	if !mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks"))) {
-		bb_engine::harness::skip("Modern Hooks isn't installed");
-		return;
-	}
 	let mut archives = harness::data_archives(dir).expect("list the data archives");
 	archives.extend(mods);
 	let engine = harness::open_mounted(dir, archives, |_| {}).expect("open the archives");

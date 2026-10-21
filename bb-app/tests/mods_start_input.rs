@@ -13,7 +13,8 @@
 //! root screen, and the game's `setFPS` never reaches a module without its label.
 //!
 //! Skips without a Steam install, without the mods this needs (Modern Hooks, MSU,
-//! Configurable Pause) or without a GPU.
+//! Configurable Pause) or without a GPU; fails if the install's mods are not the pinned
+//! corpus (`bb_engine::mod_corpus`).
 //!
 //! Run: `cargo test -p bb-app --features ui --test mods_start_input`
 //!
@@ -25,7 +26,8 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_app::game::{Boot, Game, Start};
-use bb_engine::harness::{self, STEAM_DATA_DIR};
+use bb_engine::harness::STEAM_DATA_DIR;
+use bb_engine::mod_corpus::CorpusError;
 use bb_render::Gpu;
 use squirrel::SqTable;
 use squirrel_bb::VideoMode;
@@ -169,7 +171,14 @@ fn run_main() -> ExitCode {
 	if !data.exists() {
 		return bb_engine::harness::skip_case(NAME, format!("{STEAM_DATA_DIR} not present"));
 	}
-	let mods = harness::mod_archives(data).unwrap_or_default();
+	let mods = match bb_engine::mod_corpus::installed(data) {
+		Ok(mods) => mods,
+		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip_case(NAME, why),
+		Err(e) => {
+			println!("test {NAME} ... FAILED\n{e}");
+			return ExitCode::FAILURE;
+		}
+	};
 	let missing: Vec<&str> = MODS
 		.iter()
 		.copied()

@@ -20,6 +20,8 @@ fn reads_every_installed_archive_as_the_zip_crate_does() {
 	archives.extend(harness::mod_archives(data).unwrap());
 	let (mut entries, mut compared) = (0, 0);
 	for path in &archives {
+		// Where a probe run may have moved a mod since it was listed.
+		let path = &harness::locate_mod(path);
 		let mut ours = DatArchive::open(path).unwrap();
 		let mut theirs = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
 		let names: Vec<String> = theirs.file_names().map(str::to_owned).collect();

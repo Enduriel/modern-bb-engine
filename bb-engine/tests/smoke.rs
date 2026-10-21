@@ -12,6 +12,7 @@
 
 use std::path::Path;
 
+use bb_engine::mod_corpus::{self, CorpusError};
 use bb_engine::{harness, tactical_player as player};
 use squirrel::SqTable;
 use squirrel_bb::KeyInput;
@@ -95,19 +96,16 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 }
 
 /// The same, with the install's mods mounted (32 of them, among them Modern
-/// Hooks, MSU, Reforged and Modular Vanilla, which change the battles). Skips without
-/// Modern Hooks.
+/// Hooks, MSU, Reforged and Modular Vanilla, which change the battles; the pinned corpus,
+/// `bb_engine::mod_corpus`). Skips without mods; fails if they are not the corpus.
 #[test]
 fn the_installed_mods_play_through_menu_campaign_battle_save_and_load() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
-	let Ok(mods) = harness::mod_archives(dir) else {
-		bb_engine::harness::skip(format!("{} not present", dir.display()));
-		return;
+	let mods = match mod_corpus::installed(dir) {
+		Ok(mods) => mods,
+		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
+		Err(e) => panic!("{e}"),
 	};
-	if !mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks"))) {
-		bb_engine::harness::skip("Modern Hooks isn't installed");
-		return;
-	}
 	let mut archives = harness::data_archives(dir).expect("list the data archives");
 	archives.extend(mods);
 	smoke(harness::open_mounted(dir, archives, |_| {}).expect("open the archives"));

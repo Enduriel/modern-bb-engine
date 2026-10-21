@@ -1,0 +1,36 @@
+# The mod corpus the corpus tests expect (mod_frameworks, smoke, mods_ui,
+# mods_start_input, window's modded campaign): the installed mods, one per line,
+# "<size in bytes> <file name>". After updating the installed mods, update this list
+# (and expect to retake the modded goldens, see bb-ui/tests/mods_ui.rs).
+63466 mod_EIMO-239-10-0-6-1718785066.zip
+12270 mod_breditor_reforged_patch-765-1-0-2-1745962787.zip
+8327 mod_clever_recruiter-549-2-1-6-1721399739.zip
+1441 mod_coastal_location_fix.zip
+4772 mod_configurable_pause-731-1-0-6-1720773926.zip
+23633 mod_dev_console 380 2.6.2 2026-08-08T11-21Z 8g4hpVHpe.zip
+53707 mod_dynamic_perks-758-0-5-1-1765412898.zip
+47359 mod_dynamic_spawns-759-0-6-0-1775059173.zip
+2735 mod_ends_buyback-357-1-1-1644604729.zip
+848 mod_ends_colored_rumors-373-1-1-0-1717532458.zip
+9936 mod_hooks.zip-42-20-1-1621709174.zip
+1901 mod_item_tables-760-0-1-3-1739956251.zip
+885403 mod_legends_xBreditor_LEGENDS-294-4-3-1685869773.zip
+25220 mod_modern_hooks-685-0-6-0-1748620177.zip
+93432 mod_modular_vanilla 768 0.9.1 2026-07-03T03-39Z QR12G6eB5.zip
+1087 mod_more_save_slots-389-2-2-1699990162.zip
+2453031 mod_msu 479 1.9.0 2026-06-23T04-27Z eVJjKbX9c.zip
+31002 mod_nested_tooltips-0.5.3.zip
+1808392 mod_plan_perks-452-6-1-0-1765891749.zip
+5157 mod_prepare_for_battle-557-1-0-1-1652847896.zip
+46064079 mod_reforged_assets.zip
+1299599 mod_reforged_core 765 0.9.3 2026-08-28T05-12Z Jr2H0SC7i.zip
+1967 mod_removableUpgrades.zip-278-4-1716838203.zip
+7343 mod_settlement_prices_msu-556-1-0-1-1654673706.zip
+27928 mod_settlement_situations_msu-551-2-0-1-1701802824.zip
+4429 mod_stack_based_skills-766-0-5-3-1764528330.zip
+10422 mod_streamlined_ui-730-1-0-4-1743596173.zip
+10110064 mod_stronghold-324-2-18-1-1777832897.zip
+30135 mod_swifter-542-1-1-3-1666093341.zip
+7732 mod_unified_perk_descriptions-767-0-1-2-1726115621.zip
+13614 mod_world_parameters-732-1-0-1-1719223618.zip
+3127 namedItemStats-850-1-2-1751250218.zip
