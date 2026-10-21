@@ -7,15 +7,17 @@
 //!
 //! ```text
 //! world_fights [--data <install>/data] [--mods mod_modern_hooks,mod_msu] [--extra a.zip,b.zip]
-//!              [--settings settings.nut] [--world-script probe.nut] [--seed s] [--days 30] [--speed 8]
-//!              [--save-every-days 0] [--chain 1] [--saves DIR] [--profile-start REPORT.md] --out run.log
+//!              [--settings settings.nut] [--world-script probe.nut]... [--seed s] [--days 30] [--speed 8]
+//!              [--save-every-days 0] [--chain 1] [--saves DIR] [--profile-start REPORT.md] [--timeout SECS]
+//!              --out run.log
 //! ```
 //!
 //! - `--mods` mounts the install's mods whose file names start with one of the prefixes
 //!   (none by default); `--extra` mounts more zips after them, from anywhere.
 //! - `--settings` runs a script at the main menu, before New Campaign (set a mod's MSU
 //!   settings there). `--world-script` runs a script once the campaign has started
-//!   (after the fight recorder is installed); `PROBE` lines it logs go to the log.
+//!   (after the fight recorder is installed); `PROBE` lines it logs go to the log. Give it
+//!   more than once to run several scripts, in that order.
 //! - `--profile-start REPORT.md` profiles the campaign's start (worldgen and the faction
 //!   simulation) by script function and native.
 //! - The player's company is made unattackable, fed and paid, and the event manager is
@@ -27,6 +29,14 @@
 //!   `target/world-fights-saves`) and loads back in the world every so many days,
 //!   `--chain` times in a row (a save of a just-loaded campaign, as a player's next
 //!   autosave would be).
+//! - `--timeout SECS` stops a run that takes longer (a worldgen that never finishes): it
+//!   logs `TIMEOUT` with the phase the run was in and the last line the game logged, then
+//!   stops the scripts at their next native call, so the script error that follows has
+//!   the stack they were stuck in. The exit code is then 124. A loop that calls no
+//!   native (or a native that never returns) can't be stopped that way: the run then
+//!   exits 10 s later without the stack.
+//! - A game over (the company gone: vanilla shows the game-finish screen, and loads
+//!   don't clear it) stops the run with `STOPPED: game over on day N`.
 //! - `--out` gets the log: the fights (`WF` lines), the game's warnings and errors, the
 //!   script errors with their stacks, worldgen and load timings.
 
@@ -34,7 +44,9 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bb_engine::{harness, tactical_player};
 use squirrel::ErrorValue;
@@ -49,8 +61,9 @@ struct Options {
 	mods: Vec<String>,
 	extra: Vec<PathBuf>,
 	settings: Option<PathBuf>,
-	world_script: Option<PathBuf>,
+	world_scripts: Vec<PathBuf>,
 	profile_start: Option<PathBuf>,
+	timeout: Option<std::time::Duration>,
 	seed: String,
 	days: i64,
 	speed: f64,
@@ -66,8 +79,9 @@ fn options() -> Result<Options, String> {
 		mods: Vec::new(),
 		extra: Vec::new(),
 		settings: None,
-		world_script: None,
+		world_scripts: Vec::new(),
 		profile_start: None,
+		timeout: None,
 		seed: "world-fights".into(),
 		days: 30,
 		speed: 8.0,
@@ -84,8 +98,12 @@ fn options() -> Result<Options, String> {
 			"--mods" => o.mods = v()?.split(',').map(String::from).collect(),
 			"--extra" => o.extra = v()?.split(',').map(PathBuf::from).collect(),
 			"--settings" => o.settings = Some(v()?.into()),
-			"--world-script" => o.world_script = Some(v()?.into()),
+			"--world-script" => o.world_scripts.push(v()?.into()),
 			"--profile-start" => o.profile_start = Some(v()?.into()),
+			"--timeout" => {
+				let secs: f64 = v()?.parse().map_err(|e| format!("--timeout: {e}"))?;
+				o.timeout = Some(std::time::Duration::from_secs_f64(secs));
+			}
 			"--seed" => o.seed = v()?,
 			"--days" => o.days = v()?.parse().map_err(|e| format!("--days: {e}"))?,
 			"--speed" => o.speed = v()?.parse().map_err(|e| format!("--speed: {e}"))?,
@@ -116,6 +134,80 @@ fn line(log: &Log, s: &str) {
 	let _ = writeln!(log.borrow_mut(), "{s}");
 }
 
+/// `text` without its HTML tags (mods colour their log lines).
+fn without_tags(text: &str) -> String {
+	let mut out = String::with_capacity(text.len());
+	let mut in_tag = false;
+	for c in text.chars() {
+		match c {
+			'<' => in_tag = true,
+			'>' => in_tag = false,
+			_ if !in_tag => out.push(c),
+			_ => {}
+		}
+	}
+	out
+}
+
+/// Where the run is, for `--timeout`'s message: the main thread sets it, the watchdog
+/// reads it.
+#[derive(Default)]
+struct Progress {
+	phase: String,
+	/// The last line the game logged.
+	last_log: String,
+}
+
+/// What the watchdog and the main thread share.
+#[derive(Clone, Default)]
+struct Watch {
+	progress: Arc<Mutex<Progress>>,
+	timed_out: Arc<AtomicBool>,
+}
+
+impl Watch {
+	fn phase(&self, phase: impl Into<String>) {
+		self.progress.lock().unwrap().phase = phase.into();
+	}
+
+	/// After a timeout, the run stops at the next frame or script it runs.
+	fn check(&self) -> Result<(), String> {
+		match self.timed_out.load(Ordering::Relaxed) {
+			true => Err("timed out (--timeout)".into()),
+			false => Ok(()),
+		}
+	}
+
+	/// Once `limit` has passed since `started`: log where the run is, ask the scripts to
+	/// stop, and give the main thread 10 s to wind down before exiting.
+	fn start(&self, limit: Duration, started: Instant, interrupter: squirrel::Interrupter, out: PathBuf) {
+		let watch = self.clone();
+		std::thread::spawn(move || {
+			std::thread::sleep(limit.saturating_sub(started.elapsed()));
+			let say = |s: &str| {
+				eprintln!("{s}");
+				if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&out) {
+					let _ = writeln!(f, "{s}");
+				}
+			};
+			{
+				let p = watch.progress.lock().unwrap();
+				say(&format!(
+					"TIMEOUT after {:.0?} (--timeout), in: {}; the game's last log line: {}",
+					started.elapsed(),
+					p.phase,
+					p.last_log
+				));
+			}
+			watch.timed_out.store(true, Ordering::Relaxed);
+			interrupter.request();
+			std::thread::sleep(Duration::from_secs(10));
+			say("TIMEOUT: the scripts didn't stop within 10 s (a loop that calls no native, or a native that doesn't return); exiting");
+			std::process::exit(124);
+		});
+	}
+}
+
 fn main() -> std::process::ExitCode {
 	let o = match options() {
 		Ok(o) => o,
@@ -124,20 +216,31 @@ fn main() -> std::process::ExitCode {
 			return std::process::ExitCode::FAILURE;
 		}
 	};
+	// Appending, so that the watchdog's lines (its own handle) land at the end too.
+	std::fs::File::create(&o.out).expect("create --out");
 	let log: Log = Rc::new(RefCell::new(
-		std::fs::File::create(&o.out).expect("create --out"),
+		std::fs::OpenOptions::new()
+			.append(true)
+			.open(&o.out)
+			.expect("open --out"),
 	));
-	match run(&o, &log) {
+	let watch = Watch::default();
+	match run(&o, &log, &watch) {
 		Ok(()) => std::process::ExitCode::SUCCESS,
 		Err(e) => {
 			line(&log, &format!("STOPPED: {e}"));
 			eprintln!("stopped: {e}");
-			std::process::ExitCode::FAILURE
+			match watch.timed_out.load(Ordering::Relaxed) {
+				true => std::process::ExitCode::from(124),
+				false => std::process::ExitCode::FAILURE,
+			}
 		}
 	}
 }
 
-fn run(o: &Options, log: &Log) -> Result<(), String> {
+fn run(o: &Options, log: &Log, watch: &Watch) -> Result<(), String> {
+	let started = Instant::now();
+	watch.phase("booting");
 	let io = |e: std::io::Error| e.to_string();
 	let mut archives = harness::data_archives(&o.data).map_err(io)?;
 	let mut mods = harness::mod_archives(&o.data).map_err(io)?;
@@ -152,6 +255,9 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 	archives.extend(mods.iter().cloned());
 	let mut engine = harness::open_mounted(&o.data, archives.clone(), |_| {}).map_err(io)?;
 	std::fs::create_dir_all(&o.saves).map_err(io)?;
+	if let Some(limit) = o.timeout {
+		watch.start(limit, started, engine.vm().interrupter(), o.out.clone());
+	}
 	engine.saves().set_directory(o.saves.clone());
 	engine.saves().set_modified(!mods.is_empty());
 	let errors = Rc::new(RefCell::new(0u64));
@@ -211,22 +317,33 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 	{
 		let log = log.clone();
 		let t0 = Instant::now();
-		engine.set_log_handler(move |level, message| match level {
-			LogLevel::Error | LogLevel::Warning => line(&log, &format!("[{level:?}] {message}")),
-			_ if message.starts_with("WF ") || message.starts_with("PROBE") => line(&log, message),
-			// Worldgen's progress, timed.
-			_ if !message.starts_with("contract") && !message.starts_with("Executing") => line(
-				&log,
-				&format!("{:>8.2}s {message}", t0.elapsed().as_secs_f64()),
-			),
-			_ => {}
+		let progress = watch.progress.clone();
+		engine.set_log_handler(move |level, message| {
+			progress.lock().unwrap().last_log = without_tags(message).chars().take(300).collect();
+			match level {
+				LogLevel::Error | LogLevel::Warning => line(&log, &format!("[{level:?}] {message}")),
+				_ if message.starts_with("WF ") || message.starts_with("PROBE") => line(&log, message),
+				// Worldgen's progress, timed.
+				_ if !message.starts_with("contract") && !message.starts_with("Executing") => line(
+					&log,
+					&format!("{:>8.2}s {message}", t0.elapsed().as_secs_f64()),
+				),
+				_ => {}
+			}
 		});
 	}
+	// One frame, unless the run has timed out.
+	let step = || -> Result<(), String> {
+		watch.check()?;
+		harness::run_frame(&engine, FRAME_MS)
+	};
+	watch.phase("booting the main menu");
 	harness::boot_menu(&engine)?;
 	for _ in 0..60 {
-		harness::run_frame(&engine, FRAME_MS)?;
+		step()?;
 	}
 	if let Some(path) = &o.settings {
+		watch.phase(format!("the --settings script {}", path.display()));
 		let script =
 			std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
 		engine.run_script(&script, &path.to_string_lossy())?;
@@ -239,7 +356,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 	};
 	let frames = |n: u32| -> Result<(), String> {
 		for _ in 0..n {
-			harness::run_frame(&engine, FRAME_MS)?;
+			step()?;
 		}
 		Ok(())
 	};
@@ -259,7 +376,8 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 		.profile_start
 		.as_ref()
 		.map(|_| squirrel::ScriptProfiler::new());
-	let started = Instant::now();
+	let campaign_started = Instant::now();
+	watch.phase("starting the campaign (worldgen, then the faction simulation)");
 	engine.run_script(
 		&format!("{MENU}.getNewCampaignMenuModule().onStartButtonPressed({settings});"),
 		"start",
@@ -289,7 +407,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 		log,
 		&format!(
 			"campaign started in {:.2?} (worldgen included)",
-			started.elapsed()
+			campaign_started.elapsed()
 		),
 	);
 	if let (Some(p), Some(path)) = (profiler, &o.profile_start) {
@@ -333,10 +451,13 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 			.flatten()
 			.unwrap_or(-1)
 	};
-	if let Some(path) = &o.world_script {
+	if !o.world_scripts.is_empty() {
+		engine.run_script(&quiet, "quiet")?;
+	}
+	for path in &o.world_scripts {
+		watch.phase(format!("the --world-script {}", path.display()));
 		let script =
 			std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-		engine.run_script(&quiet, "quiet")?;
 		engine.run_script(&script, &path.to_string_lossy())?;
 	}
 	let start_day = day();
@@ -351,7 +472,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 			engine.run_script(&quiet, "quiet")?;
 		}
 		let t = Instant::now();
-		harness::run_frame(&engine, FRAME_MS)?;
+		step()?;
 		let dt = t.elapsed();
 		if dt.as_millis() > 250 {
 			slow_frames += 1;
@@ -362,8 +483,14 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 			continue;
 		}
 		let d = day();
+		if eval("::World.State.m.IsGameOver") {
+			// The scripts ended the campaign (an empty roster: vanilla's world_state.onUpdate).
+			// Every later load would show it too: the flag outlives a load.
+			return Err(format!("game over on day {d}: {}", say("::__wfStatus()")));
+		}
 		if d >= next_status {
 			next_status = d + 1;
+			watch.phase(format!("the world, day {d}"));
 			line(
 				log,
 				&format!(
@@ -379,6 +506,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 				saves += 1;
 				let name = format!("bb_probe_wf_{saves}");
 				let t = Instant::now();
+				watch.phase(format!("saving {name} (day {d})"));
 				if let Err(e) =
 					engine.run_script(&format!("::World.State.saveCampaign(\"{name}\");"), "save")
 				{
@@ -396,6 +524,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 					frames(250)?;
 				}
 				let t = Instant::now();
+				watch.phase(format!("loading {name} (day {d})"));
 				engine.run_script(
 					&format!("::World.State.campaign_menu_module_onLoadPressed(\"{name}\");"),
 					"load",
@@ -403,7 +532,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 				// The load starts behind the loading screen: wait for it, then for the world.
 				let mut loading = false;
 				for _ in 0..600 {
-					harness::run_frame(&engine, FRAME_MS)?;
+					step()?;
 					if eval("::LoadingScreen.isVisible()") {
 						loading = true;
 						break;
@@ -414,7 +543,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 					if !loading {
 						break;
 					}
-					harness::run_frame(&engine, FRAME_MS)?;
+					step()?;
 					if eval(IN_WORLD) {
 						loaded = true;
 						break;
@@ -437,6 +566,7 @@ fn run(o: &Options, log: &Log) -> Result<(), String> {
 				line(log, &format!("  before: {before}"));
 				line(log, &format!("  after:  {}", say("::__wfStatus()")));
 				engine.run_script(&quiet, "quiet")?;
+				watch.phase(format!("the world, day {d}"));
 			}
 		}
 		if d - start_day >= o.days {

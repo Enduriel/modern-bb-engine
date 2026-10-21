@@ -143,7 +143,7 @@
 {
 	local fs = ::World.FactionManager.m.Factions;
 	local orphans = ::__wfOrphans();
-	local s = "status: roster " + ::World.getPlayerRoster().getSize() + ", money " + ::World.Assets.getMoney() + ", " + fs.len() + " faction slots, " + ::World.State.m.Combat.m.Combats.len() + " combats, "
+	local s = "status: roster " + ::World.getPlayerRoster().getSize() + (::World.State.m.IsGameOver ? ", GAME OVER" : "") + ", money " + ::World.Assets.getMoney() + ", " + fs.len() + " faction slots, " + ::World.State.m.Combat.m.Combats.len() + " combats, "
 		+ orphans.len() + " orphaned parties in combat";
 	foreach (o in orphans) s += " [" + ::__wfDesc(o) + "]";
 	s += "; stats started " + ::__wfStats.Started + " ended " + ::__wfStats.Ended + " throws " + ::__wfStats.Throws
