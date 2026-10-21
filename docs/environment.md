@@ -57,15 +57,16 @@ gives.
 
 | Variable | What it does |
 | --- | --- |
+| `BB_ALLOW_SKIPS=1` | Let a test skip (saying `skipping: <why>`) when the machine lacks what it needs: the Steam install, a mod, a GPU, gamescope. Unset, such a test fails, and `scripts/test_all.py` fails a run with skips in it. |
 | `BB_DATA_DIR=DIR` | The game's `data` folder the tests and examples use (default: the developer's Linux Steam install). |
 | `BB_STEAM_DIR=DIR` | Steam's folder (default `~/.local/share/Steam`). |
-| `BB_ORIGINAL_SAVES=DIR` | Saves the original wrote, for the save-format tests; the tests skip without them. |
+| `BB_ORIGINAL_SAVES=DIR` | Saves the original wrote, for the save-format tests; the tests fail without them (skip with `BB_ALLOW_SKIPS=1`). |
 | `BB_ENGINE_SEED=N` | Seed the engine's own randomness (not the scripts' generator), for runs that must repeat exactly. |
 | `BB_TEST_UNPRESENTED=N` | Draw frame `N` but don't present it (the window tests' stalled-compositor case). |
 | `BB_TEST_PRESENT_EVERY=K/N` (or `N`, as `2/N`) | Draw and present the first `K` of every `N` frames whatever they show (the window tests' frame-pacing cases). |
 | `BB_GAME_QUEUE_TURN=PATH` | A turn in the shared game-display queue that the runner (`scripts/test_all.py`) already holds, so `window.rs` waits once. |
 | `BB_UI_DISPLAY`, `BB_UI_DISPLAY_STATUS` | Set by the tests' display wrapper: where a wrapped process runs (a headless gamescope by default) and where it writes its exit status. |
-| `BB_CLIPBOARD_TEST=1` | Run the test that copies to and pastes from the display's real clipboard; only inside a display of its own (a headless gamescope). |
+| `BB_CLIPBOARD_TEST=1` | Lets the (ignored) tests that copy to and paste from a real clipboard run, with `--include-ignored`; only inside a display of its own (a headless gamescope, or a headless KWin for the Wayland one). |
 | `BB_SCENE_KEY_MODS=1` | Run `bb-engine`'s scene-key test with the install's mods. |
 | `BB_PACKAGE_RPATH` | See [packaging](packaging.md). |
 
