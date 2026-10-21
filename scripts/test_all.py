@@ -15,8 +15,8 @@ binaries run, each as cargo runs it (its package folder, cargo's environment), i
 lanes:
 
 - cpu: the CPU-bound binaries, longest first, `--cpu` at a time;
-- ui: the browser host's test binaries (paced in real time, mostly idle), `--ui` at a
-  time, longest first;
+- ui: the browser host's test binaries (paced in real time, mostly idle), `--ui` (3) at
+  a time, longest first;
 - window: bb-app's window.rs in a headless gamescope, the plain build's and then the ui
   build's. The runner queues for the game display at once (so the wait overlaps the
   cpu lane) and hands its turn to both (`BB_GAME_QUEUE_TURN`): one wait, not one per
@@ -198,6 +198,8 @@ def run_lanes(waiting, running, finished, limits, logs, turn, run_began):
 
 
 RESULT = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
+# A harness=false binary's own lines (bb-ui's and bb-app's print libtest's per-test line).
+CASE = re.compile(r"^test \S+ \.\.\. (ok|FAILED|ignored)$", re.M)
 
 
 def log_name(job):
@@ -218,9 +220,10 @@ def main():
 	ap.add_argument("--release", action="store_true", help="the release profile (as the suites are run)")
 	ap.add_argument("-j", "--jobs", type=int, default=4, help="cargo's build jobs (default 4)")
 	ap.add_argument("--cpu", type=int, default=4, help="CPU-bound binaries at once (default 4)")
-	ap.add_argument("--ui", type=int, default=2, help="browser-host binaries at once (default 2)")
+	ap.add_argument("--ui", type=int, default=3, help="browser-host binaries at once (default 3)")
 	ap.add_argument("--logs", type=Path, help="folder for the binaries' logs (default: target/test_all_logs)")
 	ap.add_argument("--only", nargs="*", default=None, help="run only the binaries with these target names")
+	ap.add_argument("--skip", nargs="*", default=[], help="leave out the binaries with these target names")
 	args = ap.parse_args()
 
 	profile_args = (["--release"] if args.release else []) + [f"-j{args.jobs}"]
@@ -253,7 +256,7 @@ def main():
 				continue
 			seen.add(path)
 			target = artifact["target"]["name"]
-			if args.only is not None and target not in args.only:
+			if args.only is not None and target not in args.only or target in args.skip:
 				continue
 			kind = artifact["target"]["kind"][0]
 			label = f"{name}:{kind}:{target}{variant}"
@@ -286,16 +289,26 @@ def main():
 	total = time.monotonic() - began
 
 	try:
-		times_file.write_text(json.dumps({j.label: round(j.wall, 1) for j in finished}, indent=1, sort_keys=True))
+		try:
+			kept = json.loads(times_file.read_text())
+		except (OSError, ValueError):
+			kept = {}
+		kept.update({j.label: round(j.wall, 1) for j in finished})
+		times_file.write_text(json.dumps(kept, indent=1, sort_keys=True))
 	except OSError:
 		pass
 	failed = [j for j in finished if j.rc != 0]
 	counts = [0, 0, 0]
 	for job in finished:
-		for m in RESULT.finditer((logs / log_name(job)).read_text(errors="replace")):
+		text = (logs / log_name(job)).read_text(errors="replace")
+		results = list(RESULT.finditer(text))
+		for m in results:
 			for i in range(3):
 				counts[i] += int(m.group(i + 1))
-	print(f"\n{len(finished) - len(failed)} of {len(finished)} binaries passed; libtest counted {counts[0]} passed, "
+		if not results:
+			for m in CASE.finditer(text):
+				counts[("ok", "FAILED", "ignored").index(m.group(1))] += 1
+	print(f"\n{len(finished) - len(failed)} of {len(finished)} binaries passed; tests: {counts[0]} passed, "
 		f"{counts[1]} failed, {counts[2]} ignored; build {built:.0f} s, tests {total - built:.0f} s, total {total:.0f} s")
 	for job in failed:
 		log = logs / log_name(job)
