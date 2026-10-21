@@ -5,7 +5,12 @@ cef` and `cargo test -p bb-app --features ui` run, the same test binaries, side 
 Run it inside a resource-limited scope, from anywhere, e.g.:
 
     systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=10G \
-        modern_bb_engine/scripts/test_all.py --release
+        modern_bb_engine/scripts/test_all.py
+
+The default profile is `test-release` (the workspace's Cargo.toml): release's
+optimisation, built incrementally: after an edit to squirrel-bb both builds take ~20 s,
+not ~2 min as under `release` (its own target folder, ~3 GB bigger with the incremental
+cache). `--release` (or `--profile NAME`) builds with another one.
 
 Two builds, both workspace-wide so that every crate below bb-ui and bb-app keeps one
 feature set (`-p bb-ui --features cef` resolves features differently and rebuilds
@@ -268,7 +273,11 @@ class Job:
 
 def main():
 	ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-	ap.add_argument("--release", action="store_true", help="the release profile (as the suites are run)")
+	profile = ap.add_mutually_exclusive_group()
+	profile.add_argument("--profile", default="test-release",
+		help="cargo's build profile (default test-release: release's optimisation, incremental)")
+	profile.add_argument("--release", dest="profile", action="store_const", const="release",
+		help="the release profile (= --profile release)")
 	ap.add_argument("-j", "--jobs", type=int, default=4, help="cargo's build jobs (default 4)")
 	ap.add_argument("--cpu", type=int, default=4, help="CPU-bound binaries at once (default 4)")
 	ap.add_argument("--ui", type=int, default=3, help="browser-host binaries at once (default 3)")
@@ -277,10 +286,11 @@ def main():
 	ap.add_argument("--skip", nargs="*", default=[], help="leave out the binaries with these target names")
 	args = ap.parse_args()
 
-	profile_args = (["--release"] if args.release else []) + [f"-j{args.jobs}"]
+	profile_args = [f"--profile={args.profile}", f"-j{args.jobs}"]
 	meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version=1", "--no-deps"], cwd=WORKSPACE,
 		stdout=subprocess.PIPE, text=True, check=True).stdout)
-	target_dir = Path(meta["target_directory"]) / ("release" if args.release else "debug")
+	# Cargo's folder for a profile: its name, but `debug` for dev (and test, which inherits it).
+	target_dir = Path(meta["target_directory"]) / ("debug" if args.profile in ("dev", "test") else args.profile)
 	logs = args.logs or Path(meta["target_directory"]) / "test_all_logs"
 	logs.mkdir(parents=True, exist_ok=True)
 	times_file = Path(meta["target_directory"]) / "test_all_times.json"
