@@ -6,7 +6,8 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
 
     python3 parity/perf/frame_breakdown.py --bin BB --out DIR [--vanilla] [--save FILE]
         [--hz 180] [--size 2560x1358] [--vsync on|off] [--quota 400] [--phase-secs 8]
-        [--gpu-times] [--script-profile] [--trace] [--cdp-memory] [--only PHASE,...] [--battles N] [--day SECS]
+        [--gpu-times] [--script-profile] [--trace] [--cdp-memory] [--only PHASE,...] [--battles N]
+        [--day SECS] [--clear-weather]
 
 - The modded run (the default) loads a copy of `--save` (default: the newest save in
   bb's savegames folder) named `bb_probe_*`, with the install's mods; `--vanilla`
@@ -17,10 +18,10 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
 - The scenes, in order: main menu; load (or the new campaign); the world map paused at
   zoom 1, zoomed out, panned at zoom 1 and zoomed out; running at 1x and 4x; a town;
   the character screen; a full-view CSS fade injected into the page over the paused map;
-  a battle (its start, the player's turn idle, AI turns). `--day SECS` adds a phase
-  running at 4x for SECS after the 4x one (28 s crosses a whole day: dusk and dawn).
-  `--battles N` then fights N
-  battles by the AI (memory after each). Each scene logs `PHASE name` and lasts
+  a battle (its start, the player's turn idle, its menu open, the character screen open,
+  the player's turn in a storm's rain, AI turns). `--day SECS` adds a phase running at
+  4x for SECS after the 4x one (28 s crosses a whole day: dusk and dawn).
+  `--battles N` then fights N battles by the AI (memory after each). Each scene logs `PHASE name` and lasts
   `--phase-secs`; the driver samples /proc in its middle.
 
 Writes DIR/frames.txt, DIR/phases.json (frame ranges, for `frame_times.py`),
@@ -65,6 +66,10 @@ ACTIVE = ('local a = ::Tactical.TurnSequenceBar.getActiveEntity(); '
 END_PLAYER_TURN = ('if (("State" in ::Tactical) && ::Tactical.State != null && !::Tactical.State.isBattleEnded()) '
                    '{ local a = ::Tactical.TurnSequenceBar.getActiveEntity(); '
                    'if (a != null && a.isPlayerControlled()) ::Tactical.TurnSequenceBar.onNextTurnButtonPressed(); }')
+# A storm's rain over the battle (`tactical_entity_manager.setupWeather`'s), the player's turn still idle.
+RAIN = ('local w = ::Tactical.getWeather(); local r = w.createRainSettings(); r.MinDrops = 150; r.MaxDrops = 150; '
+        'r.NumSplats = 50; r.MinVelocity = 400.0; r.MaxVelocity = 500.0; r.MinAlpha = 1.0; r.MaxAlpha = 1.0; '
+        'r.MinScale = 0.75; r.MaxScale = 1.0; w.buildRain(r); ::logInfo("rain built");')
 START_CAMPAIGN = ('::RootState.get("MainMenuState").campaign_menu_module_onStartPressed({ Name = "Probe Company", '
                   'Banner = ::Const.PlayerBanners[0], Difficulty = 1, EconomicDifficulty = 1, BudgetDifficulty = 1, '
                   'Ironman = false, ExplorationMode = false, GreaterEvil = ::Const.World.GreaterEvilType.Random, '
@@ -181,8 +186,18 @@ def build(args, rate):
         t.run(ENGAGE)
         t.run(CONFIRM, after=1.5)
         t.wait(9)
-        t.phase("battle start", secs, ACTIVE)
+        # `--clear-weather`: no rain or snow (their fades run on real time, so a battle
+        # with them changes even while paused).
+        start = ACTIVE + (" ::Tactical.getWeather().clear();" if "--clear-weather" in args else "")
+        t.phase("battle start", secs, start)
         t.phase("battle player idle", secs, ACTIVE)
+        t.phase("battle menu", secs, "::Tactical.State.toggleMenuScreen();")
+        t.run("::Tactical.State.toggleMenuScreen();")
+        t.wait(1)
+        t.phase("battle character screen", secs, "::Tactical.State.showCharacterScreen();")
+        t.run("::Tactical.State.hideCharacterScreen();")
+        t.wait(1)
+        t.phase("battle rain", secs, RAIN)
         t.phase("battle ai turns", secs * 2, ACTIVE, lambda i: END_PLAYER_TURN if i % 30 == 0 else None)
     battles = int(opt(args, "--battles", 0))
     if battles:
