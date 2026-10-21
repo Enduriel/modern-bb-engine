@@ -721,10 +721,17 @@ impl Running {
 				self.game.set_modifier(keys::modifier(m.state()));
 				Ok(())
 			}
+			// The window got the keyboard or lost it: the key queue forgets its keys
+			// without releasing any, and takes none in meanwhile, as the original's main
+			// loop does (`squirrel_bb::key_queue`). So Alt+Tab leaves no Alt held.
+			WindowEvent::Focused(focused) => {
+				self.game.keyboard_focus(*focused);
+				Ok(())
+			}
 			// The keys winit makes up as the window gains or loses the keyboard (on X11
-			// and Windows) are left out. The original gets none (SFML on Windows), and
-			// does nothing as the window loses the keyboard (`0x5b57bd` only notes it):
-			// a key held then stays held for the states until it's next released here.
+			// and Windows) are left out. The original gets none (SFML on Windows): a key
+			// still down as the window gets the keyboard back comes again with the
+			// system's next repeat.
 			WindowEvent::KeyboardInput { is_synthetic: true, .. } => Ok(()),
 			WindowEvent::KeyboardInput { event, .. } => {
 				let PhysicalKey::Code(code) = event.physical_key else { return Ok(()) };

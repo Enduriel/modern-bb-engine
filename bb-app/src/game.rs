@@ -342,6 +342,13 @@ impl Game {
 		})
 	}
 
+	/// The window got the keyboard or lost it: the engine's key queue forgets its keys,
+	/// releasing none, and drops the keys that come meanwhile, as the original's main
+	/// loop does (see `squirrel_bb::key_queue`).
+	pub fn keyboard_focus(&mut self, focused: bool) {
+		self.engine().keyboard_focus(focused);
+	}
+
 	/// The modifier keys held now (see `keys::modifier`).
 	pub fn set_modifier(&mut self, modifier: i64) {
 		self.modifier = modifier;

@@ -9,8 +9,16 @@
 //! A key event's `getState()` and `getFire()` are both whether the key is down (the
 //! original fills both fields with it).
 //!
-//! Nothing comes up when the window loses the keyboard: the original only notes it
-//! (`0x5b57bd`), so a key held then stays held until its next release.
+//! Nothing comes up when the window loses the keyboard, but the queue forgets its keys:
+//! the original's main loop (`0x5b3e4c`), seeing the window's focus change (its
+//! `hasFocus`, `0x5b4880`, the flag `0x5b57bd` notes), clears the queue's pending and
+//! held events without dispatching them (`0x551460`) and drops the input that comes
+//! while the window lacks the keyboard (the queue's flag `+0x92`, `0x5517f0`); it
+//! clears them again as the window gets the keyboard back. So the states (and the page)
+//! never see the held key's release, and its presses stop at once (probed 2026-10-21: a
+//! held key's keydowns to the page and presses to the states stopped as the keyboard
+//! went, with no release; with the keyboard back and the key still down, it came again
+//! with the system's next repeat, as a new press).
 //!
 //! What a key types goes through the queue too (`0x5b68e0`, key `0x62` with the
 //! character), after its key, each of the system's repeats again: the UI gets it and
@@ -36,12 +44,27 @@ pub enum QueuedInput {
 }
 
 #[derive(Default)]
-pub struct KeyQueue(RefCell<Vec<QueuedInput>>);
+pub struct KeyQueue {
+	queue: RefCell<Vec<QueuedInput>>,
+	/// The window lacks the keyboard: input is dropped.
+	unfocused: std::cell::Cell<bool>,
+}
 
 impl KeyQueue {
+	/// The window got the keyboard, or lost it: the queue forgets what it holds, and
+	/// while the window lacks it, takes nothing in (see the module notes).
+	pub fn set_focused(&self, focused: bool) {
+		if self.unfocused.replace(!focused) == focused {
+			self.queue.borrow_mut().clear();
+		}
+	}
+
 	/// A key went down (`down`) or up; the system's repeats can come in too.
 	pub fn push(&self, key: i64, down: bool, modifier: i64) {
-		let mut queue = self.0.borrow_mut();
+		if self.unfocused.get() {
+			return;
+		}
+		let mut queue = self.queue.borrow_mut();
 		let held = queue
 			.iter()
 			.position(|e| matches!(e, QueuedInput::Key(e) if e.key == key && e.state == 1));
@@ -60,12 +83,14 @@ impl KeyQueue {
 
 	/// A key typed `c` (each of the system's repeats again).
 	pub fn push_text(&self, c: char, modifier: i64) {
-		self.0.borrow_mut().push(QueuedInput::Text(c, modifier));
+		if !self.unfocused.get() {
+			self.queue.borrow_mut().push(QueuedInput::Text(c, modifier));
+		}
 	}
 
 	/// This frame's events, in order, keeping the held keys for the next frame.
 	pub fn take_frame(&self) -> Vec<QueuedInput> {
-		let mut queue = self.0.borrow_mut();
+		let mut queue = self.queue.borrow_mut();
 		let frame = queue.clone();
 		queue.retain(|e| matches!(e, QueuedInput::Key(e) if e.state == 1 && e.fire == 1 && !ONCE.contains(&e.key)));
 		frame
@@ -106,6 +131,31 @@ mod tests {
 		q.push(33, false, 0);
 		assert_eq!(keys(&q.take_frame()), [(33, 0)], "the release, once");
 		assert!(q.take_frame().is_empty());
+	}
+
+	/// Alt+Tab: Alt's press is held as the window loses the keyboard, its release comes
+	/// elsewhere. It used to stay held, every frame, for good (the page never rested).
+	#[test]
+	fn losing_the_keyboard_forgets_the_held_keys_without_a_release() {
+		let q = KeyQueue::default();
+		q.push(97, true, 4);
+		q.push(33, true, 0);
+		assert_eq!(keys(&q.take_frame()), [(97, 1), (33, 1)]);
+		q.set_focused(false);
+		assert!(q.take_frame().is_empty(), "no release, and no more presses");
+		q.push(97, false, 0);
+		q.push_text('w', 0);
+		assert!(q.take_frame().is_empty(), "input while the window lacks the keyboard is dropped");
+		q.set_focused(false);
+		q.set_focused(true);
+		assert!(q.take_frame().is_empty());
+		// W still down: the system's next repeat is a new press.
+		q.push(33, true, 0);
+		assert_eq!(keys(&q.take_frame()), [(33, 1)]);
+		assert_eq!(keys(&q.take_frame()), [(33, 1)]);
+		// Getting the keyboard back clears it too.
+		q.set_focused(true);
+		assert_eq!(keys(&q.take_frame()), [(33, 1)], "no change, nothing cleared");
 	}
 
 	#[test]

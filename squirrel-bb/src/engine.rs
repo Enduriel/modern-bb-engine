@@ -473,6 +473,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.keys.push(key, down, modifier);
 	}
 
+	/// The window got the keyboard or lost it: the queued and held keys are forgotten,
+	/// none released, and input that comes while it lacks it is dropped, as the
+	/// original's main loop does (see [`crate::key_queue`]).
+	pub fn keyboard_focus(&self, focused: bool) {
+		self.keys.set_focused(focused);
+	}
+
 	/// A key typed `c` with the `modifier` mask held (each of the system's repeats
 	/// again): the UI gets it from the next frame, after the key (see [`queue_key`]).
 	///
