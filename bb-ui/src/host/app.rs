@@ -52,6 +52,20 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("disable-features", Some("SpareRendererForSitePerProcess")),
 ];
 
+/// V8's flags for the page (`--js-flags`), unless `BB_UI_V8_FLAGS` gives others (empty:
+/// none): its memory saver mode, which keeps the heap small at the cost of more frequent
+/// collections. In V8 15.4 (Chromium 154)
+/// `--optimize-for-size` does two things: a young generation of 1 MB semi-spaces (32 MB
+/// by default on desktop), and `MemorySaverModeEnabled`, under which the old generation
+/// and the embedder's (Blink's DOM, Oilpan) grow by at most 1.3x the live size between
+/// full collections (up to 4x by default). The page's DOM churns in battles (the
+/// combat log, tooltips, the turn bar) while its JavaScript heap stays small, so by
+/// default those collections came rarely and the renderer grew by ~50 MB a battle until
+/// the battle's end released it; with the flag it stays flat (-45 MB at the busiest),
+/// for no measurable frame or CPU cost. Recheck on a V8 upgrade: the flag's meaning
+/// may change.
+const V8_FLAGS: &str = "--optimize-for-size";
+
 /// The origins allowed to drive the page over DevTools at `port`
 /// (`--remote-allow-origins`; Chromium refuses a DevTools WebSocket from any other
 /// origin): the frontend the port itself serves (`/devtools/inspector.html`, by either
@@ -160,8 +174,12 @@ wrap_app! {
 			if std::env::var_os("BB_UI_GPU_RASTER").is_none_or(|v| v == "0") {
 				command_line.append_switch(Some(&"disable-gpu-rasterization".into()));
 			}
+			let v8_flags = std::env::var("BB_UI_V8_FLAGS").unwrap_or_else(|_| V8_FLAGS.to_string());
+			if !v8_flags.trim().is_empty() {
+				command_line.append_switch_with_value(Some(&"js-flags".into()), Some(&v8_flags.as_str().into()));
+			}
 			// More switches, to compare Chromium's settings: `BB_UI_SWITCHES="name=value name2"`
-			// (features join the lists above).
+			// (features join the lists above; V8's flags too, one `js-flags=--flag` each).
 			for switch in std::env::var("BB_UI_SWITCHES").unwrap_or_default().split_whitespace() {
 				let switch = switch.trim_start_matches('-');
 				match switch.split_once('=') {
@@ -169,12 +187,20 @@ wrap_app! {
 						let old = CefString::from(&command_line.switch_value(Some(&name.into()))).to_string();
 						let value = match name {
 							"enable-features" | "disable-features" if !old.is_empty() => format!("{old},{value}"),
+							"js-flags" if !old.is_empty() => format!("{old} {value}"),
 							_ => value.to_string(),
 						};
 						command_line.append_switch_with_value(Some(&name.into()), Some(&value.as_str().into()));
 					}
 					None => command_line.append_switch(Some(&switch.into())),
 				}
+			}
+			// A renderer in this process (`--single-process`, to compare) reads the bridge's
+			// endpoint from this command line.
+			if let Some(bridge) = &self.bridge
+				&& command_line.has_switch(Some(&"single-process".into())) == 1
+			{
+				command_line.append_switch_with_value(Some(&bridge_client::SWITCH.into()), Some(&bridge.as_str().into()));
 			}
 			if let Some(port) = self.devtools_port {
 				let origins = devtools_origins(port);

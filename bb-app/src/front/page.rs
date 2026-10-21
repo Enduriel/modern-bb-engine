@@ -74,6 +74,13 @@ impl Front {
 			super::play_on_device(session.engine(), boot.data_dir, boot.mods);
 		}
 		session.boot_menu()?;
+		// The boot is behind us as a scene discarded is (`discarded`): the page gives
+		// back what running every screen's and mod's setup left (-45 MB at the main menu),
+		// and the allocator its free pages. `BB_BOOT_RELEASE=0` keeps them, to compare.
+		if std::env::var_os("BB_BOOT_RELEASE").is_none_or(|v| v != "0") {
+			session.host().release_memory();
+			crate::platform::trim_allocator();
+		}
 		if let Some((cols, rows)) = boot.world_size {
 			bb_engine::harness::set_world_size(session.engine(), cols, rows)?;
 		}

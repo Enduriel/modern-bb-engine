@@ -585,7 +585,8 @@ impl Game {
 	/// rest wait for one.
 	fn follow_scenes(&mut self) {
 		let discards = self.front.engine().take_discards();
-		if !discards.is_empty() {
+		let discarded = !discards.is_empty();
+		if discarded {
 			self.front.discarded();
 		}
 		let engine = self.front.engine();
@@ -610,6 +611,11 @@ impl Game {
 				// The new campaign draws the old one's atlases again.
 				squirrel_bb::Discard::Load => {}
 			}
+		}
+		// What the scene's objects, sounds and the page's browser side freed goes back
+		// to the system (see `platform::trim_allocator`).
+		if discarded {
+			crate::platform::trim_allocator();
 		}
 		let sprites = engine.sprites();
 		let renderer = &mut self.renderer;

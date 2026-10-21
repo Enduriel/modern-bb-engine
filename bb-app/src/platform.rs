@@ -90,6 +90,30 @@ pub fn tune_allocator() {
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
 pub fn tune_allocator() {}
 
+/// Give the C allocator's free memory back to the system, where the game discards a
+/// scene (a battle's end, the campaign left, a save loaded) and after the boot: glibc
+/// keeps what is freed inside an arena below its top (`malloc_trim` returns those pages
+/// too). It is what the second arena (the browser's in-process threads, the decode
+/// workers) held after a battle: -25 to -38 MB of the game's process; 0.3-5 ms,
+/// behind the loading screen.
+/// `BB_TRIM=0` skips it, to compare. Other systems' allocators do this by themselves.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn trim_allocator() {
+	unsafe extern "C" {
+		fn malloc_trim(pad: usize) -> std::ffi::c_int;
+	}
+	if std::env::var_os("BB_TRIM").is_some_and(|v| v == "0") {
+		return;
+	}
+	// SAFETY: `malloc_trim` only returns free pages to the system; any thread may call it.
+	unsafe {
+		malloc_trim(0);
+	}
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn trim_allocator() {}
+
 /// Open `url` in the system's browser, as the original does for the page's `openURL`:
 /// start the system's launcher for it and return without waiting. A thread waits for
 /// the launcher instead (no zombie is left); its output goes nowhere, not to the game's
