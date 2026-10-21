@@ -817,18 +817,18 @@ impl WorldEntities {
 		};
 		let get_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> Option<SqStrongRef> {
 				m.borrow()
 					.record(vm.this_identity())
-					.and_then(|rec| rec.sprites.get(&name).cloned())
+					.and_then(|rec| rec.sprites.get(name).cloned())
 			})
 		};
 		let has_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> bool {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> bool {
 				m.borrow()
 					.record(vm.this_identity())
-					.is_some_and(|rec| rec.sprites.contains_key(&name))
+					.is_some_and(|rec| rec.sprites.contains_key(name))
 			})
 		};
 		let add_label = {
@@ -846,18 +846,18 @@ impl WorldEntities {
 		};
 		let get_label = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> Option<SqStrongRef> {
 				m.borrow()
 					.record(vm.this_identity())
-					.and_then(|rec| rec.labels.get(name.as_str()).cloned())
+					.and_then(|rec| rec.labels.get(name).cloned())
 			})
 		};
 		let has_label = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> bool {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> bool {
 				m.borrow()
 					.record(vm.this_identity())
-					.is_some_and(|rec| rec.labels.contains_key(name.as_str()))
+					.is_some_and(|rec| rec.labels.contains_key(name))
 			})
 		};
 		// Faction: getFaction is native; script setFaction calls native setFactionEx
@@ -878,9 +878,9 @@ impl WorldEntities {
 		};
 		let remove_label = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| {
+			vm.make_closure(move |vm: &SQVM, name: &str| {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					rec.labels.remove(name.as_str());
+					rec.labels.remove(name);
 				}
 			})
 		};

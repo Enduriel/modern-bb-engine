@@ -772,18 +772,18 @@ impl TacticalEntities {
 		};
 		let get_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> Option<SqStrongRef> {
 				m.borrow()
 					.record(vm.this_identity())
-					.and_then(|rec| rec.sprites.get(&name).cloned())
+					.and_then(|rec| rec.sprites.get(name).cloned())
 			})
 		};
 		let has_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> bool {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> bool {
 				m.borrow()
 					.record(vm.this_identity())
-					.is_some_and(|rec| rec.sprites.contains_key(&name))
+					.is_some_and(|rec| rec.sprites.contains_key(name))
 			})
 		};
 		// createOverlay(): the unit gets its bars (empty until setOverlayValues). It also
@@ -875,7 +875,7 @@ impl TacticalEntities {
 		};
 		let remove_sprite = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| {
+			vm.make_closure(move |vm: &SQVM, name: &str| {
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.sprites.remove(&name);
 				}
@@ -910,7 +910,7 @@ impl TacticalEntities {
 		// (a zero vector for an unknown name).
 		let get_sprite_offset = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String| -> Result<Option<SqStrongRef>, String> {
+			vm.make_closure(move |vm: &SQVM, name: &str| -> Result<Option<SqStrongRef>, String> {
 				let (handle, class) = {
 					let m = m.borrow();
 					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
@@ -929,7 +929,7 @@ impl TacticalEntities {
 		// unit's portrait draws (see `portrait`).
 		let set_sprite_in_portrait = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+			vm.make_closure(move |vm: &SQVM, name: &str, on: bool| {
 				let (handle, class) = {
 					let m = m.borrow();
 					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
@@ -950,7 +950,7 @@ impl TacticalEntities {
 		// setSpriteOcclusion(name, a, b, c): see `UnitSpriteData::occlusion`.
 		let set_sprite_occlusion = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String, a: i64, b: i64, c: i64| {
+			vm.make_closure(move |vm: &SQVM, name: &str, a: i64, b: i64, c: i64| {
 				let (handle, class) = {
 					let m = m.borrow();
 					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
@@ -963,7 +963,7 @@ impl TacticalEntities {
 		// setSpriteColorization(name, on): see `UnitSpriteData::colorization`.
 		let set_sprite_colorization = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+			vm.make_closure(move |vm: &SQVM, name: &str, on: bool| {
 				let (handle, class) = {
 					let m = m.borrow();
 					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
@@ -983,7 +983,7 @@ impl TacticalEntities {
 		};
 		let set_sprite_offset = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: String, offset: Retained| {
+			vm.make_closure(move |vm: &SQVM, name: &str, offset: Retained| {
 				let (handle, class) = {
 					let m = m.borrow();
 					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())

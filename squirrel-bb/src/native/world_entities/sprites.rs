@@ -66,7 +66,7 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	};
 	let remove = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: String| {
+		vm.make_closure(move |vm: &SQVM, name: &str| {
 			if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 				rec.sprites.remove(&name);
 			}
@@ -74,7 +74,7 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	};
 	let get_offset = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: String| -> Result<Option<SqStrongRef>, String> {
+		vm.make_closure(move |vm: &SQVM, name: &str| -> Result<Option<SqStrongRef>, String> {
 			let mut offset = (0.0, 0.0);
 			with_sprite(&m, vm, &name, |s| offset = s.offset);
 			let create_vec = SqTable::root(vm)
@@ -85,26 +85,26 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	};
 	let set_offset = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: String, offset: Retained| {
+		vm.make_closure(move |vm: &SQVM, name: &str, offset: Retained| {
 			let offset = vec_xy(vm, &offset.0);
 			with_sprite(&m, vm, &name, |s| s.offset = offset);
 		})
 	};
 	let set_scaling = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+		vm.make_closure(move |vm: &SQVM, name: &str, on: bool| {
 			with_sprite(&m, vm, &name, |s| s.scaling = on);
 		})
 	};
 	let set_colorization = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+		vm.make_closure(move |vm: &SQVM, name: &str, on: bool| {
 			with_sprite(&m, vm, &name, |s| s.colorization = on);
 		})
 	};
 	let set_in_portrait = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: String, on: bool| {
+		vm.make_closure(move |vm: &SQVM, name: &str, on: bool| {
 			with_sprite(&m, vm, &name, |s| s.in_portrait = on);
 		})
 	};
