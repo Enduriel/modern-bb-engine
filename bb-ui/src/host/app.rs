@@ -18,8 +18,9 @@ use crate::coui::SCHEME;
 /// Offscreen, composited on the GPU: Chromium's GPU process composites the page and
 /// hands each paint over as a GPU buffer (`shared_texture_enabled`,
 /// `OnAcceleratedPaint`), never as pixels in memory. ANGLE runs on the system's EGL
-/// on Linux (`gl-egl`, what CEF picks for offscreen GPU paints there) and on Metal on
-/// macOS (Chromium's default there, [`ANGLE`]). The page's content is
+/// on Linux (`gl-egl`, what CEF picks for offscreen GPU paints there), on Metal on
+/// macOS and on D3D11 on Windows (Chromium's defaults there, [`ANGLE`]: CEF's shared
+/// textures are D3D11's on Windows). The page's content is
 /// rasterized on the GPU too, on both (Chromium's default): where the page repaints, it
 /// takes about a third of the CPU that CPU raster does. `BB_UI_CPU_RASTER=1` rasterizes
 /// on the CPU instead (`--disable-gpu-rasterization`, [`cpu_raster`]), to compare.
@@ -96,8 +97,10 @@ fn cpu_raster() -> bool {
 }
 
 /// The backend ANGLE (Chromium's GL) draws through: see [`SWITCHES`].
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 const ANGLE: &str = "gl-egl";
+#[cfg(windows)]
+const ANGLE: &str = "d3d11";
 #[cfg(target_os = "macos")]
 const ANGLE: &str = "metal";
 
@@ -180,6 +183,8 @@ wrap_app! {
 		bridge: Option<String>,
 		// `--ozone-platform` (the browser process's display connection).
 		ozone: Option<&'static str>,
+		// The paint sink's switches (`PageSink::browser_switches`).
+		sink_switches: Vec<(&'static str, String)>,
 	}
 
 	impl App {
@@ -201,6 +206,10 @@ wrap_app! {
 					Some(value) => command_line.append_switch_with_value(Some(&(*name).into()), Some(&(*value).into())),
 					None => command_line.append_switch(Some(&(*name).into())),
 				}
+			}
+			// What the paints need to reach the game's page (Windows: the GPU adapter).
+			for (name, value) in &self.sink_switches {
+				command_line.append_switch_with_value(Some(&(*name).into()), Some(&value.as_str().into()));
 			}
 			// macOS: Chromium keeps its cookie key in the user's keychain; the page needs no
 			// secrets, so it stays out of it.
@@ -264,14 +273,16 @@ wrap_app! {
 /// The application object; `opening` (browser process only) opens the page once CEF's
 /// context is initialized. `devtools_port` for the browser process when DevTools is
 /// served, `ozone` its display connection's platform (its children don't take switches
-/// from it). `bridge` is the bridge's endpoint, which it hands the renderer.
+/// from it). `bridge` is the bridge's endpoint, which it hands the renderer, and
+/// `sink_switches` what the paint sink asks of Chromium (`PageSink::browser_switches`).
 pub(super) fn host_app(
 	opening: Option<Opening>,
 	devtools_port: Option<u16>,
 	bridge: Option<String>,
 	ozone: Option<&'static str>,
+	sink_switches: Vec<(&'static str, String)>,
 ) -> App {
-	HostApp::new(Arc::new(Mutex::new(opening)), devtools_port, bridge, ozone)
+	HostApp::new(Arc::new(Mutex::new(opening)), devtools_port, bridge, ozone, sink_switches)
 }
 
 #[cfg(test)]

@@ -45,27 +45,28 @@ use squirrel_sys::{
 	tagSQObjectType_OT_USERPOINTER as OT_USERPOINTER, tagSQObjectType_OT_WEAKREF as OT_WEAKREF,
 };
 
+// `as u32`: bindgen gives C enums `u32` on Unix and `i32` on Windows (MSVC's `int`).
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u32)]
 pub enum SqObjectType {
-	Null = OT_NULL,
-	Integer = OT_INTEGER,
-	Float = OT_FLOAT,
-	Bool = OT_BOOL,
-	String = OT_STRING,
-	Table = OT_TABLE,
-	Array = OT_ARRAY,
-	UserData = OT_USERDATA,
-	Closure = OT_CLOSURE,
-	NativeClosure = OT_NATIVECLOSURE,
-	Generator = OT_GENERATOR,
-	UserPointer = OT_USERPOINTER,
-	Thread = OT_THREAD,
-	FuncProto = OT_FUNCPROTO,
-	Class = OT_CLASS,
-	Instance = OT_INSTANCE,
-	WeakRef = OT_WEAKREF,
-	Outer = OT_OUTER,
+	Null = OT_NULL as u32,
+	Integer = OT_INTEGER as u32,
+	Float = OT_FLOAT as u32,
+	Bool = OT_BOOL as u32,
+	String = OT_STRING as u32,
+	Table = OT_TABLE as u32,
+	Array = OT_ARRAY as u32,
+	UserData = OT_USERDATA as u32,
+	Closure = OT_CLOSURE as u32,
+	NativeClosure = OT_NATIVECLOSURE as u32,
+	Generator = OT_GENERATOR as u32,
+	UserPointer = OT_USERPOINTER as u32,
+	Thread = OT_THREAD as u32,
+	FuncProto = OT_FUNCPROTO as u32,
+	Class = OT_CLASS as u32,
+	Instance = OT_INSTANCE as u32,
+	WeakRef = OT_WEAKREF as u32,
+	Outer = OT_OUTER as u32,
 }
 
 impl TryFrom<SQObjectType> for SqObjectType {
@@ -91,7 +92,7 @@ impl TryFrom<SQObjectType> for SqObjectType {
 			OT_INSTANCE => Ok(SqObjectType::Instance),
 			OT_WEAKREF => Ok(SqObjectType::WeakRef),
 			OT_OUTER => Ok(SqObjectType::Outer),
-			other => Err(other), // Unrecognized tag value.
+			other => Err(other as u32), // Unrecognized tag value.
 		}
 	}
 }

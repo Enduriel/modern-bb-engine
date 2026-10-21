@@ -4,10 +4,10 @@
 //! copies what changed into a texture of its own (bb-render's `UiPage`). bb-ui itself
 //! never touches the GPU.
 //!
-//! Linux's buffers (DMA-BUFs) and macOS's (IOSurfaces) so far; Windows' D3D11 shared
-//! handles are still to come.
+//! Linux's buffers are DMA-BUFs, macOS's IOSurfaces and Windows' D3D11 shared textures
+//! (NT handles).
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use std::marker::PhantomData;
 #[cfg(target_os = "linux")]
 use std::os::fd::BorrowedFd;
@@ -48,6 +48,30 @@ impl IOSurface<'_> {
 	}
 }
 
+/// A paint's D3D11 shared texture (an NT handle), the browser's: valid only during the
+/// paint's call.
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug)]
+pub struct D3D11Texture<'a> {
+	handle: std::ptr::NonNull<std::ffi::c_void>,
+	call: PhantomData<&'a ()>,
+}
+
+#[cfg(windows)]
+impl D3D11Texture<'_> {
+	/// # Safety
+	/// `handle` is an NT handle to a shared texture that stays open for the lifetime
+	/// given.
+	pub(super) unsafe fn new(handle: std::ptr::NonNull<std::ffi::c_void>) -> Self {
+		D3D11Texture { handle, call: PhantomData }
+	}
+
+	/// The `HANDLE`.
+	pub fn as_ptr(&self) -> *mut std::ffi::c_void {
+		self.handle.as_ptr()
+	}
+}
+
 /// The GPU buffer a paint is in.
 #[derive(Clone, Copy, Debug)]
 pub enum PaintBuffer<'a> {
@@ -58,8 +82,11 @@ pub enum PaintBuffer<'a> {
 	/// macOS: an IOSurface.
 	#[cfg(target_os = "macos")]
 	IOSurface(IOSurface<'a>),
+	/// Windows: a D3D11 shared texture.
+	#[cfg(windows)]
+	D3D11(D3D11Texture<'a>),
 	/// No other operating system's yet.
-	#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+	#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 	#[doc(hidden)]
 	Unsupported(std::marker::PhantomData<&'a ()>),
 }
@@ -89,4 +116,10 @@ pub trait PageSink: Send + Sync {
 	/// of `region` is on the page. For checking the page's pixels (is the cursor over
 	/// the UI) and screenshots: a read from the GPU, so it waits for it.
 	fn read(&self, region: PaintRect) -> Result<Option<(PaintRect, Vec<u8>)>, String>;
+
+	/// Chromium switches the paints need to reach this sink, as `(name, value)`, given
+	/// when the browser starts (Windows: the GPU adapter to paint on). None by default.
+	fn browser_switches(&self) -> Vec<(&'static str, String)> {
+		Vec::new()
+	}
 }

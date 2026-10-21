@@ -39,6 +39,12 @@ fn workspace() -> PathBuf {
 	Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("bb-package sits in the workspace").to_path_buf()
 }
 
+/// Where cef-dll-sys keeps CEF's distributions: `CEF_PATH`, as for the build (the
+/// workspace's `.cargo/config.toml` sets `target/cef` unless the environment has one).
+fn cef_root() -> PathBuf {
+	std::env::var_os("CEF_PATH").map(PathBuf::from).unwrap_or_else(|| workspace().join("target/cef"))
+}
+
 /// Cargo's target folder for this workspace.
 fn target_dir() -> PathBuf {
 	std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| workspace().join("target"))
@@ -108,7 +114,7 @@ fn package() -> Result<(), String> {
 	let platform = layout::Platform::of(target)?;
 	let cef_dir = match &options.cef_dir {
 		Some(dir) => dir.clone(),
-		None => layout::find_cef_dir(&workspace().join("target/cef"), platform)?,
+		None => layout::find_cef_dir(&cef_root(), platform)?,
 	};
 	let bb = build_bb(target, options.build)?;
 	let steam = steam_library::fetch(target, &options.cache)?;

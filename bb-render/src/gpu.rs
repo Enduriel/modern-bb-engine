@@ -47,9 +47,21 @@ impl Gpu {
 		Gpu::open(Gpu::headless_adapter()?, wgpu::Features::empty(), features, false)
 	}
 
+	/// `descriptor` with the graphics API the game draws through on this platform,
+	/// unless `WGPU_BACKEND` chose one: Direct3D 12 on Windows, where the UI page's paints
+	/// open (`ui_page`'s `windows`); wgpu's choice elsewhere.
+	pub fn platform_backends(descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor {
+		#[cfg(windows)]
+		if std::env::var_os("WGPU_BACKEND").is_none() {
+			return wgpu::InstanceDescriptor { backends: wgpu::Backends::DX12, ..descriptor };
+		}
+		descriptor
+	}
+
 	fn headless_adapter() -> Result<wgpu::Adapter, String> {
-		let instance =
-			wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+		let instance = wgpu::Instance::new(Gpu::platform_backends(
+			wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
+		));
 		let options = wgpu::RequestAdapterOptions {
 			power_preference: wgpu::PowerPreference::from_env()
 				.unwrap_or(wgpu::PowerPreference::HighPerformance),

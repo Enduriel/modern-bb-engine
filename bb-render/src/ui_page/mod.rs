@@ -2,7 +2,8 @@
 //!
 //! Chromium paints the page on the GPU and hands each paint over as one of its own GPU
 //! buffers (CEF's accelerated paint, a shared texture): a DMA-BUF on Linux ([`linux`]),
-//! an IOSurface on macOS ([`macos`]) and a D3D11 shared handle on Windows (not yet).
+//! an IOSurface on macOS ([`macos`]) and a D3D11 shared texture on Windows
+//! ([`windows`]).
 //! Each paint is imported and the parts it changed (its dirty rectangles) are copied,
 //! GPU to GPU, into a texture of ours, which [`UiLayer`](crate::UiLayer) blends over
 //! the game's frame. Nothing of the page passes through the CPU.
@@ -10,9 +11,10 @@
 //! CEF's rules for the buffer: it may only be used during the paint's callback, comes
 //! from a pool (a different buffer each paint), and goes back to the pool when the
 //! callback returns. So the copy is submitted and waited for (that submission only, not
-//! the whole device) before [`UiPage::copy_dmabuf`] (or `copy_iosurface`) returns. Each
-//! pooled buffer is imported once and kept while the browser keeps handing it over
-//! (`imports`; on macOS each pooled IOSurface likewise, see `macos`): the import holds
+//! the whole device) before [`UiPage::copy_dmabuf`] (or `copy_iosurface`, `copy_d3d11`)
+//! returns. Each pooled buffer is imported once and kept while the browser keeps handing
+//! it over (`imports`; on macOS each pooled IOSurface likewise, see `macos`, and on
+//! Windows each pooled texture, see `windows`): the import holds
 //! its own reference to the buffer and is only read during a callback that hands over
 //! that buffer. It runs on CEF's thread (on macOS the main thread, which runs CEF's work
 //! for the game); the device and queue are
@@ -28,6 +30,8 @@ mod imports;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(windows)]
+mod windows;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -37,6 +41,8 @@ use std::time::{Duration, Instant};
 pub use linux::DmaBuf;
 #[cfg(target_os = "macos")]
 pub use macos::IOSurface;
+#[cfg(windows)]
+pub use windows::D3D11Texture;
 
 use crate::gpu::Gpu;
 
@@ -124,6 +130,9 @@ struct Inner {
 	/// macOS: the browser's pooled surfaces, imported once each (see `macos`).
 	#[cfg(target_os = "macos")]
 	imports: Mutex<macos::Imports>,
+	/// Windows: the browser's pooled textures, opened once each (see `windows`).
+	#[cfg(windows)]
+	imports: Mutex<windows::Imports>,
 }
 
 /// The page's latest frame on the GPU, shared between the browser's paint thread
@@ -136,7 +145,7 @@ pub struct UiPage {
 
 impl UiPage {
 	/// The device features importing the browser's paints needs (Linux: Vulkan's
-	/// DMA-BUF import; macOS: none, Metal does it), for [`Gpu::headless_with`] and
+	/// DMA-BUF import; macOS and Windows: none, Metal and Direct3D 12 do it), for [`Gpu::headless_with`] and
 	/// [`Gpu::for_surface_with`].
 	pub const FEATURES: wgpu::Features = features();
 
@@ -162,6 +171,8 @@ impl UiPage {
 				imports: Mutex::new(imports::Imports::default()),
 				#[cfg(target_os = "macos")]
 				imports: Mutex::new(macos::Imports::default()),
+				#[cfg(windows)]
+				imports: Mutex::new(windows::Imports::default()),
 			}),
 		})
 	}
@@ -243,8 +254,8 @@ impl UiPage {
 			.map_err(|e| format!("waiting for the GPU: {e}"))
 	}
 
-	// Only the platforms with a paint import count failures (Windows has none yet).
-	#[cfg(any(target_os = "linux", target_os = "macos"))]
+	// Only the platforms with a paint import count failures.
+	#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 	fn failed(&self) {
 		self.stats_mut().failures += 1;
 	}
@@ -301,6 +312,20 @@ impl UiPage {
 		stats.reads += 1;
 		stats.read_time += started.elapsed();
 		Ok(Some((region, pixels)))
+	}
+
+	/// Chromium switches that the browser's paints need to reach this page, as
+	/// `(name, value)`: on Windows, wgpu's adapter for Chromium's GPU work (see
+	/// `windows`); none elsewhere.
+	pub fn browser_switches(&self) -> Vec<(&'static str, String)> {
+		#[cfg(windows)]
+		{
+			windows::adapter_switch(&self.inner.device).into_iter().collect()
+		}
+		#[cfg(not(windows))]
+		{
+			Vec::new()
+		}
 	}
 
 	/// The page's size, once painted.
@@ -370,7 +395,11 @@ fn supported(gpu: &Gpu) -> Result<(), String> {
 	{
 		macos::supported(gpu)
 	}
-	#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+	#[cfg(windows)]
+	{
+		windows::supported(gpu)
+	}
+	#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 	{
 		let _ = gpu;
 		Err("the UI page's shared GPU textures aren't implemented on this operating system yet".into())

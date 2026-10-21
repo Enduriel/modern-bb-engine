@@ -13,7 +13,7 @@ use super::damage::{Damage, PaintRect};
 use super::frame::PaintState;
 use super::ipc;
 use super::paint_sink::PageSink;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use super::paint_sink::{PaintBuffer, SharedPaint};
 use super::paint_stats::PaintCounters;
 use super::bridge_server::RequestKind;
@@ -247,7 +247,25 @@ fn take_paint(sink: &dyn PageSink, info: &AcceleratedPaintInfo, width: u32, heig
 	})
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Hand the paint `info` (its shared texture handle valid only during this call) to
+/// `sink`.
+#[cfg(windows)]
+fn take_paint(sink: &dyn PageSink, info: &AcceleratedPaintInfo, width: u32, height: u32, dirty: &[PaintRect]) -> Result<(), String> {
+	use super::paint_sink::D3D11Texture;
+
+	let handle = std::ptr::NonNull::new(info.shared_texture_handle).ok_or("the paint has no shared texture handle")?;
+	sink.paint(&SharedPaint {
+		width,
+		height,
+		bgra: info.format == ColorType::BGRA_8888,
+		// SAFETY: CEF's handle, open for the duration of this callback (its contract);
+		// the paint doesn't outlive the call.
+		buffer: PaintBuffer::D3D11(unsafe { D3D11Texture::new(handle) }),
+		dirty,
+	})
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn take_paint(_sink: &dyn PageSink, _info: &AcceleratedPaintInfo, _width: u32, _height: u32, _dirty: &[PaintRect]) -> Result<(), String> {
 	Err("the UI page's shared GPU textures aren't implemented on this operating system yet".into())
 }

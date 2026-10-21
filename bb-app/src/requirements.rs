@@ -37,9 +37,12 @@ pub fn minimum() -> &'static str {
 	} else if cfg!(target_os = "macos") {
 		"On macOS the game needs a Mac with Metal, on a macOS version Chromium supports."
 	} else if cfg!(windows) {
-		"Windows isn't supported yet: for now the game runs on Linux and macOS."
+		"On Windows the game needs Windows 10 or later and a GPU with a Direct3D 12 driver: \
+		 AMD GCN 1.0 (Radeon HD 7000, 2012) or newer, NVIDIA Kepler (GeForce GTX 600, 2012) or \
+		 newer, or Intel Haswell (4th generation Core, 2013) or newer. Software renderers \
+		 (WARP) and virtual machines without a GPU passed through aren't enough."
 	} else {
-		"This operating system isn't supported yet: for now the game runs on Linux and macOS."
+		"This operating system isn't supported yet: for now the game runs on Linux, macOS and Windows."
 	}
 }
 
@@ -92,9 +95,18 @@ pub fn check_gpu(gpu: &bb_render::Gpu) -> Result<(), String> {
 	if gpu.backend != wgpu::Backend::Metal {
 		return Err(unsupported(format!("the GPU has no Metal device ({} runs through {:?})", gpu.adapter, gpu.backend)));
 	}
-	#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+	// The UI page's paints are D3D11 shared textures, opened on a Direct3D 12 device
+	// (bb-render's `ui_page`). `WGPU_BACKEND` can pick another API, which can't take them.
+	#[cfg(windows)]
+	if gpu.backend != wgpu::Backend::Dx12 {
+		return Err(unsupported(format!(
+			"the GPU has no usable Direct3D 12 driver ({} runs through {:?})",
+			gpu.adapter, gpu.backend
+		)));
+	}
+	#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 	return Err(unsupported("the game's UI can't be drawn on the GPU on this operating system yet"));
-	#[cfg(any(target_os = "linux", target_os = "macos"))]
+	#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 	Ok(())
 }
 

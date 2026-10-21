@@ -180,7 +180,9 @@ fn main() -> ExitCode {
 		let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
 		squirrel_bb::startup::mark("event loop");
 		let display = Box::new(event_loop.owned_display_handle());
-		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(display));
+		let instance = wgpu::Instance::new(bb_render::Gpu::platform_backends(
+			wgpu::InstanceDescriptor::new_with_display_handle_from_env(display),
+		));
 		squirrel_bb::startup::mark("wgpu instance");
 		let mut app = app::App::new(options, instance, event_loop.create_proxy());
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;

@@ -102,6 +102,8 @@ pub use page_log::{Echo, LogLine};
 pub use paint_sink::DmaBufPlane;
 #[cfg(target_os = "macos")]
 pub use paint_sink::IOSurface;
+#[cfg(windows)]
+pub use paint_sink::D3D11Texture;
 pub use paint_sink::{PageSink, PaintBuffer, SharedPaint};
 pub use paint_stats::PaintStats;
 pub use pump_schedule::Waker;
@@ -189,7 +191,7 @@ pub fn run_subprocess() -> Option<i32> {
 	if CefString::from(&command_line.switch_value(Some(&"type".into()))).to_string() == "renderer" {
 		system_fonts::register();
 	}
-	let mut app = app::host_app(None, None, None, None);
+	let mut app = app::host_app(None, None, None, None, Vec::new());
 	Some(execute_process(
 		Some(args.as_main_args()),
 		Some(&mut app),
@@ -357,9 +359,10 @@ impl UiHost {
 			frame_rate: config.frames.clock_rate(),
 		};
 		let (devtools_port, ozone) = (config.devtools_port, display.ozone());
+		let switches = config.sink.as_ref().map(|sink| sink.browser_switches()).unwrap_or_default();
 		let (cache_dir, cef_log) = (config.cache_dir.clone(), config.cef_log.clone());
 		let make = move || {
-			let app = app::host_app(Some(opening), devtools_port, Some(bridge_switch), ozone);
+			let app = app::host_app(Some(opening), devtools_port, Some(bridge_switch), ozone, switches);
 			let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
 			let cef_dir = cef_dir();
 			let settings = Settings {

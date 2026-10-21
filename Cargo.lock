@@ -331,6 +331,7 @@ dependencies = [
  "squirrel-bb",
  "unicode-script",
  "wgpu",
+ "windows",
 ]
 
 [[package]]

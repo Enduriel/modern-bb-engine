@@ -183,15 +183,21 @@ fn notices(dir: &Path, cef_dir: &Path, steam: &SteamLibrary) -> Result<(), Strin
 	Ok(())
 }
 
-/// Pack `<out>/<name>` as `<out>/<name>.tar.gz` (`.zip` for Windows, with a `tar` that
-/// writes zips: Windows' own and macOS's do).
+/// Pack `<out>/<name>` as `<out>/<name>.tar.gz` (`.zip` for Windows: with a `tar` that
+/// writes zips, as Windows' own and macOS's do, or with `zip` on Linux, whose GNU tar
+/// doesn't).
 pub fn archive(out: &Path, name: &str, platform: Platform) -> Result<PathBuf, String> {
-	let (archive, flags) = match platform {
-		Platform::Linux | Platform::MacOs => (out.join(format!("{name}.tar.gz")), "-czf"),
-		Platform::Windows => (out.join(format!("{name}.zip")), "-acf"),
+	let (file, flags) = match platform {
+		Platform::Linux | Platform::MacOs => (format!("{name}.tar.gz"), "-czf"),
+		Platform::Windows => (format!("{name}.zip"), "-acf"),
 	};
+	let archive = out.join(&file);
 	let _ = fs::remove_file(&archive);
-	crate::run(Command::new("tar").arg(flags).arg(&archive).arg("-C").arg(out).arg(name))?;
+	if platform == Platform::Windows && cfg!(target_os = "linux") {
+		crate::run(Command::new("zip").arg("-qr").arg(&file).arg(name).current_dir(out))?;
+	} else {
+		crate::run(Command::new("tar").arg(flags).arg(&archive).arg("-C").arg(out).arg(name))?;
+	}
 	Ok(archive)
 }
 

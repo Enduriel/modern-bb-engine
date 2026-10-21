@@ -13,7 +13,7 @@ fn region(r: PaintRect) -> UiRegion {
 }
 
 /// The paint's changed parts, as the page takes them.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn dirty(paint: &SharedPaint) -> Vec<UiRegion> {
 	paint.dirty.iter().map(|r| region(*r)).collect()
 }
@@ -47,13 +47,27 @@ impl PageSink for GpuPage {
 				};
 				self.0.copy_iosurface(&buffer, &dirty(paint))
 			}
-			#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+			#[cfg(windows)]
+			PaintBuffer::D3D11(texture) => {
+				let texture = bb_render::D3D11Texture {
+					handle: texture.as_ptr(),
+					width: paint.width,
+					height: paint.height,
+					bgra: paint.bgra,
+				};
+				self.0.copy_d3d11(&texture, &dirty(paint))
+			}
+			#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 			PaintBuffer::Unsupported(_) => Err("no GPU path for the UI page's paints on this operating system yet".into()),
 		}
 	}
 
 	fn read(&self, r: PaintRect) -> Result<Option<(PaintRect, Vec<u8>)>, String> {
 		Ok(self.0.read(region(r))?.map(|(r, bgra)| (PaintRect { x: r.x, y: r.y, width: r.width, height: r.height }, bgra)))
+	}
+
+	fn browser_switches(&self) -> Vec<(&'static str, String)> {
+		self.0.browser_switches()
 	}
 }
 

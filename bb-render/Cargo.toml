@@ -16,6 +16,16 @@ unicode-script = "0.5.8"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
 
+# Windows: the UI page's paints (D3D11 shared textures) opened on wgpu's Direct3D 12
+# device (ui_page/windows.rs). The version wgpu-hal uses, so its Direct3D 12 types are ours.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", default-features = false, features = [
+	"Win32_Foundation",
+	"Win32_Graphics_Direct3D12",
+	"Win32_Graphics_Dxgi_Common",
+	"Win32_System_Threading",
+] }
+
 [dev-dependencies]
 bb-engine = { path = "../bb-engine" }
 squirrel = { path = "../squirrel" }
