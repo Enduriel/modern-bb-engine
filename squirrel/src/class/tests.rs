@@ -373,3 +373,76 @@ fn missing_properties_fall_back_to_the_default_delegate() {
 	)
 	.expect("missing keys reach the default delegate");
 }
+
+#[derive(Clone)]
+struct Named {
+	name: String,
+	n: i64,
+}
+
+/// The VM reads and writes scalar properties without the metamethods' call frames
+/// (`sq_setaccessortable`); every case where the call route would do something else, or
+/// raise, must still behave as that route does.
+#[test]
+fn direct_property_route_behaves_as_the_metamethods() {
+	let mut vm = SQVM::new(1024);
+	let point = ClassBuilder::<Point>::new("Point")
+		.property("X", |p| p.x, |p, x| p.x = x)
+		.property("Y", |p| p.y, |p, y| p.y = y)
+		.build(&mut vm);
+	let named = ClassBuilder::<Named>::new("Named")
+		.property("Name", |n: &Named| n.name.clone(), |n: &mut Named, v: String| n.name = v)
+		.property("N", |n: &Named| n.n, |n: &mut Named, v: i64| n.n = v)
+		.property_ro("Len", |n: &Named| n.name.len() as i64)
+		.build(&mut vm);
+	vm.register("makePoint", move |vm: &SQVM, x: f64, y: f64| point.instantiate(vm, Point { x, y }));
+	vm.register("makeNamed", move |vm: &SQVM| named.instantiate(vm, Named { name: "a".into(), n: 1 }));
+	vm.run_script(
+		r#"
+		local p = makePoint(1.0, 2.0), n = makeNamed();
+		function err(f) { try { f(); } catch (e) { return e; } return null; }
+
+		// Plain reads and writes; a write's value is the expression's.
+		assert(p.X == 1.0 && p.Y == 2.0);
+		assert((p.X = 5) == 5);
+		assert(p.X == 5.0);
+		p.X += 1;
+		assert(p.X == 6.0);
+		n.Name = "abc";
+		assert(n.Name == "abc" && n.Len == 3);
+		n.N = 2.7;               // lenient, as Sqrat: truncated
+		assert(n.N == 2);
+
+		// What the setter can't take raises its own error.
+		assert(err(@() n.Name = 5) == "value has the wrong type for this property");
+		assert(n.Name == "abc");
+		// A read-only property and a missing one: Squirrel's "does not exist".
+		assert(err(@() n.Len = 1) == "the index 'Len' does not exist");
+		assert(err(@() p.Missing) == "the index 'Missing' does not exist");
+		assert(err(@() p.Missing = 1) == "the index 'Missing' does not exist");
+		// Not a string key: the metamethod's error.
+		assert(err(@() p[1]) == "_get: property name must be a string");
+		// The default delegate still answers a miss.
+		assert(p.getclass() == ::Point);
+
+		// An accessor moved to another key is called as the metamethod would call it. (One
+		// moved to another class raises from inside the metamethod's call, through the
+		// error handler, as it did before: `the getter's receiver is not an instance …`.)
+		::Point.__getTable.Z <- ::Point.__getTable.Y;
+		assert(p.Z == 2.0);
+		::Point.__setTable.Z <- ::Point.__setTable.Y;
+		p.Z = 3;
+		assert(p.Y == 3.0);
+
+		// A bound accessor runs with its environment (held weakly) as `this`.
+		local other = makePoint(7.0, 0.0);
+		::Point.__getTable.W <- ::Point.__getTable.X.bindenv(other);
+		assert(p.W == 7.0);
+		// A script accessor still gets the instance.
+		::Point.__getTable.Sum <- function() { return this.X + this.Y; };
+		assert(p.Sum == 9.0);
+		"#,
+		"direct_route",
+	)
+	.expect("the direct route behaves as the metamethods");
+}

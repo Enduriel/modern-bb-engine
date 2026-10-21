@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use super::method::IntoSqMethod;
 use super::payload::{NativePayload, instance_release_hook, native_payload_tag};
-use super::property::{FieldValue, GetMeta, Getter, Property, PropertyTable, SetMeta, Setter, Slot};
+use super::property::{FieldValue, GetMeta, Getter, Property, PropertyTable, SetMeta, Setter, Slot, get_direct, set_direct};
 use crate::function::{IntoSqFunction, SqFunction};
 use crate::{SQ_OK, SQVM, SqStrongRef, SqTable};
 
@@ -154,8 +154,12 @@ impl<T: 'static> ClassBuilder<T> {
 		let mut slots = Vec::new();
 		for (name, prop) in self.properties {
 			let prop = Rc::new(prop);
-			let getter = closure_ref(vm, Box::new(Getter { prop: prop.clone() }));
-			let setter = prop.writable.then(|| closure_ref(vm, Box::new(Setter { prop: prop.clone() })));
+			// A scalar property's accessors the VM may also call directly (`get_direct`).
+			let direct = prop.direct.then_some(Rc::as_ptr(&prop) as squirrel_sys::SQUserPointer);
+			let getter = accessor_ref(vm, Box::new(Getter { prop: prop.clone() }), direct.map(|ud| (get_direct::<T> as Direct, ud)));
+			let setter = prop
+				.writable
+				.then(|| accessor_ref(vm, Box::new(Setter { prop: prop.clone() }), direct.map(|ud| (set_direct::<T> as Direct, ud))));
 			slots.push((name, Slot::new(prop, getter, setter)));
 		}
 		let (get_table, set_table) = {
@@ -189,6 +193,9 @@ impl<T: 'static> ClassBuilder<T> {
 			props: table.clone(),
 			table: get_table.clone(),
 		})); // [class, "_get", closure]
+		// The VM looks accessors up in `__getTable` itself, as `GetMeta` does.
+		get_table.push(vm); // [class, "_get", closure, table]
+		unsafe { squirrel_sys::sq_setaccessortable(ptr, -2) }; // [class, "_get", closure]
 		unsafe { squirrel_sys::sq_newslot(ptr, -3, 0) }; // [class]
 
 		vm.push_string("_set"); // [class, "_set"]
@@ -196,6 +203,8 @@ impl<T: 'static> ClassBuilder<T> {
 			props: table,
 			table: set_table.clone(),
 		})); // [class, "_set", closure]
+		set_table.push(vm); // [class, "_set", closure, table]
+		unsafe { squirrel_sys::sq_setaccessortable(ptr, -2) }; // [class, "_set", closure]
 		unsafe { squirrel_sys::sq_newslot(ptr, -3, 0) }; // [class]
 
 		for (name, accessors) in [("__getTable", get_table), ("__setTable", set_table)] {
@@ -287,9 +296,22 @@ impl<T: 'static> SqClass<T> {
 	}
 }
 
-/// A native closure for `func`, as an owned reference.
-fn closure_ref(vm: &mut SQVM, func: Box<dyn SqFunction>) -> SqStrongRef {
+/// A property accessor's direct function for the VM and its property.
+type Direct = unsafe extern "C" fn(
+	squirrel_sys::HSQUIRRELVM,
+	squirrel_sys::SQUserPointer,
+	squirrel_sys::SQUserPointer,
+	squirrel_sys::SQUserPointer,
+) -> squirrel_sys::SQInteger;
+
+/// A native accessor closure for `func`, as an owned reference, which the VM may call as
+/// `direct` instead (`sq_setnativeaccessor`). The closure's `func` holds the property
+/// `direct` points at, so it lives as long as the closure.
+fn accessor_ref(vm: &mut SQVM, func: Box<dyn SqFunction>, direct: Option<(Direct, squirrel_sys::SQUserPointer)>) -> SqStrongRef {
 	vm.push_closure(func);
+	if let Some((fun, ud)) = direct {
+		unsafe { squirrel_sys::sq_setnativeaccessor(vm.as_ptr(), -1, Some(fun), ud) };
+	}
 	let closure = SqStrongRef::from_stack(vm, -1);
 	unsafe { squirrel_sys::sq_pop(vm.as_ptr(), 1) };
 	closure

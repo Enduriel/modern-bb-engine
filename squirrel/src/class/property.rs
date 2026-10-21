@@ -96,6 +96,9 @@ pub(crate) struct Property<T> {
 	pub(crate) set: Box<dyn Fn(&mut T, &SQVM, i64) -> Result<(), String>>,
 	/// Whether it has a setter (a slot in `__setTable`).
 	pub(crate) writable: bool,
+	/// Whether the VM may call its accessors without a call frame ([`get_direct`],
+	/// [`set_direct`]): a scalar property, whose accessors never run script code.
+	pub(crate) direct: bool,
 }
 
 impl<T: 'static> Property<T> {
@@ -114,6 +117,7 @@ impl<T: 'static> Property<T> {
 				None => Err("value has the wrong type for this property".to_string()),
 			}),
 			writable: true,
+			direct: true,
 		}
 	}
 
@@ -124,6 +128,7 @@ impl<T: 'static> Property<T> {
 			get: Box::new(move |t, vm| get(t).push_field(vm)),
 			set: Box::new(|_t, _vm, _idx| Err("this property is read-only".to_string())),
 			writable: false,
+			direct: true,
 		}
 	}
 
@@ -136,6 +141,7 @@ impl<T: 'static> Property<T> {
 			get: Box::new(move |t, vm| get(t, vm).push(vm)),
 			set: Box::new(|_t, _vm, _idx| Err("this property is read-only".to_string())),
 			writable: false,
+			direct: false,
 		}
 	}
 
@@ -155,6 +161,7 @@ impl<T: 'static> Property<T> {
 			}),
 			set: Box::new(move |t, vm, idx| set(t, vm, SqStrongRef::from_stack(vm, idx))),
 			writable: true,
+			direct: false,
 		}
 	}
 
@@ -166,6 +173,7 @@ impl<T: 'static> Property<T> {
 			get: Box::new(|_t, vm| vm.push_null()),
 			set: Box::new(|_t, _vm, _idx| Ok(())),
 			writable: true,
+			direct: true,
 		}
 	}
 }
@@ -230,6 +238,51 @@ impl<T: 'static> SqFunction for Setter<T> {
 			None => vm.throw_error("the setter's receiver is not an instance of this native class"),
 		}
 	}
+}
+
+/// A [`Getter`] as the VM calls it directly (`sq_setnativeaccessor`): `ud` is its
+/// property, `typetag` and `up` the instance's. Pushes the value, or declines (0) for an
+/// instance without a `T` payload, whose call raises the error.
+pub(crate) unsafe extern "C" fn get_direct<T: 'static>(
+	vm: squirrel_sys::HSQUIRRELVM,
+	ud: squirrel_sys::SQUserPointer,
+	typetag: squirrel_sys::SQUserPointer,
+	up: squirrel_sys::SQUserPointer,
+) -> squirrel_sys::SQInteger {
+	let Some(payload) = (unsafe { direct_payload::<T>(typetag, up) }) else { return 0 };
+	let vm = unsafe { SQVM::from_raw(vm) };
+	let prop = unsafe { &*(ud as *const Property<T>) };
+	(prop.get)(unsafe { &(*payload).value }, &vm); // pushes exactly one value
+	1
+}
+
+/// A [`Setter`] as the VM calls it directly, with the value on top of the stack. Declines
+/// (0) where the call would raise: no `T` payload, or a value the property can't take.
+pub(crate) unsafe extern "C" fn set_direct<T: 'static>(
+	vm: squirrel_sys::HSQUIRRELVM,
+	ud: squirrel_sys::SQUserPointer,
+	typetag: squirrel_sys::SQUserPointer,
+	up: squirrel_sys::SQUserPointer,
+) -> squirrel_sys::SQInteger {
+	let Some(payload) = (unsafe { direct_payload::<T>(typetag, up) }) else { return 0 };
+	let vm = unsafe { SQVM::from_raw(vm) };
+	let prop = unsafe { &*(ud as *const Property<T>) };
+	// A scalar setter fails only reading the value, before it writes anything.
+	match (prop.set)(unsafe { &mut (*payload).value }, &vm, -1) {
+		Ok(()) => 1,
+		Err(_) => 0,
+	}
+}
+
+/// The instance's payload, as [`payload_ptr`] finds it, from its typetag and user pointer.
+unsafe fn direct_payload<T: 'static>(
+	typetag: squirrel_sys::SQUserPointer,
+	up: squirrel_sys::SQUserPointer,
+) -> Option<*mut super::payload::NativePayload<T>> {
+	if typetag != super::payload::native_payload_tag() || up.is_null() {
+		return None;
+	}
+	unsafe { super::payload::payload_of::<T>(up) }
 }
 
 /// What the accessor `table` holds under the key in stack slot 2, pushed, or `false`
