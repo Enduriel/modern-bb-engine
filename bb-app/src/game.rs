@@ -20,6 +20,7 @@ use crate::fps::FpsMeter;
 use crate::front::{Front, Key};
 use crate::game_cursor::{self, CursorPictures, CursorShow};
 use crate::shown::{self, CursorLook, Look, Shown, Under};
+use crate::world_scale::WorldScale;
 
 /// The longest real time one frame advances the game by.
 const MAX_FRAME_MS: f64 = 250.0;
@@ -54,6 +55,9 @@ pub struct Game {
 	/// Battles are drawn in steps (see `squirrel_bb::scene::steps`); `BB_SCENE_STEPS=0`
 	/// draws them at the clocks as they are.
 	scene_steps: bool,
+	/// The world drawn at the screen's size and enlarged, on a Retina Mac (see
+	/// [`crate::world_scale`]).
+	world_scale: WorldScale,
 }
 
 /// Where the game starts.
@@ -200,6 +204,7 @@ impl Game {
 			shown: Shown::default(),
 			fps: None,
 			scene_steps: std::env::var_os("BB_SCENE_STEPS").is_none_or(|v| v != "0"),
+			world_scale: WorldScale::new(false),
 		};
 		// What the boot hinted (worldgen's brushes) starts decoding before the first frame.
 		game.follow_scenes();
@@ -428,6 +433,13 @@ impl Game {
 		// frame's pixels (see `Front::set_frame_scale`).
 		let fit = width as f32 / self.screen().0 as f32;
 		self.front.set_frame_scale(f64::from(fit));
+		// The world and battles: at the frame's size, or at the screen's and enlarged
+		// (`world_scale`).
+		let enlarge = self.world_scale.factor((width, height), self.screen());
+		let (world_fit, world_width, world_height) = match enlarge {
+			Some(n) => (1.0, width / n, height / n),
+			None => (fit, width, height),
+		};
 		let engine = self.front.engine();
 		let (tactical, world) = (tactical_visible(engine), world_visible(engine));
 		// A campaign's map, made or loaded: its water and fog load before it shows (the
@@ -446,16 +458,16 @@ impl Game {
 		let depth_of_field = engine.video().mode().depth_of_field;
 		// A battle's animations move in steps (see `squirrel_bb::scene::steps`): of a
 		// pixel of this frame, from the next frame on.
-		engine.set_scene_steps(self.scene_steps.then_some(fit));
+		engine.set_scene_steps(self.scene_steps.then_some(world_fit));
 		let under = if tactical {
 			// What the battle draws is all in its scene (see `crate::shown`).
 			let scene_span = bb_render::frame_timing::span("battle scene");
 			let scene = engine.tactical_scene();
 			drop(scene_span);
 			Under::Battle {
-				view: ([scene.camera.pos.0 as f32, scene.camera.pos.1 as f32], fit / scene.camera.zoom as f32),
+				view: ([scene.camera.pos.0 as f32, scene.camera.pos.1 as f32], world_fit / scene.camera.zoom as f32),
 				scene: Box::new(scene),
-				fit,
+				fit: world_fit,
 				depth_of_field,
 			}
 		} else if world {
@@ -466,10 +478,10 @@ impl Game {
 			let camera = engine.world_camera();
 			let view = WorldView {
 				center: [camera.pos.0, camera.pos.1],
-				zoom: fit / camera.zoom,
-				fit,
-				width,
-				height,
+				zoom: world_fit / camera.zoom,
+				fit: world_fit,
+				width: world_width,
+				height: world_height,
 			};
 			// The map's terrain and details are kept by the renderer (built again when
 			// the map's generation changes, edited as details are spawned and removed,
@@ -487,7 +499,7 @@ impl Game {
 			let map = key.extent.0 > 0.0 && key.extent.1 > 0.0;
 			// The fog drifts with real time, in steps (see `bb_render::fog_drift_time`).
 			let fog = (map && key.fog_of_war)
-				.then(|| shown::view_rect(view.center, view.zoom, width, height))
+				.then(|| shown::view_rect(view.center, view.zoom, world_width, world_height))
 				.filter(|rect| !grid.fog_clear_within(*rect))
 				.map(|_| bb_render::fog_drift_time(real_time, view.zoom));
 			detail_changes = changes;
@@ -522,20 +534,25 @@ impl Game {
 			virtual_time: virtual_time as f32,
 		});
 		self.renderer.set_depth_of_field(depth_of_field);
+		// The world's target: the frame, or one of the screen's size enlarged into it.
+		let world_target = match enlarge {
+			Some(_) if !matches!(look.under, Under::Nothing) => self.world_scale.target(gpu, (world_width, world_height)),
+			_ => target,
+		};
 		let stats = if let Under::Battle { scene, view: (center, zoom), .. } = &look.under {
 			let _span = bb_render::frame_timing::span("battle draw");
 			let view = WorldView {
-				fit,
+				fit: world_fit,
 				center: *center,
 				zoom: *zoom,
-				width,
-				height,
+				width: world_width,
+				height: world_height,
 			};
 			engine.sprites().with(|registry| {
-				let battle = self.renderer.draw_tactical(gpu, target, scene, registry, &view, Atlases::DrawReady);
+				let battle = self.renderer.draw_tactical(gpu, world_target, scene, registry, &view, Atlases::DrawReady);
 				// The camera's orientation overlays, over the battle and under the UI.
 				let overlays =
-					self.renderer.draw_orientation(gpu, target, registry, &scene.orientation, fit, Atlases::DrawReady);
+					self.renderer.draw_orientation(gpu, world_target, registry, &scene.orientation, world_fit, Atlases::DrawReady);
 				FrameStats {
 					quads: battle.quads + overlays.quads,
 					waiting: battle.waiting + overlays.waiting,
@@ -548,11 +565,11 @@ impl Game {
 				engine.world_scene_where(|_| false)
 			};
 			let view = WorldView {
-				fit,
+				fit: world_fit,
 				center: *center,
 				zoom: *zoom,
-				width,
-				height,
+				width: world_width,
+				height: world_height,
 			};
 			let grid = engine.world_grid();
 			let tiles = || grid.scene_map();
@@ -564,7 +581,7 @@ impl Game {
 			};
 			let _span = bb_render::frame_timing::span("world draw");
 			engine.sprites().with(|registry| {
-				self.renderer.draw_kept(gpu, target, &scene, &map, registry, &view, Atlases::DrawReady)
+				self.renderer.draw_kept(gpu, world_target, &scene, &map, registry, &view, Atlases::DrawReady)
 			})
 		} else {
 			// Neither shows (the main menu, after `World.setVisible(false)`): the UI is
@@ -572,6 +589,10 @@ impl Game {
 			target.clear(gpu);
 			FrameStats::default()
 		};
+		if enlarge.is_some() && !matches!(look.under, Under::Nothing) {
+			let _span = bb_render::frame_timing::span("world enlarge");
+			self.world_scale.enlarge(gpu, target);
+		}
 		// The UI over everything.
 		let front_span = bb_render::frame_timing::span("ui page");
 		self.front.draw(gpu, target);
@@ -689,6 +710,12 @@ impl Game {
 	/// system's shows it ([`crate::system_cursor`]).
 	pub fn set_cursor_scale(&mut self, scale: f32) {
 		self.cursor_scale = scale;
+	}
+
+	/// Draw the world and battles at the game's screen's size and enlarge them where the
+	/// frame is a whole multiple of it (see [`crate::world_scale`]); off, at the frame's pixels.
+	pub fn draw_world_at_screen_size(&mut self, on: bool) {
+		self.world_scale.on = on;
 	}
 
 	/// Show the game's cursor as the system's where it can be, rather than draw it

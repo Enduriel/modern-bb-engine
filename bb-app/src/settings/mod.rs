@@ -75,6 +75,13 @@ impl Settings {
 		self.text.get("ui.software_cursor").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
 	}
 
+	/// Whether a Retina Mac draws the world and battles at the display's pixels
+	/// (`render.retina_world = true`), rather than at the game's screen's size enlarged
+	/// pixel for pixel (the default: a quarter of the GPU's work; see `world_scale`).
+	pub fn retina_world(&self) -> bool {
+		self.text.get("render.retina_world").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
+	}
+
 	/// Keep what the scripts saved (`Settings.save`), in the file at once.
 	pub fn keep(&mut self, saved: &SavedSettings) -> Result<(), String> {
 		video::write(&mut self.text, &saved.video);
@@ -126,7 +133,11 @@ mod tests {
 		assert!(!Settings::load(Some(path.clone())).software_cursor(), "the system shows the cursor by default");
 		let text = std::fs::read_to_string(&path).expect("the file") + "ui.software_cursor = true\n";
 		std::fs::write(&path, text).expect("write");
-		assert!(Settings::load(Some(path)).software_cursor());
+		assert!(Settings::load(Some(path.clone())).software_cursor());
+		assert!(!Settings::load(Some(path.clone())).retina_world(), "the world at the screen's size by default");
+		let text = std::fs::read_to_string(&path).expect("the file") + "render.retina_world = true\n";
+		std::fs::write(&path, text).expect("write");
+		assert!(Settings::load(Some(path)).retina_world());
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }

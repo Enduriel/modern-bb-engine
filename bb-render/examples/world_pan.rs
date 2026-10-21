@@ -5,8 +5,11 @@
 //! waits for it).
 //!
 //! ```text
-//! cargo run --release -p bb-render --example world_pan -- [WIDTHxHEIGHT] [FRAMES] [--mods] [--shot OUT.png] [--battle]
+//! cargo run --release -p bb-render --example world_pan -- [WIDTHxHEIGHT] [FRAMES] [--mods] [--shot OUT.png] [--battle] [--fit F]
 //! ```
+//!
+//! `--fit 2` draws a screen of half the size at twice the scale, as on a Retina Mac,
+//! where the game's screen is in points (`bb_app::screen_scale`).
 //!
 //! `BB_PAN_UNKEPT=1` draws the world as a scene of the tiles on screen each frame, as
 //! before the map was kept on the GPU (`WorldRenderer::draw`).
@@ -35,6 +38,8 @@ fn main() {
 	let running = take_flag(&mut args, "--run");
 	let shot = take_value(&mut args, "--shot");
 	let compare = take_flag(&mut args, "--compare");
+	let fit: f32 = take_value(&mut args, "--fit").map_or(1.0, |f| f.parse().expect("--fit F"));
+	FIT.with(|f| f.set(fit));
 	let (width, height) = args
 		.first()
 		.and_then(|s| s.split_once('x').map(|(w, h)| (w.parse().unwrap(), h.parse().unwrap())))
@@ -43,7 +48,9 @@ fn main() {
 
 	let dir = Path::new(STEAM_DATA_DIR);
 	let engine = if mods { harness::open_install_with_mods(dir) } else { harness::open_install(dir) }.expect("open install");
-	engine.video().set_screen_size(i64::from(width), i64::from(height));
+	engine
+		.video()
+		.set_screen_size((width as f32 / fit).round() as i64, (height as f32 / fit).round() as i64);
 	harness::boot_menu(&engine).expect("menu");
 	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare");
 	harness::start_new_campaign(&engine).expect("start");
@@ -194,9 +201,9 @@ fn draw(
 	});
 	let camera = engine.world_camera();
 	let view = WorldView {
-		fit: 1.0,
+		fit: FIT.with(|f| f.get()),
 		center: [camera.pos.0, camera.pos.1],
-		zoom: 1.0 / camera.zoom,
+		zoom: FIT.with(|f| f.get()) / camera.zoom,
 		width: target.width,
 		height: target.height,
 	};
@@ -260,6 +267,8 @@ fn start_battle(engine: &harness::GameEngine) {
 }
 
 thread_local! {
+	/// Frame pixels per pixel of the game's screen (`--fit`).
+	static FIT: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
 	/// The last frame's details changed and the map's revision.
 	static MAP: std::cell::Cell<(usize, u64)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -280,9 +289,9 @@ fn draw_battle(
 		engine.tactical_scene()
 	};
 	let view = WorldView {
-		fit: 1.0,
+		fit: FIT.with(|f| f.get()),
 		center: [scene.camera.pos.0 as f32, scene.camera.pos.1 as f32],
-		zoom: 1.0 / scene.camera.zoom as f32,
+		zoom: FIT.with(|f| f.get()) / scene.camera.zoom as f32,
 		width: target.width,
 		height: target.height,
 	};

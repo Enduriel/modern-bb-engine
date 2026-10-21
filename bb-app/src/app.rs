@@ -325,6 +325,7 @@ impl App {
 		};
 		let mut game = Game::start(&gpu, &boot)?;
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
+		game.draw_world_at_screen_size(screen_scale::IN_POINTS && !self.settings.retina_world());
 		if std::env::var_os("BB_TEXTURE_USAGE").is_some_and(|v| v != "0") {
 			game.track_texture_usage();
 		}

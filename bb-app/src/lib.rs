@@ -26,3 +26,4 @@ pub mod stats;
 pub mod steam;
 pub mod system_cursor;
 pub mod wheel;
+pub mod world_scale;
