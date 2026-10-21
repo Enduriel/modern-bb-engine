@@ -118,7 +118,7 @@ fn a_units_sprite_flags_work_as_the_originals() {
 	let (id, arrow_before, arrow, body) = (v[0], v[1], v[2], v[3]);
 	assert_eq!(body, 0, "setAlpha(0) clears the body");
 	assert_eq!(arrow, arrow_before, "and leaves the arrow as it was");
-	let portrait = engine.portrait(id).expect("a portrait");
+	let portrait = engine.portrait(squirrel_bb::scene::PortraitKind::Tactical, id).expect("a portrait");
 	let body = portrait.sprites.iter().find(|s| s.name == "body").expect("a body sprite");
 	assert_eq!(body.color >> 24, 0xff, "the portrait draws the body at full alpha");
 }

@@ -122,7 +122,7 @@ impl Front {
 
 
 	/// Answer the page's procedural images: there is no page.
-	pub fn serve_procedural(&self, _compose: impl FnMut(&GameEngine, &str) -> Option<Vec<u8>>) {}
+	pub fn serve_procedural(&self, _compose: impl FnMut(&GameEngine, &str) -> crate::procedural::Procedural) {}
 
 	/// The page's paints: there is no page.
 	pub fn paints(&self) -> u64 {

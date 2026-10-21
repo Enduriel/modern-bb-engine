@@ -40,27 +40,34 @@ pub(super) fn blank() -> Body {
 /// Answers one thing the page waits on. Answering (or dropping it unanswered, which
 /// answers its fallback: "done", or the blank image) lets the page continue.
 pub struct Responder {
-	deliver: Option<Box<dyn FnOnce(Body) + Send>>,
+	/// Takes the answer; `None` fails the load (an image's error, an XHR's status 0).
+	deliver: Option<Box<dyn FnOnce(Option<Body>) + Send>>,
 	/// What it answers if dropped unanswered.
 	fallback: fn() -> Body,
 }
 
 impl Responder {
-	pub(super) fn new(fallback: fn() -> Body, deliver: impl FnOnce(Body) + Send + 'static) -> Responder {
+	pub(super) fn new(fallback: fn() -> Body, deliver: impl FnOnce(Option<Body>) + Send + 'static) -> Responder {
 		Responder { deliver: Some(Box::new(deliver)), fallback }
 	}
 
 	/// Answer with `json`.
 	pub fn respond(mut self, json: String) {
-		self.finish(Body::new("application/json", json.into_bytes()));
+		self.finish(Some(Body::new("application/json", json.into_bytes())));
 	}
 
 	/// Answer with an image: `png`, or the transparent placeholder.
 	pub fn respond_image(mut self, png: Option<Vec<u8>>) {
-		self.finish(Body::new("image/png", png.unwrap_or_else(|| blank_image().to_vec())));
+		self.finish(Some(Body::new("image/png", png.unwrap_or_else(|| blank_image().to_vec()))));
 	}
 
-	fn finish(&mut self, body: Body) {
+	/// Fail the load, as a missing file fails: an image's `error` event, an XHR's
+	/// status 0.
+	pub fn fail(mut self) {
+		self.finish(None);
+	}
+
+	fn finish(&mut self, body: Option<Body>) {
 		if let Some(deliver) = self.deliver.take() {
 			deliver(body);
 		}
@@ -71,7 +78,7 @@ impl Drop for Responder {
 	fn drop(&mut self) {
 		// Never leave the page waiting.
 		let fallback = (self.fallback)();
-		self.finish(fallback);
+		self.finish(Some(fallback));
 	}
 }
 

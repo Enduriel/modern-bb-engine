@@ -1303,10 +1303,12 @@ impl WorldEntities {
 					offset: (s.offset.0 as f32, s.offset.1 as f32),
 					visible: s.visible,
 					in_portrait: s.in_portrait,
+					keeps_screen_size: !s.scaling,
 				})
 			})
 			.collect();
 		Some(crate::scene::ScenePortrait {
+			kind: crate::scene::PortraitKind::World,
 			sprites,
 			apply_offsets: rec.portrait_offsets,
 		})

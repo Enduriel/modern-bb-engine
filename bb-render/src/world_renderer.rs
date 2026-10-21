@@ -1118,7 +1118,7 @@ impl WorldRenderer {
 		hidden: &[String],
 		registry: &SpriteRegistry,
 	) -> Result<Option<Image>, String> {
-		let (width, height) = crate::portrait::portrait_size(portrait, hidden, registry);
+		let crate::portrait::PortraitFrame { width, height, center } = crate::portrait::portrait_frame(portrait, hidden, registry);
 		if width == 0 || height == 0 {
 			return Ok(None);
 		}
@@ -1126,7 +1126,7 @@ impl WorldRenderer {
 		self.record_usage(&map, 1.0, None);
 		self.index(registry);
 		let target = RenderTarget::new(gpu, width, height);
-		let uniforms = SceneUniforms::centered([0.0, 0.0], width as f32, height as f32);
+		let uniforms = SceneUniforms::centered(center, width as f32, height as f32);
 		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll, Drawer::Other, (1.0, None));
 		target.read(gpu).map(Some)
 	}

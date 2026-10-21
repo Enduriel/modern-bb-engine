@@ -72,7 +72,7 @@ fn serve(mut stream: TcpStream, shared: &Shared) {
 		let Some((kind, body)) = request else { return };
 		let (tx, rx) = mpsc::sync_channel(1);
 		let responder = Responder::new(done, move |answer| {
-			let _ = tx.send(answer.data);
+			let _ = tx.send(answer.unwrap_or_else(done).data);
 		});
 		shared.send(Event::Request { kind, body, responder });
 		// The game answers, or drops the responder (which answers "done"); if the

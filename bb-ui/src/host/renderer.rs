@@ -27,6 +27,17 @@ const SCRIPTS: [(&str, &str); 8] = [
 	("bb://teardown.js", include_str!("teardown.js")),
 ];
 
+/// `window.ModernEngine`: what mods' JS detects this engine by, as their Squirrel does by
+/// `::ModernEngine` (`docs/modding.md`). Its `Version` is the Squirrel table's; the
+/// original's page has no such global (none of the game's or the known mods' scripts
+/// define one).
+fn modern_engine_script() -> String {
+	format!(
+		"window.ModernEngine = Object.freeze({{ Version: {} }});",
+		squirrel_bb::modern_engine::VERSION
+	)
+}
+
 /// Call `window.<function>(argument)` in `frame`'s context; its string result.
 fn call_page(frame: &Frame, function: &str, argument: &str) -> Option<String> {
 	let context = frame.v8_context()?;
@@ -80,6 +91,10 @@ wrap_render_process_handler! {
 			}
 			let Some(context) = context else { return };
 			super::bridge_client::install(context);
+			// This engine's marker for the page's scripts, before any of them run.
+			let (mut retval, mut exception) = (None, None);
+			let marker = modern_engine_script();
+			context.eval(Some(&marker.as_str().into()), Some(&"bb://modern_engine.js".into()), 1, Some(&mut retval), Some(&mut exception));
 			for (url, script) in SCRIPTS {
 				let mut retval = None;
 				let mut exception = None;

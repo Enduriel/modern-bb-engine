@@ -10,9 +10,11 @@
 //!   of their own ([`bridge_wire`](super::bridge_wire)), not as requests.
 //! - Procedural images (`coui://procedural/tacticalentity(...)`, `worldentity(...)`):
 //!   the engine composes portraits from entity sprites. Each becomes an
-//!   [`Event::Procedural`] for the game thread, which answers with a PNG; when it
-//!   can't (or doesn't answer), a transparent placeholder. The original also answers
-//!   200 with a fallback image when composing fails, never a load error.
+//!   [`Event::Procedural`] for the game thread, which answers with a PNG (the
+//!   original's fallback image where `tacticalentity` finds nothing to draw), or
+//!   fails the load as a missing file fails (a handler the original doesn't have, a
+//!   `worldentity` id that names no world entity). Unanswered, a transparent
+//!   placeholder.
 //! - A PNG asked for with `?bb-upside-down` comes upside down ([`upside_down`]): the
 //!   picture of a background Coherent tiles (`tiles.js`).
 //! - Fonts on macOS come as their [`whole_pixel`] variants: glyphs advance by whole
@@ -63,10 +65,17 @@ wrap_resource_handler! {
 			let path = url_to_path(&url).unwrap_or_default();
 
 			if let (Some(rest), Some(callback)) = (path.strip_prefix(PROCEDURAL_PREFIX), callback) {
-				let (slot, callback) = (self.body.clone(), callback.clone());
-				let responder = Responder::new(blank, move |body| {
-					*slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(body);
-					callback.cont();
+				let (slot, callback, shared) = (self.body.clone(), callback.clone(), self.shared.clone());
+				let responder = Responder::new(blank, move |body| match body {
+					Some(body) => {
+						*slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(body);
+						callback.cont();
+					}
+					// A failed load, as for a missing file.
+					None => {
+						shared.loads_finished.fetch_add(1, Ordering::Relaxed);
+						callback.cancel();
+					}
 				});
 				self.shared.send(Event::Procedural { path: rest.to_string(), responder });
 				// Answered later, by the game thread.

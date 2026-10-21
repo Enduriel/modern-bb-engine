@@ -370,12 +370,15 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	pub fn world_camera(&self) -> crate::scene::SceneWorldCamera {
 		crate::native::world_camera::view(&self.world_camera)
 	}
-	/// What entity `id`'s portrait draws: a battle unit (placed on the map or not, e.g.
-	/// a brother in the roster) or a world entity.
-	pub fn portrait(&self, id: i64) -> Option<crate::scene::ScenePortrait> {
-		self.tactical_entities
-			.portrait(&self.vm, id)
-			.or_else(|| self.world_entities.portrait(&self.vm, id))
+	/// What the portrait of entity `id` of `kind` draws: a battle unit's (placed on the
+	/// map or not, e.g. a brother in the roster) or a world entity's. `None` when no
+	/// live entity of that kind has the id: each kind finds only its own, as the
+	/// original's `tacticalentity` handler finds only battle units.
+	pub fn portrait(&self, kind: crate::scene::PortraitKind, id: i64) -> Option<crate::scene::ScenePortrait> {
+		match kind {
+			crate::scene::PortraitKind::Tactical => self.tactical_entities.portrait(&self.vm, id),
+			crate::scene::PortraitKind::World => self.world_entities.portrait(&self.vm, id),
+		}
 	}
 
 	/// The fonts mods registered (`ModernEngine.registerFont`), from the `from`th on

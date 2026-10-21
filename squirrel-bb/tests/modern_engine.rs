@@ -51,7 +51,7 @@ fn mods_detect_the_engine_and_register_fonts_in_load_order() {
 			"mod",
 		)
 		.expect("registered");
-	assert_eq!(root_string(&engine, "found").as_deref(), Some("yes 2"));
+	assert_eq!(root_string(&engine, "found").as_deref(), Some("yes 3"));
 	assert_eq!(root_string(&engine, "family").as_deref(), Some("BB Test Han Serif"));
 	let fonts = engine.font_registrations(0);
 	assert_eq!(fonts.len(), 2);

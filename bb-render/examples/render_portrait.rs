@@ -1,5 +1,6 @@
 //! Boot a new campaign headless and compose the portraits the UI asks for
-//! (`coui://procedural/tacticalentity(...)`) of the player's brothers, as PNGs.
+//! (`coui://procedural/tacticalentity(...)`) of the player's brothers, as PNGs; with
+//! `BB_WORLD=1`, world entities' (`worldentity(...)`).
 //!
 //! ```text
 //! cargo run --release -p bb-render --example render_portrait -- OUT_DIR [COUNT]
@@ -23,13 +24,20 @@ fn main() {
 	harness::boot_menu(&engine).expect("menu");
 	harness::prepare_new_campaign(&engine, "rust-engine-test").expect("prepare");
 	harness::start_new_campaign(&engine).expect("start");
-	// The paths the brothers' getImagePath() gives the UI.
-	engine
-		.run_script(
-			"::__paths <- ::World.getPlayerRoster().getAll().map(@(b) b.getImagePath());",
-			"paths",
-		)
-		.expect("paths");
+	// The paths the brothers' getImagePath() gives the UI; with BB_WORLD=1, the world
+	// entities' instead (`worldentity(...)`): the player's party, then settlements and
+	// locations, alternating.
+	let script = if std::env::var_os("BB_WORLD").is_some() {
+		r#"::__paths <- [::World.State.getPlayer().getImagePath()];
+		local s = ::World.EntityManager.getSettlements(), l = ::World.EntityManager.getLocations();
+		for (local i = 0; i < 20; i++) {
+			if (i < s.len()) ::__paths.push("worldentity(0," + s[i].getID() + ")");
+			if (i < l.len()) ::__paths.push(l[i].getImagePath());
+		}"#
+	} else {
+		"::__paths <- ::World.getPlayerRoster().getAll().map(@(b) b.getImagePath());"
+	};
+	engine.run_script(script, "paths").expect("paths");
 	let paths = SqTable::root(engine.vm()).get::<SqStrongRef>("__paths").expect("paths");
 	let paths: Vec<String> = (0..count)
 		.filter_map(|i| paths.get_value::<squirrel::SqArray>(engine.vm()).and_then(|a| a.get::<String>(i)))
@@ -41,7 +49,7 @@ fn main() {
 	std::fs::create_dir_all(&out).expect("out dir");
 	for (i, path) in paths.iter().enumerate() {
 		let request = PortraitRequest::parse(path).expect("a procedural path");
-		let mut portrait = engine.portrait(request.id).expect("the entity");
+		let mut portrait = engine.portrait(request.kind, request.id).expect("the entity");
 		// BB_SHOW=a,b: force those sprites visible (to compare with the original).
 		if let Ok(show) = std::env::var("BB_SHOW") {
 			for s in portrait.sprites.iter_mut().filter(|s| show.split(',').any(|n| n == s.name)) {

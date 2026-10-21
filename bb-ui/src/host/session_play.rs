@@ -17,6 +17,11 @@ impl ProceduralRequest {
 	pub fn answer(self, png: Option<Vec<u8>>) {
 		self.responder.respond_image(png);
 	}
+
+	/// Fail the load, as a missing file fails (an image's `error`, an XHR's status 0).
+	pub fn fail(self) {
+		self.responder.fail();
+	}
 }
 
 /// How the menu's "Start" (and the probe runner's campaign mode in the original)

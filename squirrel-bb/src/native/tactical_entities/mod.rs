@@ -1398,10 +1398,12 @@ impl TacticalEntities {
 					offset: (s.offset.0 as f32, s.offset.1 as f32),
 					visible: s.visible,
 					in_portrait: s.in_portrait,
+					keeps_screen_size: false,
 				})
 			})
 			.collect();
 		Some(crate::scene::ScenePortrait {
+			kind: crate::scene::PortraitKind::Tactical,
 			sprites,
 			apply_offsets: unit.portrait_offsets,
 		})

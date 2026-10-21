@@ -235,10 +235,12 @@ impl Front {
 
 	/// Answer the procedural images (portraits) the page asked for with `compose`, given
 	/// the engine and the path after `procedural/`.
-	pub fn serve_procedural(&self, mut compose: impl FnMut(&GameEngine, &str) -> Option<Vec<u8>>) {
+	pub fn serve_procedural(&self, mut compose: impl FnMut(&GameEngine, &str) -> crate::procedural::Procedural) {
 		for request in self.session.take_procedural() {
-			let png = compose(self.session.engine(), &request.path);
-			request.answer(png);
+			match compose(self.session.engine(), &request.path) {
+				crate::procedural::Procedural::Image(png) => request.answer(Some(png)),
+				crate::procedural::Procedural::Fail => request.fail(),
+			}
 		}
 	}
 

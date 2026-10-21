@@ -62,13 +62,29 @@ pub struct WorldSceneKey {
 	pub virtual_time: f32,
 }
 
+/// Which kind of entity a procedural image shows, by the handler its path names. Each
+/// finds only its own kind's entities.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PortraitKind {
+	/// `tacticalentity(...)`: a battle unit (also a brother in the roster), the
+	/// original's only handler.
+	#[default]
+	Tactical,
+	/// `worldentity(...)`: a world entity (a party, a location, a settlement). The
+	/// original has no such handler; ours is a deliberate divergence
+	/// (`ModernEngine.Version` 3).
+	World,
+}
+
 /// What an entity's portrait draws (the UI's `coui://procedural/tacticalentity(...)`
-/// and `worldentity(...)` images): its sprites, back to front.
+/// and `worldentity(...)` images): its sprites, in the order they were added.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScenePortrait {
+	/// The kind of entity, whose rules draw it (see bb-render's `portrait`).
+	pub kind: PortraitKind,
 	pub sprites: Vec<PortraitSprite>,
 	/// Sprites sit at their offsets (`setAlwaysApplySpriteOffset`); otherwise all at
-	/// the entity's anchor.
+	/// the entity's anchor. A battle unit's only: a world entity's always do.
 	pub apply_offsets: bool,
 }
 
@@ -90,6 +106,9 @@ pub struct PortraitSprite {
 	pub visible: bool,
 	/// Drawn into portraits (`setSpriteRenderToTexture`).
 	pub in_portrait: bool,
+	/// Keeps its screen size at any zoom (a world entity's `setSpriteScaling(name,
+	/// false)`: its selection ring, a location's banner); never a battle unit's.
+	pub keeps_screen_size: bool,
 }
 
 /// A footprint (`World.spawnFootprint`).

@@ -2,7 +2,9 @@
 //! offscreen (no window): the campaign starts from the menu, and its opening event is
 //! drawn over the world and takes the clicks it's under, while the open map passes
 //! them to the states. A brother's portrait the page asks for is composed by the
-//! renderer. Idle in a town, frames that would show the same are left undrawn.
+//! renderer, as are world entities' (`worldentity`, ours), each handler finding only
+//! its own kind of entity; mods see the engine's version in Squirrel and the page.
+//! Idle in a town, frames that would show the same are left undrawn.
 //! Quitting from the in-game menu (Escape, then Quit) leads back to the main menu, and
 //! Escape there ends the game, as in the original. The FPS display is off until
 //! asked for, then shows the frame rate. Keys typed into a page text field reach the
@@ -79,48 +81,158 @@ fn draw_until(game: &mut Game, gpu: &Gpu, target: &RenderTarget, ready: impl Fn(
 	Err("the frame never got ready".into())
 }
 
-/// The first brother's portrait, as the page loads it (`Path.PROCEDURAL` and his
-/// `getImagePath()`), arrives the size the compositor makes it.
-fn portrait_reaches_the_page(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
-	let engine = game.front().engine();
-	engine.run_script(
-		"::__portrait <- ::World.getPlayerRoster().getAll()[0].getImagePath();",
-		"portrait path",
-	)?;
-	let path = SqTable::root(engine.vm())
-		.get::<String>("__portrait")
-		.ok_or("no image path")?;
-	let request = PortraitRequest::parse(&path).ok_or_else(|| format!("not a portrait: {path}"))?;
-	let portrait = engine.portrait(request.id).ok_or("no such entity")?;
-	let expected = engine
-		.sprites()
-		.with(|registry| portrait_size(&portrait, &request.hidden, registry));
+/// What the page got loading `coui://procedural/<path>`: as an image, its natural size
+/// (`None`: its `error` event), and as an XHR, its status and bytes.
+struct Loaded {
+	size: Option<(i64, i64)>,
+	status: i64,
+	bytes: Vec<u8>,
+}
+
+/// Load `coui://procedural/<path>` in the page as an image and as an XHR; drawing frames
+/// answers the page's procedural images.
+fn load_procedural(game: &mut Game, gpu: &Gpu, target: &RenderTarget, path: &str) -> Result<Loaded, String> {
 	let mut url = String::new();
 	Json::Str(format!("coui://procedural/{path}")).write(&mut url);
 	game.front().session().eval(&format!(
 		"(function () {{
+	var url = {url}, out = {{}}, left = 2;
+	window.__loaded = null;
+	var finish = function () {{ if (--left === 0) window.__loaded = JSON.stringify(out); }};
 	var image = new Image();
-	window.__portrait = null;
-	image.onload = function () {{ window.__portrait = [image.naturalWidth, image.naturalHeight]; }};
-	image.src = {url};
+	image.onload = function () {{ out.size = [image.naturalWidth, image.naturalHeight]; finish(); }};
+	image.onerror = function () {{ out.size = null; finish(); }};
+	image.src = url;
+	var xhr = new XMLHttpRequest();
+	xhr.open('GET', url, true);
+	xhr.overrideMimeType('text/plain; charset=x-user-defined');
+	xhr.onloadend = function () {{
+		var text = xhr.responseText || '', bytes = [];
+		for (var i = 0; i < text.length; i++) bytes.push(text.charCodeAt(i) & 0xff);
+		out.status = xhr.status;
+		out.bytes = bytes;
+		finish();
+	}};
+	xhr.send();
 }})()"
 	))?;
-	// Drawing a frame answers the page's procedural images.
-	for _ in 0..100 {
+	for _ in 0..200 {
 		game.step(1000.0 / 60.0)?;
 		game.draw(gpu, target);
-		let loaded = game.front().session().eval("window.__portrait")?;
-		if let Json::Array(size) = loaded {
-			let size: Vec<i64> = size.iter().filter_map(|n| n.as_i64()).collect();
-			if size != [i64::from(expected.0), i64::from(expected.1)] || expected.0 == 0 {
-				return Err(format!("{path} loaded at {size:?}, composed at {expected:?}"));
-			}
-			println!("  portrait {path}: {}x{}", expected.0, expected.1);
-			return Ok(());
+		if let Json::Str(text) = game.front().session().eval("window.__loaded")? {
+			let json = Json::parse(&text)?;
+			let field = |name: &str| match &json {
+				Json::Object(entries) => entries.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone()),
+				_ => None,
+			};
+			let numbers = |v: Option<Json>| match v {
+				Some(Json::Array(items)) => items.iter().filter_map(Json::as_i64).collect::<Vec<i64>>(),
+				_ => Vec::new(),
+			};
+			let size = numbers(field("size"));
+			return Ok(Loaded {
+				size: (size.len() == 2).then(|| (size[0], size[1])),
+				status: field("status").and_then(|s| s.as_i64()).unwrap_or(-1),
+				bytes: numbers(field("bytes")).into_iter().map(|b| b as u8).collect(),
+			});
 		}
 		std::thread::sleep(Duration::from_millis(20));
 	}
-	Err(format!("{path} never loaded"))
+	Err(format!("{path} never finished loading"))
+}
+
+/// The script's value of `expression` as a string.
+fn script_string(game: &Game, expression: &str) -> Result<String, String> {
+	let engine = game.front().engine();
+	engine.run_script(&format!("::__value <- \"\" + ({expression});"), "value")?;
+	SqTable::root(engine.vm())
+		.get::<String>("__value")
+		.ok_or_else(|| format!("no value for {expression}"))
+}
+
+/// The size the compositor makes `path`'s portrait.
+fn composed_size(game: &Game, path: &str) -> Result<(i64, i64), String> {
+	let engine = game.front().engine();
+	let request = PortraitRequest::parse(path).ok_or_else(|| format!("not a portrait: {path}"))?;
+	let portrait = engine.portrait(request.kind, request.id).ok_or_else(|| format!("{path}: no such entity"))?;
+	let (w, h) = engine
+		.sprites()
+		.with(|registry| portrait_size(&portrait, &request.hidden, registry));
+	if w == 0 || h == 0 {
+		return Err(format!("{path}: nothing to draw"));
+	}
+	Ok((i64::from(w), i64::from(h)))
+}
+
+/// Procedural images, each handler finding only its own kind of entity:
+/// - the first brother's portrait (`Path.PROCEDURAL` and his `getImagePath()`) arrives
+///   the size the compositor makes it;
+/// - `tacticalentity` of a world entity's id, or of no entity's, is the original's
+///   16×16 fallback image;
+/// - `worldentity` (ours: the original has no such handler) of the player's party, a
+///   settlement and a location is a picture the compositor's size; of no world
+///   entity's id (a brother's included) the load fails, as does an unknown handler's.
+fn procedural_images(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
+	let brother = script_string(game, "::World.getPlayerRoster().getAll()[0].getImagePath()")?;
+	let brother_id = script_string(game, "::World.getPlayerRoster().getAll()[0].getID()")?;
+	let party = script_string(game, "::World.State.getPlayer().getImagePath()")?;
+	let party_id = script_string(game, "::World.State.getPlayer().getID()")?;
+	let settlement = script_string(game, "::World.EntityManager.getSettlements()[0].getID()")?;
+	let location = script_string(game, "::World.EntityManager.getLocations()[0].getID()")?;
+	let pictures = [
+		brother.clone(),
+		party,
+		format!("worldentity(1,{settlement})"),
+		format!("worldentity(2,{location})"),
+	];
+	for path in &pictures {
+		let expected = composed_size(game, path)?;
+		let loaded = load_procedural(game, gpu, target, path)?;
+		if loaded.size != Some(expected) || loaded.status != 200 {
+			return Err(format!("{path} loaded at {:?} (status {}), composed at {expected:?}", loaded.size, loaded.status));
+		}
+		println!("  {path}: {}x{}", expected.0, expected.1);
+	}
+	for path in [format!("tacticalentity(0,{party_id})"), "tacticalentity(0,999999)".to_string()] {
+		let loaded = load_procedural(game, gpu, target, &path)?;
+		if loaded.size != Some((16, 16)) || loaded.status != 200 || loaded.bytes != bb_app::procedural::FALLBACK_PNG {
+			return Err(format!(
+				"{path}: {:?} (status {}, {} bytes), not the original's fallback",
+				loaded.size,
+				loaded.status,
+				loaded.bytes.len()
+			));
+		}
+		println!("  {path}: the 16x16 fallback");
+	}
+	for path in [
+		"worldentity(5,999999)".to_string(),
+		format!("worldentity(5,{brother_id})"),
+		"bogus(1,2)".to_string(),
+	] {
+		let loaded = load_procedural(game, gpu, target, &path)?;
+		if loaded.size.is_some() || loaded.status != 0 {
+			return Err(format!("{path} loaded: {:?} (status {})", loaded.size, loaded.status));
+		}
+		println!("  {path}: a failed load");
+	}
+	Ok(())
+}
+
+/// Mods detect this engine by `::ModernEngine` in Squirrel and `window.ModernEngine` in
+/// the page, both with the same version.
+fn modern_engine_is_detectable(game: &Game) -> Result<(), String> {
+	let expected = squirrel_bb::modern_engine::VERSION;
+	let sq = script_string(game, "::ModernEngine.Version")?;
+	let js = game
+		.front()
+		.session()
+		.eval("typeof window.ModernEngine === 'object' ? window.ModernEngine.Version : null")?;
+	if sq != expected.to_string() || js.as_i64() != Some(expected) {
+		return Err(format!("ModernEngine.Version: {sq} in Squirrel, {js:?} in the page, expected {expected}"));
+	}
+	println!("  ModernEngine.Version {expected} in Squirrel and the page");
+	Ok(())
 }
 
 /// The game's cursor (on the open map the scripts' boot, centred on the mouse) is drawn
@@ -622,7 +734,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	if clicked(&game)? {
 		return Err("the states got the event's click too".into());
 	}
-	portrait_reaches_the_page(&mut game, gpu, &target)?;
+	procedural_images(&mut game, gpu, &target)?;
+	modern_engine_is_detectable(&game)?;
 
 	// The open map: a spot where the page is transparent now, away from the top bar.
 	let session = game.front().session();
