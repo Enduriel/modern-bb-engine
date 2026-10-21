@@ -77,7 +77,7 @@ fn load(engine: &harness::GameEngine, name: &str) {
 #[test]
 fn the_extension_rides_after_the_fog_and_survives_its_absence() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no Steam install");
+		bb_engine::harness::skip("no Steam install");
 		return;
 	}
 	let folder = Folder(std::env::temp_dir().join(format!("bb-save-extension-{}", std::process::id())));

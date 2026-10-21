@@ -17,7 +17,7 @@ const IN_TACTICAL: &str = "(\"State\" in ::Tactical) && ::Tactical.State != null
 fn found_loot_tooltip_queries_entity_null() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let mut engine = harness::open_install(dir).expect("open install");

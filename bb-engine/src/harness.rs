@@ -25,6 +25,49 @@ static STEAM_DATA: EnvDir = EnvDir::new("BB_DATA_DIR", "~/.local/share/Steam/ste
 pub static ORIGINAL_SAVES_DIR: &EnvDir = &ORIGINAL_SAVES;
 static ORIGINAL_SAVES: EnvDir = EnvDir::new("BB_ORIGINAL_SAVES", "<BB_ORIGINAL_SAVES is unset>");
 
+/// Says a test may skip when this machine lacks what it needs (the Steam install, a
+/// mod, a GPU, gamescope): `BB_ALLOW_SKIPS=1`, for machines without them. Unset, a test
+/// that would skip fails instead, so a green run means every test ran (libtest hides a
+/// passing test's output: a quiet skip looks like a pass).
+pub const ALLOW_SKIPS: &str = "BB_ALLOW_SKIPS";
+
+/// Whether skipping is allowed ([`ALLOW_SKIPS`] is `1`).
+pub fn skips_allowed() -> bool {
+	std::env::var_os(ALLOW_SKIPS).is_some_and(|v| v == "1")
+}
+
+/// The error a test that would skip for `why` fails with, unless skips are allowed.
+fn refused(why: &impl fmt::Display) -> Option<String> {
+	(!skips_allowed()).then(|| format!("this test can't run here: {why} (set {ALLOW_SKIPS}=1 to skip it on a machine without it)"))
+}
+
+/// A libtest test can't run on this machine because `why` (what it lacks): with skips
+/// allowed ([`ALLOW_SKIPS`]) this prints `skipping: <why>` and the test then returns;
+/// otherwise the test fails here.
+#[track_caller]
+pub fn skip(why: impl fmt::Display) {
+	if let Some(e) = refused(&why) {
+		panic!("{e}");
+	}
+	eprintln!("skipping: {why}");
+}
+
+/// [`skip`] for a test of a `harness = false` binary, named `name`: prints its
+/// libtest-style line (`test <name> ... skipping: <why>`, or `... FAILED` and why) and
+/// returns the binary's exit status.
+pub fn skip_case(name: &str, why: impl fmt::Display) -> std::process::ExitCode {
+	match refused(&why) {
+		None => {
+			println!("test {name} ... skipping: {why}");
+			std::process::ExitCode::SUCCESS
+		}
+		Some(e) => {
+			println!("test {name} ... FAILED\n{e}");
+			std::process::ExitCode::FAILURE
+		}
+	}
+}
+
 /// A directory the environment can override: the variable's value if it's set, else a
 /// default; read on first use. Usable where the `&str` constants it replaced were
 /// (`Path::new`, `PathBuf::from`, formatting).

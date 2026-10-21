@@ -271,11 +271,7 @@ fn run_main() -> ExitCode {
 	let name = "starts_a_campaign_and_reaches_the_world_screen";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if !data_dir.exists() {
-		println!(
-			"test {name} ... skipped ({} not present)",
-			data_dir.display()
-		);
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(name, format!("{} not present", data_dir.display()));
 	}
 	match starts_a_campaign_and_reaches_the_world_screen(data_dir) {
 		Ok(()) => {

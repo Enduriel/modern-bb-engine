@@ -83,7 +83,7 @@ fn roster(engine: &harness::GameEngine) -> String {
 #[test]
 fn survivors_of_a_battle_won_from_outside_are_off_its_map() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no Steam install");
+		bb_engine::harness::skip("no Steam install");
 		return;
 	}
 	let engine = campaign(false);
@@ -109,7 +109,7 @@ fn survivors_of_a_battle_won_from_outside_are_off_its_map() {
 #[test]
 fn the_ai_fights_two_battles_in_a_row_for_the_company() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no Steam install");
+		bb_engine::harness::skip("no Steam install");
 		return;
 	}
 	let engine = campaign(true);

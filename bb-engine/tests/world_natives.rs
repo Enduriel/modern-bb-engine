@@ -25,7 +25,7 @@ fn check(engine: &harness::GameEngine, what: &str, script: &str) {
 fn world_natives_from_the_disassembly() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

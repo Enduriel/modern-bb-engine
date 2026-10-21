@@ -12,7 +12,7 @@ use squirrel::{Number, SqStrongRef, SqTable};
 fn a_new_campaign_world_is_ready_to_draw() {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

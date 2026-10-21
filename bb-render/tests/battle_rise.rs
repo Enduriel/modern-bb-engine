@@ -63,7 +63,7 @@ fn covers(corners: &[[f32; 2]; 4], p: [f32; 2]) -> bool {
 fn a_unit_spawned_mid_battle_rises_on_its_tile() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

@@ -242,7 +242,7 @@ mod tests {
 	}
 
 	/// Copies to and pastes from a real compositor's clipboard through a window of its
-	/// own, so only when asked (`BB_CLIPBOARD_TEST=1`), in a compositor of its own
+	/// own, so only when asked (ignored; `--include-ignored` and `BB_CLIPBOARD_TEST=1`), in a compositor of its own
 	/// (`WAYLAND_DISPLAY`; never the player's: it would replace their clipboard). It
 	/// needs one with a clipboard and that focuses a new window, as a headless KWin
 	/// does: `kwin_wayland --virtual --exit-with-session <script>` under
@@ -253,15 +253,17 @@ mod tests {
 	/// programs (`command`).
 	#[cfg(target_os = "linux")]
 	#[test]
+	#[ignore = "opt-in: BB_CLIPBOARD_TEST=1, inside a Wayland compositor of its own"]
 	fn text_goes_round_a_compositors_clipboard() {
 		use winit::event_loop::EventLoop;
 		use winit::platform::pump_events::EventLoopExtPumpEvents;
 		use winit::platform::wayland::EventLoopBuilderExtWayland;
 
-		if std::env::var_os("BB_CLIPBOARD_TEST").is_none_or(|v| v != "1") || std::env::var_os("WAYLAND_DISPLAY").is_none() {
-			eprintln!("skipping: set BB_CLIPBOARD_TEST=1 inside a Wayland compositor of its own");
-			return;
-		}
+		// Run by name, it still never touches the player's session unasked.
+		assert!(
+			std::env::var_os("BB_CLIPBOARD_TEST").is_some_and(|v| v == "1") && std::env::var_os("WAYLAND_DISPLAY").is_some(),
+			"set BB_CLIPBOARD_TEST=1 inside a Wayland compositor of its own"
+		);
 		let mut event_loop = EventLoop::builder().with_wayland().with_any_thread(true).build().expect("a Wayland event loop");
 		let display = event_loop.owned_display_handle();
 		if std::env::var_os("BB_CLIPBOARD_WAYLAND").is_some_and(|v| v == "none") {

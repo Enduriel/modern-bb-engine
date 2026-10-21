@@ -36,7 +36,7 @@ const SETUP: &str = r#"
 fn battle_with_deaths(deaths: &str, fallen: i64) {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let mut engine = harness::open_install(dir).expect("open install");

@@ -20,7 +20,7 @@ fn bytes(script: Option<LoadedScript>) -> Vec<u8> {
 #[test]
 fn cached_loads_match_uncached_ones() {
 	let Ok(paths) = data_archives(Path::new(STEAM_DATA_DIR)) else {
-		eprintln!("skipping: no install at {STEAM_DATA_DIR}");
+		bb_engine::harness::skip(format!("no install at {STEAM_DATA_DIR}"));
 		return;
 	};
 	let root = std::env::temp_dir().join(format!("bb-script-cache-it-{}", std::process::id()));

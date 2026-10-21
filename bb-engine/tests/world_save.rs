@@ -55,7 +55,7 @@ fn run(engine: &harness::GameEngine, frames: u32) {
 fn a_campaign_survives_save_and_load() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 

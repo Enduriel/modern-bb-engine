@@ -138,14 +138,16 @@ mod tests {
 	use super::Programs;
 
 	/// Copies to and pastes from the display's real clipboard, so only when asked
-	/// (`BB_CLIPBOARD_TEST=1`), inside a display of its own (e.g. a headless gamescope):
+	/// (ignored; `--include-ignored` and `BB_CLIPBOARD_TEST=1`), inside a display of its own (e.g. a headless gamescope):
 	/// it would replace the player's clipboard otherwise.
 	#[test]
+	#[ignore = "opt-in: BB_CLIPBOARD_TEST=1, inside a display of its own"]
 	fn text_goes_round_the_systems_clipboard() {
-		if std::env::var_os("BB_CLIPBOARD_TEST").is_none_or(|v| v != "1") {
-			eprintln!("skipping: set BB_CLIPBOARD_TEST=1 inside a display of its own");
-			return;
-		}
+		// Run by name, it still never touches the player's clipboard unasked.
+		assert!(
+			std::env::var_os("BB_CLIPBOARD_TEST").is_some_and(|v| v == "1"),
+			"set BB_CLIPBOARD_TEST=1 inside a display of its own"
+		);
 		let programs = Programs::find().expect("a clipboard program for this display");
 		let text = "Ünïcode \"build\" code\nwith 2 lines | $(id)";
 		programs.write(text).expect("written");

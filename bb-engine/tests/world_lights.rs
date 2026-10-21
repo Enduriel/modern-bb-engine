@@ -17,7 +17,7 @@ const LIT: &str = "(function() { local n = 0; foreach (s in ::World.EntityManage
 fn towns_are_unlit_by_day_and_lit_at_night() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let mut engine = harness::open_install(dir).expect("open install");

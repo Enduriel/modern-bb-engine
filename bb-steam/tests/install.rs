@@ -55,14 +55,27 @@ fn a_gog_install_is_not() {
 	assert!(steam_install(&data).is_err());
 }
 
+/// `what` is missing: fails the test unless `BB_ALLOW_SKIPS=1` lets it skip (as
+/// `bb_engine::harness::skip`, which this crate can't use).
+fn skip(what: &str) {
+	if std::env::var_os("BB_ALLOW_SKIPS").is_some_and(|v| v == "1") {
+		eprintln!("skipping: {what}");
+	} else {
+		panic!("this test can't run here: {what} (set BB_ALLOW_SKIPS=1 to skip it on a machine without it)");
+	}
+}
+
 /// The developer's real Steam install, when there is one (read-only: only its folders
 /// and manifest are looked at).
 #[test]
 fn the_real_steam_install_is_steam() {
-	let Some(home) = std::env::var_os("HOME") else { return };
+	let Some(home) = std::env::var_os("HOME") else {
+		skip("HOME");
+		return;
+	};
 	let data = Path::new(&home).join(".local/share/Steam/steamapps/common/Battle Brothers/data");
 	if !data.is_dir() {
-		eprintln!("skipped: no Steam install at {}", data.display());
+		skip(&format!("no Steam install at {}", data.display()));
 		return;
 	}
 	steam_install(&data).expect("the Steam install");

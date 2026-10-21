@@ -106,7 +106,7 @@ fn budget_yields(clock: ExactClock) -> (i64, i64, u32) {
 #[test]
 fn the_ai_yields_for_time_only_under_the_live_clock() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no Steam install");
+		bb_engine::harness::skip("no Steam install");
 		return;
 	}
 	let (live, live_vanilla, live_frames) = budget_yields(ExactClock::Live);

@@ -829,14 +829,12 @@ fn main() -> ExitCode {
 fn run_main() -> ExitCode {
 	let name = "the_ui_draws_over_the_game_and_takes_its_input";
 	if !Path::new(STEAM_DATA_DIR).exists() {
-		println!("test {name} ... skipped ({STEAM_DATA_DIR} not present)");
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(name, format!("{STEAM_DATA_DIR} not present"));
 	}
 	let gpu = match Gpu::headless_with(bb_app::front::GPU_FEATURES) {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			println!("test {name} ... skipped (no GPU: {e})");
-			return ExitCode::SUCCESS;
+			return bb_engine::harness::skip_case(name, format!("no GPU: {e}"));
 		}
 	};
 	match check(&gpu) {

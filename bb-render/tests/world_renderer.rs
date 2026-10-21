@@ -92,7 +92,7 @@ fn atlases_load_on_first_use() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -163,7 +163,7 @@ fn a_hinted_atlas_goes_to_the_gpu_when_drawn_and_leaves_when_unused() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -220,7 +220,7 @@ fn a_missing_atlas_draws_the_texture_missing_picture() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -268,7 +268,7 @@ fn flipped_tiles_mirror_their_picture_in_place() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -314,7 +314,7 @@ fn details_draw_with_their_colour_and_saturation() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -365,7 +365,7 @@ fn fog_covers_what_the_mask_keeps() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -456,7 +456,7 @@ fn a_frame_from_a_page_draws_as_from_its_atlas() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -540,7 +540,7 @@ fn an_animations_frames_load_together() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -624,7 +624,7 @@ fn the_cursor_draws_from_a_page_as_from_its_atlas() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -660,7 +660,7 @@ fn a_kept_map_redraws_only_what_changed() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};

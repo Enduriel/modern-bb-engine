@@ -97,7 +97,7 @@ local origSeed = ::Math.seedRandom;
 fn a_battle_is_draw_exact_against_the_original() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

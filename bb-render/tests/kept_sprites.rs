@@ -185,7 +185,7 @@ fn the_kept_moving_layer_draws_what_the_frame_built_draws() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};

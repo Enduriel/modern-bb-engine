@@ -14,7 +14,7 @@ const IN_TACTICAL: &str = "(\"State\" in ::Tactical) && ::Tactical.State != null
 #[test]
 fn a_webknechts_corpse_twitches() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no Steam install");
+		bb_engine::harness::skip("no Steam install");
 		return;
 	}
 	let mut engine = harness::open_install(Path::new(harness::STEAM_DATA_DIR)).expect("open install");

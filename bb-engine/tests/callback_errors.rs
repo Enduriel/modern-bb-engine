@@ -71,7 +71,7 @@ fn reported(log: &Path, k: &str) -> usize {
 fn errors_in_callbacks_are_reported_and_the_native_goes_on() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let logs = std::env::temp_dir().join(format!("bb-callback-errors-{}", std::process::id()));

@@ -17,7 +17,7 @@ const IN_BATTLE: &str = "((\"State\" in ::Tactical) && ::Tactical.State != null)
 fn open() -> Option<GameEngine> {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return None;
 	}
 	let engine = if std::env::var_os("BB_SCENE_KEY_MODS").is_some() {
@@ -276,7 +276,7 @@ fn each_change_moves_the_key() {
 fn the_main_menu_s_key_stays_while_time_passes() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

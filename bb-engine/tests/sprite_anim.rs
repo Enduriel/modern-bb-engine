@@ -22,7 +22,7 @@ fn combat_frames(engine: &GameEngine) -> Vec<(i64, u32)> {
 fn a_fight_sprite_cycles_on_virtual_time() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

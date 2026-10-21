@@ -13,7 +13,7 @@ use bb_engine::vfs::DatArchive;
 fn reads_every_installed_archive_as_the_zip_crate_does() {
 	let data = Path::new(harness::STEAM_DATA_DIR);
 	if !data.exists() {
-		eprintln!("skipping: {} not present", data.display());
+		bb_engine::harness::skip(format!("{} not present", data.display()));
 		return;
 	}
 	let mut archives = harness::data_archives(data).unwrap();

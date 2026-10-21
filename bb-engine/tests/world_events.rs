@@ -18,7 +18,7 @@ fn count(engine: &harness::GameEngine, expr: &str) -> i64 {
 fn an_event_recruit_goes_through_the_world_temporary_roster() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

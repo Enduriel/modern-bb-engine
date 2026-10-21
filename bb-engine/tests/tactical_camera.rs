@@ -13,7 +13,7 @@ use squirrel::{SqArray, SqTable};
 fn a_gliding_battle_camera_moves_over_frames() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install_with(dir, |c| c.battle_camera = squirrel_bb::BattleCamera::Glides).expect("open install");

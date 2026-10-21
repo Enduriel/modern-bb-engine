@@ -29,13 +29,13 @@ fn find_mod(prefix: &str) -> Option<PathBuf> {
 fn open_with(prefixes: &[&str]) -> Option<harness::GameEngine> {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return None;
 	}
 	let mut archives = harness::data_archives(dir).expect("list the data archives");
 	for prefix in prefixes {
 		let Some(zip) = find_mod(prefix) else {
-			eprintln!("skipping: no {prefix}* mod installed");
+			bb_engine::harness::skip(format!("no {prefix}* mod installed"));
 			return None;
 		};
 		archives.push(zip);
@@ -74,11 +74,11 @@ fn modern_hooks_boots_the_menu() {
 fn the_installed_mods_boot_and_start_a_campaign() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	let Ok(mods) = harness::mod_archives(dir) else {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	};
 	if !mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks"))) {
-		eprintln!("skipping: Modern Hooks isn't installed");
+		bb_engine::harness::skip("Modern Hooks isn't installed");
 		return;
 	}
 	let mut archives = harness::data_archives(dir).expect("list the data archives");

@@ -71,7 +71,7 @@ fn xy(s: &str) -> (i64, i64) {
 fn the_battle_highlights_what_the_player_is_about_to_do() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

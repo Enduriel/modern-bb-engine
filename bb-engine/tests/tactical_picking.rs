@@ -34,7 +34,7 @@ fn set_levels(tag: &str) -> String {
 fn world_to_tile_matches_the_original() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");
@@ -75,7 +75,7 @@ fn world_to_tile_matches_the_original() {
 fn the_tile_between_two_tiles_is_picked_at_their_midpoint() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");
@@ -118,7 +118,7 @@ fn tile_between_matches_the_original() {
 	const DATA: &str = include_str!("testdata/tile_between.txt");
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

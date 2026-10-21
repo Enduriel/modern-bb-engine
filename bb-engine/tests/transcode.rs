@@ -13,7 +13,7 @@ fn data_001() -> std::path::PathBuf {
 #[test]
 fn transcodes_and_runs_a_real_compiled_script() {
 	if !data_001().exists() {
-		eprintln!("skipping: {} not present", data_001().display());
+		bb_engine::harness::skip(format!("{} not present", data_001().display()));
 		return;
 	}
 
@@ -58,7 +58,7 @@ fn transcodes_and_runs_a_real_compiled_script() {
 #[test]
 fn transcodes_and_loads_every_cnut_in_data_001() {
 	if !data_001().exists() {
-		eprintln!("skipping: {} not present", data_001().display());
+		bb_engine::harness::skip(format!("{} not present", data_001().display()));
 		return;
 	}
 

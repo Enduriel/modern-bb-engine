@@ -43,7 +43,7 @@ fn snapshot(engine: &harness::GameEngine, out: &Rc<RefCell<String>>) -> (f64, Ve
 fn a_new_campaign_runs_for_a_game_minute() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 

@@ -263,7 +263,7 @@ mod tests {
 		let gpu = match Gpu::headless() {
 			Ok(gpu) => gpu,
 			Err(e) => {
-				eprintln!("skipping: {e}");
+				bb_engine::harness::skip(&e);
 				return;
 			}
 		};
@@ -309,7 +309,7 @@ mod tests {
 		let gpu = match Gpu::headless() {
 			Ok(gpu) => gpu,
 			Err(e) => {
-				eprintln!("skipping: {e}");
+				bb_engine::harness::skip(&e);
 				return;
 			}
 		};

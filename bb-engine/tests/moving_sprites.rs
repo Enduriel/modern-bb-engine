@@ -14,7 +14,7 @@ const IN_BATTLE: &str = "((\"State\" in ::Tactical) && ::Tactical.State != null)
 fn no_moving_sprite_is_left_unnoted() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

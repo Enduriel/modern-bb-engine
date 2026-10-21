@@ -13,7 +13,7 @@ use squirrel::{SqArray, SqTable};
 fn data_archives() -> Option<Vec<DatArchive>> {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return None;
 	}
 	let paths = harness::data_archives(dir).expect("list archives");
@@ -76,7 +76,7 @@ fn a_name_repeated_in_one_file_resolves_to_its_first_entry() {
 fn scripts_see_the_loaded_brushes() {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

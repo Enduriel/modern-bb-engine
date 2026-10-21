@@ -88,7 +88,7 @@ const SUMMARY: &str = r#"
 fn menu_to_campaign_to_battle_to_save_and_load() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	smoke(harness::open_install(dir).expect("open install"));
@@ -101,11 +101,11 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 fn the_installed_mods_play_through_menu_campaign_battle_save_and_load() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	let Ok(mods) = harness::mod_archives(dir) else {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	};
 	if !mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks"))) {
-		eprintln!("skipping: Modern Hooks isn't installed");
+		bb_engine::harness::skip("Modern Hooks isn't installed");
 		return;
 	}
 	let mut archives = harness::data_archives(dir).expect("list the data archives");

@@ -42,13 +42,13 @@ fn laid_over_black(image: &CursorImage) -> Vec<u8> {
 #[test]
 fn cursor_pictures_show_what_the_software_cursor_draws() {
 	if !Path::new(STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return;
 	}
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};

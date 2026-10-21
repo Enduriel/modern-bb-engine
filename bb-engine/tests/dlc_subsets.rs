@@ -80,7 +80,7 @@ fn check_without(dir: &Path, missing: &[&str], full_mask: Option<i64>) -> i64 {
 fn every_dlc_subset_boots_and_starts_a_campaign() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let all: Vec<&str> = DLCS.iter().map(|d| d.0).collect();

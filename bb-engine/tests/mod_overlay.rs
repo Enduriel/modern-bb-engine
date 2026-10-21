@@ -24,7 +24,7 @@ fn first_mod_zip() -> Option<std::path::PathBuf> {
 #[test]
 fn reads_a_deflated_entry_from_a_mod_zip() {
 	let Some(zip) = first_mod_zip() else {
-		eprintln!("skipping: no mod_*.zip under {DATA_DIR}");
+		bb_engine::harness::skip(format!("no mod_*.zip under {DATA_DIR}"));
 		return;
 	};
 

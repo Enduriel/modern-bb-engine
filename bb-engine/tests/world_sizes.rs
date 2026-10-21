@@ -84,7 +84,7 @@ fn campaign_on(cols: i64, rows: i64, mask: u32) {
 #[test]
 fn a_smaller_map_than_vanilla() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: {} not present", harness::STEAM_DATA_DIR);
+		bb_engine::harness::skip(format!("{} not present", harness::STEAM_DATA_DIR));
 		return;
 	}
 	campaign_on(140, 140, 2048);
@@ -93,7 +93,7 @@ fn a_smaller_map_than_vanilla() {
 #[test]
 fn a_larger_map_than_the_original_makes() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: {} not present", harness::STEAM_DATA_DIR);
+		bb_engine::harness::skip(format!("{} not present", harness::STEAM_DATA_DIR));
 		return;
 	}
 	campaign_on(280, 280, 4096);

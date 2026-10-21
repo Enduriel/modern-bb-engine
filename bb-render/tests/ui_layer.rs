@@ -47,8 +47,8 @@ fn blue_target(gpu: &Gpu, width: u32, height: u32) -> RenderTarget {
 /// A GPU and a page on it, or `None` (skip) without one that can take the browser's
 /// paints.
 fn page_gpu() -> Option<(Gpu, UiPage)> {
-	let gpu = Gpu::headless_with(UiPage::FEATURES).map_err(|e| eprintln!("skipping: {e}")).ok()?;
-	let page = UiPage::new(&gpu).map_err(|e| eprintln!("skipping: {e}")).ok()?;
+	let gpu = Gpu::headless_with(UiPage::FEATURES).map_err(|e| bb_engine::harness::skip(&e)).ok()?;
+	let page = UiPage::new(&gpu).map_err(|e| bb_engine::harness::skip(&e)).ok()?;
 	Some((gpu, page))
 }
 

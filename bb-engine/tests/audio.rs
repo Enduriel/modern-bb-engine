@@ -19,7 +19,7 @@ fn number(engine: &GameEngine, code: &str) -> f64 {
 fn the_scripts_sound_plays_on_the_originals_rules() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	// The audio's stream mixes in the engine seed: 4 unless `BB_ENGINE_SEED` gives one

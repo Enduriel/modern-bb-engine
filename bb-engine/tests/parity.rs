@@ -148,7 +148,7 @@ fn run_group(mode: &str, seed: Option<&str>, probes: &[&Probe]) -> Vec<String> {
 #[test]
 fn probes_match_the_original() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no install at {}", harness::STEAM_DATA_DIR);
+		bb_engine::harness::skip(format!("no install at {}", harness::STEAM_DATA_DIR));
 		return;
 	}
 	let probes = load_probes(&parity_dir().join("probes"));

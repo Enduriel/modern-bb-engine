@@ -281,7 +281,7 @@ mod tests {
 		let text = "龍";
 		let shaped = shaper.shape("cinzel_bold_20", text, None).clone();
 		if shaped.glyphs.is_empty() {
-			eprintln!("skipping: no system font has {text}");
+			bb_engine::harness::skip(format!("no system font has {text}"));
 			return;
 		}
 		assert_eq!(chars(text, &shaped), ["龍"]);

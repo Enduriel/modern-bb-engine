@@ -22,7 +22,7 @@ fn a_larger_map_draws_the_same_from_only_the_tiles_it_shows() {
 fn views_draw_the_same(size: Option<(i64, i64)>) {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

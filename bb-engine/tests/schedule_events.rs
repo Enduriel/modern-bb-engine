@@ -58,7 +58,7 @@ fn schedule_all(engine: &harness::GameEngine, tag: &str, ms: u32) {
 fn scheduled_events_are_dropped_only_by_clear_events() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let mut engine = harness::open_install(dir).expect("open install");

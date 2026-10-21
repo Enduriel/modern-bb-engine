@@ -130,7 +130,7 @@ fn run_ours() -> Vec<String> {
 #[test]
 fn world_ui_payloads_match_the_original() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no install at {}", harness::STEAM_DATA_DIR);
+		bb_engine::harness::skip(format!("no install at {}", harness::STEAM_DATA_DIR));
 		return;
 	}
 	let ours = run_ours();

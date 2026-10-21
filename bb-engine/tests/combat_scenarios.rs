@@ -186,7 +186,7 @@ const SCRIPTED_PLAYER: &str = include_str!("testdata/scripted_player.nut");
 fn fight(s: &Scenario) {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let end = s.checkpoints.last().expect("checkpoints").0;

@@ -149,8 +149,7 @@ fn main() -> ExitCode {
 
 fn run_main() -> ExitCode {
 	if !Path::new(STEAM_DATA_DIR).exists() {
-		println!("test {NAME} ... skipped ({STEAM_DATA_DIR} not present)");
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(NAME, format!("{STEAM_DATA_DIR} not present"));
 	}
 	let goldens = goldens_dir();
 	let update = std::env::var_os("BB_FRAME_GOLDENS_UPDATE").is_some();
@@ -160,12 +159,10 @@ fn run_main() -> ExitCode {
 			return ExitCode::FAILURE;
 		}
 	} else if std::fs::read_dir(&goldens).map_or(true, |mut d| d.next().is_none()) {
-		println!(
-			"test {NAME} ... skipped: NO FRAME GOLDENS at {} (take them with BB_FRAME_GOLDENS_UPDATE=1)",
-			goldens.display()
+		return bb_engine::harness::skip_case(
+			NAME,
+			format!("no frame goldens at {} (take them with BB_FRAME_GOLDENS_UPDATE=1)", goldens.display()),
 		);
-		eprintln!("warning: {NAME} skipped, no frame goldens at {}", goldens.display());
-		return ExitCode::SUCCESS;
 	}
 	match run(&goldens, update) {
 		Ok(failures) if failures.is_empty() => {

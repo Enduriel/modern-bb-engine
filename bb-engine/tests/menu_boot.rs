@@ -15,7 +15,7 @@ use bb_engine::harness::STEAM_DATA_DIR as DATA_DIR;
 #[test]
 fn boots_to_a_running_main_menu_headless() {
 	if !std::path::Path::new(DATA_DIR).exists() {
-		eprintln!("skipping: {DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{DATA_DIR} not present"));
 		return;
 	}
 

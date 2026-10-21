@@ -15,11 +15,21 @@ fn cursors() -> PathBuf {
 	}
 }
 
+/// `what` is missing: fails the test unless `BB_ALLOW_SKIPS=1` lets it skip (as
+/// `bb_engine::harness::skip`, which this crate can't use).
+fn skip(what: &str) {
+	if std::env::var_os("BB_ALLOW_SKIPS").is_some_and(|v| v == "1") {
+		eprintln!("skipping: {what}");
+	} else {
+		panic!("this test can't run here: {what} (set BB_ALLOW_SKIPS=1 to skip it on a machine without it)");
+	}
+}
+
 #[test]
 fn the_installs_cursors_read() {
 	let dir = &cursors();
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		skip(&format!("{} not present", dir.display()));
 		return;
 	}
 	let read = |name: &str| parse_cursor(&std::fs::read(dir.join(format!("{name}.cur"))).expect("file")).expect(name);

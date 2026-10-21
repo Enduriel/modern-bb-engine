@@ -27,7 +27,7 @@ fn run(out: &mut KiraOut<MockBackend>, ms: u32) {
 fn a_game_sound_plays_through_kira_for_its_length() {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let files = GameFiles::open(harness::data_archives(dir).expect("archives")).expect("open");

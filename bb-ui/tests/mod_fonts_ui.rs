@@ -130,8 +130,7 @@ fn run_main() -> ExitCode {
 	let name = "a_mods_font_draws_chinese_on_the_real_ui";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if harness::data_archives(data_dir).map_or(true, |a| a.is_empty()) {
-		println!("test {name} ... skipped (no install at {})", data_dir.display());
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(name, format!("no install at {}", data_dir.display()));
 	}
 	match a_mods_font_draws_chinese_on_the_real_ui(data_dir) {
 		Ok(()) => {

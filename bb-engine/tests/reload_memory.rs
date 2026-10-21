@@ -153,7 +153,7 @@ fn load_from_menu(engine: &harness::GameEngine, name: &str) {
 fn reloading_a_campaign_does_not_grow_memory() {
 	let from = Path::new(harness::ORIGINAL_SAVES_DIR).join("new_campaign.sav");
 	if !Path::new(harness::STEAM_DATA_DIR).exists() || !from.exists() {
-		eprintln!("skipping: needs the Steam install and {}", from.display());
+		bb_engine::harness::skip(format!("needs the Steam install and {}", from.display()));
 		return;
 	}
 	// The fixture, where the engine may write.

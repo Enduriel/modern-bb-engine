@@ -23,7 +23,7 @@ fn atlases_draw_right_side_up_and_blend() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -77,7 +77,7 @@ fn onto_transparency_alpha_is_kept_and_colour_premultiplied() {
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};

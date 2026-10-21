@@ -69,7 +69,7 @@ fn view() -> WorldView {
 #[test]
 fn chinese_names_are_shaped_one_glyph_a_character_and_latin_keeps_the_bitmap_font() {
 	let Some(files) = files() else {
-		eprintln!("skipping: no install");
+		bb_engine::harness::skip("no install");
 		return;
 	};
 	let bitmap = |name: &str| BitmapFont::parse(&files.read(&format!("gfx/fonts/{name}.fnt")).expect("the bitmap font")).expect("parse");
@@ -102,13 +102,13 @@ fn chinese_names_are_shaped_one_glyph_a_character_and_latin_keeps_the_bitmap_fon
 #[test]
 fn a_registered_font_draws_a_chinese_label_on_screen() {
 	let Some(files) = files() else {
-		eprintln!("skipping: no install");
+		bb_engine::harness::skip("no install");
 		return;
 	};
 	let gpu = match Gpu::headless() {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			eprintln!("skipping: {e}");
+			bb_engine::harness::skip(&e);
 			return;
 		}
 	};
@@ -140,7 +140,7 @@ fn a_registered_font_draws_a_chinese_label_on_screen() {
 fn a_mod_registers_its_font_through_modern_engine() {
 	let dir = Path::new(STEAM_DATA_DIR);
 	let Some(mut archives) = harness::data_archives(dir).ok().filter(|a| !a.is_empty()) else {
-		eprintln!("skipping: no install");
+		bb_engine::harness::skip("no install");
 		return;
 	};
 	archives.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mod_han_font_test.zip"));

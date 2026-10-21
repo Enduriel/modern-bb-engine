@@ -62,7 +62,7 @@ fn listed(engine: &harness::GameEngine) -> String {
 #[test]
 fn a_campaign_saved_to_disk_loads_in_a_new_game() {
 	if !Path::new(harness::STEAM_DATA_DIR).exists() {
-		eprintln!("skipping: no Steam install");
+		bb_engine::harness::skip("no Steam install");
 		return;
 	}
 	let folder = Folder(std::env::temp_dir().join(format!("bb-saves-on-disk-{}", std::process::id())));

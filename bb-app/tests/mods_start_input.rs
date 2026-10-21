@@ -167,8 +167,7 @@ fn main() -> ExitCode {
 fn run_main() -> ExitCode {
 	let data = Path::new(STEAM_DATA_DIR);
 	if !data.exists() {
-		println!("test {NAME} ... skipped ({STEAM_DATA_DIR} not present)");
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(NAME, format!("{STEAM_DATA_DIR} not present"));
 	}
 	let mods = harness::mod_archives(data).unwrap_or_default();
 	let missing: Vec<&str> = MODS
@@ -177,14 +176,12 @@ fn run_main() -> ExitCode {
 		.filter(|m| !mods.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(m))))
 		.collect();
 	if !missing.is_empty() {
-		println!("test {NAME} ... skipped (mods not installed: {missing:?})");
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(NAME, format!("mods not installed: {missing:?}"));
 	}
 	let gpu = match Gpu::headless_with(bb_app::front::GPU_FEATURES) {
 		Ok(gpu) => gpu,
 		Err(e) => {
-			println!("test {NAME} ... skipped (no GPU: {e})");
-			return ExitCode::SUCCESS;
+			return bb_engine::harness::skip_case(NAME, format!("no GPU: {e}"));
 		}
 	};
 	match check(&gpu) {

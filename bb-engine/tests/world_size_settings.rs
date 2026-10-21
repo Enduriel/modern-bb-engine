@@ -21,7 +21,7 @@ const LOADED: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in :
 fn installed() -> bool {
 	let there = Path::new(harness::STEAM_DATA_DIR).exists();
 	if !there {
-		eprintln!("skipping: {} not present", harness::STEAM_DATA_DIR);
+		bb_engine::harness::skip(format!("{} not present", harness::STEAM_DATA_DIR));
 	}
 	there
 }
@@ -100,7 +100,7 @@ fn a_mod_sets_the_size_as_it_loads() {
 		.into_iter()
 		.find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks")))
 	else {
-		eprintln!("skipping: Modern Hooks not installed");
+		bb_engine::harness::skip("Modern Hooks not installed");
 		return;
 	};
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("world_size_settings");

@@ -437,13 +437,9 @@ fn run_main() -> ExitCode {
 	];
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if !data_dir.exists() {
-		for (name, _) in checks {
-			println!(
-				"test {name} ... skipped ({} not present)",
-				data_dir.display()
-			);
-		}
-		return ExitCode::SUCCESS;
+		let why = format!("{} not present", data_dir.display());
+		let codes: Vec<ExitCode> = checks.iter().map(|(name, _)| bb_engine::harness::skip_case(name, &why)).collect();
+		return codes.into_iter().find(|c| *c != ExitCode::SUCCESS).unwrap_or(ExitCode::SUCCESS);
 	}
 	let session = match start(data_dir) {
 		Ok(session) => session,

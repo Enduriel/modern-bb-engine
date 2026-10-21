@@ -19,7 +19,7 @@ const SAMPLE: &str = r#"(function() {
 fn the_players_party_moves_smoothly_along_a_path() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

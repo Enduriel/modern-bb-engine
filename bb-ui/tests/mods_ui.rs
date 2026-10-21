@@ -240,8 +240,7 @@ fn run_main() -> ExitCode {
 		mods.iter().any(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks")))
 	});
 	if !has_mh {
-		println!("test {name} ... skipped (no install with Modern Hooks at {})", data_dir.display());
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(name, format!("no install with Modern Hooks at {}", data_dir.display()));
 	}
 	match mods_js_runs_on_the_real_ui(data_dir) {
 		Ok(()) => {

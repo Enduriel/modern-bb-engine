@@ -1239,8 +1239,7 @@ fn run_main() -> ExitCode {
 	let name = "a_long_play_session";
 	let data_dir = Path::new(STEAM_DATA_DIR);
 	if !data_dir.exists() {
-		println!("test {name} ... skipped ({} not present)", data_dir.display());
-		return ExitCode::SUCCESS;
+		return bb_engine::harness::skip_case(name, format!("{} not present", data_dir.display()));
 	}
 	match run(data_dir) {
 		Ok(()) => {

@@ -96,7 +96,7 @@ const STASH: [&str; 4] = [
 fn new_campaign_is_seed_exact_with_the_original() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 

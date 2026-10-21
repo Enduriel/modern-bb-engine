@@ -13,7 +13,7 @@ use bb_engine::harness::STEAM_DATA_DIR as DATA_DIR;
 #[test]
 fn array_literal_floats_and_derived_costs_load_correctly() {
 	if !std::path::Path::new(DATA_DIR).exists() {
-		eprintln!("skipping: {DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{DATA_DIR} not present"));
 		return;
 	}
 	let mut dats: Vec<PathBuf> = std::fs::read_dir(DATA_DIR)

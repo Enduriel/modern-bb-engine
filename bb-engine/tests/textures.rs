@@ -15,7 +15,7 @@ use bb_engine::harness::{self, STEAM_DATA_DIR};
 fn install() -> Option<Vec<std::path::PathBuf>> {
 	let dir = Path::new(STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {STEAM_DATA_DIR} not present");
+		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return None;
 	}
 	Some(harness::data_archives(dir).expect("list archives"))

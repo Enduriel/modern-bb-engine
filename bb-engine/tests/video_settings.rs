@@ -18,7 +18,7 @@ fn eval_f64(engine: &GameEngine, expr: &str) -> f64 {
 fn the_scripts_video_mode_is_the_games() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		eprintln!("skipping: {} not present", dir.display());
+		bb_engine::harness::skip(format!("{} not present", dir.display()));
 		return;
 	}
 	let engine = harness::open_install(dir).expect("open install");

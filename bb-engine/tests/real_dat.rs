@@ -11,7 +11,7 @@ fn data_001() -> std::path::PathBuf {
 #[test]
 fn reads_a_real_cnut_and_confirms_the_bytecode_header() {
 	if !data_001().exists() {
-		eprintln!("skipping: {} not present", data_001().display());
+		bb_engine::harness::skip(format!("{} not present", data_001().display()));
 		return;
 	}
 

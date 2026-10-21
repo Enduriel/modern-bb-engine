@@ -65,7 +65,7 @@ const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 fn saves_dir(test: &str) -> Option<std::path::PathBuf> {
 	let from = Path::new(harness::ORIGINAL_SAVES_DIR);
 	if !Path::new(harness::STEAM_DATA_DIR).exists() || !from.join("new_campaign.sav").exists() {
-		eprintln!("skipping: needs the Steam install and {}", from.display());
+		bb_engine::harness::skip(format!("needs the Steam install and {}", from.display()));
 		return None;
 	}
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(test);
