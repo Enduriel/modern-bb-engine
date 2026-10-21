@@ -18,16 +18,22 @@ lanes:
 - ui: the browser host's test binaries (paced in real time, mostly idle), `--ui` (3) at
   a time, longest first;
 - window: bb-app's window.rs in a headless gamescope, the plain build's and then the ui
-  build's. The runner queues for the game display at once (so the wait overlaps the
-  cpu lane) and hands its turn to both (`BB_GAME_QUEUE_TURN`): one wait, not one per
-  binary. It keeps the display until both are done, idle if the ui build's has to wait
-  for the cpu lane.
+  build's. Each queues for the game display as soon as it could otherwise start (the
+  plain one's wait overlaps the cpu lane), hands its turn to the binary
+  (`BB_GAME_QUEUE_TURN`: its runs wait once, not once each) and gives it up when the
+  binary ends. A turn that hasn't come in an hour fails the binary, naming the holder.
 
-The ui lane and the ui build's window.rs (its frame-rate test is load-sensitive) start
-once the cpu lane is done. Not alongside it: the scope's CPU quota throttles every process in it once the
-cpu lane uses it up, and their real-time checks then fail (seen: a page collecting
-garbage early, CEF's shutdown trapping). window.rs runs the bb of its own build
-(`BB_TEST_BIN`): the second build replaces the first's `target/…/bb`.
+The ui lane starts once the cpu lane is done, and the ui build's window.rs (its
+frame-rate test is load-sensitive) once the ui lane is too. Not alongside them: the scope's CPU quota throttles every
+process in it once the cpu lane uses it up, and their real-time checks then fail (seen:
+a page collecting garbage early, CEF's shutdown trapping). window.rs runs the bb of its
+own build (`BB_TEST_BIN`): the second build replaces the first's `target/…/bb`.
+
+The ui build is workspace-wide, so our crates get the same features as under the old
+`-p bb-ui --features cef` and `-p bb-app --features ui` suites (compared with
+`--unit-graph`); only third-party crates' features unify more widely. What it doesn't
+show is that bb-ui and bb-app build on their own: `cargo check -p bb-ui --features cef
+--tests` (and bb-app's) does.
 
 Each binary's output goes to its own log in `--logs`; a summary follows, and the exit
 status is nonzero if any binary failed. Wall times are kept in the target folder and
@@ -82,6 +88,8 @@ def build(profile_args, features):
 			shutil.copy2(bb, kept)
 		elif msg.get("reason") == "build-script-executed":
 			scripts[msg["package_id"]] = msg
+	if kept is None:
+		sys.exit(f"no bb binary among the build's artifacts, for window.rs: {' '.join(cmd)}")
 	return tests, scripts, str(kept)
 
 
@@ -127,11 +135,17 @@ def package_name_version(artifact):
 
 
 QUEUE = Path("/tmp/bb-probe-queue")
+# The lanes the ui build's window.rs waits out: its frame-rate test is load-sensitive.
+WINDOW_UI_AFTER = {"cpu", "ui"}
 
 
 class Turn:
-	"""A place in the game queue (bb-engine's game_queue, the probe runner's), held for the
-	window lane: its binaries take it over (`BB_GAME_QUEUE_TURN`), so they wait once."""
+	"""A place in the game queue (bb-engine's game_queue, the probe runner's), taken for one
+	window.rs binary as soon as it could otherwise start and given up when it ends: the
+	binary takes it over (`BB_GAME_QUEUE_TURN`), so its runs wait once, not once each."""
+
+	# As long as window.rs itself waits for a turn (game_queue's `max_wait`).
+	MAX_WAIT = 3600
 
 	def __init__(self):
 		QUEUE.mkdir(exist_ok=True)
@@ -142,58 +156,95 @@ class Turn:
 		self.queued = time.monotonic()
 
 	def ready(self):
-		"""First in line? (looked at twice a second at most)"""
+		"""First in line? (looked at twice a second at most) Raises TimeoutError, naming
+		the holder, once it has waited `MAX_WAIT` seconds."""
 		if not self.held and time.monotonic() - self.checked >= 0.5:
 			self.checked = time.monotonic()
 			live = []
 			for ticket in sorted(QUEUE.iterdir()):
-				try:
-					pid = int(ticket.name.split("-")[1])
-				except (IndexError, ValueError):
+				pid = ticket_pid(ticket)
+				if pid is None:
 					continue
 				if Path(f"/proc/{pid}").exists():
 					live.append(ticket)
 				else:
 					ticket.unlink(missing_ok=True)
 			self.held = bool(live) and live[0] == self.path
+			waited = time.monotonic() - self.queued
 			if self.held:
-				print(f"game queue: the display is ours after {time.monotonic() - self.queued:.0f} s", flush=True)
+				print(f"game queue: the display is ours after {waited:.0f} s", flush=True)
+			elif waited >= self.MAX_WAIT:
+				holder = live[0] if live else None
+				raise TimeoutError(f"the game display stayed busy for {waited:.0f} s ({QUEUE}); "
+					f"held by {describe_holder(holder) if holder else 'nobody (our ticket is gone)'}")
 		return self.held
 
 	def give_up(self):
 		self.path.unlink(missing_ok=True)
 
 
-def run_lanes(waiting, running, finished, limits, logs, turn, run_began):
-	"""Start the waiting jobs as their lanes allow (the ui lane and the ui build's window.rs
-	once the cpu lane is done, window.rs once the game queue's turn is ours), until all
-	have finished."""
+def ticket_pid(ticket):
+	"""The pid in a ticket's name (`<nanoseconds>-<pid>`), or None."""
+	try:
+		return int(ticket.name.split("-")[1])
+	except (IndexError, ValueError):
+		return None
+
+
+def describe_holder(ticket):
+	"""The process holding the ticket: its pid and command line."""
+	pid = ticket_pid(ticket)
+	try:
+		cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+	except OSError:
+		cmdline = "(gone)"
+	return f"pid {pid}: {cmdline or '(no command line)'} [{ticket.name}]"
+
+
+def run_lanes(waiting, running, finished, limits, logs, run_began):
+	"""Start the waiting jobs as their lanes allow (a job waits until the lanes in its
+	`after` are done, and window.rs for its turn in the game queue), until all have
+	finished."""
+
+	def done(job, rc):
+		job.rc, job.wall = rc, time.monotonic() - job.start
+		job.log.close()
+		if job.turn:
+			job.turn.give_up()
+		finished.append(job)
+		status = "ok" if job.rc == 0 else f"FAILED ({job.rc})"
+		print(f"{time.monotonic() - run_began:7.1f}  {job.label}: {status} in {job.wall:.1f} s", flush=True)
+
 	while waiting or running:
 		for job in list(running):
 			if job.proc.poll() is not None:
-				job.rc, job.wall = job.proc.returncode, time.monotonic() - job.start
-				job.log.close()
 				running.remove(job)
-				finished.append(job)
-				status = "ok" if job.rc == 0 else f"FAILED ({job.rc})"
-				print(f"{time.monotonic() - run_began:7.1f}  {job.label}: {status} in {job.wall:.1f} s", flush=True)
-		cpu_left = any(j.lane == "cpu" for j in waiting + running)
+				done(job, job.proc.returncode)
+		lanes_left = {j.lane for j in waiting + running}
 		for job in list(waiting):
 			if sum(1 for r in running if r.lane == job.lane) >= limits[job.lane]:
 				continue
-			if job.after_cpu and cpu_left:
+			if job.after & lanes_left:
 				continue
 			if job.lane == "window":
-				if not turn.ready():
+				job.turn = job.turn or Turn()
+				try:
+					ready = job.turn.ready()
+				except TimeoutError as e:
+					job.log = open(logs / log_name(job), "w")
+					print(f"game queue: {e}", file=job.log, flush=True)
+					job.start = job.turn.queued
+					waiting.remove(job)
+					done(job, "no turn")
 					continue
-				job.env["BB_GAME_QUEUE_TURN"] = str(turn.path)
+				if not ready:
+					continue
+				job.env["BB_GAME_QUEUE_TURN"] = str(job.turn.path)
 			job.log = open(logs / log_name(job), "w")
 			job.start = time.monotonic()
 			job.proc = subprocess.Popen(job.cmd, cwd=job.cwd, env=job.env, stdout=job.log, stderr=subprocess.STDOUT)
 			waiting.remove(job)
 			running.append(job)
-		if turn and not any(j.lane == "window" for j in waiting + running):
-			turn.give_up()
 		time.sleep(0.1)
 
 
@@ -207,10 +258,10 @@ def log_name(job):
 
 
 class Job:
-	def __init__(self, label, lane, cmd, cwd, env, est, after_cpu):
+	def __init__(self, label, lane, cmd, cwd, env, est, after=()):
 		self.label, self.lane, self.cmd, self.cwd, self.env = label, lane, cmd, cwd, env
-		self.est, self.after_cpu = est, after_cpu
-		self.proc = self.log = None
+		self.est, self.after = est, set(after)
+		self.proc = self.log = self.turn = None
 		self.start = self.wall = None
 		self.rc = None
 
@@ -265,14 +316,14 @@ def main():
 			est = times.get(label, times.get(target, 0))
 			if target == "window":
 				env["BB_TEST_BIN"] = bb
-				jobs.append(Job(label, "window", [path], cwd, env, est, after_cpu=bool(variant)))
+				jobs.append(Job(label, "window", [path], cwd, env, est, after=WINDOW_UI_AFTER if variant else ()))
 			elif variant and kind == "test":
-				jobs.append(Job(label, "ui", [path], cwd, env, est, after_cpu=True))
+				jobs.append(Job(label, "ui", [path], cwd, env, est, after={"cpu"}))
 			else:
-				jobs.append(Job(label, "cpu", [path], cwd, env, est, after_cpu=False))
+				jobs.append(Job(label, "cpu", [path], cwd, env, est))
 	if args.only is None:
 		doc = ["cargo", "test", "--workspace", *profile_args, "--doc"]
-		jobs.append(Job("doctests", "cpu", doc, WORKSPACE, dict(os.environ), times.get("doctests", 30), after_cpu=False))
+		jobs.append(Job("doctests", "cpu", doc, WORKSPACE, dict(os.environ), times.get("doctests", 30)))
 
 	limits = {"cpu": args.cpu, "ui": args.ui, "window": 1}
 	waiting = sorted(jobs, key=lambda j: -j.est)
@@ -280,12 +331,12 @@ def main():
 	finished = []
 	print(f"built in {built:.0f} s; running {len(jobs)} binaries (logs in {logs})", flush=True)
 	run_began = time.monotonic()
-	turn = Turn() if any(j.lane == "window" for j in jobs) else None
 	try:
-		run_lanes(waiting, running, finished, limits, logs, turn, run_began)
+		run_lanes(waiting, running, finished, limits, logs, run_began)
 	finally:
-		if turn:
-			turn.give_up()
+		for job in jobs:
+			if job.turn:
+				job.turn.give_up()
 	total = time.monotonic() - began
 
 	try:
