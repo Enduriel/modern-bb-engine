@@ -37,6 +37,19 @@
 //! second on a 180 Hz display. Where the system reports the monitor's refresh, the pace
 //! is never faster than that.
 //!
+//! **A stale measure is noticed and taken again.** Paced by a clock slower than the
+//! display (the refresh measured too long), a run of presented frames is never held back
+//! by the display, so no interval the display set is measured again: the measure could
+//! only grow, from frames late from their own work. A heavy battle's 25 ms frames, slow
+//! boot frames, or a measure taken on a 60 Hz monitor before the window moved to a
+//! 180 Hz one then kept the game at 40 or 60 steps a second for good. With a measure
+//! right (or a little long, by less than [`LEAD`]'s share), the clock gains on the
+//! display and it holds a run of presented frames back within about `2 * LEAD` frames
+//! (the two frames in flight); so a run of [`STALE`] presented frames that the display
+//! never held back, while it could have, shows the measure is too long, and it is
+//! forgotten and taken again (frames presented at once until it is). A change in the
+//! monitor's reported refresh, or a new video mode, takes it again too.
+//!
 //! With VSync off (presents don't wait for the display), the frame cap's interval is the
 //! clock's (144 by default), or with no cap the display's refresh for undrawn frames and
 //! none for presented ones (as fast as they're made).
@@ -66,6 +79,11 @@ const LEAD: u32 = 32;
 /// wasn't started by the clock (the timer's wake-up is late by far less) but by the
 /// display or its own late work.
 const LATE: u32 = 8;
+/// How many presented frames in a row, each started by the clock and none held back by
+/// the display while it could hold them, show the measured refresh is too long: with it
+/// right, the clock gains a refresh on the display every [`LEAD`] frames, and with two
+/// frames in flight the display holds them back within about twice that.
+const STALE: u32 = 4 * LEAD;
 
 /// The last frame on the frame clock.
 #[derive(Clone, Copy)]
@@ -86,6 +104,12 @@ pub struct Pacer {
 	last_presented: Option<Instant>,
 	/// The frames presented one after another so far, the last included.
 	run: u32,
+	/// The presented frames in a row that the clock started, the display holding none
+	/// of them back while it could (see [`STALE`]).
+	unheld: u32,
+	/// How many times the refresh was measured again.
+	#[cfg(test)]
+	remeasured: u32,
 	intervals: VecDeque<Duration>,
 }
 
@@ -97,14 +121,20 @@ impl Pacer {
 			last: None,
 			last_presented: None,
 			run: 0,
+			unheld: 0,
+			#[cfg(test)]
+			remeasured: 0,
 			intervals: VecDeque::with_capacity(KEPT),
 		}
 	}
 
 	/// The monitor's refresh as the system reports it now (the window may have moved
-	/// to another).
+	/// to another): if it changed, the display's refresh is measured again.
 	pub fn set_reported(&mut self, reported: Option<Duration>) {
-		self.reported = reported;
+		if reported != self.reported {
+			self.reported = reported;
+			self.remeasure();
+		}
 	}
 
 	/// Presenting now waits for the display, or not (VSync turned on or off): what was
@@ -112,9 +142,20 @@ impl Pacer {
 	pub fn set_display_paced(&mut self, display_paced: bool) {
 		if display_paced != self.display_paced {
 			self.display_paced = display_paced;
-			self.intervals.clear();
-			self.run = 0;
-			self.last_presented = None;
+			self.remeasure();
+		}
+	}
+
+	/// Forget the display's measured refresh and measure it again (a new video mode, the
+	/// window on another monitor, or a measure shown to be stale).
+	pub fn remeasure(&mut self) {
+		self.intervals.clear();
+		self.run = 0;
+		self.unheld = 0;
+		self.last_presented = None;
+		#[cfg(test)]
+		{
+			self.remeasured += 1;
 		}
 	}
 
@@ -155,12 +196,22 @@ impl Pacer {
 		self.last = Some(Slot { at: slot, presented });
 		if !presented {
 			self.run = 0;
+			self.unheld = 0;
 			return;
 		}
 		self.run = match self.last_presented {
 			Some(_) if self.run > 0 => self.run + 1,
 			_ => 1,
 		};
+		// A run of presented frames the display could hold back but never did: the
+		// clock is slower than the display, the measure too long.
+		if self.run > 1 && !self.measuring() && self.display_holds(cap) {
+			self.unheld = if clocked { self.unheld + 1 } else { 0 };
+			if self.unheld >= STALE {
+				self.remeasure();
+				return;
+			}
+		}
 		// An interval the clock set says nothing of the display.
 		if let (Some(last), true) = (self.last_presented, self.run > SETTLING && !clocked) {
 			if self.intervals.len() == KEPT {

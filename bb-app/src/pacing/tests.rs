@@ -263,3 +263,100 @@ fn with_vsync_off_the_game_steps_at_the_cap() {
 		assert!((rate - 144.0).abs() < 0.1, "{rate:.2} frames a second");
 	}
 }
+
+/// Frames presented `every` apart from `from`, `n` of them, none held back by the
+/// window: frames late from their own work (a heavy battle, slow boot frames).
+fn slow_frames(pacer: &mut Pacer, from: Instant, every: Duration, n: u32) -> Instant {
+	let mut t = from;
+	for _ in 0..n {
+		pacer.frame(t, true, false, None);
+		t += every;
+	}
+	t
+}
+
+/// The steps a second, a long while after `secs` of busy frames (each one presented) on a
+/// 180 Hz display that starts at `from`.
+fn busy_rate_at_180(pacer: &mut Pacer, from: Instant, secs: f64) -> f64 {
+	let mut display = Display { refresh: HZ_180, start: from + HZ_180 / 3, shown: Vec::new() };
+	rate(&frames(pacer, &mut display, secs, |_| true))
+}
+
+/// A heavy stretch (a big battle on a slow machine, 25 ms a frame) set the measured
+/// refresh, and the clock, slower than the display then held back no frame, so nothing
+/// shorter was measured again: light frames afterwards stepped ~41 times a second on a
+/// 180 Hz display, for good.
+#[test]
+fn a_heavy_stretch_doesnt_slow_the_game_for_good() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(None, true);
+	assert!((busy_rate_at_180(&mut pacer, start, 1.0) - 180.0).abs() < 2.0);
+	let t = slow_frames(&mut pacer, start + Duration::from_secs(1), Duration::from_millis(25), 40);
+	assert!(pacer.interval(None) > Duration::from_millis(20), "the heavy frames' pace, while they last");
+	let rate = busy_rate_at_180(&mut pacer, t, 4.0);
+	assert!((rate - 180.0).abs() < 2.0, "after a heavy stretch: {rate:.1} steps a second, interval {:?}", pacer.interval(None));
+}
+
+/// Slow boot frames as the first measure.
+#[test]
+fn slow_first_frames_dont_set_the_pace_for_good() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(None, true);
+	let t = slow_frames(&mut pacer, start, Duration::from_millis(25), 10);
+	assert!(!pacer.measuring());
+	let rate = busy_rate_at_180(&mut pacer, t, 4.0);
+	assert!((rate - 180.0).abs() < 2.0, "after slow boot frames: {rate:.1} steps a second, interval {:?}", pacer.interval(None));
+}
+
+/// Measured on a 60 Hz monitor, then the window moves to a 180 Hz one (or the mode
+/// changes): whether the system reports the new refresh or not.
+#[test]
+fn a_faster_display_after_measuring_is_followed() {
+	for reports in [true, false] {
+		let start = Instant::now();
+		let mut pacer = Pacer::new(reports.then_some(HZ_60), true);
+		let mut display = Display { refresh: HZ_60, start: start + HZ_60 / 3, shown: Vec::new() };
+		let _ = frames(&mut pacer, &mut display, 2.0, |_| true);
+		assert_eq!(pacer.interval(None), HZ_60);
+		if reports {
+			pacer.set_reported(Some(HZ_180));
+		}
+		let rate = busy_rate_at_180(&mut pacer, start + Duration::from_secs(2), 4.0);
+		assert!((rate - 180.0).abs() < 2.0, "reported {reports}: {rate:.1} steps a second, interval {:?}", pacer.interval(None));
+	}
+}
+
+/// With the measure right, the display holds a run of presented frames back well before
+/// [`STALE`] of them: the measure is never taken again for nothing (each time costs a few
+/// frames presented at once), whichever frames are presented, nor with a frame cap the
+/// display can't hold back (144 a second on a 180 Hz display).
+#[test]
+fn a_right_measure_is_kept() {
+	type Pattern = fn(usize) -> bool;
+	let patterns: [(&str, Pattern); 4] =
+		[("all", |_| true), ("every other", |i| i % 2 == 0), ("runs of 200", |i| i % 300 < 200), ("none", |_| false)];
+	for refresh in [HZ_180, HZ_60] {
+		for (name, presented) in patterns {
+			let start = Instant::now();
+			let mut pacer = Pacer::new(None, true);
+			let mut display = Display { refresh, start: start + refresh / 3, shown: Vec::new() };
+			let _ = frames(&mut pacer, &mut display, 6.0, presented);
+			assert_eq!(pacer.remeasured, 0, "{name} at {refresh:?}");
+			assert_eq!(pacer.interval(None), refresh, "{name} at {refresh:?}");
+		}
+	}
+	// A cap longer than the refresh paces presented frames; the display holds none back.
+	let cap = Some(Duration::from_secs_f64(1.0 / 144.0));
+	let start = Instant::now();
+	let mut pacer = Pacer::new(None, true);
+	let mut display = Display { refresh: HZ_180, start: start + HZ_180 / 3, shown: Vec::new() };
+	let _ = frames(&mut pacer, &mut display, 0.5, |_| true);
+	let mut t = start + Duration::from_secs(1);
+	for _ in 0..1000 {
+		let due = pacer.due(cap).unwrap();
+		t = due.max(t);
+		pacer.frame(t, true, true, cap);
+		t += Duration::from_micros(500);
+	}
+	assert_eq!(pacer.remeasured, 0, "with a 144 cap");
+}

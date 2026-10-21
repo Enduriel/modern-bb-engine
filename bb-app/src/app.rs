@@ -483,6 +483,8 @@ impl Running {
 			if let Some(size) = window_mode::apply(&self.window, placement, &monitor, screen) {
 				self.resize(size);
 			}
+			// Another mode may refresh at another rate.
+			self.pacer.remeasure();
 		}
 		let present_mode = display::present_mode(mode.vsync, &self.present_modes);
 		if present_mode != self.config.present_mode {
