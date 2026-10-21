@@ -60,8 +60,30 @@ full-screen UI animations at the display's rate, but the GPU path is required.
 
 ## Windows
 
-Not available yet. The UI page has no GPU path on Windows (D3D11 shared
-handles still to be written). The game refuses to start there with a message saying so.
+**Required:**
+
+- **Windows 10 or 11** (64-bit). [driver docs] Chromium dropped Windows 7 and 8 with
+  version 110, and the game's CEF 154 is newer. The UI page's import also uses
+  `CompareObjectHandles` (Windows 10 1607).
+- A GPU with a **Direct3D 12** driver. The game draws through Direct3D 12 on Windows
+  (wgpu); Chromium draws the UI with Direct3D 11 and hands each frame over as a shared
+  texture, which the game opens on its Direct3D 12 device. `WGPU_BACKEND` naming
+  another API makes the game refuse to start (the UI can't reach it).
+
+**Which GPUs that means** [driver docs; nothing run on real Windows yet]:
+
+| vendor | oldest generation | source |
+|---|---|---|
+| AMD | GCN 1.0 (Radeon HD 7000, 2012) | AMD's Direct3D 12 drivers start at GCN |
+| Intel | Haswell (4th gen Core, 2013) | Intel's Direct3D 12 drivers start at Haswell |
+| NVIDIA | Kepler (GeForce GTX 600/700, 2012) | NVIDIA's Direct3D 12 drivers start at Kepler (Fermi's never shipped) |
+
+**Not enough:** software renderers (WARP, "Microsoft Basic Render Driver"), and virtual
+machines without a GPU passed through (they have only WARP).
+
+[measured] 2026-10-21, not on Windows: the cross-built `bb.exe` under Proton
+Experimental (DXVK for Direct3D 11, vkd3d-proton for Direct3D 12) on the RX 9070 XT
+draws the main menu with its UI.
 
 ## CPU and memory
 
@@ -108,6 +130,7 @@ The message names the first thing missing:
 - `no hardware GPU was found, only the software renderer …`
 - `the GPU has no usable Vulkan driver (… runs through Gl only)`
 - `the GPU's Vulkan driver (…) can't import DMA-BUF buffers (VK_EXT_external_memory_dma_buf), which the UI needs`
+- `the GPU has no usable Direct3D 12 driver (… runs through …)` (Windows)
 - `no GPU render node (/dev/dri/renderD*) is visible to the game, …`
 - `no GPU could draw to the game's window (…)`
 - `the browser engine for the UI couldn't start (…)`

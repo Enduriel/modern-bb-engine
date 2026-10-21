@@ -72,10 +72,26 @@ German and recording every shared object its processes mapped:
 
 - **Linux x86_64:** built and run.
 - **Linux aarch64:** a pinned library exists; not built.
-- **Windows x86_64:** laid out from every DLL and resource at the top of CEF's folder
-  (`bb.exe` beside them), but not yet packaged. `bb.exe` without the UI is
-  cross-built on Linux for `x86_64-pc-windows-gnullvm` (`scripts/windows_cross.py`) and
-  runs under Proton; the UI build doesn't link yet (cef-dll-sys builds only for msvc).
+- **Windows x86_64 (`x86_64-pc-windows-msvc`):** cross-built and packaged on Linux
+  (2026-10-21) with cargo-xwin, which supplies Microsoft's CRT and SDK, clang-cl and
+  lld-link. The runner sets that environment up:
+
+  ```bash
+  modern_bb_engine/scripts/windows_cross.py --no-ui --package
+  ```
+
+  or by hand, with `cargo xwin env --target x86_64-pc-windows-msvc` evaluated in the
+  shell, `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS` extended by
+  `-C target-feature=+crt-static`, and then `cargo run --release -p bb-package --
+  --target x86_64-pc-windows-msvc`. `CEF_PATH` names where CEF's distributions are
+  (the runner: `<target>/windows-msvc/cef`); bb-package looks there, as the build does.
+  The package: `bb.exe` (19 MB, static C runtime: no Visual C++ runtime needed) beside
+  every DLL and resource at the top of CEF's folder, `steam_api64.dll`, the English
+  locale; 378.7 MiB, 170.7 MiB as `.zip` (made with `zip` on Linux). The packaged
+  `bb.exe` draws the main menu with its UI under Proton; not yet run on real Windows.
+  Not yet trimmed as Linux's is: `vk_swiftshader.dll`, `vulkan-1.dll` and their ICD file
+  are probably unneeded (the game draws through Direct3D 12 and refuses software GPUs),
+  to confirm on Windows before leaving them out.
 - **macOS arm64:** built on an M4 (2026-10-20): an app bundle, below. Its executable
   runs the game windowed; launching it through Finder is still to be checked.
 
