@@ -85,9 +85,8 @@
 	// shaky click on any of vanilla's image buttons (end turn, the top bar's) was lost.
 	// The game's UI drags with mouse events only (jquery.event.drag, which keeps the
 	// native drag off its own items), and neither vanilla nor the mods surveyed use
-	// HTML5 drag and drop, which Coherent's offscreen views have no system drag for.
-	// Unprobed in the original (a probe can't press its mouse); the press moves on as
-	// mouse events, as in the game's own drags.
+	// HTML5 drag and drop. In the original no `dragstart` ever fires, and a press moved
+	// 32 px over an image is still its click (probed with real mouse input, 2026-10-21).
 	window.addEventListener('dragstart', function (e) {
 		e.preventDefault();
 	}, true);
