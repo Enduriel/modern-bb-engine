@@ -34,6 +34,8 @@ struct Step {
 	shot: Option<String>,
 	until: Option<String>,
 	click: Option<String>,
+	/// Its `until` is polled without pacing frames to the clock (`unpaced = true`).
+	unpaced: bool,
 }
 
 /// The script's `::probeSteps`.
@@ -42,8 +44,11 @@ fn steps(game: &Game) -> Result<Vec<Step>, String> {
 	engine.run_script(
 		r#"::__steps <- "";
 		foreach (s in ::probeSteps)
+		{
 			foreach (k in ["scene", "shot", "until", "click"])
-				::__steps += (s[k] == null ? "" : s[k]) + (k == "click" ? "\n" : "\t");"#,
+				::__steps += (s[k] == null ? "" : s[k]) + "\t";
+			::__steps += ("unpaced" in s && s.unpaced ? "1" : "") + "\n";
+		}"#,
 		"steps",
 	)?;
 	let text = SqTable::root(engine.vm()).get::<String>("__steps").ok_or("no steps")?;
@@ -57,6 +62,7 @@ fn steps(game: &Game) -> Result<Vec<Step>, String> {
 				shot: some(f[1]),
 				until: some(f[2]),
 				click: some(f[3]),
+				unpaced: f[4] == "1",
 			}
 		})
 		.collect())
@@ -72,14 +78,16 @@ fn scene(game: &Game, name: &str) -> Result<bool, String> {
 	Ok(SqTable::root(engine.vm()).get::<bool>("__scene") == Some(true))
 }
 
-/// Run `seconds` of frames at 60 a second, as the game loop does, drawing each.
-fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64) -> Result<(), String> {
+/// Run `seconds` of frames at 60 a second, as the game loop does, drawing each; `paced`,
+/// each takes at least a 60th of a second of the clock too (the page's animations run on
+/// it), else they come as fast as they're drawn.
+fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64, paced: bool) -> Result<(), String> {
 	let frame = Duration::from_micros(16_667);
 	for _ in 0..(seconds * 60.0) as u32 {
 		let start = Instant::now();
 		game.step(1000.0 / 60.0)?;
 		game.draw(gpu, target);
-		if let Some(rest) = frame.checked_sub(start.elapsed()) {
+		if let Some(rest) = frame.checked_sub(start.elapsed()).filter(|_| paced) {
 			game.front().session().host().idle(rest);
 		}
 	}
@@ -149,11 +157,11 @@ pub fn shoot_scenes(
 				if waited >= STEP.as_secs_f64() {
 					return Err(format!("{until} never came true in {waited} s of game time"));
 				}
-				play(&mut game, gpu, &target, 0.5)?;
+				play(&mut game, gpu, &target, 0.5, !step.unpaced)?;
 				waited += 0.5;
 			}
 		}
-		play(&mut game, gpu, &target, 3.0)?;
+		play(&mut game, gpu, &target, 3.0, true)?;
 		if let Some(name) = &step.shot {
 			shot(name, target.read(gpu)?)?;
 		}
@@ -161,7 +169,7 @@ pub fn shoot_scenes(
 			let session = game.front().session();
 			session.click_when_ready(label, STEP)?;
 			session.move_away()?;
-			play(&mut game, gpu, &target, 3.0)?;
+			play(&mut game, gpu, &target, 3.0, true)?;
 		}
 	}
 	Ok(())
