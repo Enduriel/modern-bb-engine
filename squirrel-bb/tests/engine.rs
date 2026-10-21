@@ -87,6 +87,22 @@ fn engine_accessors_and_run_script() {
 	assert!(engine.root_state().root().is_none(), "not booted yet");
 }
 
+/// `Tactical.loadResources` and `World.prepareRender` have nothing left to do in this
+/// engine (the hints already reach the on-demand loader; the renderer draws the water
+/// backdrop): plain no-ops, kept out of the stub telemetry, which lists only real gaps.
+#[test]
+fn finished_no_ops_are_not_counted_as_stubs() {
+	let engine = Engine::new(sources());
+	engine
+		.run_script("::Tactical.loadResources(); ::World.prepareRender(); ::World.prepareRender();", "no-ops")
+		.expect("the no-ops run");
+	let calls = engine.stub_calls();
+	assert!(
+		!calls.iter().any(|(name, _)| name == "Tactical.loadResources" || name == "World.prepareRender"),
+		"{calls:?}"
+	);
+}
+
 /// A fake Steam behind the engine's achievement and stat natives: the scripts' calls
 /// reach the service the host set, in the original's order (never the real Steam).
 #[test]

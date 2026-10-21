@@ -770,14 +770,19 @@ impl TacticalGrid {
 			})
 		};
 
+		// Tactical.loadResources(): the original's flush of the hints above. Each hint
+		// has already gone to the on-demand loader, so there is nothing left to do and no
+		// script can tell; a plain no-op, not a stub (it is not a gap).
+		let load_resources = vm.make_closure(|| {});
 		// Still stubs (see `stubs`).
-		let stubs: Vec<(&str, SqStrongRef)> = ["loadResources", "setAmbientColor"]
+		let stubs: Vec<(&str, SqStrongRef)> = ["setAmbientColor"]
 			.into_iter()
 			.map(|name| (name, crate::native::stubs::closure(vm, crate::native::stubs::name(format!("Tactical.{name}")))))
 			.collect();
 		let mut tactical = SqTable::root(vm)
 			.get::<SqTable>("Tactical")
 			.expect("Tactical table must be installed before TacticalGrid");
+		tactical.set("loadResources", load_resources);
 		tactical.set("resizeScene", resize);
 		tactical.set("clearScene", clear_scene);
 		tactical.set("getMapSize", get_map_size);
