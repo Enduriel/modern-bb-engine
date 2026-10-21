@@ -123,6 +123,11 @@ fn waiting_in_cycles(engine: &harness::GameEngine) -> usize {
 
 #[test]
 fn battles_between_loads_do_not_grow_memory() {
+	// As in `reload_memory`: an exact heap count on macOS needs the large cache off.
+	if !heap::exact() {
+		assert!(heap::rerun_exact("battles_between_loads_do_not_grow_memory"), "the test failed with an exact heap count");
+		return;
+	}
 	let from = Path::new(harness::ORIGINAL_SAVES_DIR).join("new_campaign.sav");
 	if !Path::new(harness::STEAM_DATA_DIR).exists() || !from.exists() {
 		bb_engine::harness::skip(format!("needs the Steam install and {}", from.display()));

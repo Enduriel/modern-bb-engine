@@ -9,7 +9,8 @@
 //! After a warm-up, each load leaves the heap where the last one did, the engine holds the
 //! same entities, thinkers, scheduled events and UI connections, and no cycle of script
 //! objects is left for the collector. The heap is the allocator's count of bytes in use
-//! ([`heap`]): exact, unlike the resident set, which is only a loose backstop here.
+//! ([`heap`]): exact (on macOS in a rerun with the large cache off, [`heap::exact`]),
+//! unlike the resident set, which is only a loose backstop here.
 //! One test in its own binary, so no other test allocates meanwhile. Skips without the
 //! Steam install or the original's saves.
 
@@ -151,6 +152,12 @@ fn load_from_menu(engine: &harness::GameEngine, name: &str) {
 
 #[test]
 fn reloading_a_campaign_does_not_grow_memory() {
+	// macOS counts a cached block's slack unless its large cache is off: the count would
+	// flip by a megabyte between loads.
+	if !heap::exact() {
+		assert!(heap::rerun_exact("reloading_a_campaign_does_not_grow_memory"), "the test failed with an exact heap count");
+		return;
+	}
 	let from = Path::new(harness::ORIGINAL_SAVES_DIR).join("new_campaign.sav");
 	if !Path::new(harness::STEAM_DATA_DIR).exists() || !from.exists() {
 		bb_engine::harness::skip(format!("needs the Steam install and {}", from.display()));
