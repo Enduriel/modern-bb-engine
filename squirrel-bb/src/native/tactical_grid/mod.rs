@@ -14,6 +14,7 @@ pub(crate) mod detail;
 pub(crate) mod faction_set;
 pub(crate) mod heads;
 mod heat;
+mod off_map;
 mod picking;
 mod camera_callbacks;
 mod orientation;
@@ -710,7 +711,7 @@ impl TacticalGrid {
 		let get_tile_square = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, x: i64, y: i64| -> Result<SqStrongRef, String> {
-				let id = g.borrow().idx(x, y).ok_or_else(|| format!("getTileSquare: ({x}, {y}) is off the map"))?;
+				let id = off_map::square_or_nearest(&g, vm, x, y)?;
 				tile_handle(&g, vm, id).ok_or_else(|| "getTileSquare: no tile class".to_string())
 			})
 		};
