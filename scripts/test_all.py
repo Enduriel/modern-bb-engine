@@ -46,12 +46,20 @@ SIGTERM, SIGHUP), the binaries still running are stopped with all they started
 session's run.
 
 Each binary's output goes to its own log in `--logs`; a summary follows, and the exit
-status is nonzero if any binary failed. Wall times are kept in the target folder and
+status is nonzero if any binary failed.
+
+Skips are reported, never hidden. A test that can't run on this machine (no Steam
+install, mod, GPU or gamescope) fails, unless `BB_ALLOW_SKIPS=1` lets it skip
+(`bb_engine::harness::skip`), printing `skipping: <why>`. libtest hides a passing test's
+output, so libtest binaries run with `--show-output`; the summary lists every
+`skipping:` line with its test, and the ignored tests with their reasons, and the run
+fails on a skip unless `BB_ALLOW_SKIPS=1` is set for it too. Wall times are kept in the target folder and
 order the next run's lanes longest first.
 """
 
 import argparse
 import json
+import tomllib
 import os
 import re
 import shutil
@@ -291,6 +299,42 @@ def leave(signum, _frame):
 	raise SystemExit(128 + signum)
 
 
+# A skip (`bb_engine::harness::skip`): `skipping: <why>`, on a line of its own or after a
+# harness=false binary's `test <name> ... `.
+SKIP = re.compile(r"^(?:test (\S+) \.\.\. )?skipping: (.*)$")
+# libtest's section of a passing test's output (`--show-output`).
+SECTION = re.compile(r"^---- (\S+) std(?:out|err) ----$")
+# window.rs's one retry of a gamescope that couldn't create its backend (unexplained).
+RETRY = re.compile(r"^gamescope couldn't create its backend; trying once more", re.M)
+IGNORED = re.compile(r"^test (.+?) \.\.\. ignored(?:, (.*))?$", re.M)
+
+
+def skips_in(text):
+	"""The skips a binary's output reports: (test name or '?', why)."""
+	found, test = [], "?"
+	for line in text.splitlines():
+		if m := SECTION.match(line):
+			test = m.group(1)
+		elif m := SKIP.match(line.strip()):
+			found.append((m.group(1) or test, m.group(2)))
+	return found
+
+
+def harness_false_tests(meta):
+	"""The (package, target) names of the test targets with `harness = false`: they take
+	no libtest flags."""
+	found = set()
+	for package in meta["packages"]:
+		try:
+			manifest = tomllib.loads(Path(package["manifest_path"]).read_text())
+		except (OSError, ValueError):
+			continue
+		for test in manifest.get("test", []):
+			if test.get("harness") is False:
+				found.add((package["name"], test["name"]))
+	return found
+
+
 RESULT = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
 # A harness=false binary's own lines (bb-ui's and bb-app's print libtest's per-test line).
 CASE = re.compile(r"^test \S+ \.\.\. (ok|FAILED|ignored)$", re.M)
@@ -340,6 +384,9 @@ def main():
 		check=True).stdout.strip()
 	sysroot_lib = str(Path(sysroot) / "lib")
 
+	no_libtest = harness_false_tests(meta)
+	allow_skips = os.environ.get("BB_ALLOW_SKIPS") == "1"
+
 	began = time.monotonic()
 	plain, plain_scripts, plain_bb = build(profile_args, None)
 	ui, ui_scripts, ui_bb = build(profile_args, UI_FEATURES)
@@ -362,13 +409,15 @@ def main():
 			env = run_env(artifact, scripts, sysroot_lib, target_dir)
 			cwd = Path(artifact["manifest_path"]).parent
 			est = times.get(label, times.get(target, 0))
+			# A passing test's output too, so its skips show (libtest hides it otherwise).
+			cmd = [path] if (name, target) in no_libtest else [path, "--show-output"]
 			if target == "window":
 				env["BB_TEST_BIN"] = bb
-				jobs.append(Job(label, "window", [path], cwd, env, est, after=WINDOW_UI_AFTER if variant else ()))
+				jobs.append(Job(label, "window", cmd, cwd, env, est, after=WINDOW_UI_AFTER if variant else ()))
 			elif variant and kind == "test":
-				jobs.append(Job(label, "ui", [path], cwd, env, est, after={"cpu"}))
+				jobs.append(Job(label, "ui", cmd, cwd, env, est, after={"cpu"}))
 			else:
-				jobs.append(Job(label, "cpu", [path], cwd, env, est))
+				jobs.append(Job(label, "cpu", cmd, cwd, env, est))
 	if args.only is None:
 		doc = ["cargo", "test", "--workspace", *profile_args, "--doc"]
 		jobs.append(Job("doctests", "cpu", doc, WORKSPACE, dict(os.environ), times.get("doctests", 30)))
@@ -403,8 +452,12 @@ def main():
 		pass
 	failed = [j for j in finished if j.rc != 0]
 	counts = [0, 0, 0]
+	skips, ignored, retries = [], [], []
 	for job in finished:
 		text = (logs / log_name(job)).read_text(errors="replace")
+		skips += [(job.label, test, why) for test, why in skips_in(text)]
+		retries += [job.label] * len(RETRY.findall(text))
+		ignored += [(job.label, m.group(1), m.group(2) or "no reason given") for m in IGNORED.finditer(text)]
 		results = list(RESULT.finditer(text))
 		for m in results:
 			for i in range(3):
@@ -413,12 +466,27 @@ def main():
 			for m in CASE.finditer(text):
 				counts[("ok", "FAILED", "ignored").index(m.group(1))] += 1
 	print(f"\n{len(finished) - len(failed)} of {len(finished)} binaries passed; tests: {counts[0]} passed, "
-		f"{counts[1]} failed, {counts[2]} ignored; build {built:.0f} s, tests {total - built:.0f} s, total {total:.0f} s")
+		f"{counts[1]} failed, {counts[2]} ignored, {len(skips)} skipped; build {built:.0f} s, "
+		f"tests {total - built:.0f} s, total {total:.0f} s")
+	if ignored:
+		print(f"\nignored ({len(ignored)}):")
+		for label, test, why in ignored:
+			print(f"  {label}: {test}: {why}")
+	if skips:
+		verdict = "allowed (BB_ALLOW_SKIPS=1)" if allow_skips else "NOT ALLOWED: the run fails (BB_ALLOW_SKIPS=1 allows them)"
+		print(f"\nskipped, {verdict} ({len(skips)}):")
+		for label, test, why in skips:
+			print(f"  {label}: {test}: {why}")
+	else:
+		print("\nskipped: none")
+	if retries:
+		print(f"\ngamescope retried after failing to create its backend ({len(retries)}, see the logs): "
+			+ ", ".join(retries))
 	for job in failed:
 		log = logs / log_name(job)
 		print(f"\n--- {job.label} FAILED ({job.rc}); the end of {log}:")
 		print("".join(log.read_text(errors="replace").splitlines(keepends=True)[-40:]))
-	return 1 if failed else 0
+	return 1 if failed or (skips and not allow_skips) else 0
 
 
 if __name__ == "__main__":
