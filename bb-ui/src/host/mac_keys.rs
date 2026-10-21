@@ -3,6 +3,11 @@
 //! `keyCode` from those, not from the Windows code the event carries. So each Windows
 //! virtual-key code is given its Mac key and the characters it types (unshifted).
 
+/// A Mac virtual key no key has (`0x34`, unassigned in Carbon's `Events.h`): Chromium
+/// gives it no code (`VKEY_UNKNOWN`, keyCode 0), for keys the Mac lacks. Without it the
+/// native code would stay 0, `kVK_ANSI_A`, and the page would see `A`.
+pub(super) const NO_KEY: i32 = 0x34;
+
 /// The Mac virtual key (`kVK_*`, Carbon's `Events.h`) for the Windows virtual-key code
 /// `vk`, and the character the key types without modifiers (AppKit's function-key
 /// characters for keys that type none), if the Mac has it.

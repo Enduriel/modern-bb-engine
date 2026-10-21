@@ -160,6 +160,10 @@ pub(super) fn send_key(
 				event.character = if shifted { plain - 0x20 } else { plain };
 				event.unmodified_character = plain;
 			}
+		} else if type_ != KeyEventType::CHAR {
+			// No Mac key (Coherent's -1, the function keys): one Chromium knows no code
+			// for, so the page sees keyCode 0 (`compat.js` makes it -1), not kVK 0's `A`.
+			event.native_key_code = super::mac_keys::NO_KEY;
 		}
 	}
 	host.send_key_event(Some(&event));

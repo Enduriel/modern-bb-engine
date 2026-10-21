@@ -92,7 +92,10 @@
 	}, true);
 
 	// The keys Coherent's table has no code for (the function keys) came to the page as
-	// keyCode -1 (probed). The host sends -1 too, which Chromium keeps as 16 bits.
+	// keyCode -1 (probed). The host sends -1 too, which Chromium keeps as 16 bits. On
+	// macOS Chromium takes the code from the Mac key instead, and the host gives those
+	// keys one the Mac lacks (`mac_keys::NO_KEY`), so their keydown and keyup come as 0.
+	var mac = navigator.platform.indexOf('Mac') === 0;
 	['keyCode', 'which'].forEach(function (name) {
 		var native = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, name) ||
 			Object.getOwnPropertyDescriptor(UIEvent.prototype, name);
@@ -104,7 +107,7 @@
 			enumerable: native.enumerable,
 			get: function () {
 				var code = native.get.call(this);
-				return code === 0xFFFF ? -1 : code;
+				return code === 0xFFFF || (mac && code === 0 && this.type !== 'keypress') ? -1 : code;
 			}
 		});
 	});
