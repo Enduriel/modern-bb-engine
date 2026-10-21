@@ -88,9 +88,12 @@ struct Running {
 	last_frame: Instant,
 	frames: u64,
 	/// The last frame showed what the one before it did, so nothing was drawn or
-	/// presented (see `bb_app::shown`), and what paces such frames.
+	/// presented (see `bb_app::shown`).
 	unchanged: bool,
+	/// When frames start (see `bb_app::pacing`).
 	pacer: Pacer,
+	/// The loop held the coming frame back until it was due (`App::about_to_wait`).
+	held_back: bool,
 	/// The refresh interval of the monitor the window is on, as the system last
 	/// reported it, if it did.
 	reported_refresh: Option<Duration>,
@@ -102,8 +105,10 @@ struct Running {
 	unpresented: Option<u64>,
 	/// With `BB_TEST_PRESENT_EVERY=N`, two frames in a row of every N are drawn and
 	/// presented, changed or not, as a mouse moved now and then does with the game's
-	/// cursor: the window tests' check that undrawn frames keep the display's pace.
-	present_every: Option<u64>,
+	/// cursor; with `K/N`, K of every N (`1/2`: every other frame, as the UI page's paints
+	/// landing every other frame): the window tests' check that the game steps at the
+	/// display's rate whichever frames are presented.
+	present_every: Option<(u64, u64)>,
 	/// With `BB_STATS`, when the renderer's memory is logged next, and the frames since
 	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
@@ -348,10 +353,14 @@ impl App {
 			frames: 0,
 			unchanged: false,
 			pacer,
+			held_back: false,
 			reported_refresh: None,
 			redraw_asked: None,
 			unpresented: std::env::var("BB_TEST_UNPRESENTED").ok().and_then(|v| v.parse().ok()),
-			present_every: std::env::var("BB_TEST_PRESENT_EVERY").ok().and_then(|v| v.parse().ok()).filter(|&n| n > 0),
+			present_every: std::env::var("BB_TEST_PRESENT_EVERY").ok().and_then(|v| match v.split_once('/') {
+				Some((k, n)) => Some((k.parse().ok()?, n.parse().ok()?)),
+				None => Some((2, v.parse().ok()?)),
+			}).filter(|&(_, n)| n > 0),
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
@@ -484,14 +493,22 @@ impl Running {
 		}
 	}
 
-	/// When the next frame may start: with the frame rate limited (VSync off), a frame
-	/// cap's interval after the last; after a frame left undrawn, which nothing paced,
-	/// the display's refresh or the cap's interval after it (see `bb_app::pacing`).
-	fn next_frame_at(&self) -> Option<Instant> {
+	/// The frame cap's interval, with the frame rate limited.
+	fn frame_cap(&self) -> Option<Duration> {
 		let mode = self.game.video().mode();
-		let cap = (mode.limit_frame_rate && mode.frame_cap > 0).then(|| Duration::from_secs_f64(1.0 / mode.frame_cap as f64));
-		let interval = if self.unchanged { Some(self.pacer.interval(cap)) } else { cap };
-		interval.map(|i| self.last_frame + i)
+		(mode.limit_frame_rate && mode.frame_cap > 0).then(|| Duration::from_secs_f64(1.0 / mode.frame_cap as f64))
+	}
+
+	/// When the next frame may start: a refresh of the display after the last, on the
+	/// frame clock, or the frame cap's interval (see `bb_app::pacing`); `None`: at once.
+	fn next_frame_at(&self) -> Option<Instant> {
+		self.pacer.due(self.frame_cap())
+	}
+
+	/// The frame that started at `at` is on the frame clock, presented or not.
+	fn paced(&mut self, at: Instant, presented: bool) {
+		let waited = std::mem::take(&mut self.held_back);
+		self.pacer.frame(at, presented, waited, self.frame_cap());
 	}
 
 	/// Show the cursor the game wants over the window (see `bb_app::game_cursor`): the
@@ -588,7 +605,7 @@ impl Running {
 		// The test's unpresented frame is drawn whatever it shows (under load, the frames
 		// around it have all been unchanged).
 		if self.pacer.measuring()
-			|| self.present_every.is_some_and(|n| self.frames % n < 2)
+			|| self.present_every.is_some_and(|(k, n)| self.frames % n < k)
 			|| self.unpresented == Some(self.frames)
 		{
 			self.game.forget_shown();
@@ -597,6 +614,7 @@ impl Running {
 		let after_presented = !self.unchanged;
 		self.unchanged = drawn.is_none();
 		let Some(drawn) = drawn else {
+			self.paced(now, false);
 			if let Some(times) = &mut self.frame_times {
 				let t = self.game.real_seconds();
 				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t);
@@ -621,10 +639,12 @@ impl Running {
 			wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
 				self.surface.configure(&self.gpu.device, &self.config);
 				self.game.forget_shown();
+				self.paced(now, false);
 				return Ok(self.frames);
 			}
 			_ => {
 				self.game.forget_shown();
+				self.paced(now, false);
 				return Ok(self.frames);
 			}
 		};
@@ -645,7 +665,7 @@ impl Running {
 			// The window may have moved to another monitor while nothing was presented.
 			self.follow_monitor_refresh();
 		}
-		self.pacer.presented(now, after_presented);
+		self.paced(now, true);
 		if let Some(times) = &mut self.frame_times {
 			if times.wait_gpu {
 				let _span = bb_render::frame_timing::span("gpu");
@@ -841,7 +861,10 @@ impl ApplicationHandler for App {
 		let pump_due = running.game.front().pump_due();
 		let now = Instant::now();
 		match running.next_frame_at() {
-			Some(at) if now < at => event_loop.set_control_flow(ControlFlow::WaitUntil(pump_due.map_or(at, |due| due.min(at)))),
+			Some(at) if now < at => {
+				running.held_back = true;
+				event_loop.set_control_flow(ControlFlow::WaitUntil(pump_due.map_or(at, |due| due.min(at))));
+			}
 			_ => {
 				let asked = *running.redraw_asked.get_or_insert(now);
 				if now >= asked + REDRAW_STALLED {

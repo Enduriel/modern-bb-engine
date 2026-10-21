@@ -454,46 +454,63 @@ fn bb_writes_its_log_and_keeps_the_last() {
 	}
 }
 
-/// Frames left undrawn, because they'd show what the last did, step the scripts at the
-/// display's rate, as drawn ones do: on a 180 Hz and a 60 Hz display, at the main menu
-/// with the page (nothing there changes while idle), with two frames in a row of every
-/// seven presented, as a mouse moved now and then presents them with the game's cursor.
-/// Paced from the shortest recent interval between presented frames, the first frames
-/// after a pause (presented as fast as the swapchain had images free) set the pace:
-/// here 330-350 undrawn frames a second at 180 Hz, 220-390 at 60 Hz.
+/// The game steps once per refresh of the display, whichever frames are presented: on a
+/// 180 Hz and a 60 Hz display, at the main menu with the page (nothing there changes
+/// while idle), with frames presented changed or not:
+///
+/// - two in a row of every seven, as a mouse moved now and then presents them with the
+///   game's cursor. Paced from the shortest recent interval between presented frames,
+///   the first frames after a pause (presented as fast as the swapchain had images free)
+///   set the pace of the undrawn ones: here 330-350 undrawn frames a second at 180 Hz,
+///   220-390 at 60 Hz.
+/// - every other one, as the UI page's paints landed in a CSS fade over the whole page
+///   at 2560x1358. With undrawn frames paced a refresh after their own start, the frame
+///   after a presented one came at once (the display's queue had room): ~312 steps a
+///   second at 180 Hz, ~114 at 60 Hz.
 #[test]
-fn undrawn_frames_step_at_the_displays_rate() {
+fn the_game_steps_at_the_displays_rate_whichever_frames_are_presented() {
 	if !cfg!(feature = "ui") {
 		eprintln!("skipping: without the page, the game starts a campaign, whose world map draws every frame");
 		return;
 	}
-	for refresh in [180u32, 60] {
-		let dir = run_dir(&format!("pace_{refresh}"));
+	for (refresh, presented) in [(180u32, "2/7"), (60, "2/7"), (180, "1/2"), (60, "1/2")] {
+		let dir = run_dir(&format!("pace_{refresh}_{}", presented.replace('/', "_of_")));
 		let (settings, times) = (dir.join("settings.cfg"), dir.join("frame_times.txt"));
 		let quit = r#"local menu = ::RootState.get("MainMenuState"); if (menu != null) menu.main_menu_module_onQuitPressed();"#;
 		// About ten seconds at the display's rate.
 		let end = (refresh * 10).to_string();
 		let args = ["--settings", settings.to_str().unwrap(), "--at", &end, quit];
-		let env = [("BB_FRAME_TIMES", times.to_str().unwrap()), ("BB_TEST_PRESENT_EVERY", "7")];
+		let env = [("BB_FRAME_TIMES", times.to_str().unwrap()), ("BB_TEST_PRESENT_EVERY", presented)];
 		let Some(run) = run_bb_at(&dir, (1280, 720), Some(refresh), &args, &env) else { return };
 		assert_eq!(run.status, "0", "{}", run.stderr);
-		// Each frame's interval since the last and whether it drew (quads > 0); the
-		// first few seconds (the page loading, the menu showing) left out.
+		// Each frame's interval since the last and whether it was presented; the first
+		// few seconds (the page loading, the menu showing) left out.
 		let frames: Vec<(f64, bool)> = std::fs::read_to_string(&times)
 			.expect("the frame times")
 			.lines()
 			.filter_map(|line| {
 				let field = |name: &str| line.split(' ').find_map(|f| f.strip_prefix(name)).and_then(|v| v.parse::<f64>().ok());
-				Some((field("interval=")?, field("quads=")? > 0.0))
+				Some((field("interval=")?, field("present=").is_some()))
 			})
 			.collect();
 		let settled = &frames[frames.len() / 2..];
-		let undrawn: Vec<f64> = settled.windows(2).filter(|w| !w[0].1 && !w[1].1).map(|w| w[1].0).collect();
-		assert!(undrawn.len() > settled.len() / 3, "{} of {} frames undrawn after an undrawn one", undrawn.len(), settled.len());
-		let rate = 1000.0 * undrawn.len() as f64 / undrawn.iter().sum::<f64>();
 		let drawn = settled.iter().filter(|f| f.1).count();
-		eprintln!("{refresh} Hz: undrawn frames {rate:.1} a second ({} of them, {drawn} drawn)", undrawn.len());
+		let rate = 1000.0 * settled.len() as f64 / settled.iter().map(|f| f.0).sum::<f64>();
+		let undrawn: Vec<f64> = settled.windows(2).filter(|w| !w[0].1 && !w[1].1).map(|w| w[1].0).collect();
+		let undrawn_rate = 1000.0 * undrawn.len() as f64 / undrawn.iter().sum::<f64>().max(f64::MIN_POSITIVE);
+		eprintln!(
+			"{refresh} Hz, {presented} presented: {rate:.1} steps a second ({} frames, {drawn} presented); \
+			{} undrawn after undrawn, {undrawn_rate:.1} a second",
+			settled.len(),
+			undrawn.len()
+		);
 		let expected = f64::from(refresh);
-		assert!((rate - expected).abs() < expected * 0.08, "undrawn frames at {rate:.1} a second on a {refresh} Hz display");
+		let (k, n) = presented.split_once('/').map(|(k, n)| (k.parse::<f64>().unwrap(), n.parse::<f64>().unwrap())).unwrap();
+		let share = drawn as f64 / settled.len() as f64;
+		assert!((share - k / n).abs() < 0.05, "{drawn} of {} frames presented", settled.len());
+		assert!((rate - expected).abs() < expected * 0.03, "{rate:.1} steps a second on a {refresh} Hz display");
+		if !undrawn.is_empty() {
+			assert!((undrawn_rate - expected).abs() < expected * 0.08, "undrawn frames at {undrawn_rate:.1} a second on a {refresh} Hz display");
+		}
 	}
 }
