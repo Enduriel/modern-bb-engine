@@ -315,6 +315,22 @@ fn item_at(p: &Play, owner: &str) -> Result<(i32, i32, i64), String> {
 	Ok((n(0)? as i32, n(1)? as i32, n(2)?))
 }
 
+/// Whether the page shows the item `id` (its instance id) in `owner`'s list ("shop" or
+/// "stash"): the list is redrawn with it.
+fn shows_item(p: &Play, owner: &str, id: &str) -> bool {
+	let found = p.session.eval(&format!(
+		r#"(function () {{
+			var owner = 'world-town-screen-shop-dialog-module.{owner}', hit = false;
+			jQuery('.ui-control').each(function () {{
+				var d = jQuery(this).data('item');
+				if (d && d.owner === owner && d.isEmpty === false && d.id === {id:?} && this.offsetParent !== null) hit = true;
+			}});
+			return hit;
+		}})()"#
+	));
+	matches!(found, Ok(bb_ui::json::Json::Bool(true)))
+}
+
 /// Run the game until the page has stopped animating and `ready` holds.
 fn settled(p: &Play, ready: impl Fn(&Play) -> bool) -> Result<(), String> {
 	let ok = p.session.pump_until(STEP, |s| !s.animating().unwrap_or(true) && ready(p));
@@ -365,10 +381,14 @@ fn shop(p: &Play, building: &str) -> Result<(), String> {
 	let (x, y, idx) = item_at(p, "shop")?;
 	let price = p.int(&format!("::World.State.getTownScreen().getShopDialogModule().getShop().getStash().getItemAtIndex({idx}).item.getBuyPrice()"))?;
 	let name = p.text(&format!("::World.State.getTownScreen().getShopDialogModule().getShop().getStash().getItemAtIndex({idx}).item.getName()"))?;
+	let id = p.text(&format!("::World.State.getTownScreen().getShopDialogModule().getShop().getStash().getItemAtIndex({idx}).item.getInstanceID()"))?;
 	let before = money()?;
 	right_click(p, x, y)?;
 	during(&format!("buying {name} for {price}"), p.session.pump_until(Duration::from_secs(10), |_| money().is_ok_and(|m| m != before)).then_some(()).ok_or("the crowns didn't move".to_string()))?;
 	ensure(money()? == before - price, format!("bought {name}: {before} - {price} != {}", money()?))?;
+	// The page's lists are redrawn with it (in the stash, gone from the shop) before the
+	// stash's first item is looked for there.
+	during(&format!("{name} moving to the stash"), settled(p, |p| shows_item(p, "stash", &id) && !shows_item(p, "shop", &id)))?;
 	p.shot("bought");
 	println!("bought {name} for {price}");
 
@@ -385,11 +405,28 @@ fn shop(p: &Play, building: &str) -> Result<(), String> {
 	Ok(())
 }
 
-/// The tavern: pay for a rumour, then for a round; each costs what its building says.
+/// The tavern's result under its `n`th button (0 the rumour's, 1 the round's), a page
+/// expression.
+fn tavern_result(n: usize) -> String {
+	format!("jQuery('.l-tavern-button:visible').eq({n}).closest('.row.is-bottom').find('.is-result')")
+}
+
+/// Whether the tavern shows something under its `n`th button (emptied before it's paid).
+fn told(p: &Play, n: usize) -> bool {
+	let text = p.session.eval(&format!("{}.text().trim().length", tavern_result(n)));
+	text.ok().and_then(|n| n.as_i64()).unwrap_or(0) > 0
+}
+
+/// The tavern: pay for a rumour, then for a round; each costs what its building says,
+/// and the page tells what came of it.
 fn tavern(p: &Play) -> Result<(), String> {
 	enter_town(p, Some("building.tavern"))?;
 	open_building(p, "building.tavern")?;
 	during("waiting for the tavern", settled(p, |p| nth(p, ".l-tavern-button .ui-control", 1).is_ok()))?;
+	// Both results empty, so what the payments show is theirs.
+	for n in 0..2 {
+		p.session.eval(&format!("{}.empty().length", tavern_result(n)))?;
+	}
 	p.shot("tavern");
 	let money = || p.int("::World.Assets.getMoney()");
 	let tavern = "::World.State.getCurrentTown().getBuilding(\"building.tavern\")";
@@ -398,14 +435,14 @@ fn tavern(p: &Play) -> Result<(), String> {
 	let (x, y) = nth(p, ".l-tavern-button .ui-control", 0)?;
 	p.session.click_at(x, y)?;
 	paid(p, before, rumour, "a rumour")?;
-	during("the rumour", settled(p, |_| true))?;
+	during("the rumour", settled(p, |p| told(p, 0)))?;
 	p.shot("rumour");
 	let round = p.int(&format!("{tavern}.getDrinkPrice()"))?;
 	let before = money()?;
 	let (x, y) = nth(p, ".l-tavern-button .ui-control", 1)?;
 	p.session.click_at(x, y)?;
 	paid(p, before, round, "a round")?;
-	during("the round", settled(p, |_| true))?;
+	during("the round", settled(p, |p| told(p, 1)))?;
 	p.shot("round");
 	during("leaving the tavern", p.session.click_when_ready("Leave", STEP))?;
 	Ok(())
