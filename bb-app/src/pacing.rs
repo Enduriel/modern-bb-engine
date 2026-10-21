@@ -48,7 +48,10 @@
 //! (the two frames in flight); so a run of [`STALE`] presented frames that the display
 //! never held back, while it could have, shows the measure is too long, and it is
 //! forgotten and taken again (frames presented at once until it is). A change in the
-//! monitor's reported refresh, or a new video mode, takes it again too.
+//! monitor's reported refresh takes it again too. (Not a new video mode, nor the first
+//! report as the window shows: those come in the boot, whose heavy frames measured a
+//! refresh a few percent long, which then held while too few frames were presented in
+//! a row to notice it: 172.7 steps a second at 180 Hz with 2 of 7 frames presented.)
 //!
 //! With VSync off (presents don't wait for the display), the frame cap's interval is the
 //! clock's (144 by default), or with no cap the display's refresh for undrawn frames and
@@ -129,10 +132,13 @@ impl Pacer {
 	}
 
 	/// The monitor's refresh as the system reports it now (the window may have moved
-	/// to another): if it changed, the display's refresh is measured again.
+	/// to another): if it changed from one reported refresh to another, the display's
+	/// refresh is measured again. Not when it's first reported (as the window first
+	/// shows): measuring again then falls in the boot's heavy frames.
 	pub fn set_reported(&mut self, reported: Option<Duration>) {
-		if reported != self.reported {
-			self.reported = reported;
+		let moved = matches!((self.reported, reported), (Some(a), Some(b)) if a != b);
+		self.reported = reported;
+		if moved {
 			self.remeasure();
 		}
 	}
@@ -146,8 +152,8 @@ impl Pacer {
 		}
 	}
 
-	/// Forget the display's measured refresh and measure it again (a new video mode, the
-	/// window on another monitor, or a measure shown to be stale).
+	/// Forget the display's measured refresh and measure it again (the window on another
+	/// monitor, or a measure shown to be stale).
 	pub fn remeasure(&mut self) {
 		self.intervals.clear();
 		self.run = 0;
