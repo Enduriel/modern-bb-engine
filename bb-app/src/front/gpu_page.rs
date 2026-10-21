@@ -13,9 +13,14 @@ fn region(r: PaintRect) -> UiRegion {
 	UiRegion { x: r.x, y: r.y, width: r.width, height: r.height }
 }
 
+/// The paint's changed parts, as the page takes them.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn dirty(paint: &SharedPaint) -> Vec<UiRegion> {
+	paint.dirty.iter().map(|r| region(*r)).collect()
+}
+
 impl PageSink for GpuPage {
 	fn paint(&self, paint: &SharedPaint) -> Result<(), String> {
-		let rects: Vec<UiRegion> = paint.dirty.iter().map(|r| region(*r)).collect();
 		match paint.buffer {
 			#[cfg(target_os = "linux")]
 			PaintBuffer::DmaBuf { planes, modifier } => {
@@ -31,7 +36,7 @@ impl PageSink for GpuPage {
 					height: paint.height,
 					bgra: paint.bgra,
 				};
-				self.0.copy_dmabuf(&buffer, &rects)
+				self.0.copy_dmabuf(&buffer, &dirty(paint))
 			}
 			#[cfg(target_os = "macos")]
 			PaintBuffer::IOSurface(surface) => {
@@ -41,8 +46,10 @@ impl PageSink for GpuPage {
 					height: paint.height,
 					bgra: paint.bgra,
 				};
-				self.0.copy_iosurface(&buffer, &rects)
+				self.0.copy_iosurface(&buffer, &dirty(paint))
 			}
+			#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+			PaintBuffer::Unsupported(_) => Err("no GPU path for the UI page's paints on this operating system yet".into()),
 		}
 	}
 

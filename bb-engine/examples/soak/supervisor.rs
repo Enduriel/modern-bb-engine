@@ -6,13 +6,22 @@
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::Options;
 use crate::record::{self, Json, quote};
+
+/// The signal that ended a session (Unix; Windows has none).
+#[cfg(unix)]
+fn exit_signal(status: std::process::ExitStatus) -> Option<i32> {
+	std::os::unix::process::ExitStatusExt::signal(&status)
+}
+#[cfg(not(unix))]
+fn exit_signal(_: std::process::ExitStatus) -> Option<i32> {
+	None
+}
 
 /// A session's exit code when the run's time is up.
 pub const EXIT_DONE: i32 = 0;
@@ -224,7 +233,7 @@ fn run_child(o: &Options, n: u32, seed: &str, deadline: u64, totals: &mut Totals
 		*totals.stats.entry(k.clone()).or_default() += v;
 	}
 	let code = status.and_then(|s| s.code());
-	let signal = status.and_then(|s| s.signal());
+	let signal = status.and_then(exit_signal);
 	match (killed, code) {
 		(Some(_), _) => {}
 		(None, Some(EXIT_DONE)) => {}

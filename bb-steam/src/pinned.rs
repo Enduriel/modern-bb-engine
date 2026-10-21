@@ -52,7 +52,7 @@ pub const LIBRARIES: [PinnedLibrary; 4] = [
 		sha256: "179bfb241de94c0320755b558d91edb0004f72d98bf7ad6f1147f9ada835dcbc",
 	},
 	PinnedLibrary {
-		targets: &["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu"],
+		targets: &["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu", "x86_64-pc-windows-gnullvm"],
 		member: "steamworks-sys-0.13.0/lib/steam/redistributable_bin/win64/steam_api64.dll",
 		file_name: "steam_api64.dll",
 		sha256: "eb17909a76668cf9ae0b92a618a34a50f6c73d3a6787cb4dd8ce36a8b10bfb75",

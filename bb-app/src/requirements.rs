@@ -36,8 +36,10 @@ pub fn minimum() -> &'static str {
 		 a GPU passed through aren't enough."
 	} else if cfg!(target_os = "macos") {
 		"On macOS the game needs a Mac with Metal, on a macOS version Chromium supports."
+	} else if cfg!(windows) {
+		"Windows isn't supported yet: for now the game runs on Linux and macOS."
 	} else {
-		"The game's UI isn't available on this operating system yet."
+		"This operating system isn't supported yet: for now the game runs on Linux and macOS."
 	}
 }
 
@@ -91,7 +93,7 @@ pub fn check_gpu(gpu: &bb_render::Gpu) -> Result<(), String> {
 		return Err(unsupported(format!("the GPU has no Metal device ({} runs through {:?})", gpu.adapter, gpu.backend)));
 	}
 	#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-	return Err(unsupported("the game's UI isn't available on this operating system yet"));
+	return Err(unsupported("the game's UI can't be drawn on the GPU on this operating system yet"));
 	#[cfg(any(target_os = "linux", target_os = "macos"))]
 	Ok(())
 }

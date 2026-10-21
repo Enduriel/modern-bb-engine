@@ -243,6 +243,8 @@ impl UiPage {
 			.map_err(|e| format!("waiting for the GPU: {e}"))
 	}
 
+	// Only the platforms with a paint import count failures (Windows has none yet).
+	#[cfg(any(target_os = "linux", target_os = "macos"))]
 	fn failed(&self) {
 		self.stats_mut().failures += 1;
 	}

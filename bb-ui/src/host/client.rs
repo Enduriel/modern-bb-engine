@@ -12,7 +12,9 @@ use cef::*;
 use super::damage::{Damage, PaintRect};
 use super::frame::PaintState;
 use super::ipc;
-use super::paint_sink::{PageSink, PaintBuffer, SharedPaint};
+use super::paint_sink::PageSink;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use super::paint_sink::{PaintBuffer, SharedPaint};
 use super::paint_stats::PaintCounters;
 use super::bridge_server::RequestKind;
 use super::responder::Responder;

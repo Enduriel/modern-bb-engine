@@ -554,8 +554,8 @@ fn the_game_steps_at_the_displays_rate_whichever_frames_are_presented() {
 /// Where the GPU can't run the game with its UI, `bb` exits at once and says what is
 /// missing: on stderr, in log.html, and in a message box (here a stand-in `zenity`
 /// that writes down what it was asked to show). wgpu on GL stands for a GPU without a
-/// Vulkan driver.
-#[cfg(feature = "ui")]
+/// Vulkan driver. Linux's message box (zenity) only.
+#[cfg(all(feature = "ui", target_os = "linux"))]
 #[test]
 fn bb_says_what_it_lacks_on_a_gpu_without_vulkan() {
 	let dir = run_dir("no_vulkan");
