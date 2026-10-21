@@ -17,11 +17,13 @@ otherwise.
 | `BB_SCRIPT_CACHE=DIR` | Keep the compiled-script cache in `DIR` (default `$XDG_CACHE_HOME/bb-modern-engine/scripts`, else `~/.cache/…`); `off` or `0` turns the cache off. |
 | `BB_SHEET_CACHE=DIR` | Keep the engine's own sprite sheets (each atlas's frames cut out, see `bb_assets::sheet_cache`) in `DIR`, not under the engine's cache folder; `off` keeps none. |
 | `BB_AUDIO_BUFFER=FRAMES` | The sound device's buffer, in frames (default: the device's). |
+| `BB_ERROR_DIALOG=0` | No message box when the machine can't run the game (`bb_app::requirements`); the message still goes to stderr and `log.html`. The window tests set it. |
 
 ## Measuring
 
 | Variable | What it does |
 | --- | --- |
+| `BB_STARTUP_TIMES=1` | Print the start's phases to stderr (`startup: <phase> <ms>`, milliseconds since the process started; `squirrel_bb::startup`). |
 | `BB_STATS=1` | Log the game's total CPU and memory, its CEF processes included, every 5 s, with the frames left undrawn and those the page rested through. |
 | `BB_FRAME_TIMES=PATH` | Write each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls) to `PATH`; see `parity/perf/frame_breakdown.py`. |
 | `BB_FRAME_TIMES_GPU=1` | With `BB_FRAME_TIMES`, each frame waits for the GPU, so its GPU time counts too. |
