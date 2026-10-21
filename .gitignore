@@ -1,1 +1,15 @@
+# Rust build artifacts
 /target
+**/target
+**/*.rs.bk
+
+# squirrel-sys is its own git repository (remote: Enduriel/squirrel-sys), present here
+# as a sibling build dependency (modern_bb_engine/squirrel/Cargo.toml: ../../squirrel-sys).
+# Managed separately, not vendored into this repo.
+/squirrel-sys
+
+# Python bytecode from parity/ and the scripts
+__pycache__/
+
+# vkd3d-proton writes its shader cache into the working folder under Proton
+vkd3d-proton.cache
