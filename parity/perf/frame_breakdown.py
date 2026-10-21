@@ -19,7 +19,7 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
   zoom 1, zoomed out, panned at zoom 1 and zoomed out; running at 1x and 4x; a town;
   the character screen; a full-view CSS fade injected into the page over the paused map;
   a battle (its start, the player's turn idle, its menu open, the character screen open,
-  the player's turn in a storm's rain, AI turns). `--day SECS` adds a phase running at
+  the player's turn in a storm's rain, its menu open in the rain, AI turns). `--day SECS` adds a phase running at
   4x for SECS after the 4x one (28 s crosses a whole day: dusk and dawn).
   `--battles N` then fights N battles by the AI (memory after each). Each scene logs `PHASE name` and lasts
   `--phase-secs`; the driver samples /proc in its middle.
@@ -202,6 +202,10 @@ def build(args, rate):
         t.run("::Tactical.State.hideCharacterScreen();")
         t.wait(1)
         t.phase("battle rain", secs, RAIN)
+        # The storm with the battle paused (its menu): the rain's fades go on.
+        t.phase("battle rain menu", secs, "::Tactical.State.toggleMenuScreen();")
+        t.run("::Tactical.State.toggleMenuScreen();")
+        t.wait(1)
         t.phase("battle ai turns", secs * 2, ACTIVE, lambda i: END_PLAYER_TURN if i % 30 == 0 else None)
     battles = int(opt(args, "--battles", 0))
     if battles:
