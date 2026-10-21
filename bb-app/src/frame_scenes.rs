@@ -6,8 +6,9 @@
 //! The campaign is the probe's (seed `bbuitest`), and its scene script runs where the
 //! probe runs it (right after `world_state.init()`). Once the intro event shows, the
 //! script's `::probeSteps` are walked as the probe's page walks them: each step's scene
-//! set up, its `until` polled, 3 s to settle, its shot taken, its button clicked. The
-//! drawn cursor is left out: the original's screenshots have none.
+//! set up, its `until` polled, 3 s to settle, its shot taken, its button clicked (and
+//! checked to have done what its `clicked` says). The drawn cursor is left out: the
+//! original's screenshots have none.
 //!
 //! Frames are drawn as `bb` draws them: one that would show what the last did is left
 //! undrawn ([`Game::draw_if_changed`]). So each shot is the frame left up, and is checked
@@ -38,6 +39,8 @@ struct Step {
 	shot: Option<String>,
 	until: Option<String>,
 	click: Option<String>,
+	/// What its click brings about: a JS expression on the page that holds once it has.
+	clicked: Option<String>,
 	/// Its `until` is polled without pacing frames to the clock (`unpaced = true`).
 	unpaced: bool,
 }
@@ -49,8 +52,8 @@ fn steps(game: &Game) -> Result<Vec<Step>, String> {
 		r#"::__steps <- "";
 		foreach (s in ::probeSteps)
 		{
-			foreach (k in ["scene", "shot", "until", "click"])
-				::__steps += (s[k] == null ? "" : s[k]) + "\t";
+			foreach (k in ["scene", "shot", "until", "click", "clicked"])
+				::__steps += (!(k in s) || s[k] == null ? "" : s[k]) + "\t";
 			::__steps += ("unpaced" in s && s.unpaced ? "1" : "") + "\n";
 		}"#,
 		"steps",
@@ -66,7 +69,8 @@ fn steps(game: &Game) -> Result<Vec<Step>, String> {
 				shot: some(f[1]),
 				until: some(f[2]),
 				click: some(f[3]),
-				unpaced: f[4] == "1",
+				clicked: some(f[4]),
+				unpaced: f[5] == "1",
 			}
 		})
 		.collect())
@@ -100,6 +104,38 @@ fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64, hz: f64
 		}
 	}
 	Ok(undrawn)
+}
+
+/// Click the button `label` once it's ready and give the game 3 s, as the probe's page
+/// does; then `done` (a JS expression) must hold: the page seeing the click doesn't say
+/// its handler ran. A click that didn't take is logged with what it hit and made again,
+/// once.
+fn click(game: &mut Game, gpu: &Gpu, target: &RenderTarget, label: &str, done: &str) -> Result<(), String> {
+	let mut first = None;
+	loop {
+		let session = game.front().session();
+		let (x, y) = session.locate_when_ready(label, STEP).map_err(|e| match &first {
+			Some(trail) => format!("clicking {label:?} didn't take ({done} still false; {trail}), and clicking it again: {e}"),
+			None => e,
+		})?;
+		session.click_at(x, y)?;
+		session.move_away()?;
+		play(game, gpu, target, 3.0, 60.0, true)?;
+		let session = game.front().session();
+		if session.holds(done)? {
+			return Ok(());
+		}
+		let trail = session.click_trail(x, y);
+		match first {
+			None => {
+				println!("clicking {label:?} didn't take ({done} still false after 3 s): {trail}; clicking again");
+				first = Some(trail);
+			}
+			Some(first) => {
+				return Err(format!("clicking {label:?} didn't take, twice ({done} still false); first: {first}; again: {trail}"));
+			}
+		}
+	}
 }
 
 /// What `target` holds (the frame left up), checked against the frame drawn again.
@@ -195,10 +231,8 @@ pub fn shoot_scenes(
 			shot(name, shot_checked(&mut game, gpu, &target, name)?)?;
 		}
 		if let Some(label) = &step.click {
-			let session = game.front().session();
-			session.click_when_ready(label, STEP)?;
-			session.move_away()?;
-			play(&mut game, gpu, &target, 3.0, 60.0, true)?;
+			let done = step.clicked.as_deref().ok_or(format!("the step clicking {label:?} names no `clicked`"))?;
+			click(&mut game, gpu, &target, label, done)?;
 		}
 	}
 	Ok(())

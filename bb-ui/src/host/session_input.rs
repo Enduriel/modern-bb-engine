@@ -121,9 +121,13 @@ impl UiSession {
 		}
 	}
 
-	/// Left-click at `(x, y)`, as a player would.
+	/// Left-click at `(x, y)`, as a player would; returns once the page has seen the
+	/// `click` (what buttons listen for), which says the browser dispatched it, not what
+	/// it hit or did: [`UiSession::click_until`] checks that, and
+	/// [`UiSession::click_trail`] says what it hit.
 	pub fn click_at(&self, x: i32, y: i32) -> Result<(), String> {
-		self.input("mouseup", |host| {
+		self.start_click_trail()?;
+		self.input("click", |host| {
 			host.click(x, y);
 			1
 		})

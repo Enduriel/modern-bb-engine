@@ -67,6 +67,7 @@ mod renderer;
 mod responder;
 mod scheme;
 mod session;
+mod session_click_check;
 mod session_input;
 mod session_fps;
 mod session_play;

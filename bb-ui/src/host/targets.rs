@@ -2,7 +2,11 @@
 //! the centre `[x, y]` (view pixels) of an element the player can see, or `null`.
 //!
 //! "Can see" means displayed, with an area, and centred inside the view: screens slide
-//! in from outside it, and a player can't click a button that hasn't arrived yet.
+//! in from outside it, and a player can't click a button that hasn't arrived yet. And
+//! not covered there: what the page hit-tests at the centre is the element, inside it,
+//! or one of its ancestors (a label that lets the pointer through to its button), not
+//! something else on top (a screen fading over it), which a click there would hit
+//! instead.
 
 use crate::json::Json;
 
@@ -17,7 +21,9 @@ fn call(body: &str, arg: &str) -> String {
 		var r = el.getBoundingClientRect();
 		var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
 		var seen = r.width > 0 && r.height > 0 && x >= 0 && y >= 0 && x < innerWidth && y < innerHeight;
-		return seen ? [x, y] : null;
+		if (!seen) return null;
+		var hit = document.elementFromPoint(x, y);
+		return hit && (el.contains(hit) || hit.contains(el)) ? [x, y] : null;
 	}}
 	{body}
 }})({})",

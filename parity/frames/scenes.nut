@@ -19,13 +19,16 @@ local mode = ::Settings.getVideoMode();
 
 // The steps, in order. Each: `scene`, the probeScene to call (null for none); `shot`,
 // the screenshot's name (null for none); `until`, a probeScene to poll until it returns
-// true before shooting; `click`, a button to click on the page afterwards. `unpaced`
+// true before shooting; `click`, a button to click on the page afterwards; `clicked`
+// (ours only), a JS expression on the page that holds once the click has done what it
+// should: the page seeing a click doesn't say the button's handler ran. `unpaced`
 // (ours only; the probe's page ignores it): ours polls `until` with frames as fast as
 // they're drawn, not one a 60th of a second of the clock, where the page has nothing
 // running that the clock would move (the night's hours of world time on the map). The
 // 3 s settle before the shot stays paced.
 ::probeSteps <- [
-	{ scene = null, shot = "intro", until = null, click = "Huzzah!" },
+	{ scene = null, shot = "intro", until = null, click = "Huzzah!",
+		clicked = "!Screens.WorldEventScreen.isVisible()" },
 	{ scene = "world", shot = "world", until = null, click = null },
 	{ scene = "town", shot = "town", until = null, click = null },
 	{ scene = "leaveTown", shot = null, until = "leftTown", click = null },
@@ -47,7 +50,8 @@ local mode = ::Settings.getVideoMode();
 	{ scene = "occlClear", shot = null, until = null, click = null },
 	{ scene = "icons", shot = "battle_icons", until = null, click = null },
 	{ scene = "iconsClear", shot = null, until = null, click = null },
-	{ scene = "winBattle", shot = "battle_results", until = "resultsShown", click = "Continue" },
+	{ scene = "winBattle", shot = "battle_results", until = "resultsShown", click = "Continue",
+		clicked = "Screens.TacticalCombatResultScreen.mLootPanel.isVisible()" },
 	{ scene = null, shot = "battle_loot", until = null, click = null }
 ];
 
