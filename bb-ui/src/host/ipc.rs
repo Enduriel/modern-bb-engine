@@ -5,8 +5,8 @@
 //! Browser → renderer:
 //! - [`CALL`] `(id, entry)`: run an SQ→JS entry now and reply (`__bbCall`);
 //! - [`EVAL`] `(id, code)`: evaluate test code and reply (`__bbEval`);
-//! - [`PARK`] `(id)`: park (`__bbPark`), replying once the game lets the page go
-//!   on, or at once if the page has no bridge yet;
+//! - [`PARK`] `(id)`: park (`__bbPark`, a step at a time: `renderer::park`), replying
+//!   once the game lets the page go on, or at once if the page has no bridge yet;
 //! - [`TRIM`] `()`: give the C allocator's free memory back to the system
 //!   ([`memory`](super::memory)); no reply.
 //!

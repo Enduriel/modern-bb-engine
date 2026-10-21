@@ -90,8 +90,9 @@ pub(super) struct PageRest {
 	/// How many decisions so far left it resting.
 	rests: Cell<u64>,
 	/// Log each decision that changes whether the page rests, and every 1,000 decisions
-	/// what gave the page its turns (`BB_PAGE_REST_LOG`).
-	log: bool,
+	/// what gave the page its turns (`BB_PAGE_REST_LOG`, level 1); at level 2
+	/// (`BB_PAGE_REST_LOG=2`) every decision.
+	log: u8,
 	/// For the log: why the page last said it's busy, and the causes counted.
 	reason: RefCell<String>,
 	tally: RefCell<BTreeMap<String, u32>>,
@@ -111,7 +112,11 @@ impl PageRest {
 			interval: Cell::new(Duration::ZERO),
 			resting: Cell::new(false),
 			rests: Cell::new(0),
-			log: std::env::var_os("BB_PAGE_REST_LOG").is_some(),
+			log: match std::env::var("BB_PAGE_REST_LOG").as_deref() {
+				Err(_) | Ok("0") => 0,
+				Ok("2") => 2,
+				Ok(_) => 1,
+			},
 			reason: RefCell::new(String::new()),
 			tally: RefCell::new(BTreeMap::new()),
 		}
@@ -159,7 +164,7 @@ impl PageRest {
 	}
 
 	fn note_reason(&self, body: &str) {
-		if self.log {
+		if self.log > 0 {
 			let reason = Json::parse(body).ok().and_then(|j| j.get("busy").and_then(|r| r.as_str().map(str::to_string)));
 			*self.reason.borrow_mut() = reason.unwrap_or_else(|| "?".into());
 		}
@@ -196,7 +201,7 @@ impl PageRest {
 		if work {
 			self.active.set(Some(now));
 		}
-		if self.log && painted && !cause {
+		if self.log > 0 && painted && !cause {
 			if let Some(since) = self.quiet.get() {
 				let ms = now.saturating_duration_since(since).as_secs_f64() * 1000.0;
 				eprintln!("page rest: a paint landed {ms:.1} ms after the page went quiet");
@@ -208,7 +213,7 @@ impl PageRest {
 			self.quiet.set(Some(now));
 		}
 		let turn = work || self.active.get().is_none_or(|at| now.saturating_duration_since(at) < SETTLE);
-		if self.log {
+		if self.log > 0 {
 			self.count(&[
 				(woken, "woken"),
 				(painted, "painted"),
@@ -219,15 +224,21 @@ impl PageRest {
 				(!turn, "rested"),
 			]);
 		}
-		if self.log && turn == self.resting.get() {
-			let why = [(woken, "woken"), (painted, "painted"), (loaded, "loaded"), (report.busy, "busy"), (timer, "timer")]
+		if self.log > 1 || (self.log > 0 && turn == self.resting.get()) {
+			let busy = format!("busy:{}", self.reason.borrow());
+			let why = [(woken, "woken"), (painted, "painted"), (loaded, "loaded"), (report.busy, busy.as_str()), (timer, "timer")]
 				.iter()
 				.filter(|(on, _)| *on)
 				.map(|(_, name)| *name)
 				.collect::<Vec<_>>()
 				.join(",");
 			let next = report.timer.map(|due| due.saturating_duration_since(now).as_secs_f64() * 1000.0);
-			eprintln!("page rest: {} ({why}; next timer {next:?} ms)", if turn { "turn" } else { "rests" });
+			let state = match (turn, work) {
+				(false, _) => "rests",
+				(true, true) => "turn",
+				(true, false) => "settling",
+			};
+			eprintln!("page rest: {state} ({why}; next timer {next:?} ms)");
 		}
 		self.resting.set(!turn);
 		if !turn {

@@ -277,8 +277,8 @@ fn frame_in_real_time(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Resu
 }
 
 /// Idle in a town, the page comes to rest: parked across the frames, none of its frames
-/// begun. The scripts' calls still reach it at once, and a timer it sets fires on time,
-/// the page resting until it's due and again after.
+/// begun. The scripts' calls still reach it at once, and timers set while it rests fire
+/// on time, however they were set, the page resting while they wait.
 fn an_idle_page_rests(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
 	let resting = |game: &Game| game.front().session().host().is_resting();
 	let mut frames = 0;
@@ -300,38 +300,90 @@ fn an_idle_page_rests(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Resu
 	if sum.as_i64() != Some(42) {
 		return Err(format!("a call into the resting page answered {sum:?}"));
 	}
-	// A timer: the page rests while it waits, gets a turn as it comes due, and rests
-	// again after.
-	game.front().session().eval(
-		"window.__bbFired = null; (function (set) { setTimeout(function () { window.__bbFired = performance.now() - set; }, 400); })(performance.now()); 0",
-	)?;
-	let (mut rested_waiting, mut rested_after) = (0, 0);
-	let start = Instant::now();
-	while start.elapsed() < Duration::from_millis(900) {
-		frame_in_real_time(game, gpu, target)?;
-		let elapsed = start.elapsed();
-		if resting(game) {
-			if elapsed < Duration::from_millis(380) {
-				rested_waiting += 1;
-			} else if elapsed > Duration::from_millis(700) {
-				rested_after += 1;
-			}
+	for (context, name, code) in TIMER_CONTEXTS {
+		a_timer_fires_on_time(game, gpu, target, context, name, code)?;
+	}
+	Ok(())
+}
+
+/// How long the timers [`TIMER_CONTEXTS`] set wait.
+const TIMER_MS: f64 = 300.0;
+
+/// Ways a timer gets set while the page rests, as the code a call into the page runs:
+/// `__bbArm(name)` sets a [`TIMER_MS`] timer that records, under `name` (the middle
+/// field), how long after it was set it fired.
+const TIMER_CONTEXTS: [(&str, &str, &str); 6] = [
+	("the game's call", "call", "__bbArm('call');"),
+	("a promise's callback", "promise", "Promise.resolve().then(function () { __bbArm('promise'); });"),
+	("another timer", "timer", "setTimeout(function () { __bbArm('timer'); }, 100);"),
+	("an animation frame", "frame", "requestAnimationFrame(function () { __bbArm('frame'); });"),
+	(
+		"a load",
+		"load",
+		"var x = new XMLHttpRequest(); x.onload = function () { __bbArm('load'); }; x.open('GET', 'coui://ui/main.html'); x.send();",
+	),
+	(
+		"an interval",
+		"interval",
+		"(function (set, n) { var h = setInterval(function () { if (++n === 3) { clearInterval(h); __bbTimers.interval = performance.now() - set; } }, 100); })(performance.now(), 0);",
+	),
+];
+
+/// Idle in a town, with the page resting, a call into it runs `code`, which sets a
+/// timer in `context` (see [`TIMER_CONTEXTS`]): the timer fires in the frame its due
+/// time falls in, as it did without resting, and the page rests while it waits.
+fn a_timer_fires_on_time(
+	game: &mut Game,
+	gpu: &Gpu,
+	target: &RenderTarget,
+	context: &str,
+	name: &str,
+	code: &str,
+) -> Result<(), String> {
+	let resting = |game: &Game| game.front().session().host().is_resting();
+	let mut frames = 0;
+	while !resting(game) {
+		frames += 1;
+		if frames > 600 {
+			return Err(format!("before a timer set from {context}, the page never came back to rest"));
 		}
+		frame_in_real_time(game, gpu, target)?;
 	}
-	let fired = game.front().session().eval("window.__bbFired")?;
-	let Json::Float(after) = fired else {
-		return Err(format!("the page's 400 ms timer never fired ({fired:?})"));
+	game.front().session().eval(&format!(
+		"window.__bbTimers = window.__bbTimers || {{}}; window.__bbTimers.{name} = null;
+		window.__bbArm = window.__bbArm || function (name) {{
+			var set = performance.now();
+			setTimeout(function () {{ window.__bbTimers[name] = performance.now() - set; }}, {TIMER_MS});
+		}};
+		{code} 0"
+	))?;
+	let mut rested = 0;
+	let start = Instant::now();
+	let after = loop {
+		frame_in_real_time(game, gpu, target)?;
+		if resting(game) {
+			rested += 1;
+		}
+		// Asked with the page parked, as the scripts' calls reach it: a call into a page
+		// on its turn would give it the next turn too.
+		game.front().session().park();
+		let fired = game.front().session().eval(&format!("window.__bbTimers.{name}"))?;
+		if let Some(after) = fired.as_f64() {
+			break after;
+		}
+		if start.elapsed() > Duration::from_secs(2) {
+			return Err(format!("a {TIMER_MS} ms timer set from {context} never fired ({fired:?})"));
+		}
 	};
-	// It fires in the frame its due time falls in, as it did without resting.
-	if !(400.0..=400.0 + 2.0 * 16.7 + 10.0).contains(&after) {
-		return Err(format!("the page's 400 ms timer fired after {after:.1} ms"));
+	// It fires in the frame its due time falls in, as it did without resting: by the
+	// end of the turn after it (two frames), with some leeway.
+	if !(TIMER_MS..=TIMER_MS + 2.0 * 16.7 + 10.0).contains(&after) {
+		return Err(format!("a {TIMER_MS} ms timer set from {context} fired after {after:.1} ms"));
 	}
-	if rested_waiting < 5 || rested_after < 5 {
-		return Err(format!(
-			"the page rested {rested_waiting} frames while its timer waited and {rested_after} after it fired"
-		));
+	if rested < 5 {
+		return Err(format!("the page rested {rested} frames while a timer set from {context} waited"));
 	}
-	println!("  idle, the page rests: calls answered, a 400 ms timer fired after {after:.1} ms");
+	println!("  idle, the page rests: a {TIMER_MS} ms timer set from {context} fired after {after:.1} ms");
 	Ok(())
 }
 

@@ -31,7 +31,7 @@
 // The game reaches the page with:
 //   __bbCall(entryJson)  run one entry now, returning its result as JSON
 //   __bbEval(code)       evaluate test code, returning {"ok": value} or {"error": text}
-//   __bbPark()           park until the game lets the page go on
+//   __bbPark(result)     one step of parking until the game lets the page go on
 // An entry is ["t", event, args...]: engine._trigger(event, args...), or ["e", code]:
 // evaluate test code, as __bbEval does.
 //
@@ -309,12 +309,20 @@
 		};
 	}
 
-	define('__bbPark', function () {
+	// One step of a park (renderer.rs runs the loop): with no argument, park; with the
+	// result of the game's last call into the parked page, report it. Returns the next
+	// call the game sends (an entry, as JSON, for `__bbCall`), or '' once the game lets
+	// the page go on. The renderer runs each call on its own, not nested in this
+	// function, so the promise callbacks it queues run as it returns, before the page
+	// says what it has to do (as after a call into a page that isn't parked).
+	define('__bbPark', function (result) {
+		var reply;
 		try {
-			wait('park', workNow());
+			reply = result ? request('resume', workNow() + '\n' + result) : request('park', workNow());
 		} catch (e) {
 			reportError('parking', e);
+			return '';
 		}
-		return 'unparked';
+		return reply.nested === undefined ? '' : JSON.stringify(reply.nested);
 	});
 })();

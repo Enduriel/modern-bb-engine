@@ -47,6 +47,22 @@ fn call_page(frame: &Frame, function: &str, argument: &str) -> Option<String> {
 	result
 }
 
+/// Park the page until the game lets it go on, running the game's calls into it
+/// meanwhile (`__bbPark` in bootstrap.js takes each step). Each call runs from here as
+/// a script call of its own, not nested inside the park's, as a call into a page that
+/// isn't parked does: the promise callbacks it queues run as it returns, so what they
+/// change or a timer they set is counted when the page next says what it has to do.
+/// Nested in the park, they waited until the page was let go on, which a resting page
+/// (`page_rest`) may not be until something else wakes it.
+fn park(frame: &Frame) -> Option<String> {
+	let mut next = call_page(frame, "__bbPark", "")?;
+	while !next.is_empty() {
+		let result = call_page(frame, "__bbCall", &next).unwrap_or_else(|| "null".into());
+		next = call_page(frame, "__bbPark", &result).unwrap_or_default();
+	}
+	Some("unparked".into())
+}
+
 wrap_render_process_handler! {
 	pub(super) struct PageHandler {}
 
@@ -97,14 +113,14 @@ wrap_render_process_handler! {
 				super::memory::trim();
 				return 1;
 			}
-			let function = match name.as_str() {
-				ipc::CALL => "__bbCall",
-				ipc::EVAL => "__bbEval",
-				ipc::PARK => "__bbPark",
+			let id = ipc::int_arg(message, 0);
+			let result = match name.as_str() {
+				ipc::CALL => call_page(frame, "__bbCall", &ipc::string_arg(message, 1)),
+				ipc::EVAL => call_page(frame, "__bbEval", &ipc::string_arg(message, 1)),
+				ipc::PARK => park(frame),
 				_ => return 0,
 			};
-			let id = ipc::int_arg(message, 0);
-			let (ok, text) = match call_page(frame, function, &ipc::string_arg(message, 1)) {
+			let (ok, text) = match result {
 				Some(result) => (1, result),
 				None => (0, "the page is not ready".to_string()),
 			};

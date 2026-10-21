@@ -96,6 +96,17 @@ impl Json {
 		}
 	}
 
+	/// The number, if this is one. A JS number with no fraction reaches us as
+	/// [`Json::Int`] (JSON text doesn't keep the difference), so a reader of any number
+	/// takes both.
+	pub fn as_f64(&self) -> Option<f64> {
+		match *self {
+			Json::Int(n) => Some(n as f64),
+			Json::Float(f) => Some(f),
+			_ => None,
+		}
+	}
+
 	/// The array items, if this is an array.
 	pub fn as_array(&self) -> Option<&[Json]> {
 		match self {
@@ -355,6 +366,17 @@ mod tests {
 		let value = Json::parse(text).unwrap();
 		assert_eq!(value.to_text(), text);
 		assert_eq!(value.get("e"), Some(&Json::Int(-7)));
+	}
+
+	#[test]
+	fn numbers_read_whole_or_not() {
+		// A JS number that happens to be whole (408 ms between two clock readings)
+		// arrives as an integer.
+		assert_eq!(Json::parse("408").unwrap(), Json::Int(408));
+		assert_eq!(Json::parse("408").unwrap().as_f64(), Some(408.0));
+		assert_eq!(Json::parse("400.2").unwrap().as_f64(), Some(400.2));
+		assert_eq!(Json::Null.as_f64(), None);
+		assert_eq!(Json::Str("1".into()).as_f64(), None);
 	}
 
 	#[test]
