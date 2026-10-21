@@ -53,6 +53,13 @@
 //! refresh a few percent long, which then held while too few frames were presented in
 //! a row to notice it: 172.7 steps a second at 180 Hz with 2 of 7 frames presented.)
 //!
+//! **Where the system's report is the display's pace** ([`Pacer::trust_reported`],
+//! macOS), the reported refresh is the clock's and nothing is measured. There a redraw
+//! asked for comes with the window's next display cycle, so every frame starts a little
+//! after its due time: none was ever "started by the clock", each interval counted as the
+//! display's, and on a 60 Hz display the measure settled at 22-26 ms (38-47 steps a
+//! second, with 1-2 ms of work a frame, measured on a Mac), never noticed as stale.
+//!
 //! With VSync off (presents don't wait for the display), the frame cap's interval is the
 //! clock's (144 by default), or with no cap the display's refresh for undrawn frames and
 //! none for presented ones (as fast as they're made).
@@ -103,6 +110,9 @@ pub struct Pacer {
 	/// Whether presenting waits for the display (VSync on: FIFO). Otherwise the
 	/// presented frames' intervals say nothing of the display.
 	display_paced: bool,
+	/// Whether the reported refresh is the display's pace, not measured (see
+	/// [`Pacer::trust_reported`]).
+	trusted: bool,
 	last: Option<Slot>,
 	last_presented: Option<Instant>,
 	/// The frames presented one after another so far, the last included.
@@ -121,6 +131,7 @@ impl Pacer {
 		Pacer {
 			reported,
 			display_paced,
+			trusted: false,
 			last: None,
 			last_presented: None,
 			run: 0,
@@ -141,6 +152,14 @@ impl Pacer {
 		if moved {
 			self.remeasure();
 		}
+	}
+
+	/// Take the reported refresh as the display's pace, measuring only while none is
+	/// reported: where the system paces the window's redraws itself (macOS, whose
+	/// reports come from the display's own mode), so the frames' intervals measure the
+	/// redraws' lateness as much as the display.
+	pub fn trust_reported(&mut self, trusted: bool) {
+		self.trusted = trusted;
 	}
 
 	/// Presenting now waits for the display, or not (VSync turned on or off): what was
@@ -192,7 +211,12 @@ impl Pacer {
 		let interval = self.interval(cap);
 		// Started by the clock: at its due time (or sooner, a redraw the system asked
 		// for), not held back by the display or late from its own work.
-		let clocked = due.is_some_and(|due| at < due || (waited && at < due + interval / LATE));
+		// Where the report is trusted, a held-back frame is the clock's however late the
+		// redraw came, up to a refresh (macOS hands it over with the window's display
+		// cycle, 1-4 ms after it was asked for): taking its start as its slot would
+		// lose that lateness every frame (56.7 steps a second at 60 Hz, 2026-10-21).
+		let late = if self.trusted && self.reported.is_some() { interval } else { interval / LATE };
+		let clocked = due.is_some_and(|due| at < due || (waited && at < due + late));
 		let slot = match (clocked, self.last) {
 			// An undrawn frame stands for the refresh after the last frame's.
 			(true, Some(last)) if !presented => last.at + interval,
@@ -231,13 +255,14 @@ impl Pacer {
 	/// Whether frames should be presented, changed or not, to measure the display's
 	/// refresh: presenting waits for the display, and too little of it is measured yet.
 	pub fn measuring(&self) -> bool {
-		self.display_paced && self.intervals.len() < ENOUGH
+		self.display_paced && self.intervals.len() < ENOUGH && !(self.trusted && self.reported.is_some())
 	}
 
 	/// The display's refresh interval: measured, where presenting waits for it, and no
 	/// shorter than the monitor's reported one; else as reported; else 60 Hz.
 	pub fn refresh(&self) -> Duration {
-		let measured = (self.display_paced && self.intervals.len() >= ENOUGH).then(|| self.median()).flatten();
+		let trusted = self.trusted && self.reported.is_some();
+		let measured = (self.display_paced && !trusted && self.intervals.len() >= ENOUGH).then(|| self.median()).flatten();
 		let refresh = match (measured, self.reported) {
 			(Some(measured), Some(reported)) => measured.max(reported),
 			(Some(measured), None) => measured,

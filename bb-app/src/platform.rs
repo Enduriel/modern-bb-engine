@@ -23,6 +23,14 @@ pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
 	true
 }
 
+/// Whether the monitor's refresh as the system reports it is the pace the window's
+/// redraws keep (see `pacing`): macOS reports it from the display's mode and delivers
+/// redraws on the window's display cycle. Elsewhere it's measured (gamescope's Wayland
+/// reports none, and a compositor's own pace may differ).
+pub fn reported_refresh_paces() -> bool {
+	cfg!(target_os = "macos")
+}
+
 /// With `BB_ALLOW_TRACE=1`, any process of the user's may attach a debugger to this one
 /// (Linux, where Yama's `ptrace_scope` 1 otherwise lets only its ancestors): the window
 /// tests read the stacks of a run that hangs. The browser's processes, which run this

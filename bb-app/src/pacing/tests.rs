@@ -360,3 +360,42 @@ fn a_right_measure_is_kept() {
 	}
 	assert_eq!(pacer.remeasured, 0, "with a 144 cap");
 }
+
+/// macOS: redraws come late with the window's display cycle, so presented frames 25 ms
+/// apart on a 60 Hz display would measure a 25 ms refresh. With the reported refresh
+/// trusted, it is the clock's, and nothing is measured; without a report it's measured.
+#[test]
+fn a_trusted_report_is_the_pace() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(None, true);
+	pacer.trust_reported(true);
+	assert!(pacer.measuring(), "nothing reported yet");
+	pacer.set_reported(Some(HZ_60));
+	assert!(!pacer.measuring());
+	presenting(&mut pacer, start, &run(0, Duration::from_micros(25_000), 40));
+	assert_eq!(pacer.interval(None), HZ_60, "late redraws don't set the pace");
+	let mut untrusted = Pacer::new(Some(HZ_60), true);
+	presenting(&mut untrusted, start, &run(0, Duration::from_micros(25_000), 40));
+	assert_eq!(untrusted.interval(None), Duration::from_micros(25_000), "measured where not trusted");
+}
+
+/// macOS: frames held back to their due time start up to a few milliseconds late (the
+/// redraw comes with the display cycle); with the report trusted they keep the clock's
+/// slots, so the steps keep the display's rate.
+#[test]
+fn late_redraws_keep_a_trusted_clock() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(Some(HZ_60), true);
+	pacer.trust_reported(true);
+	pacer.frame(start, false, false, None);
+	let mut at = start;
+	for i in 0..600u64 {
+		let due = pacer.due(None).expect("due");
+		assert!(due >= at);
+		// 1-4 ms late, the frame undrawn or presented.
+		at = due + Duration::from_micros(1_000 + (i * 7919) % 3_000);
+		pacer.frame(at, i % 3 == 0, true, None);
+	}
+	let rate = 600.0 / at.duration_since(start).as_secs_f64();
+	assert!((59.0..61.0).contains(&rate), "{rate:.2} steps a second");
+}

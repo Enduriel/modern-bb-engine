@@ -369,7 +369,8 @@ impl App {
 		let presenter = Presenter::new(&gpu, format);
 		let frame_rect = display::frame_rect((config.width, config.height), game.screen());
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
-		let pacer = Pacer::new(None, config.present_mode == wgpu::PresentMode::Fifo);
+		let mut pacer = Pacer::new(None, config.present_mode == wgpu::PresentMode::Fifo);
+		pacer.trust_reported(platform::reported_refresh_paces());
 		let cursor_scale = window.scale_factor();
 		let cursor_shower = Shower::new(window);
 		let (window, surface) = unfinished.finish();
