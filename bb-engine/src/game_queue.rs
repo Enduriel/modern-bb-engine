@@ -153,6 +153,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg_attr(not(target_os = "linux"), ignore = "the queue reads processes from Linux's /proc")]
 	fn a_turn_handed_down_counts_only_from_a_live_ancestor() {
 		let parent = parent_of(std::process::id()).expect("the test's parent");
 		let (dir, ticket) = queue_with("parent", parent);
