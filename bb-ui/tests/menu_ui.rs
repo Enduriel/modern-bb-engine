@@ -270,7 +270,54 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		problems.is_empty(),
 		format!("page or bridge errors:\n{}", problems.join("\n")),
 	)?;
+	throws_in_the_scripts_calls_go_to_coherents_handler(&session)?;
 	links_reach_the_url_opener(&session)
+}
+
+/// A page method that throws when the scripts call it, as in Coherent (probed
+/// 2026-10-21): the error goes to coherent.js's `engine._ThrowError`, which logs an
+/// Error (name, message, stack) and nothing for a thrown string; the script's call gets
+/// null either way, as it does from a method that returns.
+fn throws_in_the_scripts_calls_go_to_coherents_handler(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		r#"window.__bbRan = [];
+		Screens.MainMenuScreen.bbReturns = function () { __bbRan.push('returns'); return 42; };
+		Screens.MainMenuScreen.bbThrowsString = function () { __bbRan.push('string'); throw 'BB_THROWN_STRING'; };
+		Screens.MainMenuScreen.bbThrowsError = function () { __bbRan.push('error'); throw new Error('BB_THROWN_ERROR'); };
+		0"#,
+	)?;
+	let mentions = |needle: &str| session.log().iter().filter(|l| l.text.contains(needle)).count();
+	let (strings, errors) = (mentions("BB_THROWN_STRING"), mentions("BB_THROWN_ERROR"));
+	session.engine().run_script(
+		r#"
+		local h = ::RootState.get("MainMenuState").m.MainMenuScreen.m.JSHandle;
+		::__bbAnswers <- [h.call("bbReturns", null), h.call("bbThrowsString", null), h.call("bbThrowsError", null)];
+		h.asyncCall("bbThrowsString", null);
+		"#,
+		"throwing page methods",
+	)?;
+	session.engine().run_script(
+		"::__bbAnswer <- ::__bbAnswers[0] == null && ::__bbAnswers[1] == null && ::__bbAnswers[2] == null;",
+		"answers",
+	)?;
+	ensure(
+		SqTable::root(session.engine().vm()).get::<bool>("__bbAnswer") == Some(true),
+		"a page method's call answered something other than null",
+	)?;
+	let ran = session.eval("__bbRan.join(',')")?;
+	ensure(
+		ran.as_str() == Some("returns,string,error,string"),
+		format!("the page methods ran as {}", ran.to_text()),
+	)?;
+	// The page's console messages arrive on their own: wait for the Error's, then a
+	// moment more for anything else.
+	session.pump_until(Duration::from_secs(5), |_| mentions("BB_THROWN_ERROR") > errors);
+	session.pump_until(Duration::from_millis(500), |_| false);
+	ensure(mentions("BB_THROWN_STRING") == strings, "a thrown string was logged")?;
+	ensure(
+		mentions("BB_THROWN_ERROR") == errors + 1,
+		format!("a thrown Error was logged {} times", mentions("BB_THROWN_ERROR") - errors),
+	)
 }
 
 /// The page's list of a scroll bar (vanilla's `createList`), its bar and thumb.

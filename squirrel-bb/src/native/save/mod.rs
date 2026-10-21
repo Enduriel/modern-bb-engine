@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use squirrel::{SQVM, SqStrongRef, SqTable};
+use squirrel::{SQVM, SqStrongRef, SqTable, This};
 
 use storage::Storage;
 use stream::{Meta, SaveReader, SaveWriter, StreamClasses};
@@ -76,10 +76,26 @@ pub trait ExtensionSection {
 /// The callbacks `World.setOn*Callback` registers.
 #[derive(Default)]
 struct Callbacks {
-	before_save: Option<SqStrongRef>,
-	save: Option<SqStrongRef>,
-	before_load: Option<SqStrongRef>,
-	load: Option<SqStrongRef>,
+	before_save: Option<SaveCallback>,
+	save: Option<SaveCallback>,
+	before_load: Option<SaveCallback>,
+	load: Option<SaveCallback>,
+}
+
+/// A registered save or load callback and the receiver it was registered on (`World`),
+/// its `this` (probed: Sqrat keeps a function argument's receiver as its environment).
+#[derive(Clone)]
+pub(crate) struct SaveCallback {
+	function: SqStrongRef,
+	this: SqStrongRef,
+}
+
+impl SaveCallback {
+	/// Call it with the stream. A throw is reported (the VM's error handler) and goes no
+	/// further: the original saves or loads on (probed 2026-10-21).
+	pub(crate) fn run(&self, vm: &SQVM, stream: &SqStrongRef) {
+		drop(self.function.call_with_this(vm, &self.this, (stream.clone(),)));
+	}
 }
 
 struct Inner {
@@ -129,8 +145,10 @@ impl Default for SaveSystem {
 }
 
 /// Call a registered callback with the stream, if one is registered.
-fn run_callback(vm: &SQVM, callback: Option<SqStrongRef>, stream: &SqStrongRef) -> Result<(), String> {
-	callback.map_or(Ok(()), |c| c.call(vm, (stream.clone(),)))
+fn run_callback(vm: &SQVM, callback: Option<SaveCallback>, stream: &SqStrongRef) {
+	if let Some(c) = callback {
+		c.run(vm, stream);
+	}
 }
 
 fn now_secs() -> i64 {
@@ -164,7 +182,7 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 	}));
 	let stream = classes.out_stream(vm, writer.clone(), meta.clone());
 	let before = inner.callbacks.borrow().before_save.clone();
-	run_callback(vm, before, &stream)?;
+	run_callback(vm, before, &stream);
 	if original {
 		let world = inner.original.borrow().clone().ok_or("saving in the original's format: no world to save")?;
 		let after = inner.callbacks.borrow().save.clone();
@@ -190,7 +208,7 @@ fn save_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 		part.save(&cx)?;
 	}
 	let after = inner.callbacks.borrow().save.clone();
-	run_callback(vm, after, &stream)?;
+	run_callback(vm, after, &stream);
 	let bytes = storage::encode(&meta.borrow(), &writer.borrow().buf);
 	inner.storage.borrow().write(&file, bytes)
 }
@@ -250,7 +268,7 @@ fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 		return load_extension(inner, vm, found);
 	}
 	let before = inner.callbacks.borrow().before_load.clone();
-	run_callback(vm, before, &stream)?;
+	run_callback(vm, before, &stream);
 	let parts = inner.parts.borrow().clone();
 	let cx = LoadCx {
 		vm,
@@ -261,7 +279,8 @@ fn load_campaign(inner: &Inner, classes: &StreamClasses, vm: &SQVM, file: String
 		part.load(&cx)?;
 	}
 	let after = inner.callbacks.borrow().load.clone();
-	run_callback(vm, after, &stream)
+	run_callback(vm, after, &stream);
+	Ok(())
 }
 
 impl SaveSystem {
@@ -350,8 +369,9 @@ impl SaveSystem {
 		macro_rules! setter {
 			($field:ident) => {{
 				let inner = self.inner.clone();
-				vm.make_closure(move |callback: Option<SqStrongRef>| {
-					inner.callbacks.borrow_mut().$field = callback;
+				vm.make_closure(move |vm: &SQVM, this: This, callback: Option<SqStrongRef>| {
+					let this = this.to_strong(vm);
+					inner.callbacks.borrow_mut().$field = callback.map(|function| SaveCallback { function, this });
 				})
 			}};
 		}

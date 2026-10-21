@@ -495,12 +495,15 @@ impl WorldGrid {
 			let g = self.grid.clone();
 			vm.make_closure(
 				move |vm: &SQVM,
+				      this: This,
 				      center: Native<TileHandle>,
 				      min: i64,
 				      max: i64,
 				      callback: SqStrongRef,
 				      userdata: Retained|
 				      -> Result<(), String> {
+					// `this` in the callback is the receiver (`World`), as Sqrat keeps it.
+					let this = this.to_strong(vm);
 					// The original's range walk (`hex_range`): sector order, centre
 					// excluded; then the inner rings closer than `min` are skipped. No grid
 					// borrow is held across the callback (it runs arbitrary script that
@@ -521,7 +524,7 @@ impl WorldGrid {
 						}
 						if let Some(tile) = tile_at(&g, vm, q, r + q / 2) {
 							// A throw is reported and the walk goes on (probed).
-							drop(callback.call(vm, (tile, userdata.0.clone())));
+							drop(callback.call_with_this(vm, &this, (tile, userdata.0.clone())));
 						}
 					}
 					Ok(())

@@ -16,7 +16,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, Variadic};
+use squirrel::{ClassBuilder, Number, Retained, SQVM, SqClass, SqStrongRef, SqTable, This, Variadic};
 
 use super::camera_callbacks::{self, MovementCallbacks};
 use super::camera_overlays::EntityOverlays;
@@ -214,7 +214,9 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 	let (register, unregister, update) = (callbacks.clone(), callbacks.clone(), callbacks.clone());
 	let moving = camera.clone();
 	b = b
-		.native_method("registerCallbacks", move |start: Retained, end: Retained| register.borrow_mut().register(start.0, end.0))
+		.native_method("registerCallbacks", move |vm: &SQVM, this: This, start: Retained, end: Retained| {
+			register.borrow_mut().register(this.to_strong(vm), start.0, end.0)
+		})
 		.native_method("unregisterCallbacks", move |start: Retained, end: Retained| unregister.borrow_mut().unregister(&start.0, &end.0))
 		.native_method("update", move |vm: &SQVM| {
 			let due = update.borrow_mut().due(moving.borrow().is_moving());

@@ -297,6 +297,47 @@ macro_rules! impl_into_sq_function {
 			}
 		}
 
+		// -------- &SQVM + this + fixed: FnMut(&SQVM, This, A, B, ...) -> R --------
+		// For a native that keeps its receiver (`This::to_strong` needs the VM), e.g. to
+		// call a script callback later with the receiver as `this`, as Sqrat does.
+		impl<Func, Ret, $($arg),*> IntoSqFunction<(VmMarker, ThisMarker, FixedMarker, $($arg,)*)> for Func
+		where
+			Func: for<'vm> FnMut(&'vm SQVM, This<'vm>, $($arg),*) -> Ret
+				+ for<'a> FnMut(&'a SQVM, This<'a>, $(<$arg as SqArg>::Item<'a>),*) -> Ret
+				+ 'static,
+			Ret: IntoSqReturn,
+			$($arg: SqArg + 'static,)*
+		{
+			fn into_sq_function(self) -> Box<dyn SqFunction> {
+				#[allow(unused_mut)]
+				let mut typemask = String::from(".");
+				$( <$arg as SqArg>::push_typemask(&mut typemask); )*
+				let nparamscheck = 1i64 $(+ count_one!($arg))*;
+
+				let mut func = self;
+				let invoke = move |vm: &SQVM| -> squirrel_sys::SQInteger {
+					let this = This::extract(vm);
+					#[allow(unused_mut)]
+					let mut idx = 2i64;
+					$(
+						#[allow(non_snake_case)]
+						let $arg = match <$arg as SqArg>::from_sq(vm, idx) {
+							Ok(value) => value,
+							Err(error) => return vm.throw_error(&error),
+						};
+						idx += 1;
+					)*
+					let _ = idx;
+					match func(vm, this, $($arg),*).push_return(vm) {
+						Ok(count) => count,
+						Err(error) => vm.throw_error(&error),
+					}
+				};
+
+				Box::new(ClosureFn { invoke: Box::new(invoke), nparamscheck, typemask, label: std::any::type_name::<Func>().to_string() })
+			}
+		}
+
 		// -------- &SQVM + variadic: FnMut(&SQVM, A, ..., Variadic<V>) -> R --------
 		impl<Func, Ret, Var, $($arg),*> IntoSqFunction<(VmMarker, VariadicMarker, Var, $($arg,)*)>
 			for Func

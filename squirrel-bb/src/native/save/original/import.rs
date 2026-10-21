@@ -3,7 +3,7 @@
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
-use super::super::LoadCx;
+use super::super::{LoadCx, SaveCallback};
 use super::camera::{Camera, Clock};
 use super::fog;
 use super::record::{Body, Head, TacticalNative};
@@ -59,13 +59,13 @@ pub(crate) fn load(
 	world: &dyn OriginalWorld,
 	cx: &LoadCx,
 	version: i64,
-	before: Option<SqStrongRef>,
-	after: Option<SqStrongRef>,
+	before: Option<SaveCallback>,
+	after: Option<SaveCallback>,
 ) -> Result<(), String> {
 	let vm = cx.vm;
 	world.clear(vm)?;
 	if let Some(before) = before {
-		before.call(vm, (cx.stream.clone(),))?;
+		before.run(vm, &cx.stream);
 	}
 	let (vtime, scene) = {
 		let mut r = cx.reader.borrow_mut();
@@ -111,7 +111,7 @@ pub(crate) fn load(
 		target.call_method(vm, "onDeserialize", (cx.stream.clone(),))?;
 	}
 	if let Some(after) = after {
-		after.call(vm, (cx.stream.clone(),))?;
+		after.run(vm, &cx.stream);
 	}
 	let mask = fog::read(&mut cx.reader.borrow_mut(), version)?;
 	world.load_fog(mask)

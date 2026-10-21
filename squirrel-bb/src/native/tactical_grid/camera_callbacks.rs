@@ -3,7 +3,7 @@
 //! `start` hides the tooltip. With the instant camera (headless) the camera never moves,
 //! so neither list is ever called.
 
-use squirrel::{ClassBuilder, Retained, SQVM};
+use squirrel::{ClassBuilder, Retained, SQVM, This};
 
 use super::Grid;
 use super::camera::CameraHandle;
@@ -15,7 +15,9 @@ use crate::native::camera_motion::Camera;
 pub(super) fn add(b: ClassBuilder<CameraHandle>, grid: &Grid) -> ClassBuilder<CameraHandle> {
 	let register = {
 		let grid = grid.clone();
-		move |start: Retained, end: Retained| grid.borrow_mut().camera.callbacks.register(start.0, end.0)
+		move |vm: &SQVM, this: This, start: Retained, end: Retained| {
+			grid.borrow_mut().camera.callbacks.register(this.to_strong(vm), start.0, end.0)
+		}
 	};
 	let unregister = {
 		let grid = grid.clone();

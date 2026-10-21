@@ -118,11 +118,23 @@
 		}
 	}
 
+	// A game call into the page that throws goes to coherent.js's `engine._ThrowError`,
+	// as Coherent's does: an Error is logged (its name, message and stack, through
+	// console.error) and anything else thrown, a string say, fails in there and logs
+	// nothing (probed 2026-10-21). The script's call gets null either way.
 	function runReporting(entry) {
 		try {
 			return run(entry);
 		} catch (e) {
-			reportError(entry.slice(1, 5).join('.'), e);
+			var engine = window.engine;
+			if (engine && typeof engine._ThrowError === 'function') {
+				try {
+					engine._ThrowError(e);
+				} catch (ignored) {
+				}
+			} else {
+				reportError(entry.slice(1, 5).join('.'), e);
+			}
 		}
 	}
 

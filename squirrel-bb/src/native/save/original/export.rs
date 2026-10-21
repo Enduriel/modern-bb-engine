@@ -1,9 +1,8 @@
 //! Writing a campaign save in the original's layout, as its `World.save` (`0x4f4650`)
 //! does (see [`super`] for the order), from the engine's state.
 
-use squirrel::SqStrongRef;
 
-use super::super::SaveCx;
+use super::super::{SaveCallback, SaveCx};
 use super::fog;
 use super::world::{OriginalWorld, SavedUnit};
 
@@ -24,7 +23,7 @@ fn write_units(cx: &SaveCx, units: &[SavedUnit]) -> Result<(), String> {
 
 /// Write the campaign's body (after the world state's `onBeforeSave` filled the
 /// metadata) with the world state's `onSave` callback.
-pub(crate) fn save(world: &dyn OriginalWorld, cx: &SaveCx, after: Option<SqStrongRef>) -> Result<(), String> {
+pub(crate) fn save(world: &dyn OriginalWorld, cx: &SaveCx, after: Option<SaveCallback>) -> Result<(), String> {
 	let vm = cx.vm;
 	let scene = world.scene(vm)?;
 	{
@@ -48,7 +47,7 @@ pub(crate) fn save(world: &dyn OriginalWorld, cx: &SaveCx, after: Option<SqStron
 		script.call_method(vm, "onSerialize", (cx.stream.clone(),))?;
 	}
 	if let Some(after) = after {
-		after.call(vm, (cx.stream.clone(),))?;
+		after.run(vm, &cx.stream);
 	}
 	fog::write(&mut cx.writer.borrow_mut(), &world.fog());
 	Ok(())

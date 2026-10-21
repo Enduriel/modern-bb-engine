@@ -10,9 +10,10 @@
 //!
 //! The centre is never included. No map borrow is held across a callback (it runs
 //! script, which may touch the map). A callback's error is reported and the walk goes
-//! on; the query returns normally (probed 2026-10-21).
+//! on; the query returns normally. `this` in the callback is the native's receiver
+//! (`Tactical`, normally), as Sqrat keeps it (probed 2026-10-21).
 
-use squirrel::{Native, Retained, SQVM, SqArray, SqStrongRef};
+use squirrel::{Native, Retained, SQVM, SqArray, SqStrongRef, This};
 
 use super::zone::{FactionSet, faction_mask};
 use super::{Grid, TacticalGridState, TileHandle, hex_distance, range, tile_handle};
@@ -54,7 +55,7 @@ pub(super) fn query_actors(
 	centre: usize,
 	min: i64,
 	max: i64,
-	callback: &SqStrongRef,
+	(callback, this): (&SqStrongRef, &SqStrongRef),
 	userdata: &SqStrongRef,
 ) -> Result<(), String> {
 	let ids = range::tiles_in_range(&g.borrow(), centre, max);
@@ -68,7 +69,7 @@ pub(super) fn query_actors(
 			}
 		};
 		if let Some(actor) = actor {
-			drop(callback.call(vm, (actor, userdata.clone())));
+			drop(callback.call_with_this(vm, this, (actor, userdata.clone())));
 		}
 	}
 	Ok(())
@@ -84,7 +85,7 @@ pub(super) fn query_tiles(
 	only_empty: bool,
 	tv_floor: i64,
 	allied: &[i64],
-	callback: &SqStrongRef,
+	(callback, this): (&SqStrongRef, &SqStrongRef),
 	userdata: &SqStrongRef,
 ) -> Result<(), String> {
 	let allied = (!allied.is_empty()).then(|| faction_mask(allied));
@@ -97,7 +98,7 @@ pub(super) fn query_tiles(
 		};
 		if take {
 			let tile = tile_handle(g, vm, id).ok_or("queryTilesInRange: no tile class")?;
-			drop(callback.call(vm, (tile, userdata.clone())));
+			drop(callback.call_with_this(vm, this, (tile, userdata.clone())));
 		}
 	}
 	Ok(())
@@ -108,8 +109,8 @@ pub(super) fn natives(vm: &mut SQVM, g: &Grid) -> [(String, SqStrongRef); 3] {
 	let actors = {
 		let g = g.clone();
 		vm.make_closure(
-			move |vm: &SQVM, centre: Native<TileHandle>, min: i64, max: i64, callback: SqStrongRef, data: Retained| {
-				query_actors(&g, vm, centre.0.id, min, max, &callback, &data.0)
+			move |vm: &SQVM, this: This, centre: Native<TileHandle>, min: i64, max: i64, callback: SqStrongRef, data: Retained| {
+				query_actors(&g, vm, centre.0.id, min, max, (&callback, &this.to_strong(vm)), &data.0)
 			},
 		)
 	};
@@ -117,6 +118,7 @@ pub(super) fn natives(vm: &mut SQVM, g: &Grid) -> [(String, SqStrongRef); 3] {
 		let g = g.clone();
 		vm.make_closure(
 			move |vm: &SQVM,
+			      this: This,
 			      centre: Native<TileHandle>,
 			      min: i64,
 			      max: i64,
@@ -126,7 +128,7 @@ pub(super) fn natives(vm: &mut SQVM, g: &Grid) -> [(String, SqStrongRef); 3] {
 			      data: Retained|
 			      -> Result<(), String> {
 				let allied = allied.to_vec::<i64>();
-				query_tiles(&g, vm, centre.0.id, min, max, only_empty, NO_TV_FLOOR, &allied, &callback, &data.0)
+				query_tiles(&g, vm, centre.0.id, min, max, only_empty, NO_TV_FLOOR, &allied, (&callback, &this.to_strong(vm)), &data.0)
 			},
 		)
 	};
@@ -134,6 +136,7 @@ pub(super) fn natives(vm: &mut SQVM, g: &Grid) -> [(String, SqStrongRef); 3] {
 		let g = g.clone();
 		vm.make_closure(
 			move |vm: &SQVM,
+			      this: This,
 			      centre: Native<TileHandle>,
 			      min: i64,
 			      max: i64,
@@ -144,7 +147,7 @@ pub(super) fn natives(vm: &mut SQVM, g: &Grid) -> [(String, SqStrongRef); 3] {
 			      data: Retained|
 			      -> Result<(), String> {
 				let allied = allied.to_vec::<i64>();
-				query_tiles(&g, vm, centre.0.id, min, max, only_empty, tv_floor, &allied, &callback, &data.0)
+				query_tiles(&g, vm, centre.0.id, min, max, only_empty, tv_floor, &allied, (&callback, &this.to_strong(vm)), &data.0)
 			},
 		)
 	};

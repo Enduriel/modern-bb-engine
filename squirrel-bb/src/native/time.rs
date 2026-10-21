@@ -38,7 +38,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
 
-use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
+use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable, This};
 
 // The script-facing `TimeUnit` values.
 const UNIT_REAL: i64 = 0;
@@ -78,8 +78,9 @@ struct Event {
 
 /// What an event does when it fires.
 enum Action {
-	/// A script's `callback(userdata)`.
-	Script { callback: SqStrongRef, userdata: SqStrongRef },
+	/// A script's `callback(userdata)`, with `this` the receiver `scheduleEvent` was
+	/// called on (`Time`, normally), as Sqrat keeps it (probed).
+	Script { callback: SqStrongRef, this: SqStrongRef, userdata: SqStrongRef },
 	/// The engine's own (the music's and the ambience's timers): the original keeps them
 	/// on the same list, so `clearEvents` drops them and `hasEventScheduled` sees them.
 	Native(Box<dyn FnOnce()>),
@@ -172,7 +173,7 @@ impl TimeService {
 			};
 			match due.action {
 				// A throwing callback must not abort the frame.
-				Action::Script { callback, userdata } => drop(callback.call(vm, (userdata,))),
+				Action::Script { callback, this, userdata } => drop(callback.call_with_this(vm, &this, (userdata,))),
 				Action::Native(run) => run(),
 			}
 		}
@@ -343,7 +344,7 @@ impl TimeService {
 			("scheduleEvent", {
 				let state = self.state.clone();
 				vm.make_closure(
-					move |unit: i64, delay: Number, callback: SqStrongRef, userdata: Retained| {
+					move |vm: &SQVM, this: This, unit: i64, delay: Number, callback: SqStrongRef, userdata: Retained| {
 						let mut st = state.borrow_mut();
 						// Any other unit schedules nothing (0x51d310).
 						let kind = match unit {
@@ -362,7 +363,7 @@ impl TimeService {
 							KIND_ROUNDS => st.round as f64,
 							_ => st.real_time.trunc(),
 						};
-						let action = Action::Script { callback, userdata: userdata.0 };
+						let action = Action::Script { callback, this: this.to_strong(vm), userdata: userdata.0 };
 						st.push(Event { kind, fire_threshold: base + delay.0.trunc(), action });
 					},
 				)
