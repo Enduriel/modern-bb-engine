@@ -28,10 +28,11 @@ squirrel-bb = { path = "../squirrel-bb" }
 wgpu = "30.0.1"
 winit = "0.30.13"
 
-# macOS: the game's cursor pixel for pixel on scaled displays (`system_cursor`).
+# macOS: the game's cursor pixel for pixel on scaled displays (`system_cursor`), and the
+# wheel event being handled (`wheel`).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSBitmapImageRep", "NSCursor", "NSGraphics", "NSImage", "NSImageRep", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSBitmapImageRep", "NSCursor", "NSEvent", "NSGraphics", "NSImage", "NSImageRep", "NSResponder", "NSView", "NSWindow"] }
 
 # Linux and the BSDs: Wayland's clipboard through the game's own connection to the
 # compositor (`clipboard::wayland`). 0.7.2 is on winit

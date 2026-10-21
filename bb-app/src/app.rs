@@ -133,6 +133,11 @@ struct Running {
 	/// landing every other frame): the window tests' check that the game steps at the
 	/// display's rate whichever frames are presented.
 	present_every: Option<(u64, u64)>,
+	/// With `BB_INPUT_LOG=1`, the wheel's events and the cursor shown are logged on
+	/// stderr, with what macOS says of them.
+	input_log: bool,
+	/// When the cursor was last logged on a mouse move (`input_log`).
+	input_logged: Instant,
 	/// With `BB_STATS`, when the renderer's memory is logged next, and the frames since
 	/// the last log: how many, and their own time (stepping, drawing, presenting).
 	next_stats: Option<Instant>,
@@ -396,6 +401,8 @@ impl App {
 			reported_refresh: None,
 			redraw_asked: None,
 			unpresented: std::env::var("BB_TEST_UNPRESENTED").ok().and_then(|v| v.parse().ok()),
+			input_log: std::env::var_os("BB_INPUT_LOG").is_some_and(|v| v != "0"),
+			input_logged: Instant::now(),
 			present_every: std::env::var("BB_TEST_PRESENT_EVERY").ok().and_then(|v| match v.split_once('/') {
 				Some((k, n)) => Some((k.parse().ok()?, n.parse().ok()?)),
 				None => Some((2, v.parse().ok()?)),
@@ -600,6 +607,9 @@ impl Running {
 			CursorShow::Drawn | CursorShow::Hidden => None,
 		};
 		self.cursor_shower.show(&self.window, cursor.as_ref());
+		if self.input_log {
+			eprintln!("input: cursor {show:?}: {}", system_cursor::describe(cursor.as_ref()));
+		}
 		self.shown_cursor = Some(show);
 	}
 
@@ -738,6 +748,10 @@ impl Running {
 		match event {
 			WindowEvent::CursorMoved { position, .. } => {
 				let (x, y) = self.to_screen(position.x, position.y);
+				if self.input_log && self.input_logged.elapsed() >= Duration::from_secs(1) {
+					self.input_logged = Instant::now();
+					eprintln!("input: mouse at {x},{y}: {}", system_cursor::describe(None));
+				}
 				self.game.mouse_moved(x, y)
 			}
 			WindowEvent::MouseInput { state, button, .. } => {
@@ -753,7 +767,11 @@ impl Running {
 			}
 			// Whole notches, each to the UI or the states (see `wheel`).
 			WindowEvent::MouseWheel { delta, .. } => {
-				let turned = self.wheel.add(wheel::notches(delta, self.window.scale_factor()));
+				let turn = wheel::notches(delta, self.window.scale_factor(), wheel::pixels_per_notch());
+				let turned = self.wheel.add(turn);
+				if self.input_log {
+					eprintln!("input: wheel {delta:?} ({}): {turn:.3} notches, {turned} whole", wheel::describe_event());
+				}
 				for _ in 0..turned.unsigned_abs() {
 					self.game.wheel(turned > 0)?;
 				}

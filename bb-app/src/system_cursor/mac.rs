@@ -8,9 +8,9 @@
 //!
 //! winit sets its own cursor from its view's cursor rectangle (`resetCursorRects`), and
 //! takes no `NSCursor` from outside. So a transparent view of ours lies over it, which
-//! lets every mouse event through (`hitTest:` finds nothing) and, while a cursor is
-//! shown, puts a cursor rectangle with it over the whole window; AppKit uses the topmost
-//! view's. With none shown, it has no rectangle and winit's applies (hidden).
+//! lets every mouse event through (`hitTest:` finds nothing) and puts a cursor rectangle
+//! over the whole window with the cursor shown, or a transparent one for none (see
+//! [`Overlay::show`]).
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -142,6 +142,8 @@ define_class!(
 /// Our view over winit's.
 pub(super) struct Overlay {
 	view: Retained<CursorView>,
+	/// A transparent cursor, for none.
+	hidden: Cursor,
 }
 
 impl Overlay {
@@ -162,20 +164,47 @@ impl Overlay {
 		};
 		view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
 		parent.addSubview(&view);
-		Ok(Overlay { view })
+		let clear = CursorImage {
+			width: 1,
+			height: 1,
+			hotspot: (0, 0),
+			rgba: vec![0; 4],
+		};
+		Ok(Overlay {
+			view,
+			hidden: cursor(&clear, 1.0)?,
+		})
 	}
 
-	/// Show `cursor` over the whole window, or leave the cursor to winit (`None`).
+	/// Show `cursor` over the whole window, or none (a transparent one).
+	///
+	/// The overlay's cursor rectangle is always there, so winit's never decides: winit
+	/// re-adds its own whenever its cursor is shown or hidden, and AppKit doesn't say
+	/// which of two overlapping rectangles wins. winit's stays as it started (its
+	/// arrow, never hidden).
 	pub(super) fn show(&self, cursor: Option<&Cursor>) {
-		*self.view.ivars().borrow_mut() = cursor.cloned();
+		let cursor = cursor.unwrap_or(&self.hidden);
+		*self.view.ivars().borrow_mut() = Some(cursor.clone());
 		if let Some(window) = self.view.window() {
 			window.invalidateCursorRectsForView(&self.view);
 		}
 		// At once, not at the next mouse move.
-		if let Some(cursor) = cursor {
-			cursor.set();
-		}
+		cursor.set();
 	}
+}
+
+/// The cursors now, for `BB_INPUT_LOG`: whether the app's current cursor is `shown`, and
+/// the system's (what shows on the screen, from any app) size in points.
+pub(super) fn describe(shown: Option<&Cursor>) -> String {
+	let current = NSCursor::currentCursor();
+	let ours = shown.is_some_and(|c| std::ptr::eq(&**c, &*current));
+	#[allow(deprecated)]
+	let system = NSCursor::currentSystemCursor().map(|c| {
+		// SAFETY: `size` returns a CGSize.
+		let size: Size = unsafe { msg_send![&c.image(), size] };
+		format!("{}x{} points", size.width, size.height)
+	});
+	format!("the app's cursor is {}ours; the system's {}", if ours { "" } else { "not " }, system.unwrap_or_else(|| "none".into()))
 }
 
 impl Drop for Overlay {

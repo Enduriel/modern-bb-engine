@@ -109,8 +109,20 @@ impl Shower {
 		#[cfg(target_os = "macos")]
 		if let Some(overlay) = &self.overlay {
 			overlay.show(cursor.map(|c| &c.0));
+			return;
 		}
 		window.set_cursor_visible(cursor.is_some());
+	}
+}
+
+/// The cursors now, as the system has them, for a log (macOS; empty elsewhere).
+pub fn describe(shown: Option<&Cursor>) -> String {
+	#[cfg(target_os = "macos")]
+	return mac::describe(shown.map(|c| &c.0));
+	#[cfg(not(target_os = "macos"))]
+	{
+		let _ = shown;
+		String::new()
 	}
 }
 
