@@ -847,13 +847,16 @@ fn text_lays_out_in_whole_pixels(session: &UiSession) -> Result<(), String> {
 
 /// Where the game discards a scene, the page gives back what it kept (`UiHost::
 /// release_memory`), a garbage collection among it: an object nothing holds any more
-/// is gone after it, where a page this quiet wouldn't collect on its own.
+/// is gone after it. The page holds the object until the release, then lets it go and
+/// is told to release at once: V8 collects on its own whenever its heuristics say
+/// (more often under load), so an object let go earlier may already be gone, which
+/// would say nothing about the release.
 fn discards_give_memory_back(session: &UiSession) -> Result<(), String> {
-	session.eval("window.__bbWeak = new WeakRef({ big: new Array(100000).fill(1) }); true")?;
+	session.eval("window.__bbHeld = { big: new Array(100000).fill(1) }; window.__bbWeak = new WeakRef(window.__bbHeld); true")?;
 	session.run_frames(0.3)?;
 	ensure(
-		session.eval("window.__bbWeak.deref() !== undefined")? == Json::Bool(true),
-		"the object went before any release (the check can't tell)",
+		session.eval("delete window.__bbHeld; window.__bbWeak.deref() !== undefined")? == Json::Bool(true),
+		"the object went while the page held it",
 	)?;
 	session.host().release_memory();
 	session.run_frames(0.5)?;
