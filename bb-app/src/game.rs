@@ -32,6 +32,10 @@ pub struct Game {
 	/// units on the world map), warmed whenever one is; and whether one was last frame.
 	battle_atlases: HashSet<String>,
 	battle_map: bool,
+	/// The world map's revision when the campaign was last left: until it changes (a
+	/// campaign made or loaded), the map's tiles are the old campaign's, and the water's
+	/// and the fog's textures aren't wanted.
+	left_map: Option<u64>,
 	/// How many of the fonts mods registered the renderer has.
 	fonts: usize,
 	cursor: (i64, i64),
@@ -177,6 +181,7 @@ impl Game {
 			battle_atlases: HashSet::new(),
 			fonts: 0,
 			battle_map: false,
+			left_map: None,
 			cursor: (0, 0),
 			system_cursor: false,
 			cursor_pictures: CursorPictures::new(files),
@@ -397,6 +402,13 @@ impl Game {
 		// The screen the scripts think in maps onto the frame.
 		let fit = width as f32 / self.screen().0 as f32;
 		let (tactical, world) = (tactical_visible(engine), world_visible(engine));
+		// A campaign's map, made or loaded: its water and fog load before it shows (the
+		// loading screen), not with its first frame.
+		let grid = engine.world_grid();
+		let (map_width, map_height) = grid.extent();
+		if !tactical && map_width > 0.0 && map_height > 0.0 && self.left_map != Some(grid.map_revision()) {
+			self.renderer.prefetch_world(gpu, grid.fog_of_war());
+		}
 		let virtual_time = engine.time().virtual_seconds() as f32;
 		// A battle, and a world map whose fog of war shows (it drifts with real time) or
 		// just changed, look different every frame.
@@ -578,6 +590,7 @@ impl Game {
 				squirrel_bb::Discard::Battle => self.renderer.discard(Discard::Battle),
 				squirrel_bb::Discard::Campaign => {
 					self.renderer.discard(Discard::Campaign);
+					self.left_map = Some(engine.world_grid().map_revision());
 					self.battle_atlases.clear();
 				}
 				// The new campaign draws the old one's atlases again.

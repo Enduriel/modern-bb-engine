@@ -253,9 +253,9 @@ fn a_missing_atlas_draws_the_texture_missing_picture() {
 		let memory = renderer.memory();
 		let stand_in = memory.textures.iter().find(|t| t.path == "gfx/test.png");
 		assert_eq!(stand_in.map(|t| t.stand_in), (drawn == 1).then_some(true), "counted as a stand-in");
-		// The water's picture is missing here too.
-		let failed = if drawn == 1 { 0 } else { 2 };
-		assert_eq!(memory.failed, failed, "or as failed, with nothing in its place");
+		assert_eq!(memory.failed, 1 - drawn, "or as failed, with nothing in its place");
+		// A scene without a map's extent draws no water: its texture isn't asked for.
+		assert!(memory.textures.iter().all(|t| t.path != "gfx/water.png"), "no water without a map");
 		if drawn == 1 {
 			let image = target.read(&gpu).expect("read back");
 			assert_eq!(&image.rgba[(5 * 4)..(5 * 4 + 4)], &red, "drawn with the picture");

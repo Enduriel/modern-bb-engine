@@ -83,7 +83,8 @@ pub struct WorldRenderer {
 	/// When each texture was last drawn, for which stay on the GPU.
 	residency: Residency,
 	/// Makes an atlas's mips when a draw first samples them.
-	mips: MipMaker,
+	/// Shared with the uploads' closures, which make the water's and the fog's.
+	mips: Arc<MipMaker>,
 	/// The drawn frames in our own pages (`None`: whole atlases, `BB_TEXTURE_PAGES=off`).
 	pages: Option<FramePages>,
 	/// Text the bitmap fonts can't draw, shaped in the outline fonts.
@@ -193,6 +194,11 @@ const ERROR_TEXTURE: &str = "error.png";
 /// The water's texture.
 const WATER_TEXTURE: &str = "gfx/water.png";
 
+/// The textures of the world map's own passes: the water's, and the fog's with `fog`.
+fn world_textures(fog: bool) -> impl Iterator<Item = &'static str> {
+	[WATER_TEXTURE, FOG_TEXTURE].into_iter().filter(move |p| *p == WATER_TEXTURE || fog)
+}
+
 /// What shows where nothing is drawn.
 const CLEAR: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 
@@ -233,7 +239,7 @@ impl WorldRenderer {
 			depth_of_field: false,
 			usage: None,
 			residency: Residency::new(gpu.texture_budget()),
-			mips: MipMaker::new(gpu),
+			mips: Arc::new(MipMaker::new(gpu)),
 			pages: (!std::env::var_os("BB_TEXTURE_PAGES").is_some_and(|v| v == "off" || v == "0"))
 				.then(|| FramePages::new(files.clone(), bb_assets::SheetCache::from_env(), threads)),
 			text: std::cell::RefCell::new(TextShaper::new(FontDb::new(
@@ -392,7 +398,9 @@ impl WorldRenderer {
 		view: (f32, Option<u32>),
 		out: &mut Vec<Option<(From, Quad)>>,
 	) -> bool {
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
+		let mips = self.mips.clone();
+		let mips = &*mips;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
 		self.textures.pump(upload);
 		let wait = atlases == Atlases::WaitForAll;
 		let mut whole = vec![false; map.atlases.paths.len()];
@@ -546,8 +554,28 @@ impl WorldRenderer {
 		self.residency.set_budget(bytes);
 	}
 
+	/// A world map is on its way (a campaign made or loaded): load the water's texture,
+	/// and the fog's with `fog` (fog of war on), so that they're on the GPU when it shows.
+	/// Decoded on the workers, each is uploaded by the first frame after.
+	pub fn prefetch_world(&mut self, gpu: &Gpu, fog: bool) {
+		let mut loading = false;
+		for path in world_textures(fog) {
+			if !matches!(self.textures.slot(path), Some(Slot::Ready(_) | Slot::Missing(..) | Slot::Failed(_))) {
+				self.textures.prefetch(path);
+				self.residency.drawn(path, Drawer::World);
+				loading = true;
+			}
+		}
+		if loading {
+			let _span = crate::frame_timing::span("world textures");
+			let mips = &self.mips;
+			self.textures.pump(|path, image| upload(gpu, mips, path, &image));
+		}
+	}
+
 	/// The game discarded a scene: what only it needed goes, and the warmed images no
-	/// draw asked for.
+	/// draw asked for. Leaving the campaign, the water and the fog go too (only a map
+	/// draws them).
 	pub fn discard(&mut self, discard: Discard) {
 		// The kept map's and moving layer's bind groups hold their textures.
 		self.kept.forget_groups();
@@ -566,6 +594,11 @@ impl WorldRenderer {
 		};
 		for path in gone {
 			self.textures.remove(&path);
+		}
+		if discard == Discard::Campaign {
+			for path in world_textures(true) {
+				self.textures.remove(path);
+			}
 		}
 	}
 
@@ -708,7 +741,9 @@ impl WorldRenderer {
 		atlases: Atlases,
 		moving: Moving,
 	) -> FrameStats {
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
+		let mips = self.mips.clone();
+		let mips = &*mips;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
 		self.textures.pump(upload);
 		let fonts = WorldFonts {
 			label: label_font(&self.label_font),
@@ -734,15 +769,15 @@ impl WorldRenderer {
 			self.record_usage(world, view.zoom, None);
 		}
 		self.index(registry);
-		for path in [WATER_TEXTURE, FOG_TEXTURE].into_iter().filter(|p| *p == WATER_TEXTURE || scene.fog_of_war) {
-			match atlases {
-				Atlases::WaitForAll => {
-					let _ = self.textures.get_now(path, upload);
-				}
-				Atlases::DrawReady => {
-					let _ = self.textures.get_or_upload(path, upload);
-				}
-			}
+		// The water and the fog only over a map: none is loaded for the main menu.
+		let map = scene.extent.0 > 0.0 && scene.extent.1 > 0.0;
+		let mut passes_waiting = 0;
+		for path in world_textures(scene.fog_of_war).filter(|_| map) {
+			let ready = match atlases {
+				Atlases::WaitForAll => self.textures.get_now(path, upload).is_ok(),
+				Atlases::DrawReady => self.textures.get_or_upload(path, upload).is_some(),
+			};
+			passes_waiting += usize::from(!ready);
 			self.residency.drawn(path, Drawer::World);
 		}
 		let resolve_span = crate::frame_timing::span("resolve+bind");
@@ -837,7 +872,7 @@ impl WorldRenderer {
 		};
 		drop(resolve_span);
 		stats.quads += shown.quads - kept_unready;
-		stats.waiting += shown.waiting + kept_unready;
+		stats.waiting += shown.waiting + kept_unready + passes_waiting;
 		stats.failed += kept_failed;
 		if world.is_some() {
 			stats.quads = frame.parts.iter().map(Vec::len).sum::<usize>() + shown.quads - kept_unready;
@@ -930,7 +965,9 @@ impl WorldRenderer {
 	/// now, given their mips if drawn at `zoom` samples them, and their usage recorded if
 	/// tracked. Returns how many failed to load.
 	fn moving_atlases(&mut self, gpu: &Gpu, atlases: Atlases, zoom: f32) -> usize {
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
+		let mips = self.mips.clone();
+		let mips = &*mips;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
 		if self.usage.is_some() {
 			let mut list = crate::world::AtlasList::default();
 			let quads = self
@@ -989,7 +1026,9 @@ impl WorldRenderer {
 	/// recorded if tracked. Returns how many failed to load, and the quads drawn from
 	/// those not ready (or failed with no stand-in), which draw nothing.
 	fn kept_atlases(&mut self, gpu: &Gpu, shown: &kept_map::Shown, atlases: Atlases, zoom: f32) -> (usize, usize) {
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, path, &image);
+		let mips = self.mips.clone();
+		let mips = &*mips;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
 		if self.usage.is_some() {
 			let mut list = crate::world::AtlasList::default();
 			for path in self.kept.atlas_paths() {
@@ -1165,10 +1204,11 @@ impl WorldRenderer {
 
 /// A texture as it goes to the GPU: an atlas or a font with level 0 only (an atlas's
 /// mips are made when a draw first samples them, see [`crate::mips`]), the water's and
-/// the fog's with their mips (their passes tile them over the view).
-fn upload(gpu: &Gpu, path: &str, image: &Image) -> GpuTexture {
+/// the fog's with their mips (their passes tile them over the view), made on the GPU
+/// (a 2048² texture's chain takes ~20 ms on the CPU).
+fn upload(gpu: &Gpu, mips: &MipMaker, path: &str, image: &Image) -> GpuTexture {
 	if path == WATER_TEXTURE || path == FOG_TEXTURE {
-		GpuTexture::upload(gpu, path, image)
+		mips.with_mips(gpu, &GpuTexture::upload_flat(gpu, path, image))
 	} else {
 		GpuTexture::upload_flat(gpu, path, image)
 	}
