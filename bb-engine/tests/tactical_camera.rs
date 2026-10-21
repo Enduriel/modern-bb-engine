@@ -1,7 +1,8 @@
 //! The battle camera as the windowed game runs it (`BattleCamera::Glides`): a move to
 //! a tile takes frames, says it's moving until it arrives, and arrives centred, while
 //! the battle carries on. Its movement callbacks (`registerCallbacks`) are called once
-//! as it sets off and once as it stops. Skips cleanly when the Steam install isn't
+//! as it sets off and once as it stops; quakes and moves aimed at units work while it
+//! glides. Skips cleanly when the Steam install isn't
 //! there.
 
 use std::path::Path;
@@ -88,4 +89,18 @@ fn a_gliding_battle_camera_moves_over_frames() {
 		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
 	}
 	assert_eq!(moves(), (1, 1), "not after unregisterCallbacks");
+
+	// A quake or a move aimed at units reads their positions (their `getPos`, which reads
+	// the grid) before the camera takes the grid: a hit's quake from a scheduled event
+	// (Reforged's hit sounds) panicked on the grid already borrowed.
+	engine
+		.run_script(
+			"local c = ::Tactical.getCamera(); local us = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player); \
+			 c.quake(us[0], us[1], 5.0, 0.16, 0.3); c.quake(::createVec(1.0, 0.0), 5.0, 0.16, 0.3); c.move(us[0]);",
+			"quake",
+		)
+		.expect("quake and move at units");
+	for _ in 0..30 {
+		harness::run_frame(&engine, 1000.0 / 60.0).expect("frame");
+	}
 }

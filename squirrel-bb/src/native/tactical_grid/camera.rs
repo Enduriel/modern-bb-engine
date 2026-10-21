@@ -411,6 +411,11 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 		});
 	// (dx, dy) ends a glide where it is; (vec) shifts its target too.
 	b = class_overloads!(b, CameraHandle, "move", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		// The entity's position first: its `getPos` reads the grid.
+		let target = match a {
+			[v] => pos_of(vm, &v.0),
+			_ => None,
+		};
 		let mut g = c.0.borrow_mut();
 		let Some(glide) = g.camera.glide.as_mut() else { return Ok::<(), String>(()) };
 		let n = |v: &Retained| v.0.get_value::<Number>(vm).map(|n| n.0 as f32);
@@ -420,8 +425,8 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 					glide.shift((x, y));
 				}
 			}
-			[v] => {
-				if let Some((x, y)) = pos_of(vm, &v.0) {
+			[_] => {
+				if let Some((x, y)) = target {
 					glide.shift_with_target((x as f32, y as f32));
 				}
 			}
@@ -432,19 +437,22 @@ pub(super) fn build_class(vm: &mut SQVM, grid: &Grid) -> SqClass<CameraHandle> {
 	// quake(from, to, strength, out, back) along the way from one entity to the other,
 	// or quake(direction, strength, out, back): a gliding camera shakes.
 	b = class_overloads!(b, CameraHandle, "quake", [4, 5], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
+		// The entities' positions first: their `getPos` reads the grid.
+		let from_to = if a.len() >= 5 { Some((pos_of(vm, &a[0].0), pos_of(vm, &a[1].0))) } else { None };
+		let direction = if a.len() < 5 { a.first().and_then(|v| pos_of(vm, &v.0)) } else { None };
 		let mut g = c.0.borrow_mut();
 		let Some(glide) = g.camera.glide.as_mut() else { return Ok::<(), String>(()) };
 		let n = |i: usize| a.get(i).and_then(|v| v.0.get_value::<Number>(vm)).map_or(0.0, |n| n.0 as f32);
 		let now = crate::native::sprite_color::virtual_time(vm);
-		if a.len() >= 5 {
-			let (Some(from), Some(to)) = (pos_of(vm, &a[0].0), pos_of(vm, &a[1].0)) else { return Ok(()) };
+		if let Some(from_to) = from_to {
+			let (Some(from), Some(to)) = from_to else { return Ok(()) };
 			let (dx, dy) = ((to.0 - from.0) as f32, (to.1 - from.1) as f32);
 			if dx == 0.0 && dy == 0.0 {
 				return Ok(());
 			}
 			let inv = 1.0 / f64::from(dy * dy + dx * dx).sqrt() as f32;
 			glide.quake((inv * dx, inv * dy), n(2), n(3), n(4), now);
-		} else if let Some(dir) = a.first().and_then(|v| pos_of(vm, &v.0)) {
+		} else if let Some(dir) = direction {
 			glide.quake((dir.0 as f32, dir.1 as f32), n(1), n(2), n(3), now);
 		}
 		Ok(())
