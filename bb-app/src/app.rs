@@ -613,6 +613,14 @@ impl Running {
 		self.shown_cursor = Some(show);
 	}
 
+	/// Keep the cursor shown over the window (see `system_cursor::Shower::keep`), on
+	/// `why`; logged when something else had replaced it (`BB_INPUT_LOG`).
+	fn keep_cursor(&self, why: &str) {
+		if self.cursor_shower.keep() && self.input_log {
+			eprintln!("input: the cursor set again on {why}: something had replaced it");
+		}
+	}
+
 	/// One frame: step the game by the real time since the last, draw, present.
 	/// Returns the frame count.
 	fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<u64, String> {
@@ -747,6 +755,7 @@ impl Running {
 	fn event(&mut self, event: &WindowEvent) -> Result<(), String> {
 		match event {
 			WindowEvent::CursorMoved { position, .. } => {
+				self.keep_cursor("a move");
 				let (x, y) = self.to_screen(position.x, position.y);
 				if self.input_log && self.input_logged.elapsed() >= Duration::from_secs(1) {
 					self.input_logged = Instant::now();
@@ -781,6 +790,12 @@ impl Running {
 			// MouseLeft, ignored by its event loop at `0x5b5780`, disassembled):
 			// the page keeps the pointer where it last was, and its hover.
 			WindowEvent::CursorLeft { .. } => Ok(()),
+			// Another app's cursor may show as the pointer comes back (see
+			// `system_cursor::Shower::keep`).
+			WindowEvent::CursorEntered { .. } => {
+				self.keep_cursor("the pointer entering");
+				Ok(())
+			}
 			WindowEvent::ModifiersChanged(m) => {
 				self.modifiers = m.state();
 				self.game.set_modifier(keys::modifier(m.state()));
@@ -790,6 +805,9 @@ impl Running {
 			// without releasing any, and takes none in meanwhile, as the original's main
 			// loop does (`squirrel_bb::key_queue`). So Alt+Tab leaves no Alt held.
 			WindowEvent::Focused(focused) => {
+				if *focused {
+					self.keep_cursor("the window's focus");
+				}
 				self.game.keyboard_focus(*focused);
 				Ok(())
 			}

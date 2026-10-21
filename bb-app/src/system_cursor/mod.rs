@@ -80,7 +80,7 @@ pub fn enlarged(image: &CursorImage, factor: u32) -> CursorImage {
 /// Shows cursors over one window.
 pub struct Shower {
 	#[cfg(target_os = "macos")]
-	overlay: Option<mac::Overlay>,
+	owner: Option<mac::Owner>,
 }
 
 impl Shower {
@@ -92,11 +92,11 @@ impl Shower {
 		}
 		#[cfg(target_os = "macos")]
 		{
-			let overlay = mac::Overlay::new(window);
-			if let Err(e) = &overlay {
+			let owner = mac::Owner::new(window);
+			if let Err(e) = &owner {
 				eprintln!("the system's cursor: {e}");
 			}
-			Shower { overlay: overlay.ok() }
+			Shower { owner: owner.ok() }
 		}
 	}
 
@@ -107,11 +107,23 @@ impl Shower {
 			window.set_cursor(cursor.0.clone());
 		}
 		#[cfg(target_os = "macos")]
-		if let Some(overlay) = &self.overlay {
-			overlay.show(cursor.map(|c| &c.0));
+		if let Some(owner) = &self.owner {
+			owner.show(cursor.map(|c| &c.0));
 			return;
 		}
 		window.set_cursor_visible(cursor.is_some());
+	}
+
+	/// Keep the cursor shown over the window where something else may have replaced
+	/// it: the pointer moved, entered the window, or the window got the keyboard
+	/// (macOS, see `mac::Owner::keep`; elsewhere the window's cursor stays). Whether
+	/// it had to set it again.
+	pub fn keep(&self) -> bool {
+		#[cfg(target_os = "macos")]
+		if let Some(owner) = &self.owner {
+			return owner.keep();
+		}
+		false
 	}
 }
 

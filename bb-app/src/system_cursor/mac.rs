@@ -1,16 +1,19 @@
-//! macOS: the cursor as an `NSCursor` made here, shown over winit's view by a view of
-//! our own.
+//! macOS: the cursor as an `NSCursor` made here, set on the window by us alone.
 //!
 //! The picture's pixels (enlarged by the backing factor first, see [`super`]) go into a
 //! bitmap whose size in points is pixels / scale, so the display shows each pixel once
 //! (and the hotspot is in points too). Its alpha is
 //! straight, not premultiplied, as the pictures are.
 //!
-//! winit sets its own cursor from its view's cursor rectangle (`resetCursorRects`), and
-//! takes no `NSCursor` from outside. So a transparent view of ours lies over it, which
-//! lets every mouse event through (`hitTest:` finds nothing) and puts a cursor rectangle
-//! over the whole window with the cursor shown, or a transparent one for none (see
-//! [`Overlay::show`]).
+//! winit sets its own cursor from its view's cursor rectangle (`resetCursorRects`): its
+//! arrow, or a transparent cursor while hidden. It takes no `NSCursor` from outside
+//! (its own custom cursors are sized in points as pixels). A view of ours over it with
+//! a rectangle of our cursor lost to winit's: AppKit set winit's arrow (28x40 points,
+//! `NSCursor.arrowCursor` on macOS 26) on every mouse move, and ours showed only as it
+//! was set (as `BB_INPUT_LOG` showed). So the window's cursor rectangles are off
+//! (`disableCursorRects`), and [`Owner`] sets the cursor itself, again whenever
+//! something else has replaced it ([`Owner::keep`], on the pointer's moves, its
+//! entering and the window's focus).
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -19,8 +22,8 @@ use bb_assets::CursorImage;
 use objc2::encode::{Encode, Encoding};
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
-use objc2::{AllocAnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
-use objc2_app_kit::{NSAutoresizingMaskOptions, NSBitmapFormat, NSBitmapImageRep, NSCursor, NSDeviceRGBColorSpace, NSImage, NSResponder, NSView};
+use objc2::{AllocAnyThread, MainThreadMarker, msg_send};
+use objc2_app_kit::{NSBitmapFormat, NSBitmapImageRep, NSCursor, NSDeviceRGBColorSpace, NSImage, NSView, NSWindow};
 use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::Window;
 
@@ -48,19 +51,6 @@ struct Size {
 // SAFETY: `repr(C)` with CGSize's fields and encoding.
 unsafe impl Encode for Size {
 	const ENCODING: Encoding = Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
-}
-
-/// `CGRect`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Rect {
-	origin: Point,
-	size: Size,
-}
-
-// SAFETY: `repr(C)` with CGRect's fields and encoding.
-unsafe impl Encode for Rect {
-	const ENCODING: Encoding = Encoding::Struct("CGRect", &[Point::ENCODING, Size::ENCODING]);
 }
 
 pub(super) type Cursor = Retained<NSCursor>;
@@ -110,86 +100,61 @@ pub(super) fn cursor(image: &CursorImage, scale: f64) -> Result<Cursor, String> 
 	}
 }
 
-define_class!(
-	// SAFETY: NSView may be subclassed; this one has no `Drop`.
-	#[unsafe(super(NSView, NSResponder, NSObject))]
-	#[thread_kind = MainThreadOnly]
-	#[name = "BbCursorView"]
-	#[ivars = RefCell<Option<Cursor>>]
-	struct CursorView;
-
-	impl CursorView {
-		/// No mouse event is ours: they go to the view below (winit's).
-		#[unsafe(method(hitTest:))]
-		fn hit_test(&self, _point: Point) -> *mut NSView {
-			std::ptr::null_mut()
-		}
-
-		#[unsafe(method(resetCursorRects))]
-		fn reset_cursor_rects(&self) {
-			if let Some(cursor) = &*self.ivars().borrow() {
-				// SAFETY: `bounds` returns a CGRect; `addCursorRect:cursor:` takes one and a
-				// cursor, and may be called from `resetCursorRects`.
-				unsafe {
-					let bounds: Rect = msg_send![self, bounds];
-					let _: () = msg_send![self, addCursorRect: bounds, cursor: &**cursor];
-				}
-			}
-		}
-	}
-);
-
-/// Our view over winit's.
-pub(super) struct Overlay {
-	view: Retained<CursorView>,
+/// The window's cursor, ours alone.
+pub(super) struct Owner {
+	window: Retained<NSWindow>,
 	/// A transparent cursor, for none.
 	hidden: Cursor,
+	/// The cursor shown now.
+	shown: RefCell<Cursor>,
 }
 
-impl Overlay {
-	pub(super) fn new(window: &Window) -> Result<Overlay, String> {
-		let mtm = MainThreadMarker::new().ok_or("not on the main thread")?;
+impl Owner {
+	pub(super) fn new(window: &Window) -> Result<Owner, String> {
+		MainThreadMarker::new().ok_or("not on the main thread")?;
 		let handle = window.window_handle().map_err(|e| e.to_string())?;
 		let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
 			return Err("not an AppKit window".into());
 		};
-		let parent: NonNull<NSView> = handle.ns_view.cast();
+		let view: NonNull<NSView> = handle.ns_view.cast();
 		// SAFETY: winit's view, alive as long as the window (which outlives this).
-		let parent = unsafe { parent.as_ref() };
-		let this = CursorView::alloc(mtm).set_ivars(RefCell::new(None));
-		// SAFETY: `bounds` returns a CGRect, NSView's `initWithFrame:` takes one.
-		let view: Retained<CursorView> = unsafe {
-			let bounds: Rect = msg_send![parent, bounds];
-			msg_send![super(this), initWithFrame: bounds]
-		};
-		view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
-		parent.addSubview(&view);
+		let view = unsafe { view.as_ref() };
+		let window = view.window().ok_or("winit's view is in no window")?;
 		let clear = CursorImage {
 			width: 1,
 			height: 1,
 			hotspot: (0, 0),
 			rgba: vec![0; 4],
 		};
-		Ok(Overlay {
-			view,
-			hidden: cursor(&clear, 1.0)?,
+		let hidden = cursor(&clear, 1.0)?;
+		window.disableCursorRects();
+		Ok(Owner {
+			window,
+			shown: RefCell::new(hidden.clone()),
+			hidden,
 		})
 	}
 
-	/// Show `cursor` over the whole window, or none (a transparent one).
-	///
-	/// The overlay's cursor rectangle is always there, so winit's never decides: winit
-	/// re-adds its own whenever its cursor is shown or hidden, and AppKit doesn't say
-	/// which of two overlapping rectangles wins. winit's stays as it started (its
-	/// arrow, never hidden).
+	/// Show `cursor` over the window, or none (a transparent one).
 	pub(super) fn show(&self, cursor: Option<&Cursor>) {
 		let cursor = cursor.unwrap_or(&self.hidden);
-		*self.view.ivars().borrow_mut() = Some(cursor.clone());
-		if let Some(window) = self.view.window() {
-			window.invalidateCursorRectsForView(&self.view);
+		*self.shown.borrow_mut() = cursor.clone();
+		self.keep();
+	}
+
+	/// Set the cursor shown again if something else replaced it (another app's while
+	/// the pointer was away, or AppKit's cursor rectangles if they came back on).
+	/// Whether it had to.
+	pub(super) fn keep(&self) -> bool {
+		if self.window.areCursorRectsEnabled() {
+			self.window.disableCursorRects();
 		}
-		// At once, not at the next mouse move.
-		cursor.set();
+		let shown = self.shown.borrow();
+		if std::ptr::eq(&**shown, &*NSCursor::currentCursor()) {
+			return false;
+		}
+		shown.set();
+		true
 	}
 }
 
@@ -205,12 +170,6 @@ pub(super) fn describe(shown: Option<&Cursor>) -> String {
 		format!("{}x{} points", size.width, size.height)
 	});
 	format!("the app's cursor is {}ours; the system's {}", if ours { "" } else { "not " }, system.unwrap_or_else(|| "none".into()))
-}
-
-impl Drop for Overlay {
-	fn drop(&mut self) {
-		self.view.removeFromSuperview();
-	}
 }
 
 #[cfg(test)]
