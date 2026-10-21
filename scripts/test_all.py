@@ -40,6 +40,11 @@ The ui build is workspace-wide, so our crates get the same features as under the
 show is that bb-ui and bb-app build on their own: `cargo check -p bb-ui --features cef
 --tests` (and bb-app's) does.
 
+Each binary runs in a process group of its own; however the runner ends (done, Ctrl-C,
+SIGTERM, SIGHUP), the binaries still running are stopped with all they started
+(gamescope, bb, the browser's processes), so none outlives it into the next queued
+session's run.
+
 Each binary's output goes to its own log in `--logs`; a summary follows, and the exit
 status is nonzero if any binary failed. Wall times are kept in the target folder and
 order the next run's lanes longest first.
@@ -50,6 +55,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -247,10 +253,42 @@ def run_lanes(waiting, running, finished, limits, logs, run_began):
 				job.env["BB_GAME_QUEUE_TURN"] = str(job.turn.path)
 			job.log = open(logs / log_name(job), "w")
 			job.start = time.monotonic()
-			job.proc = subprocess.Popen(job.cmd, cwd=job.cwd, env=job.env, stdout=job.log, stderr=subprocess.STDOUT)
+			# A group of its own, so what it starts can be stopped with it (`stop`).
+			job.proc = subprocess.Popen(job.cmd, cwd=job.cwd, env=job.env, stdout=job.log, stderr=subprocess.STDOUT,
+				start_new_session=True)
 			waiting.remove(job)
 			running.append(job)
 		time.sleep(0.1)
+
+
+def stop(jobs, grace=10.0):
+	"""Stop the jobs still running, each with its process group (what it started): SIGTERM,
+	then SIGKILL for a group still there after `grace` seconds."""
+	live = [j for j in jobs if j.proc is not None and j.proc.poll() is None]
+	for job in live:
+		try:
+			os.killpg(job.proc.pid, signal.SIGTERM)
+		except ProcessLookupError:
+			pass
+	deadline = time.monotonic() + grace
+	for job in live:
+		try:
+			job.proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+		except subprocess.TimeoutExpired:
+			pass
+	for job in live:
+		try:
+			# The group outlives its leader if what it started still runs.
+			os.killpg(job.proc.pid, signal.SIGKILL)
+		except ProcessLookupError:
+			pass
+		job.proc.wait()
+	return len(live)
+
+
+def leave(signum, _frame):
+	"""A SIGTERM or SIGHUP ends the runner as Ctrl-C does, through its cleanup."""
+	raise SystemExit(128 + signum)
 
 
 RESULT = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored")
@@ -341,9 +379,14 @@ def main():
 	finished = []
 	print(f"built in {built:.0f} s; running {len(jobs)} binaries (logs in {logs})", flush=True)
 	run_began = time.monotonic()
+	signal.signal(signal.SIGTERM, leave)
+	signal.signal(signal.SIGHUP, leave)
 	try:
 		run_lanes(waiting, running, finished, limits, logs, run_began)
 	finally:
+		stopped = stop(running)
+		if stopped:
+			print(f"stopped {stopped} binaries still running, with what they started", flush=True)
 		for job in jobs:
 			if job.turn:
 				job.turn.give_up()
