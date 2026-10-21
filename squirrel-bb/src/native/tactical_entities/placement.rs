@@ -157,15 +157,18 @@ pub(super) fn spawn_at(m: &Machine, vm: &SQVM, path: &str, tile: usize, parent: 
 			return Ok(None);
 		}
 	};
-	let (is_actor, occupied, coords) = {
+	let (is_actor, occupant, coords) = {
 		let machine = m.borrow();
 		let grid = machine.grid.clone().ok_or("no battle map")?;
 		let g = grid.borrow();
 		let t = &g.tiles[tile];
-		(machine.units[idx].is_actor, t.occupant.is_some(), (t.q, t.r))
+		(machine.units[idx].is_actor, t.occupant.as_ref().map(|o| o.0.clone()), (t.q, t.r))
 	};
-	if occupied {
+	if let Some(occupant) = occupant {
+		// The original's warning, then (ours only) who asked: the spawned script, the
+		// occupant's class and the script stack.
 		eprintln!("TacticalScene: Spawned Entity at ({},{}) although the tile is already occupied.", coords.0, coords.1);
+		eprintln!("{}", occupied_spawn_context(vm, path, &occupant));
 	}
 	super::set_parent_id(vm, &entity, parent);
 	place(m, idx, tile, is_actor)?;
@@ -174,6 +177,18 @@ pub(super) fn spawn_at(m: &Machine, vm: &SQVM, path: &str, tile: usize, parent: 
 	m.borrow_mut().units[idx].initialized = true;
 	ignore_missing(entity.call_method(vm, "onPlacedOnMap", ()))?;
 	Ok(Some(entity))
+}
+
+/// What spawned `path` onto `occupant`'s tile: the classes and the script stack.
+fn occupied_spawn_context(vm: &SQVM, path: &str, occupant: &SqStrongRef) -> String {
+	let class = occupant.get_member::<String>(vm, "ClassName").unwrap_or_else(|| "?".to_string());
+	let stack: Vec<String> = vm
+		.call_stack()
+		.into_iter()
+		.filter(|f| f.source.as_deref() != Some("NATIVE"))
+		.map(|f| format!("{} ({}:{})", f.function.as_deref().unwrap_or("unknown"), f.source.as_deref().unwrap_or("?"), f.line))
+		.collect();
+	format!("  spawned {path} onto a {class}; script stack: {}", stack.join(" <- "))
 }
 
 /// The tile handle unit `idx` stands on, if placed.
