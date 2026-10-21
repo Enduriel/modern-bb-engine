@@ -12,8 +12,19 @@ if ("ModernEngine" in ::getroottable())
 }
 ```
 
-`::ModernEngine.Version` is the API's version (an integer, `2` for now). A later
+`::ModernEngine.Version` is the API's version (an integer, `3` for now). A later
 version only adds to this page. Each section names the version that added it.
+
+The UI's JavaScript can tell the same way (version 3): `window.ModernEngine` is defined
+only by this engine, before any of the game's or mods' scripts run, with the same
+`Version`:
+
+```js
+if (typeof window.ModernEngine === 'object' && window.ModernEngine.Version >= 3)
+{
+	// The modern engine is running.
+}
+```
 
 ## Fonts for text in any language (`registerFont`, version 1)
 
@@ -120,3 +131,45 @@ local parts = ("split3_2" in ::getroottable()) ? ::split3_2(text, ",") : ::split
   where the original's `format` gives `"3"` and `"0.13"`. inf and NaN are written
   `inf`, `nan` and `-nan`. The text is the same on every platform: neither function
   uses the system's C library for floats.
+
+## Portraits of world entities (`worldentity` images, version 3)
+
+A world entity's `getImagePath()` (`world_entity.nut`) returns
+`worldentity(<random>,<id>)`, but the original game has no handler for it: the image
+`coui://procedural/worldentity(...)` always fails to load there. The modern engine
+answers it with a picture of the entity, so a mod can show a party, a settlement or a
+location in its UI as it shows a brother:
+
+```js
+var image = $('<img/>');
+image.attr('src', Path.PROCEDURAL + data.ImagePath); // a world entity's getImagePath()
+```
+
+Check for `::ModernEngine.Version >= 3` (or `window.ModernEngine.Version >= 3` in the
+UI) first, so the original game keeps your fallback (in the original, the image's
+`error` event fires, and an XHR for it ends with status 0).
+
+The picture is the entity as the world map shows it at zoom 1:
+
+- Its sprites that are visible, have a brush and aren't transparent (`Alpha` 0: a
+  camp's fire by day) are drawn. Left out: sprites that keep their screen size at any
+  zoom (`setSpriteScaling(name, false)`: the selection ring, a location's banner),
+  sprites taken out of portraits with `setSpriteRenderToTexture(name, false)`, and any
+  sprites named after the id: `worldentity(<random>,<id>,banner)` leaves out the
+  banner, as `tacticalentity(...)` leaves out a brother's `socket`.
+- Each sprite sits where the map puts it (its offset plus its brush's, scaled,
+  mirrored and turned as set), in its own colour and alpha, in the map's order, without
+  the time of day's light.
+- The image is the drawn sprites' bounding box, in whole pixels, transparent around
+  them; its colours are premultiplied by alpha, as the original's portraits are.
+- The first argument is ignored: `getImagePath()` puts a random number there, so each
+  call gives a new URL and the picture is drawn again.
+
+Each handler finds only its own kind of entity, as the original's does:
+
+- `tacticalentity(...)` shows battle units only (a brother in the roster included).
+  For any other id, a world entity's included, it answers the original's fallback, a
+  transparent 16×16 image, and logs `Failed to load procedural content "..."`.
+- `worldentity(...)` shows world entities only. For any other id, a brother's
+  included, or an entity with nothing to draw, the load fails (the `error` event,
+  status 0) and the same warning is logged.
