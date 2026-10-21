@@ -79,8 +79,18 @@ fn a_campaign_saved_to_disk_loads_in_a_new_game() {
 		engine.run_script("::World.State.setPause(true); ::World.State.saveCampaign(\"bb_probe_disk\");", "save").expect("save");
 		assert!(folder.0.join("bb_probe_disk.sav").is_file(), "the save is a file");
 		// Saved over: the newer campaign is the one kept.
-		engine.run_script("::World.Assets.addMoney(1234); ::World.State.saveCampaign(\"bb_probe_disk\"); ::World.State.saveCampaign(\"bb_probe_spare\");", "save again").expect("save again");
-		assert_eq!(listed(&engine), "bb_probe_disk bb_probe_spare ", "both saves listed");
+		engine.run_script("::World.Assets.addMoney(1234); ::World.State.saveCampaign(\"bb_probe_disk\");", "save again").expect("save again");
+		// The list is newest first by the time saved in each file, in whole seconds, as
+		// the original's; saves of the same second keep the listing's (name) order. The
+		// spare is saved in a later second than the other, so the order doesn't hang on
+		// whether the two fell in one (it flaked when they didn't).
+		let second = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+		let saved_in = second();
+		while second() == saved_in {
+			std::thread::sleep(std::time::Duration::from_millis(5));
+		}
+		engine.run_script("::World.State.saveCampaign(\"bb_probe_spare\");", "save a spare").expect("save a spare");
+		assert_eq!(listed(&engine), "bb_probe_spare bb_probe_disk ", "both saves listed, the newer first");
 		// Deleted from the menus: the file goes.
 		engine.run_script("::PersistenceManager.deleteStorage(\"bb_probe_spare\");", "delete").expect("delete");
 		assert!(!folder.0.join("bb_probe_spare.sav").exists(), "the deleted save's file is gone");
