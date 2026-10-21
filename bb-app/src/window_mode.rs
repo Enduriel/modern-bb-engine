@@ -3,6 +3,8 @@
 //! system's units (`bb_app::screen_scale`: points on macOS, pixels elsewhere).
 
 use bb_app::display::{MIN_WINDOW, MonitorMode, Placement};
+#[cfg(target_os = "macos")]
+use bb_app::point_modes;
 use bb_app::screen_scale;
 use winit::dpi::{LogicalSize, PhysicalSize, Size};
 use winit::event_loop::ActiveEventLoop;
@@ -44,9 +46,8 @@ impl Monitor {
 	}
 
 	fn of(handle: Option<MonitorHandle>) -> Monitor {
-		// winit's sizes are pixels: a mode's is its pixels too, so on macOS each is in
-		// points at the monitor's present scale (a HiDPI mode's points; the list only
-		// sizes windows there, fullscreen being borderless).
+		// winit's sizes are pixels, a mode's too (the monitor's in points at its present
+		// scale on macOS).
 		let scale = screen_scale::of(handle.as_ref().map_or(1.0, |m| m.scale_factor()));
 		let handles: Vec<VideoModeHandle> = handle.iter().flat_map(|m| m.video_modes()).collect();
 		let modes = handles
@@ -62,8 +63,31 @@ impl Monitor {
 			})
 			.collect();
 		let size = handle.as_ref().map(|m| m.size()).filter(|s| s.width > 0 && s.height > 0);
+		let size = size.map_or(NO_MONITOR, |s| screen_scale::to_screen((s.width, s.height), scale));
+		// macOS: the modes' sizes in points (see `bb_app::point_modes`); fullscreen is
+		// borderless there, so no mode is switched to.
+		#[cfg(target_os = "macos")]
+		let (modes, handles) = {
+			use winit::platform::macos::MonitorHandleExtMacOS;
+			let refresh_millihertz = handle.as_ref().and_then(|m| m.refresh_rate_millihertz()).unwrap_or(0);
+			match handle.as_ref().and_then(|m| point_modes::of_display(m.native_id())) {
+				Some(listed) => {
+					let modes = point_modes::sizes(&listed, size)
+						.into_iter()
+						.map(|(width, height)| MonitorMode {
+							width,
+							height,
+							bits: 32,
+							refresh_millihertz,
+						})
+						.collect();
+					(modes, Vec::new())
+				}
+				None => (modes, handles),
+			}
+		};
 		Monitor {
-			size: size.map_or(NO_MONITOR, |s| screen_scale::to_screen((s.width, s.height), scale)),
+			size,
 			handle,
 			modes,
 			handles,

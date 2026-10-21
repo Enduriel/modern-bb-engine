@@ -15,6 +15,7 @@ pub mod keys;
 pub mod logs;
 pub mod pacing;
 pub mod platform;
+pub mod point_modes;
 pub mod procedural;
 pub mod requirements;
 pub mod screen_scale;
