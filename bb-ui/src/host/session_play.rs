@@ -40,8 +40,7 @@ impl UiSession {
 	/// out at the UI scale, and the page's turn, its calls into the game answered.
 	pub fn step(&self, ms: f64) -> Result<(), String> {
 		self.park();
-		self.engine().frame(ms)?;
-		self.forward_keys();
+		self.game_frame(ms)?;
 		self.follow_ui_scale();
 		self.follow_fonts();
 		self.pump();
@@ -58,8 +57,7 @@ impl UiSession {
 	/// the game's frames.
 	pub fn step_unparked(&self, ms: f64) -> Result<(), String> {
 		self.park();
-		self.engine().frame(ms)?;
-		self.forward_keys();
+		self.game_frame(ms)?;
 		self.follow_ui_scale();
 		self.follow_fonts();
 		self.unpark();

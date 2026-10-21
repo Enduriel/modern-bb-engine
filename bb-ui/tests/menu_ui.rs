@@ -1102,6 +1102,23 @@ fn keys_come_to_the_page_from_the_frames(session: &UiSession) -> Result<(), Stri
 		true",
 	)?;
 	let engine = session.engine();
+	// Each frame the page sees K before the state does: the page's keydown calls into
+	// the scripts (as vanilla's handlers do through `SQ.call`), and the main menu
+	// state's onKeyInput notes its turn after it.
+	engine.run_script(
+		"::__bbOrder <- [];
+		local state = ::RootState.get(\"MainMenuState\");
+		state.m.MainMenuScreen.bbKeySeen <- function ( _key ) { ::__bbOrder.push(\"page\"); };
+		state.__bbOnKeyInput <- state.onKeyInput;
+		state.onKeyInput <- function ( _key ) { ::__bbOrder.push(\"state\"); return this.__bbOnKeyInput(_key); };",
+		"key order",
+	)?;
+	session.eval(
+		"window.addEventListener('keydown', function (e) {
+			if (e.keyCode === 75) SQ.call(Screens.MainMenuScreen.mSQHandle, 'bbKeySeen', e.keyCode);
+		}, true);
+		true",
+	)?;
 	// K (21), held for 15 frames.
 	engine.queue_key(21, true, 0);
 	engine.queue_text('k', 0);
@@ -1124,6 +1141,15 @@ fn keys_come_to_the_page_from_the_frames(session: &UiSession) -> Result<(), Stri
 			&& k.starts_with(&expected_tail)
 			&& events.iter().any(|e| e.starts_with("keydown:") && *e != "keydown:75"),
 		format!("the page got the frames' keys as {seen:?}"),
+	)?;
+	engine.run_script(
+		"local o = ::__bbOrder; ::__bbOrderText <- o.len() > 0 ? o[0] + \" \" + o[1] + \" \" + o[2] + \" \" + o[3] + \" (\" + o.len() + \")\" : \"\";",
+		"key order",
+	)?;
+	let order = squirrel::SqTable::root(engine.vm()).get::<String>("__bbOrderText").unwrap_or_default();
+	ensure(
+		order.starts_with("page state page state"),
+		format!("the page and the state got K in the order {order:?}"),
 	)?;
 	let function_key: Vec<&&str> = events.iter().skip_while(|e| **e != "keyup:75").skip(1).collect();
 	ensure(

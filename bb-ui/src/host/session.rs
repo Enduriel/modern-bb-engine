@@ -82,8 +82,6 @@ impl UiSession {
 			sink.borrow_mut().push(line);
 		});
 		protocol.attach(engine.ui());
-		// The page gets the keys from the game's frames, as the original's UI did.
-		engine.forward_keys();
 		let session = UiSession {
 			engine,
 			protocol,
@@ -284,8 +282,7 @@ impl UiSession {
 		self.park();
 		for _ in 0..frames {
 			let start = Instant::now();
-			self.engine.frame(1000.0 / 60.0)?;
-			self.forward_keys();
+			self.game_frame(1000.0 / 60.0)?;
 			self.follow_ui_scale();
 			self.follow_fonts();
 			self.pump_until_deadline(start + frame);

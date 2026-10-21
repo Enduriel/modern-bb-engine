@@ -14,24 +14,77 @@ use crate::json::Json;
 /// How long the page may take to see input.
 const INPUT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long a game frame waits for the page to see its keys.
+const KEYS_TIMEOUT: Duration = Duration::from_millis(250);
+
 /// How long [`UiSession::fill_field`] waits for its field to show up.
 const FIELD_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl UiSession {
-	/// Hand the page the key events the game's frames dispatched since the last call, as
-	/// the original's UI got them from its key queue: each key's press (again every frame
-	/// while it's held) and release by Coherent's code for it, and what keys typed.
-	pub(super) fn forward_keys(&self) {
+	/// One game frame of `ms` (the page parked), its keys to the page before the states,
+	/// as the original's UI listener got them from its key queue (see
+	/// [`squirrel_bb::QueuedInput`]).
+	pub(super) fn game_frame(&self, ms: f64) -> Result<(), String> {
+		let keys = self.engine().begin_frame(ms);
+		if !keys.is_empty() {
+			self.keys_to_page(&keys);
+		}
+		self.engine().finish_frame(ms, &keys)
+	}
+
+	/// Hand the page a frame's key events and let it handle them before the states get
+	/// them: each key's press (again every frame while it's held) and release by
+	/// Coherent's code for it, and what keys typed. The page runs until it has seen
+	/// every keydown and keyup (its handlers' calls into the scripts answered as they
+	/// come, as in the original, where the UI's listener ran first), then is parked
+	/// again. What's typed comes after its key; a keypress isn't waited for (a keydown
+	/// the page cancels has none).
+	fn keys_to_page(&self, keys: &[squirrel_bb::QueuedInput]) {
+		let Ok(before) = self.eval(
+			"(function () {
+	if (window.__bbKeysSeen === undefined) {
+		window.__bbKeysSeen = 0;
+		var count = function () { window.__bbKeysSeen++; };
+		window.addEventListener('keydown', count, true);
+		window.addEventListener('keyup', count, true);
+	}
+	return window.__bbKeysSeen;
+})()",
+		) else {
+			return;
+		};
+		let before = before.as_i64().unwrap_or(0);
 		let host = self.host();
-		for input in self.engine().take_page_keys() {
-			match input {
+		let mut expected = before;
+		for input in keys {
+			match *input {
 				squirrel_bb::QueuedInput::Key(key) => {
 					let code = super::coherent_key_code(key.key);
 					host.key(code, key.state != 0, super::modifiers_of_mask(key.modifier));
+					expected += 1;
 				}
 				squirrel_bb::QueuedInput::Text(c, modifier) => {
 					host.character(c, super::modifiers_of_mask(modifier));
 				}
+			}
+		}
+		let deadline = Instant::now() + KEYS_TIMEOUT;
+		loop {
+			self.unpark();
+			for event in self.host().poll() {
+				self.handle(event);
+			}
+			if let Some(event) = self.host().next_event(Duration::from_millis(1)) {
+				self.handle(event);
+			}
+			self.park();
+			let seen = self.eval("window.__bbKeysSeen").ok().and_then(|n| n.as_i64()).unwrap_or(0);
+			if seen >= expected {
+				return;
+			}
+			if Instant::now() >= deadline {
+				self.record("bridge", format!("the page saw {} of a frame's {} key events", seen - before, expected - before));
+				return;
 			}
 		}
 	}
