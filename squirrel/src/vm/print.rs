@@ -4,9 +4,12 @@
 //! Consumers set high-level `Fn(&str)` handlers (see
 //! [`SQVM::set_print_handler`](super::SQVM::set_print_handler)); this module does
 //! the printf formatting and dispatch, so no `squirrel-sys` types leak out. With
-//! no handler installed, output goes to Rust's stdout/stderr.
+//! no handler installed, output goes to stdout/stderr as the bytes the script made, as
+//! Squirrel's own print functions write them (a cp1252 string stays cp1252), and a
+//! closed stream (`| head`) is ignored rather than a panic aborting the process.
 
 use std::ffi::{CStr, VaList, c_char, c_int};
+use std::io::Write;
 
 unsafe extern "C" {
 	// `scvprintf` maps to this in non-Unicode builds.
@@ -94,6 +97,11 @@ unsafe fn context<'a>(vm: squirrel_sys::HSQUIRRELVM) -> Option<&'a VmContext> {
 /// precisely that and re-format (from a `va_copy`d cursor). No truncation, and no
 /// wasteful fixed buffer — large debug prints work and small ones stay cheap.
 unsafe fn with_formatted(format: *const c_char, args: VaList<'_>, f: impl FnOnce(&str)) {
+	unsafe { with_formatted_bytes(format, args, |bytes| f(&String::from_utf8_lossy(bytes))) }
+}
+
+/// As [`with_formatted`], the bytes as formatted.
+unsafe fn with_formatted_bytes(format: *const c_char, args: VaList<'_>, f: impl FnOnce(&[u8])) {
 	const INLINE: usize = 256;
 	let mut stack = [0u8; INLINE];
 	// First pass into the stack buffer, on a `va_copy` (`args` survives for a
@@ -112,14 +120,18 @@ unsafe fn with_formatted(format: *const c_char, args: VaList<'_>, f: impl FnOnce
 	}
 	let needed = needed as usize;
 	if needed < INLINE {
-		let text = String::from_utf8_lossy(&stack[..needed]);
-		f(&text);
+		f(&stack[..needed]);
 	} else {
 		let mut heap = vec![0u8; needed + 1];
 		unsafe { vsnprintf(heap.as_mut_ptr() as *mut c_char, heap.len(), format, args) };
-		let text = String::from_utf8_lossy(&heap[..needed]);
-		f(&text);
+		f(&heap[..needed]);
 	}
+}
+
+/// Write `bytes` as they are, ignoring a stream that can't take them (a closed pipe):
+/// inside the C trampolines a panic would abort the process.
+fn write_raw(out: &mut impl Write, bytes: &[u8]) {
+	let _ = out.write_all(bytes).and_then(|()| out.flush());
 }
 
 pub(crate) unsafe extern "C" fn print_trampoline(
@@ -131,7 +143,7 @@ pub(crate) unsafe extern "C" fn print_trampoline(
 		Some(handler) => unsafe { with_formatted(format, args, |text| handler(text)) },
 		// Through Rust's stdout, not C's `stdout` (glibc exports that `FILE *` but
 		// macOS names it `__stdoutp`), which also keeps the order with Rust's prints.
-		None => unsafe { with_formatted(format, args, |text| print!("{text}")) },
+		None => unsafe { with_formatted_bytes(format, args, |bytes| write_raw(&mut std::io::stdout().lock(), bytes)) },
 	}
 }
 
@@ -142,7 +154,7 @@ pub(crate) unsafe extern "C" fn error_trampoline(
 ) {
 	match unsafe { context(vm) }.and_then(|c| c.error.as_ref()) {
 		Some(handler) => unsafe { with_formatted(format, args, |text| handler(text)) },
-		None => unsafe { with_formatted(format, args, |text| eprint!("{text}")) },
+		None => unsafe { with_formatted_bytes(format, args, |bytes| write_raw(&mut std::io::stderr().lock(), bytes)) },
 	}
 }
 
@@ -177,5 +189,32 @@ pub(crate) unsafe extern "C" fn compile_error_trampoline(
 			column,
 		}),
 		None => eprintln!("Compile error in '{source}', line {line}, column {column}: {message}"),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::write_raw;
+
+	/// A stream closed under the default print (`... | head`): the write fails.
+	struct Closed;
+
+	impl std::io::Write for Closed {
+		fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+			Err(std::io::ErrorKind::BrokenPipe.into())
+		}
+
+		fn flush(&mut self) -> std::io::Result<()> {
+			Err(std::io::ErrorKind::BrokenPipe.into())
+		}
+	}
+
+	#[test]
+	fn the_default_print_writes_the_scripts_bytes_and_survives_a_closed_stream() {
+		let mut out = Vec::new();
+		// "é" as the game's cp1252 strings hold it.
+		write_raw(&mut out, b"caf\xe9\n");
+		assert_eq!(out, b"caf\xe9\n");
+		write_raw(&mut Closed, b"lost");
 	}
 }
