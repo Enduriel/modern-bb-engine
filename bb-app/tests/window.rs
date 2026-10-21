@@ -116,8 +116,8 @@ fn start_bb(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args:
 		.env("BB_SAVES_DIR", dir.join("saves"))
 		// So a run that hangs can have its stacks read (`dump_stacks`).
 		.env("BB_ALLOW_TRACE", "1")
-		// No message box that nobody is there to close, unless the run asks for one
-		// (its `env`, which bb's `env` sets over this).
+		// No message box that nobody is there to close, unless the run asks for one (its
+		// `env`, set for bb over this).
 		.env("BB_ERROR_DIALOG", "0")
 		.env("BB_TEST_STARTED", &started)
 		.env("BB_TEST_STATUS", &status)
@@ -579,7 +579,7 @@ fn bb_refuses_a_software_gpu_with_a_message() {
 	let dir = run_dir("software_gpu");
 	let lavapipe = "/usr/share/vulkan/icd.d/lvp_icd.json";
 	if !Path::new(lavapipe).exists() {
-		eprintln!("skipping: no lavapipe");
+		bb_engine::harness::skip(format!("no lavapipe ({lavapipe})"));
 		return;
 	}
 	let env = [("VK_DRIVER_FILES", lavapipe), ("VK_ICD_FILENAMES", lavapipe), ("WGPU_BACKEND", "vulkan")];
