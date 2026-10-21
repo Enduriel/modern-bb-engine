@@ -166,6 +166,9 @@ pub enum MapEdit {
 	Spawned { tile: usize, detail: SceneDetail },
 	/// The detail with this id removed.
 	Removed(i64),
+	/// The terrain of the tile at flat index `tile` set (its brush or mirroring), as
+	/// drawn when the edits were taken (`terrain`, without its details).
+	Terrain { tile: usize, terrain: SceneTile },
 }
 
 /// A tile's detail as drawn (see `world_detail`).

@@ -223,7 +223,7 @@ struct GridState {
 	revision: u64,
 	/// Counts the changes a renderer can't follow edit by edit, which build the kept
 	/// map again (see [`WorldGrid::map_generation`]): all of `revision`'s but details
-	/// spawned or removed, which go on `edits`.
+	/// spawned or removed and tiles' terrain set, which go on `edits`.
 	generation: u64,
 	/// The details spawned and removed since a renderer last took them, in order (see
 	/// [`WorldGrid::take_map_edits`]).
@@ -236,6 +236,7 @@ struct GridState {
 enum Edit {
 	Spawned { tile: usize, detail: Detail },
 	Removed(i64),
+	Terrain { tile: usize },
 }
 
 /// The most edits held for a renderer: past it they're dropped and the map is built
@@ -251,7 +252,8 @@ impl GridState {
 		self.edits.clear();
 	}
 
-	/// A detail spawned or removed (see [`WorldGrid::take_map_edits`]).
+	/// A detail spawned or removed, or a tile's terrain set (see
+	/// [`WorldGrid::take_map_edits`]).
 	fn edited(&mut self, edit: Edit) {
 		if self.edits.len() == MAX_EDITS {
 			self.redrawn();
@@ -283,11 +285,11 @@ impl TileHandle {
 	fn with_mut<R>(&self, f: impl FnOnce(&mut TileData) -> R) -> R {
 		f(&mut self.grid.borrow_mut().tiles[self.id])
 	}
-	/// [`with_mut`](Self::with_mut) for a change to what the tile draws: its terrain or
-	/// its details (see [`GridState::redrawn`]).
-	fn with_drawn_mut<R>(&self, f: impl FnOnce(&mut TileData) -> R) -> R {
+	/// [`with_mut`](Self::with_mut) for a change to the tile's terrain (its brush or
+	/// mirroring), an edit of the map (see [`WorldGrid::take_map_edits`]).
+	fn with_terrain_mut<R>(&self, f: impl FnOnce(&mut TileData) -> R) -> R {
 		let mut g = self.grid.borrow_mut();
-		g.redrawn();
+		g.edited(Edit::Terrain { tile: self.id });
 		f(&mut g.tiles[self.id])
 	}
 	/// The flat id of the neighbour in `dir` (0..6), or `None` (off-grid / bad dir).
@@ -931,29 +933,44 @@ impl WorldGrid {
 	}
 
 	/// Counts the changes to the map's order a renderer builds its kept map again for
-	/// (a terrain brush or mirroring, the map sized, cleared or loaded, too many edits
-	/// left untaken); details spawned or removed between are given by
+	/// (the map sized, cleared or loaded, too many edits left untaken); a tile's terrain
+	/// set and details spawned or removed between are given by
 	/// [`take_map_edits`](Self::take_map_edits) instead. Each of these changes moves
 	/// [`map_revision`](Self::map_revision) too.
 	pub fn map_generation(&self) -> u64 {
 		self.grid.borrow().generation
 	}
 
-	/// The details spawned and removed since the last call or the last change of
-	/// [`map_generation`](Self::map_generation), in order, a spawned one as drawn now
-	/// (hidden ones included). A renderer whose map is of the current generation
+	/// The details spawned and removed and the tiles whose terrain was set (brush or
+	/// mirroring) since the last call or the last change of
+	/// [`map_generation`](Self::map_generation), in order, a spawned detail or a tile as
+	/// drawn now (hidden details included). A renderer whose map is of the current generation
 	/// applies them in turn; one that builds it again (from
 	/// [`scene_map`](Self::scene_map), which has them all) drops them.
 	pub fn take_map_edits(&self) -> Vec<crate::scene::MapEdit> {
-		let (edits, now) = {
-			let mut g = self.grid.borrow_mut();
-			(std::mem::take(&mut g.edits), g.drawn_at)
-		};
+		let edits = std::mem::take(&mut self.grid.borrow_mut().edits);
+		let g = self.grid.borrow();
 		edits
 			.into_iter()
 			.map(|edit| match edit {
-				Edit::Spawned { tile, detail } => crate::scene::MapEdit::Spawned { tile, detail: detail.borrow().scene(now) },
+				Edit::Spawned { tile, detail } => crate::scene::MapEdit::Spawned { tile, detail: detail.borrow().scene(g.drawn_at) },
 				Edit::Removed(id) => crate::scene::MapEdit::Removed(id),
+				Edit::Terrain { tile } => {
+					let t = &g.tiles[tile];
+					crate::scene::MapEdit::Terrain {
+						tile,
+						terrain: crate::scene::SceneTile {
+							col: t.col,
+							row: t.row,
+							pos: world_layout::tile_pos(t.col, t.row),
+							terrain: t.type_,
+							discovered: t.is_discovered,
+							brush: t.brush.clone(),
+							flipped: t.is_flipped,
+							details: Vec::new(),
+						},
+					}
+				}
 			})
 			.collect()
 	}
@@ -1336,7 +1353,7 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b.property(
 		"IsFlipped",
 		|t: &TileHandle| t.with(|d| d.is_flipped),
-		|t: &mut TileHandle, v: bool| t.with_drawn_mut(|d| d.is_flipped = v),
+		|t: &mut TileHandle, v: bool| t.with_terrain_mut(|d| d.is_flipped = v),
 	);
 	b = scalar!(b, "IsDiscovered", is_discovered, bool);
 	b = scalar!(b, "HasRiver", has_river, bool);
@@ -1525,12 +1542,12 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.method("setBrush", |t: &mut TileHandle, brush: &str| {
 			let name = t.grid.borrow().sprites.name(brush);
-			t.with_drawn_mut(|d| d.brush = name);
+			t.with_terrain_mut(|d| d.brush = name);
 			hint_brush(t, brush);
 		})
 		.method("resetBrush", |t: &mut TileHandle| {
 			let empty = t.grid.borrow().sprites.name("");
-			t.with_drawn_mut(|d| d.brush = empty);
+			t.with_terrain_mut(|d| d.brush = empty);
 		})
 		.method("getBrush", |t: &mut TileHandle| -> String { t.with(|d| d.brush.to_string()) });
 

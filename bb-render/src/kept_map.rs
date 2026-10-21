@@ -5,13 +5,14 @@
 //! order they draw, written to a vertex buffer in world units (the camera and the day's
 //! light are uniforms), and drawn from it every frame; only what changed is built again:
 //!
-//! - The map's order changes in a way it can't follow (a terrain brush or mirroring
-//!   set, the map sized, cleared or loaded): everything is built again
+//! - The map's order changes in a way it can't follow (the map sized, cleared or
+//!   loaded): everything is built again
 //!   (`squirrel_bb::WorldGrid::map_generation`), as the sprite registry's sheets
 //!   changing.
-//! - A detail is spawned or removed (`WorldGrid::take_map_edits`; every settlement's
-//!   house lights at dusk and dawn): its quad goes in at its place in the order, or
-//!   out, and only its segment is located and written again.
+//! - A detail is spawned or removed, or a tile's terrain set
+//!   (`WorldGrid::take_map_edits`; every settlement's house lights at dusk and dawn):
+//!   its quad goes in at its place in the order, or out, and only its segment is
+//!   located and written again.
 //! - A detail's look changes (a script set its colour, brush, offset, …, or it turned,
 //!   stepped or faded on its own): only its quad is written again
 //!   (`WorldGrid::take_detail_changes`). Its place in the order stays: a detail's key is
@@ -90,11 +91,14 @@ struct Item {
 	/// nothing (hidden, or an unknown brush).
 	quad: Option<Quad>,
 	order: Order,
-	/// Its detail's id, [`NO_ID`] for terrain.
+	/// Its detail's id, or for terrain its tile's [`terrain_id`].
 	id: i64,
 }
 
-const NO_ID: i64 = i64::MIN;
+/// The id a tile's terrain is kept by (details' ids, entity ids, are never negative).
+fn terrain_id(tile: usize) -> i64 {
+	i64::MIN + tile as i64
+}
 
 /// The map's terrain and details in drawing order.
 #[derive(Default)]
@@ -106,7 +110,7 @@ pub(crate) struct KeptMap {
 	segments: Vec<Segment>,
 	/// The segments in drawing order.
 	order: Vec<usize>,
-	/// Each detail's quad, by its id: its segment and place in it.
+	/// Each quad by its id (see [`Item::id`]): its segment and place in it.
 	ids: FastMap<i64, (usize, usize)>,
 	/// Each tile's next detail's place among its own ([`Order::nth`]).
 	next: Vec<u32>,
@@ -256,7 +260,7 @@ impl KeptMap {
 			if let Some((key, texture, quad)) = terrain_quad(tile, sprites) {
 				entries.push(Entry {
 					order: at(Layer::Terrain, key, 0),
-					id: NO_ID,
+					id: terrain_id(t),
 					quad: Some((ids.id(texture), quad)),
 				});
 			}
@@ -323,9 +327,7 @@ impl KeptMap {
 	fn push_segment(&mut self, segment: Segment) -> usize {
 		let s = self.segments.len();
 		for (at, item) in segment.items.iter().enumerate() {
-			if item.id != NO_ID {
-				self.ids.insert(item.id, (s, at));
-			}
+			self.ids.insert(item.id, (s, at));
 		}
 		self.segments.push(segment);
 		self.order.push(s);
@@ -344,20 +346,39 @@ impl KeptMap {
 		}
 	}
 
-	/// Follow the details spawned and removed since it was built or last edited, in
-	/// order (see `squirrel_bb::WorldGrid::take_map_edits`).
+	/// Follow the details spawned and removed and the tiles' terrain set since it was
+	/// built or last edited, in order (see `squirrel_bb::WorldGrid::take_map_edits`).
 	pub(crate) fn edit(&mut self, edits: &[MapEdit], sprites: &SpriteRegistry) {
 		for edit in edits {
 			match edit {
-				MapEdit::Spawned { tile, detail } => self.insert(*tile, detail, sprites),
+				MapEdit::Spawned { tile, detail } => self.spawned(*tile, detail, sprites),
 				MapEdit::Removed(id) => self.remove(*id),
+				MapEdit::Terrain { tile, terrain } => {
+					// Its key follows its brush's depth bias: out, and in at its place.
+					self.remove(terrain_id(*tile));
+					if let Some((key, texture, quad)) = terrain_quad(terrain, sprites) {
+						let quad = Quad {
+							texture: self.atlases.index_of(texture),
+							..quad
+						};
+						self.insert(Item {
+							quad: Some(quad),
+							order: Order {
+								layer: Layer::Terrain,
+								key: Reverse(key),
+								tile: *tile as u32,
+								nth: 0,
+							},
+							id: terrain_id(*tile),
+						});
+					}
+				}
 			}
 		}
 	}
 
-	/// `detail`, spawned on tile `tile` after its others, goes in at its place in the
-	/// order.
-	fn insert(&mut self, tile: usize, detail: &SceneDetail, sprites: &SpriteRegistry) {
+	/// `detail`, spawned on tile `tile` after its others, goes in at its place.
+	fn spawned(&mut self, tile: usize, detail: &SceneDetail, sprites: &SpriteRegistry) {
 		if self.next.len() <= tile {
 			self.next.resize(tile + 1, 0);
 		}
@@ -373,6 +394,11 @@ impl KeptMap {
 			},
 			id: detail.id,
 		};
+		self.insert(item);
+	}
+
+	/// `item` goes in at its place in the order.
+	fn insert(&mut self, item: Item) {
 		let is_before = before(&item.order);
 		// The first segment of its part whose last quad comes after it, or the part's
 		// last (a part without any gets one, at the split).
@@ -415,9 +441,7 @@ impl KeptMap {
 			self.segments[s].unplace();
 			let new = self.segments.len();
 			for (i, moved) in moved.iter().enumerate() {
-				if moved.id != NO_ID {
-					self.ids.insert(moved.id, (new, i));
-				}
+				self.ids.insert(moved.id, (new, i));
 			}
 			self.segments.push(Segment::new(is_before, moved));
 			self.order.insert(at + 1, new);
@@ -430,13 +454,11 @@ impl KeptMap {
 		segment.items.insert(place, item);
 		segment.unplace();
 		for (i, item) in segment.items.iter().enumerate().skip(place) {
-			if item.id != NO_ID {
-				self.ids.insert(item.id, (s, i));
-			}
+			self.ids.insert(item.id, (s, i));
 		}
 	}
 
-	/// The detail with id `id` goes out of the order (one never kept is passed over).
+	/// The quad with id `id` goes out of the order (one never kept is passed over).
 	fn remove(&mut self, id: i64) {
 		let Some((s, place)) = self.ids.remove(&id) else {
 			return;
@@ -445,9 +467,7 @@ impl KeptMap {
 		segment.items.remove(place);
 		segment.unplace();
 		for (i, item) in segment.items.iter().enumerate().skip(place) {
-			if item.id != NO_ID {
-				self.ids.insert(item.id, (s, i));
-			}
+			self.ids.insert(item.id, (s, i));
 		}
 	}
 
@@ -884,9 +904,10 @@ mod tests {
 		assert_eq!(map.segments[0].patched, [3]);
 	}
 
-	/// Details spawned and removed one by one give the map a build of the tiles as they
-	/// end up gives, quad for quad: keys ≥ 0 and below, ties between tiles and on one
-	/// tile, hidden ones, a part with no segment yet, and segments filling and splitting.
+	/// Details spawned and removed and terrain set, one by one, give the map a build of
+	/// the tiles as they end up gives, quad for quad: keys ≥ 0 and below, ties between
+	/// tiles and on one tile, hidden ones, terrain changed or gone, a part with no
+	/// segment yet, and segments filling and splitting.
 	#[test]
 	fn edits_keep_the_order_a_build_gives() {
 		let registry = registry();
@@ -927,7 +948,13 @@ mod tests {
 			let mut edits = Vec::new();
 			for _ in 0..60 {
 				let t = next(tiles.len() as u64) as usize;
-				if next(3) == 0 && !tiles[t].details.is_empty() {
+				if next(8) == 0 {
+					// Its terrain set: another brush, or none.
+					tiles[t].brush = ["rock", "tile", ""][next(3) as usize].into();
+					tiles[t].flipped = next(2) == 0;
+					let terrain = SceneTile { details: Vec::new(), ..tiles[t].clone() };
+					edits.push(MapEdit::Terrain { tile: t, terrain });
+				} else if next(3) == 0 && !tiles[t].details.is_empty() {
 					let at = next(tiles[t].details.len() as u64) as usize;
 					let gone = tiles[t].details.remove(at);
 					edits.push(MapEdit::Removed(gone.id));
@@ -944,7 +971,7 @@ mod tests {
 			built.build(&tiles, &registry, None);
 			assert_eq!(items(&map), items(&built), "round {round}");
 			for (&id, &(s, at)) in &map.ids {
-				assert_eq!(map.segments[s].items[at].id, id, "where detail {id} is kept");
+				assert_eq!(map.segments[s].items[at].id, id, "where quad {id} is kept");
 			}
 			assert!(map.segments.iter().all(|s| s.items.len() <= SEGMENT));
 		}

@@ -239,8 +239,8 @@ fn a_renderer_learns_what_changed_on_the_map() {
 	grid.clear();
 }
 
-/// Details spawned and removed are edits a renderer follows one by one (the map's
-/// generation stays); a change it can't follow (terrain, the map sized) moves the
+/// Details spawned and removed and terrain set are edits a renderer follows one by one
+/// (the map's generation stays); a change it can't follow (the map sized) moves the
 /// generation and drops the edits; edits nothing takes are bounded.
 #[test]
 fn details_spawned_and_removed_are_edits_of_the_kept_map() {
@@ -271,8 +271,19 @@ fn details_spawned_and_removed_are_edits_of_the_kept_map() {
 	}
 	assert!(grid.take_map_edits().is_empty(), "taken");
 
-	run("t.spawnDetail(\"hill\", 30, 8, true); t.setBrush(\"plains\");");
-	assert_eq!(grid.map_generation(), generation + 1, "terrain builds the map again");
+	run("t.setBrush(\"plains\"); t.IsFlipped = true;");
+	assert_eq!(grid.map_generation(), generation, "terrain is an edit too");
+	match &grid.take_map_edits()[..] {
+		[MapEdit::Terrain { tile: t1, terrain: a }, MapEdit::Terrain { tile: t2, terrain: b }] => {
+			assert_eq!((*t1, *t2), (tile, tile));
+			assert_eq!((&*a.brush, a.flipped, (a.col, a.row)), ("plains", true, (1, 2)), "as drawn when taken");
+			assert!(b.details.is_empty());
+		}
+		other => panic!("edits {other:?}"),
+	}
+
+	run("t.spawnDetail(\"hill\", 30, 8, true); World.resizeScene(4, 4); ::t <- World.getTileSquare(1, 2);");
+	assert_eq!(grid.map_generation(), generation + 1, "the map sized builds it again");
 	assert!(grid.take_map_edits().is_empty(), "the edits before it are in the map built again");
 
 	run("for (local i = 0; i < 5000; i++) t.spawnDetail(\"hill\", 30, 8, true);");
