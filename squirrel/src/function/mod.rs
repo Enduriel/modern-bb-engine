@@ -95,6 +95,9 @@ unsafe extern "C" fn trampoline(vm: squirrel_sys::HSQUIRRELVM) -> squirrel_sys::
 	}
 
 	let func = unsafe { &mut *(ptr as *mut Box<dyn SqFunction>) };
+	if crate::vm::interrupt_requested(vm.as_ptr()) {
+		return vm.throw_error(crate::INTERRUPTED);
+	}
 	let Some(depth) = crate::profile::native_enter(|| func.label()) else { return func.invoke(&vm) };
 	let result = func.invoke(&vm);
 	crate::profile::native_exit(depth);

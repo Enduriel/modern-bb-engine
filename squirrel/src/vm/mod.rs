@@ -8,6 +8,7 @@
 
 mod bytecode;
 mod call_stack;
+mod interrupt;
 pub(crate) mod closing;
 mod print;
 mod runtime_error;
@@ -22,6 +23,8 @@ mod float_format_tests;
 #[cfg(test)]
 mod stdlib_parity_tests;
 
+pub use interrupt::{INTERRUPTED, Interrupter};
+pub(crate) use interrupt::requested as interrupt_requested;
 pub use print::CompileError;
 pub use runtime_error::{ErrorValue, Frame, Local, RuntimeError};
 
@@ -192,6 +195,7 @@ impl Drop for SQVM {
 			// The objects `sq_close` frees drop their Rust state, and with it any
 			// strong refs they hold; those must not release against the closing VM
 			// (see `closing`).
+			interrupt::forget(squirrel_sys::sq_getrootvm(self.ptr));
 			let closing = closing::Closing::begin(self.ptr);
 			squirrel_sys::sq_close(self.ptr);
 			drop(closing);
