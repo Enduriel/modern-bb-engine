@@ -6,6 +6,10 @@
 //!
 //! - `BOOT_MODS_ONLY=mod_modern_hooks,mod_msu` mounts only the mods whose file names
 //!   start with one of those prefixes.
+//! - `BOOT_MODS_EXTRA=/path/a.zip,/path/b.zip` also mounts these zips from anywhere (e.g.
+//!   a dev build): in load order by file name among the data dir's mods, as the original
+//!   orders them once copied into `data/` (what the probe runner's `--with-mod` does). One
+//!   named like an installed mod replaces it. `BOOT_MODS_ONLY` doesn't filter them.
 //! - `BOOT_MODS_SCRIPT=probe.nut` runs a script once the menu is up (e.g. a probe
 //!   written for the original, to compare).
 //! - `BOOT_MODS_CAMPAIGN=1` then starts a new campaign through the menus (as the smoke
@@ -25,9 +29,17 @@ fn main() {
 			prefixes.iter().any(|p| name.starts_with(p))
 		});
 	}
+	let extra: Vec<PathBuf> = std::env::var("BOOT_MODS_EXTRA")
+		.map(|list| list.split(',').map(str::trim).filter(|p| !p.is_empty()).map(PathBuf::from).collect())
+		.unwrap_or_default();
+	for zip in &extra {
+		assert!(zip.is_file(), "BOOT_MODS_EXTRA: not a file: {}", zip.display());
+	}
+	let mods = harness::with_extra_mods(mods, extra.clone()).expect("BOOT_MODS_EXTRA");
 	println!("{} mod archives:", mods.len());
 	for m in &mods {
-		println!("  {}", m.file_name().unwrap().to_string_lossy());
+		let from = if extra.contains(m) { format!("  (extra: {})", m.display()) } else { String::new() };
+		println!("  {}{from}", m.file_name().unwrap().to_string_lossy());
 	}
 	let mut archives = harness::data_archives(&dir).expect("list the data archives");
 	archives.extend(mods);

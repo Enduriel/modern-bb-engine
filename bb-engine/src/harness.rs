@@ -160,6 +160,24 @@ pub fn mod_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 	Ok(zips)
 }
 
+/// `mods` (in load order, as [`mod_archives`] lists them) with the zips at `extra` added,
+/// wherever they are on disk: all of them in load order by file name, as the original
+/// would mount them had they been copied into `data/`. An extra zip named like a listed
+/// mod takes its place, as a copy into `data/` would replace the file (e.g. a dev build
+/// of an installed mod); two extras of the same name are an error.
+pub fn with_extra_mods(mut mods: Vec<PathBuf>, extra: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
+	for (i, zip) in extra.iter().enumerate() {
+		let name = zip.file_name().ok_or_else(|| format!("not a file: {}", zip.display()))?;
+		if extra[..i].iter().any(|z| z.file_name() == Some(name)) {
+			return Err(format!("two extra mods named {}", name.to_string_lossy()));
+		}
+		mods.retain(|m| m.file_name() != Some(name));
+	}
+	mods.extend(extra);
+	mods.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+	Ok(mods)
+}
+
 /// Where a probe run keeps the installed mods, beside the install's `data/`.
 pub const HELD_MODS: &str = "_bb_probe_held_mods";
 
@@ -567,6 +585,17 @@ pub fn run_frame(engine: &GameEngine, real_delta_ms: f64) -> Result<(), String> 
 #[cfg(test)]
 mod mod_archive_tests {
 	use super::*;
+
+	#[test]
+	fn extra_mods_join_the_load_order_by_name() {
+		let installed = ["/g/data/mod_modern_hooks.zip", "/g/data/mod_msu.zip", "/g/data/mod_x.zip"];
+		let extra = ["/dev/out/mod_msu.zip", "/dev/out/mod_a.zip", "/dev/out/zz.zip"];
+		let paths = |p: &[&str]| p.iter().map(PathBuf::from).collect::<Vec<_>>();
+		let mods = with_extra_mods(paths(&installed), paths(&extra)).unwrap();
+		let want = ["/dev/out/mod_a.zip", "/g/data/mod_modern_hooks.zip", "/dev/out/mod_msu.zip", "/g/data/mod_x.zip", "/dev/out/zz.zip"];
+		assert_eq!(mods, paths(&want));
+		assert!(with_extra_mods(vec![], paths(&["/a/m.zip", "/b/m.zip"])).is_err());
+	}
 
 	#[test]
 	fn mods_a_probe_holds_still_count() {
