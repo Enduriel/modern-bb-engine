@@ -69,6 +69,7 @@ gives.
 | `BB_CLIPBOARD_TEST=1` | Lets the (ignored) tests that copy to and paste from a real clipboard run, with `--include-ignored`; only inside a display of its own (a headless gamescope, or a headless KWin for the Wayland one). |
 | `BB_SCENE_KEY_MODS=1` | Run `bb-engine`'s scene-key test with the install's mods. |
 | `BB_PACKAGE_RPATH` | See [packaging](packaging.md). |
+| `BB_LLVM_MINGW=DIR` | An unpacked llvm-mingw for `scripts/windows_cross.py` (the Windows cross-build), instead of the pinned release it fetches into the target folder. |
 
 Build-time variables, set by the build scripts rather than by hand: `BB_CEF_DIR` (where
 the CEF distribution was found), `BB_STEAM_TARGET` (the target the pinned Steam library

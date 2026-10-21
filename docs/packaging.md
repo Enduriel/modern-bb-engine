@@ -73,7 +73,9 @@ German and recording every shared object its processes mapped:
 - **Linux x86_64:** built and run.
 - **Linux aarch64:** a pinned library exists; not built.
 - **Windows x86_64:** laid out from every DLL and resource at the top of CEF's folder
-  (`bb.exe` beside them), but not yet built or run.
+  (`bb.exe` beside them), but not yet packaged. `bb.exe` without the UI is
+  cross-built on Linux for `x86_64-pc-windows-gnullvm` (`scripts/windows_cross.py`) and
+  runs under Proton; the UI build doesn't link yet (cef-dll-sys builds only for msvc).
 - **macOS arm64:** built on an M4 (2026-10-20): an app bundle, below. Its executable
   runs the game windowed; launching it through Finder is still to be checked.
 
