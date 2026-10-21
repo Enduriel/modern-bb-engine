@@ -153,6 +153,7 @@ fn main() -> ExitCode {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
 	bb_app::platform::tune_allocator();
+	squirrel_bb::startup::mark("main");
 	let mut logs = None;
 	let mut run = || -> Result<(), String> {
 		let (mut options, steam, log_dir) = options()?;
@@ -175,9 +176,12 @@ fn main() -> ExitCode {
 		if std::env::var_os("BB_STATS").is_some_and(|v| v != "0") {
 			bb_app::stats::spawn_logger(std::time::Duration::from_secs(5));
 		}
+		squirrel_bb::startup::mark("options, logs, steam");
 		let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+		squirrel_bb::startup::mark("event loop");
 		let display = Box::new(event_loop.owned_display_handle());
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(display));
+		squirrel_bb::startup::mark("wgpu instance");
 		let mut app = app::App::new(options, instance, event_loop.create_proxy());
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
 		app.error.take().map_or(Ok(()), Err)

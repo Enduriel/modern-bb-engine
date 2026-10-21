@@ -2,11 +2,12 @@
 //! `coui` scheme registration (every process must agree on it), command-line
 //! switches, and the per-process handlers.
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 
 use cef::*;
 
 use super::bridge_client;
+use super::opening::Opening;
 use super::renderer::PageHandler;
 use super::scheme::scheme_options;
 use crate::coui::SCHEME;
@@ -141,7 +142,8 @@ fn set_preferences() {
 
 wrap_browser_process_handler! {
 	struct BrowserReady {
-		ready: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+		// The page, opened once the context is initialized (browser process only).
+		opening: Arc<Mutex<Option<Opening>>>,
 		// The bridge's endpoint (`bridge_wire`), for the renderer's command line only.
 		bridge: Option<String>,
 	}
@@ -162,8 +164,9 @@ wrap_browser_process_handler! {
 
 		fn on_context_initialized(&self) {
 			set_preferences();
-			if let Some(ready) = self.ready.lock().unwrap_or_else(|e| e.into_inner()).take() {
-				let _ = ready.send(());
+			squirrel_bb::startup::mark("cef initialized");
+			if let Some(opening) = self.opening.lock().unwrap_or_else(|e| e.into_inner()).take() {
+				opening.open();
 			}
 		}
 	}
@@ -171,7 +174,7 @@ wrap_browser_process_handler! {
 
 wrap_app! {
 	pub(super) struct HostApp {
-		ready: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+		opening: Arc<Mutex<Option<Opening>>>,
 		// The DevTools port, if served.
 		devtools_port: Option<u16>,
 		bridge: Option<String>,
@@ -249,7 +252,7 @@ wrap_app! {
 		}
 
 		fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
-			Some(BrowserReady::new(self.ready.clone(), self.bridge.clone()))
+			Some(BrowserReady::new(self.opening.clone(), self.bridge.clone()))
 		}
 
 		fn render_process_handler(&self) -> Option<RenderProcessHandler> {
@@ -258,17 +261,17 @@ wrap_app! {
 	}
 }
 
-/// The application object; `ready` (browser process only) is signalled once CEF's
+/// The application object; `opening` (browser process only) opens the page once CEF's
 /// context is initialized. `devtools_port` for the browser process when DevTools is
 /// served, `ozone` its display connection's platform (its children don't take switches
 /// from it). `bridge` is the bridge's endpoint, which it hands the renderer.
 pub(super) fn host_app(
-	ready: Option<mpsc::Sender<()>>,
+	opening: Option<Opening>,
 	devtools_port: Option<u16>,
 	bridge: Option<String>,
 	ozone: Option<&'static str>,
 ) -> App {
-	HostApp::new(Arc::new(Mutex::new(ready)), devtools_port, bridge, ozone)
+	HostApp::new(Arc::new(Mutex::new(opening)), devtools_port, bridge, ozone)
 }
 
 #[cfg(test)]

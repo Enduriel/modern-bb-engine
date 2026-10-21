@@ -34,6 +34,7 @@ mod module;
 mod native;
 pub mod platform;
 pub mod scene;
+pub mod startup;
 mod source;
 mod state;
 mod state_stack;

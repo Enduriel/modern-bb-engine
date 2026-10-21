@@ -237,10 +237,22 @@ pub fn boot_menu(engine: &GameEngine) -> Result<(), String> {
 pub fn boot_menu_with(
 	engine: &GameEngine,
 	tries: u32,
-	mut wait: impl FnMut() -> Result<(), String>,
+	wait: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
 	load_config(engine)?;
+	squirrel_bb::startup::mark("preload run");
+	boot_root_state_with(engine, tries, wait)
+}
+
+/// The rest of [`boot_menu_with`] after the config (`load_config`): `scripts/root_state`,
+/// the wait for the UI, the cursor.
+pub fn boot_root_state_with(
+	engine: &GameEngine,
+	tries: u32,
+	mut wait: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
 	engine.boot("scripts/root_state")?;
+	squirrel_bb::startup::mark("root state booted");
 	for _ in 0..tries {
 		if squirrel::SqTable::root(engine.vm()).get::<squirrel::SqTable>("Cursor").is_some() {
 			break;

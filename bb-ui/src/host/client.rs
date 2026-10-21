@@ -50,6 +50,8 @@ pub enum Event {
 	Procedural { path: String, responder: Responder },
 	/// The browser exists (it can receive messages).
 	Created,
+	/// The page couldn't be opened: why.
+	OpenFailed(String),
 	/// The browser is gone (after a close).
 	Closed,
 	/// The renderer process died.

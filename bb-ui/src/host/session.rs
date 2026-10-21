@@ -17,6 +17,11 @@ use crate::coui::UiFiles;
 use crate::hot_reload::FileWatcher;
 use crate::json::Json;
 
+/// What [`UiSession::wait_page`]'s error says when the page never painted: Chromium
+/// couldn't paint it on the GPU (it says why only in its log, "Unable to allocate
+/// frame").
+pub const NO_PAINTS: &str = "the UI page never painted";
+
 /// The game and its UI page, running together on this thread.
 pub struct UiSession {
 	// Field order is drop order: the scripts (which hold the bridge's frontend) go
@@ -32,6 +37,9 @@ pub struct UiSession {
 	pub(super) procedural: RefCell<Option<Vec<super::ProceduralRequest>>>,
 	/// The fonts mods registered that the page has (`ModernEngine.registerFont`).
 	fonts: RefCell<crate::mod_fonts::PageFonts>,
+	/// Whether the page has opened, registered its screens and painted
+	/// ([`UiSession::wait_page`]).
+	page_ready: std::cell::Cell<bool>,
 }
 
 impl UiSession {
@@ -39,6 +47,16 @@ impl UiSession {
 	/// script engine, and wait until the page has registered its screens. Page and
 	/// bridge messages are kept in [`log`](Self::log) and echoed as `echo` says.
 	pub fn start(data_dir: &Path, config: HostConfig, echo: Echo) -> Result<UiSession, String> {
+		let session = UiSession::open(data_dir, config, echo)?;
+		session.wait_page()?;
+		Ok(session)
+	}
+
+	/// [`start`](Self::start) without waiting for the page: it opens and loads while
+	/// the caller goes on, and [`boot_menu`](Self::boot_menu) runs the scripts' preload
+	/// meanwhile, then waits for it ([`wait_page`](Self::wait_page)). The game's own
+	/// start; nothing may call into the page before the menu is booted.
+	pub fn open(data_dir: &Path, config: HostConfig, echo: Echo) -> Result<UiSession, String> {
 		let mut archives = harness::data_archives(data_dir).map_err(|e| format!("install: {e}"))?;
 		if config.mods {
 			archives.extend(harness::mod_archives(data_dir).map_err(|e| format!("mods: {e}"))?);
@@ -90,7 +108,20 @@ impl UiSession {
 			echo,
 			procedural: RefCell::new(None),
 			fonts: RefCell::default(),
+			page_ready: std::cell::Cell::new(false),
 		};
+		squirrel_bb::startup::mark("engine opened");
+		Ok(session)
+	}
+
+	/// Wait until the page has opened, registered its screens and painted (nothing to
+	/// do once it has). Fails with [`NO_PAINTS`] in the message if it never painted.
+	pub fn wait_page(&self) -> Result<(), String> {
+		if self.page_ready.get() {
+			return Ok(());
+		}
+		let session = self;
+		session.host().wait_open(Duration::from_secs(30))?;
 		// The page registers its screens once loaded; scripts may only connect to them
 		// after that, as in the original.
 		if !session.pump_until(Duration::from_secs(30), |s| s.protocol.is_registered()) {
@@ -101,11 +132,13 @@ impl UiSession {
 		if !session.pump_until(Duration::from_secs(10), |s| s.host().paints() > 0) {
 			let why = session.host().paint_error().map_or_else(|| "none arrived".to_string(), |e| format!("the last couldn't be taken: {e}"));
 			return Err(format!(
-				"the page never painted ({why}): Chromium's GPU process didn't hand over its paints; \
+				"{NO_PAINTS} ({why}): Chromium's GPU process didn't hand over its paints; \
 				its log is CEF's (cef.log, or the game's log folder)"
 			));
 		}
-		Ok(session)
+		squirrel_bb::startup::mark("page painted");
+		self.page_ready.set(true);
+		Ok(())
 	}
 
 	/// Boot the scripts to the main menu (config, then `scripts/root_state`). With
@@ -117,12 +150,24 @@ impl UiSession {
 	/// player can't click anything before that; a host that starts a campaign at once
 	/// mustn't either.
 	pub fn boot_menu(&self) -> Result<(), String> {
-		self.park();
-		harness::boot_menu_with(&self.engine, 600, || {
+		let wait = || {
 			self.pump_until_deadline(Instant::now() + Duration::from_micros(16_667));
 			Ok(())
-		})?;
+		};
+		if self.page_ready.get() {
+			self.park();
+			harness::boot_menu_with(&self.engine, 600, wait)?;
+		} else {
+			// Opened without waiting (`open`): the preload runs while the page loads (it
+			// calls nothing in the page), then the root state once the page is ready.
+			harness::load_config(&self.engine)?;
+			squirrel_bb::startup::mark("preload run");
+			self.wait_page()?;
+			self.park();
+			harness::boot_root_state_with(&self.engine, 600, wait)?;
+		}
 		self.pump();
+		squirrel_bb::startup::mark("menu booted");
 		if !self.pump_until(Duration::from_secs(30), |s| s.scripts_settled()) {
 			self.record("bridge", "the page's inserted scripts were still loading after 30 s".into());
 		}

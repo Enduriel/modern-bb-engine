@@ -20,7 +20,12 @@
 //!
 //! Run: `cargo run -p bb-ui --features cef --example boot_menu_ui -- [data-dir]
 //!       [--seconds N] [--out menu.png] [--size 1920x1080] [--click "New Campaign"]
-//!       [--after 10] [--seed bbuitest] [--eval "document.title"] [--devtools 9222]`
+//!       [--after 10] [--seed bbuitest] [--eval "document.title"] [--devtools 9222]
+//!       [--mods] [--serial]`
+//!
+//! `--mods` mounts the install's mods. The page loads while the scripts' preload runs,
+//! as the game starts; `--serial` waits for the page first, as the tests' sessions do,
+//! to compare.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -59,6 +64,8 @@ struct Options {
 	bench: u32,
 	after: f64,
 	seed: Option<String>,
+	mods: bool,
+	serial: bool,
 }
 
 /// Time `n` script → page calls, and `n` that call back into the script (each one a
@@ -100,6 +107,8 @@ fn parse_options() -> Result<Options, String> {
 		bench: 0,
 		after: 0.0,
 		seed: None,
+		mods: false,
+		serial: false,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -114,6 +123,8 @@ fn parse_options() -> Result<Options, String> {
 			"--bench" => options.bench = value()?.parse().map_err(|e| format!("--bench: {e}"))?,
 			"--after" => options.after = value()?.parse().map_err(|e| format!("--after: {e}"))?,
 			"--seed" => options.seed = Some(value()?),
+			"--mods" => options.mods = true,
+			"--serial" => options.serial = true,
 			"--devtools" => {
 				options.devtools = Some(value()?.parse().map_err(|e| format!("--devtools: {e}"))?)
 			}
@@ -157,19 +168,22 @@ fn run(options: Options) -> Result<(), String> {
 		height: options.height,
 		devtools_port: options.devtools,
 		sink: Some(gpu_page::sink()?),
+		mods: options.mods,
 		..HostConfig::default()
 	};
 	if let Some(port) = options.devtools {
 		println!("DevTools: http://127.0.0.1:{port} (or chrome://inspect)");
 	}
-	let session = UiSession::start(&options.data_dir, config, Echo::All)?;
-	println!(
-		"page up, {} screens registered, after {:?}",
-		session.protocol().screens().len(),
-		started.elapsed()
-	);
-
+	let session = if options.serial {
+		UiSession::start(&options.data_dir, config, Echo::All)?
+	} else {
+		UiSession::open(&options.data_dir, config, Echo::All)?
+	};
 	session.boot_menu()?;
+	println!(
+		"page up, {} screens registered",
+		session.protocol().screens().len(),
+	);
 	println!(
 		"booted root_state after {:?}; states: {:?}",
 		started.elapsed(),
@@ -234,6 +248,7 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	squirrel_bb::startup::mark("main");
 	// Chromium paints the page through a display connection: a headless gamescope's.
 	bb_ui::host::with_display(run_main)
 }

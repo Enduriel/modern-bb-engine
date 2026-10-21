@@ -258,6 +258,7 @@ impl App {
 		let placement = Placement::of(&mode, monitor.size, &monitor.modes, exclusive);
 		let screen = (mode.width.max(1) as u32, mode.height.max(1) as u32);
 		let attributes = window_mode::attributes(placement, &monitor, screen);
+		squirrel_bb::startup::mark("monitor, settings");
 		let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
 		let surface = self
 			.instance

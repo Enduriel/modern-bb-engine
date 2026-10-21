@@ -38,6 +38,7 @@ mod app;
 mod bridge_client;
 mod bridge_server;
 mod bridge_wire;
+mod cef_thread;
 mod click_count;
 mod client;
 mod damage;
@@ -55,6 +56,7 @@ mod mac;
 #[cfg(target_os = "macos")]
 mod mac_keys;
 mod memory;
+mod opening;
 mod page_frames;
 mod page_log;
 mod page_rest;
@@ -102,12 +104,12 @@ pub use paint_sink::IOSurface;
 pub use paint_sink::{PageSink, PaintBuffer, SharedPaint};
 pub use paint_stats::PaintStats;
 pub use pump_schedule::Waker;
-pub use session::UiSession;
+pub use session::{NO_PAINTS, UiSession};
 pub use session_play::ProceduralRequest;
 
 use crate::bridge::{Reply, Transport};
 use crate::clipboard::{Clipboard, MemoryClipboard};
-use crate::coui::{MAIN_PAGE, SCHEME, UiFiles};
+use crate::coui::{MAIN_PAGE, UiFiles};
 use crate::json::Json;
 
 /// Where the build found the CEF distribution (`libcef.so`, its resources, locales).
@@ -145,6 +147,9 @@ fn recv<T>(rx: &mpsc::Receiver<T>, timeout: Duration) -> Option<T> {
 /// How often a waiting game thread runs CEF's work on macOS.
 #[cfg(target_os = "macos")]
 const PUMP_EVERY: Duration = Duration::from_millis(1);
+
+/// What a host says when CEF itself couldn't start (its own log, `cef.log`, says why).
+pub const CEF_FAILED: &str = "the browser engine (CEF) failed to start (see its log, cef.log)";
 
 /// How long the game waits for the page to answer one call (time spent serving the
 /// page's own calls back into the game doesn't count).
@@ -303,12 +308,15 @@ pub struct UiHost {
 	/// Whether the page gets a turn this frame, or rests ([`page_rest`]).
 	rest: page_rest::PageRest,
 	cache_dir: PathBuf,
-	_args: Args,
+	/// Where CEF was initialized, and is shut down when the host goes.
+	cef: Option<cef_thread::CefThread>,
 }
 
 impl UiHost {
-	/// Start CEF and open the page, serving `coui://` from `files`. Returns once the
-	/// browser exists; the page itself is still loading.
+	/// Start CEF and open the page, serving `coui://` from `files`. Returns at once:
+	/// CEF starts on a thread of its own ([`cef_thread`]) and opens the page as soon as
+	/// it can ([`opening`]), while the caller goes on with its own start;
+	/// [`wait_open`](Self::wait_open) waits for the page's browser.
 	pub fn start(files: Arc<UiFiles>, config: HostConfig) -> Result<UiHost, String> {
 		let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 		let sink = config
@@ -320,58 +328,9 @@ impl UiHost {
 			None => Display::from_env()?,
 		};
 		std::fs::create_dir_all(&config.cache_dir).map_err(|e| format!("cache dir: {e}"))?;
-		let args = Args::new();
-		let (ready_tx, ready_rx) = mpsc::channel();
 		// Bound before CEF starts: the renderer is told where it is as it launches.
 		let bridge = bridge_wire::Listener::bind().map_err(|e| format!("the bridge's socket: {e}"))?;
-		let mut app = app::host_app(
-			Some(ready_tx),
-			config.devtools_port,
-			Some(bridge.endpoint().to_switch()),
-			display.ozone(),
-		);
-
-		let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
-		let cef_dir = cef_dir();
-		let settings = Settings {
-			no_sandbox: 1,
-			windowless_rendering_enabled: 1,
-			root_cache_path: path(config.cache_dir.clone()),
-			log_file: path(config.cef_log.clone().unwrap_or_else(|| config.cache_dir.join("cef.log"))),
-			log_severity: LogSeverity::WARNING,
-			// Transparent: the UI is drawn over the game's scene.
-			background_color: 0,
-			remote_debugging_port: config.devtools_port.map_or(0, i32::from),
-			..Default::default()
-		};
-		// CEF's UI thread: its own on Windows and Linux; on macOS the main thread, which
-		// runs CEF's work whenever the game polls or waits (`mac`). There the framework
-		// holds the resources, and every child process runs this program too.
-		#[cfg(not(target_os = "macos"))]
-		let settings = Settings {
-			multi_threaded_message_loop: 1,
-			resources_dir_path: path(cef_dir.clone()),
-			locales_dir_path: path(cef_dir.join("locales")),
-			..settings
-		};
-		#[cfg(target_os = "macos")]
-		let settings = Settings {
-			external_message_pump: 1,
-			framework_dir_path: mac::framework_dir(&cef_dir).map(path).unwrap_or_default(),
-			browser_subprocess_path: mac::subprocess_path().map(path).unwrap_or_default(),
-			main_bundle_path: mac::main_bundle().map(path).unwrap_or_default(),
-			..settings
-		};
-		if initialize(
-			Some(args.as_main_args()),
-			Some(&settings),
-			Some(&mut app),
-			std::ptr::null_mut(),
-		) != 1
-		{
-			return Err("CEF failed to initialize (see its cef.log)".into());
-		}
-		recv(&ready_rx, Duration::from_secs(30)).ok_or("CEF did not finish initializing")?;
+		let bridge_switch = bridge.endpoint().to_switch();
 
 		let (events_tx, events) = mpsc::channel();
 		let shared = Arc::new(Shared {
@@ -388,12 +347,55 @@ impl UiHost {
 			clipboard: config.clipboard.clone(),
 		});
 		bridge_server::start(bridge, shared.clone());
-		let mut factory = scheme::CouiFactory::new(files, shared.clone());
-		if register_scheme_handler_factory(Some(&SCHEME.into()), None, Some(&mut factory)) != 1 {
-			return Err("could not register the coui:// scheme".into());
-		}
-		let host = UiHost {
+		let opening = opening::Opening {
+			files,
 			shared: shared.clone(),
+			url: config.url.clone(),
+			external_frames: config.frames.external(),
+			frame_rate: config.frames.clock_rate(),
+		};
+		let (devtools_port, ozone) = (config.devtools_port, display.ozone());
+		let (cache_dir, cef_log) = (config.cache_dir.clone(), config.cef_log.clone());
+		let make = move || {
+			let app = app::host_app(Some(opening), devtools_port, Some(bridge_switch), ozone);
+			let path = |p: PathBuf| CefString::from(p.to_string_lossy().as_ref());
+			let cef_dir = cef_dir();
+			let settings = Settings {
+				no_sandbox: 1,
+				windowless_rendering_enabled: 1,
+				root_cache_path: path(cache_dir.clone()),
+				log_file: path(cef_log.unwrap_or_else(|| cache_dir.join("cef.log"))),
+				log_severity: LogSeverity::WARNING,
+				// Transparent: the UI is drawn over the game's scene.
+				background_color: 0,
+				remote_debugging_port: devtools_port.map_or(0, i32::from),
+				..Default::default()
+			};
+			// CEF's UI thread: its own on Windows and Linux; on macOS the main thread,
+			// which runs CEF's work whenever the game polls or waits (`mac`). There the
+			// framework holds the resources, and every child process runs this program too.
+			#[cfg(not(target_os = "macos"))]
+			let settings = Settings {
+				multi_threaded_message_loop: 1,
+				resources_dir_path: path(cef_dir.clone()),
+				locales_dir_path: path(cef_dir.join("locales")),
+				..settings
+			};
+			#[cfg(target_os = "macos")]
+			let settings = Settings {
+				external_message_pump: 1,
+				framework_dir_path: mac::framework_dir(&cef_dir).map(path).unwrap_or_default(),
+				browser_subprocess_path: mac::subprocess_path().map(path).unwrap_or_default(),
+				main_bundle_path: mac::main_bundle().map(path).unwrap_or_default(),
+				..settings
+			};
+			(app, settings)
+		};
+		let failing = shared.clone();
+		let failed = move || failing.send(Event::OpenFailed(CEF_FAILED.into()));
+		let cef = cef_thread::CefThread::spawn(make, failed)?;
+		Ok(UiHost {
+			shared,
 			events,
 			deferred: RefCell::new(VecDeque::new()),
 			pending: RefCell::new(None),
@@ -412,46 +414,23 @@ impl UiHost {
 				config.devtools_port.is_some(),
 			)),
 			cache_dir: config.cache_dir,
-			_args: args,
-		};
+			cef: Some(cef),
+		})
+	}
 
-		let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
-		window_info.external_begin_frame_enabled = config.frames.external().into();
-		// Paints arrive as GPU buffers (`OnAcceleratedPaint`), never as pixels in memory.
-		window_info.shared_texture_enabled = 1;
-		// The generic font families are the original's, Windows' defaults (probed,
-		// `probes/font_families.js`): `monospace` is Courier New there, where Linux's
-		// default is DejaVu Sans Mono (a pixel taller a line: Modern Hooks' popup, and
-		// MSU's `monospace` text). Fontconfig gives the metric-compatible fonts here.
-		let browser_settings = BrowserSettings {
-			windowless_frame_rate: config.frames.clock_rate(),
-			background_color: 0,
-			standard_font_family: generic_family("Times New Roman").as_str().into(),
-			serif_font_family: generic_family("Times New Roman").as_str().into(),
-			sans_serif_font_family: generic_family("Arial").as_str().into(),
-			fixed_font_family: generic_family("Courier New").as_str().into(),
-			// What Coherent allowed: `execCommand('copy')`/`('cut')` outside a click,
-			// and `execCommand('paste')` (Plan Perks' Paste button). The text itself
-			// comes from the game's clipboard (`bootstrap.js`, `crate::clipboard`).
-			javascript_access_clipboard: State::ENABLED,
-			javascript_dom_paste: State::ENABLED,
-			..Default::default()
-		};
-		let mut client = client::page_client(shared);
-		let created = browser_host_create_browser(
-			Some(&window_info),
-			Some(&mut client),
-			Some(&config.url.as_str().into()),
-			Some(&browser_settings),
-			None,
-			None,
-		);
-		if created != 1 {
-			return Err("could not create the browser".into());
+	/// Wait until the page's browser exists (it can take messages), for up to `timeout`.
+	pub fn wait_open(&self, timeout: Duration) -> Result<(), String> {
+		if self.shared.browser.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+			return Ok(());
 		}
-		host.wait_for(Duration::from_secs(30), |e| matches!(e, Event::Created))
-			.ok_or("the browser was not created in time")?;
-		Ok(host)
+		match self.wait_for(timeout, |e| matches!(e, Event::Created | Event::OpenFailed(_))) {
+			Some(Event::Created) => {
+				squirrel_bb::startup::mark("browser created");
+				Ok(())
+			}
+			Some(Event::OpenFailed(why)) => Err(why),
+			_ => Err(format!("{CEF_FAILED}: the page's browser didn't open within {timeout:?}")),
+		}
 	}
 
 	/// Let `duration` pass. On macOS the waiting thread is CEF's UI thread, so it runs
@@ -1076,17 +1055,15 @@ impl Drop for UiHost {
 		pump_schedule::SCHEDULE.set_waker(None);
 		// Release a page still waiting on the game.
 		drop(self.pending.take());
-		let browser = self
-			.shared
-			.browser
-			.lock()
-			.unwrap_or_else(|e| e.into_inner())
-			.clone();
+		let browser = || self.shared.browser.lock().unwrap_or_else(|e| e.into_inner()).clone();
+		// A page still being opened is let open first, so it can be closed.
+		let browser = browser().or_else(|| self.wait_open(Duration::from_secs(10)).ok().and_then(|()| browser()));
 		if let Some(host) = browser.and_then(|b| b.host()) {
 			host.close_browser(1);
 			self.wait_for(Duration::from_secs(10), |e| matches!(e, Event::Closed));
 		}
-		shutdown();
+		// CEF shuts down where it was initialized.
+		drop(self.cef.take());
 		let _ = std::fs::remove_dir_all(&self.cache_dir);
 	}
 }

@@ -54,7 +54,8 @@ impl Front {
 			sink: Some(super::gpu_page::sink(page.clone())),
 			..HostConfig::default()
 		};
-		let session = UiSession::start(boot.data_dir, config, Echo::Problems)?;
+		// The page opens and loads while the scripts' preload runs (`boot_menu`).
+		let session = UiSession::open(boot.data_dir, config, Echo::Problems)?;
 		// Before the scripts boot to the menu.
 		boot.store.attach(session.engine());
 		// The page's links (`openURL`: mods' pages, the version label) open in the
