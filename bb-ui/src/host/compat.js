@@ -286,7 +286,7 @@
 	// `scrollHeight` stays native.
 	//
 	// Leaving boxes out can only shrink the overflow, so the native value stands when
-	// nothing overflows: aciScrollBar reads this every 200ms for every list. Otherwise
+	// nothing overflows: aciScrollBar reads this on every update of every list. Otherwise
 	// the content is measured the old way, never beyond the native value.
 	var scrollWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth');
 

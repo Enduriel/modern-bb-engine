@@ -9,7 +9,8 @@
 //! scripts inserted at runtime run in Coherent's order. The page's links reach the URL
 //! opener the game installs.
 //! Where the game discards a scene, the page gives its memory back. Vanilla's FPS
-//! module shows only when the game asks for it. Skips if there is no Steam install.
+//! module shows only when the game asks for it. Scroll bars follow their content without
+//! polling it. Skips if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -252,6 +253,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	page_tasks_run_between_scripts(&session)?;
 	inserted_scripts_run_in_coherents_order(&session)?;
 	fps_module_shows_when_asked(&session)?;
+	scroll_bars_follow_their_content(&session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -264,6 +266,94 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		format!("page or bridge errors:\n{}", problems.join("\n")),
 	)?;
 	links_reach_the_url_opener(&session)
+}
+
+/// The page's list of a scroll bar (vanilla's `createList`), its bar and thumb.
+const SCROLL_LIST: &str = r#"(function () {
+	var list = window.__bbList, bar = list.find('.aciSb_bar_v:last'), content = list.find('.aciSb_cnt:first')[0];
+	var track = list.find('.aciSb_track_v:last')[0], grip = list.find('.aciSb_drag_vc:last')[0];
+	var reach = content.scrollHeight - content.clientHeight;
+	var expected = reach > 0 ? content.scrollTop * (track.offsetHeight - grip.offsetHeight) / reach : 0;
+	return { bar: bar.is(':visible'), grip: $(grip).is(':visible'), top: parseFloat(grip.style.top) || 0,
+		expected: expected, scrollTop: content.scrollTop, updates: window.__bbUpdates };
+})()"#;
+
+/// Vanilla's scroll bars follow their content when it changes, without the plugin's
+/// 200ms poll (an intentional divergence, docs/differences.md): a list's bar shows
+/// within a few frames of rows being added, its thumb follows a scroll made around the
+/// plugin and content growing, it hides when the rows go, and while nothing changes
+/// nothing updates it.
+fn scroll_bars_follow_their_content(session: &UiSession) -> Result<(), String> {
+	session.eval(
+		r#"(function () {
+			var host = $('<div id="bb-scroll" style="position:absolute;left:0;top:0;width:200px;height:100px;z-index:99999"/>').appendTo('body');
+			window.__bbList = host.createList(8);
+			window.__bbUpdates = 0;
+			window.__bbList.on('update', function () { window.__bbUpdates++; });
+			return true;
+		})()"#,
+	)?;
+	// The list three frames (50ms) after a change: a 200ms poll would mostly miss it.
+	let state = || -> Result<Json, String> {
+		session.run_frames(0.05)?;
+		session.eval(SCROLL_LIST)
+	};
+	let number = |state: &Json, key: &str| match state.get(key) {
+		Some(Json::Int(n)) => *n as f64,
+		Some(Json::Float(f)) => *f,
+		_ => f64::NAN,
+	};
+	session.run_frames(0.5)?;
+	let empty = state()?;
+	ensure(empty.get("bar") == Some(&Json::Bool(false)), format!("an empty list shows its bar: {}", empty.to_text()))?;
+
+	session.eval("window.__bbUpdates = 0; 0")?;
+	session.run_frames(1.0)?;
+	let idle = session.eval("window.__bbUpdates")?;
+	ensure(idle.as_i64() == Some(0), format!("an unchanged list updated its bar {} times in a second", idle.to_text()))?;
+
+	// Rows added: the bar shows within three frames, far sooner than a 200ms poll.
+	session.eval(
+		r#"(function () {
+			var rows = window.__bbList.findListScrollContainer();
+			for (var i = 0; i < 20; i++) { rows.append($('<div class="bb-row" style="height:20px">row ' + i + '</div>')); }
+			return true;
+		})()"#,
+	)?;
+	let filled = state()?;
+	ensure(
+		filled.get("bar") == Some(&Json::Bool(true)) && filled.get("grip") == Some(&Json::Bool(true)),
+		format!("rows added, but the bar or its thumb isn't shown: {}", filled.to_text()),
+	)?;
+
+	// Scrolled around the plugin (a script setting `scrollTop`): the thumb follows.
+	session.eval("window.__bbList.find('.aciSb_cnt:first')[0].scrollTop = 150; 0")?;
+	let scrolled = state()?;
+	ensure(
+		number(&scrolled, "scrollTop") == 150.0 && number(&scrolled, "top") > 0.0 &&
+			(number(&scrolled, "top") - number(&scrolled, "expected")).abs() < 0.5,
+		format!("the thumb didn't follow a scroll: {}", scrolled.to_text()),
+	)?;
+
+	// The content grows (a style change, no rows added): the thumb moves up to match.
+	session.eval("window.__bbList.find('.bb-row').css('height', '40px'); 0")?;
+	let grown = state()?;
+	ensure(
+		number(&grown, "top") < number(&scrolled, "top") &&
+			(number(&grown, "top") - number(&grown, "expected")).abs() < 0.5,
+		format!("the thumb didn't follow the content growing: {} after {}", grown.to_text(), scrolled.to_text()),
+	)?;
+
+	// The rows go: the bar hides again.
+	session.eval("window.__bbList.findListScrollContainer().empty(); 0")?;
+	let emptied = state()?;
+	ensure(
+		emptied.get("bar") == Some(&Json::Bool(false)),
+		format!("the bar stayed after its rows went: {}", emptied.to_text()),
+	)?;
+
+	session.eval("window.__bbList.destroyList(); $('#bb-scroll').remove(); delete window.__bbList; delete window.__bbUpdates; true")?;
+	Ok(())
 }
 
 /// The page's links go to the URL opener the game installs (the system's browser in

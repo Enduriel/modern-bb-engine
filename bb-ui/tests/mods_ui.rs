@@ -86,7 +86,25 @@ fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
 		session.run_frames(0.1)?;
 	}
 	matches_the_originals_modded_screens(&session)?;
+	scroll_bars_stay_still(&session)?;
 	fps_display_shows(&session)
+}
+
+/// Every scroll bar on the page, the mods' (MSU's settings, Stronghold's, …) and those
+/// made after the boot included, is left alone while nothing changes: none runs the
+/// plugin's 200ms poll (`host/scroll_bars.js`), which would update each five times a
+/// second.
+fn scroll_bars_stay_still(session: &UiSession) -> Result<(), String> {
+	let bars = session.eval(
+		"window.__bbUpdates = 0; $('.aciScrollBar').on('update.bbCount', function () { window.__bbUpdates++; }).length",
+	)?;
+	ensure(bars.as_i64().is_some_and(|n| n >= 10), format!("only {} scroll bars on the modded page", bars.to_text()))?;
+	session.run_frames(1.0)?;
+	let updates = session.eval("var n = window.__bbUpdates; $('.aciScrollBar').off('update.bbCount'); delete window.__bbUpdates; n")?;
+	ensure(
+		updates.as_i64() == Some(0),
+		format!("{} scroll bars updated {} times in a second with nothing changing", bars.to_text(), updates.to_text()),
+	)
 }
 
 /// The FPS display with the mods: Modern Hooks registers a second
