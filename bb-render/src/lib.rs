@@ -19,6 +19,7 @@ mod cursor;
 pub mod cursor_image;
 mod fast_hash;
 mod fog;
+pub use fog::drift_time as fog_drift_time;
 pub mod fonts;
 pub mod frame_diff;
 /// The frame's spans (moved to `squirrel_bb`, which the engine's frame times too).

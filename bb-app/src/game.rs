@@ -410,8 +410,9 @@ impl Game {
 			self.renderer.prefetch_world(gpu, grid.fog_of_war());
 		}
 		let virtual_time = engine.time().virtual_seconds() as f32;
-		// A battle, and a world map whose fog of war shows (it drifts with real time) or
-		// just changed, look different every frame.
+		let real_time = engine.time().real_seconds() as f32;
+		// A battle looks different every frame, and so does a world map whose fog of war
+		// just changed.
 		let mut comparable = !tactical;
 		let mut detail_changes = Vec::new();
 		let mut map_edits = Vec::new();
@@ -441,16 +442,18 @@ impl Game {
 			// Without a map (the main menu before a campaign) the water and the fog draw
 			// nothing, and so don't drift.
 			let map = key.extent.0 > 0.0 && key.extent.1 > 0.0;
-			if map && key.fog_of_war {
-				let rect = shown::view_rect(view.center, view.zoom, width, height);
-				comparable &= grid.fog_clear_within(rect);
-			}
+			// The fog drifts with real time, in steps (see `bb_render::fog_drift_time`).
+			let fog = (map && key.fog_of_war)
+				.then(|| shown::view_rect(view.center, view.zoom, width, height))
+				.filter(|rect| !grid.fog_clear_within(*rect))
+				.map(|_| bb_render::fog_drift_time(real_time, view.zoom));
 			detail_changes = changes;
 			map_edits = edits;
 			Under::World {
 				scene: key,
 				view: (view.center, view.zoom),
 				virtual_time: if map { virtual_time } else { 0.0 },
+				fog,
 				map_revision: grid.map_revision(),
 			}
 		} else {
@@ -469,7 +472,7 @@ impl Game {
 		self.renderer.begin_frame();
 		let engine = self.front.engine();
 		self.renderer.set_clock(Clock {
-			real: engine.time().real_seconds() as f32,
+			real: real_time,
 			virtual_time,
 		});
 		self.renderer.set_depth_of_field(engine.video().mode().depth_of_field);

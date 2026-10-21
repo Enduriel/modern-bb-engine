@@ -5,9 +5,10 @@
 //! paint, the drawn cursor, the fonts, and under the UI either nothing (the main menu)
 //! or the world map's scene with the view and the clocks its drawing reads. The world
 //! map's water drifts with virtual time (still while the game is paused) and its fog of
-//! war with real time, so a view with fog on it never looks the same twice; nor does a
-//! battle, which isn't compared ([`Look`] is `None` for both). The scripts still run
-//! every frame: only the drawing is left out.
+//! war with real time in steps (`bb_render::fog_drift_time`), so a view with fog on it
+//! looks the same until the fog's next step. A battle looks different every frame and
+//! isn't compared ([`Look`] is `None`). The scripts still run every frame: only the
+//! drawing is left out.
 
 use squirrel_bb::scene::WorldSceneKey;
 
@@ -43,12 +44,15 @@ pub enum Under {
 	/// The world map: what its scene (without the tiles, which the renderer keeps) is
 	/// made from, compared without building it (`Engine::world_scene_key`), the view
 	/// (centre, zoom), the virtual clock the water drifts with (0 without a map, where
-	/// no water is drawn), and the map's revision (its terrain and details; a detail
-	/// spawned, removed or whose look changed draws anyway, see `Game::draw_if_changed`).
+	/// no water is drawn), the time the fog of war is drawn at where it shows
+	/// (`bb_render::fog_drift_time`), and the map's revision (its terrain and details; a
+	/// detail spawned, removed or whose look changed draws anyway, see
+	/// `Game::draw_if_changed`).
 	World {
 		scene: WorldSceneKey,
 		view: ([f32; 2], f32),
 		virtual_time: f32,
+		fog: Option<f32>,
 		map_revision: u64,
 	},
 }

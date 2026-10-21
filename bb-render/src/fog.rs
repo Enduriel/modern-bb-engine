@@ -10,6 +10,13 @@
 //!   look the same at any map size);
 //! - as in `shaders/fow.fs`, three samples at different scales and drift directions
 //!   are averaged, times the ambient colour, drifting with `Time.getRealTimeF() / 100`.
+//!
+//! The original moves the fog on every frame it draws (60 a second). Ours moves it in
+//! steps ([`drift_time`]): 60 a second where a step moves it more than a quarter of a
+//! screen pixel (as the original's frames do), fewer where it moves slower on the screen
+//! (zoomed out), each step then under a quarter pixel. A still map with fog on it needs a
+//! new frame only when the fog has moved (the window leaves the last one up in between):
+//! zoomed out ~15 frames a second instead of the display's 180.
 
 use squirrel_bb::{FOG_MASK_SIZE, FogPatch};
 
@@ -30,6 +37,42 @@ fn fs_main(f: Out) -> @location(0) vec4<f32> {
 	return vec4<f32>(rgb, textureSample(mask, mask_sampler, f.map_uv).r);
 }
 "#;
+
+/// The fastest of the three samples' drifts (the second's, `(0.5, 1.5)` texture widths a
+/// hundred seconds). Its scale cancels out: a texture taken smaller drifts as much
+/// slower over the map. A texture width is [`FOG_MASK_SIZE`] world units at most.
+const FASTEST_DRIFT: [f32; 2] = [0.5, 1.5];
+
+/// The fog's steps: at most 60 a second, as the original's frames.
+const STEP: f32 = 1.0 / 60.0;
+
+/// The most a step may move the fog, in screen pixels: below one 8-bit level of change
+/// for the fog texture's gradients (at most 12 levels a texel, 4 for 99% of it).
+const STEP_PIXELS: f32 = 0.25;
+
+/// The real time the fog is drawn at, for a view of `zoom` screen pixels per world unit:
+/// `real` (seconds) rounded down to a whole step. A step is [`STEP`], doubled as long as
+/// the fog moves no more than [`STEP_PIXELS`] in it (powers of two, so that the times
+/// of a coarser step are among a finer one's when the zoom changes). At zoom 1 that is
+/// 60 steps a second (32 px a second, ~0.54 px a step, as the original's frames); the
+/// camera zoomed out (~0.1) 15.
+pub fn drift_time(real: f32, zoom: f32) -> f32 {
+	let speed = drift_speed(zoom);
+	let mut step = STEP;
+	// Up to ~1 s: past that, steps would be too far apart to call the fog moving.
+	for _ in 0..6 {
+		if speed * step * 2.0 > STEP_PIXELS {
+			break;
+		}
+		step *= 2.0;
+	}
+	(real / step).floor() * step
+}
+
+/// How fast the fog's fastest sample moves on the screen, in pixels a second, at `zoom`.
+fn drift_speed(zoom: f32) -> f32 {
+	FASTEST_DRIFT[0].hypot(FASTEST_DRIFT[1]) * FOG_MASK_SIZE as f32 / 100.0 * zoom
+}
 
 /// The fog-of-war compositing pass, and the mask it reads.
 pub struct FogPass {
@@ -110,8 +153,8 @@ impl FogPass {
 
 	/// The fog's draw over a frame, for a pass of its encoder: `fog` is `gfx/fow.png`,
 	/// `map_extent` the world size the mask spans, `real_time` (seconds) drives the
-	/// drift, `ambient` is the scene's light. Nothing is drawn before the mask's first
-	/// patch.
+	/// drift (in steps, see [`drift_time`]), `ambient` is the scene's light. Nothing is
+	/// drawn before the mask's first patch.
 	pub(crate) fn prepare(
 		&self,
 		gpu: &Gpu,
@@ -130,9 +173,39 @@ impl FogPass {
 			view,
 			map_extent,
 			texture_size: (size, size),
-			factor: real_time / 100.0,
+			factor: drift_time(real_time, view.zoom) / 100.0,
 			ambient,
 		};
 		Some(self.pass.prepare(gpu, &params, fog, Some(mask)))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn the_fog_moves_in_steps_of_at_most_a_quarter_pixel_and_a_sixtieth() {
+		let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+		// Zoom 1: 60 steps a second (the drift is 32 px/s, so half a pixel each).
+		assert!(near(drift_time(1.0 + 1.0 / 120.0, 1.0), 1.0));
+		assert!(near(drift_time(1.0 + 1.0 / 60.0 + 0.001, 1.0), 1.0 + 1.0 / 60.0));
+		// Zoomed out (the camera at ~9.8): 3.3 px/s, steps of 4/60 s, 0.22 px each.
+		let zoom = 1.0 / 9.77;
+		assert!(near(drift_time(10.0 + 0.06, zoom), 10.0));
+		assert!(near(drift_time(10.0 + 0.07, zoom), 10.0 + 4.0 / 60.0));
+		for zoom in [4.0, 1.0, 0.5, 0.25, 0.1, 0.05, 0.001] {
+			let speed = drift_speed(zoom);
+			let (mut last, mut steps) = (drift_time(100.0, zoom), 0);
+			for i in 1..=6000 {
+				let now = drift_time(100.0 + i as f32 / 1000.0, zoom);
+				if now != last {
+					assert!((now - last) * speed <= STEP_PIXELS.max(speed * STEP) + 1e-3, "zoom {zoom}");
+					steps += 1;
+					last = now;
+				}
+			}
+			assert!(steps <= 6 * 60 && steps >= 5, "zoom {zoom}: {steps} steps in 6 s");
+		}
 	}
 }
