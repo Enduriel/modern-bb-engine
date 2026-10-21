@@ -106,24 +106,28 @@ fn locals(vm: &super::SQVM, level: i64) -> Vec<Local> {
 	out
 }
 
-/// The call stack below the error handler (level 0), innermost first.
-fn frames(vm: &super::SQVM) -> Vec<Frame> {
+/// The call stack from `level` down, innermost first, each frame with its locals or not.
+pub(super) fn frames_from(vm: &super::SQVM, mut level: i64, with_locals: bool) -> Vec<Frame> {
 	let mut out = Vec::new();
-	let mut level = 1;
 	loop {
 		let mut si: squirrel_sys::SQStackInfos = unsafe { std::mem::zeroed() };
-		if unsafe { squirrel_sys::sq_stackinfos(vm.as_ptr(), level, &mut si) } < 0 {
+		if unsafe { squirrel_sys::sq_stackinfos(vm.as_ptr(), level as _, &mut si) } < 0 {
 			break;
 		}
 		out.push(Frame {
 			function: text(si.funcname),
 			source: text(si.source),
 			line: si.line,
-			locals: locals(vm, level),
+			locals: if with_locals { locals(vm, level) } else { Vec::new() },
 		});
 		level += 1;
 	}
 	out
+}
+
+/// The call stack below the error handler (level 0), innermost first.
+fn frames(vm: &super::SQVM) -> Vec<Frame> {
+	frames_from(vm, 1, true)
 }
 
 /// The VM's error handler: called with (this, error) and, as its free variable, the
