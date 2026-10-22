@@ -25,8 +25,8 @@ otherwise.
 | Variable | What it does |
 | --- | --- |
 | `BB_STARTUP_TIMES=1` | Print the start's phases to stderr (`startup: <phase> <ms>`, milliseconds since the process started; `squirrel_bb::startup`). |
-| `BB_STATS=1` | Log the game's total CPU and memory, its CEF processes included, every 5 s, with the frames left undrawn and those the page rested through. |
-| `BB_FRAME_TIMES=PATH` | Write each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls) to `PATH`; see `parity/perf/frame_breakdown.py`. |
+| `BB_STATS=1` | Log the game's total CPU and memory, its CEF processes included, every 5 s, with the frames left undrawn and those the page rested through, and the page's paints (`page:`: how many, the time each took in the paint callback, its textures opened, its reads back). |
+| `BB_FRAME_TIMES=PATH` | Write each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls) to `PATH`, with the page's paints since the last frame (`page_paints#`, `page_copy`: their time in the paint callback on the browser's thread, `page_imports#`, `page_reads#`, `page_read`); see `parity/perf/frame_breakdown.py` and `page_capture.py`. A player on Windows can record it with `player_capture.py`'s `.bat`. |
 | `BB_FRAME_TIMES_GPU=1` | With `BB_FRAME_TIMES`, each frame waits for the GPU, so its GPU time counts too. |
 | `BB_GPU_TIMES=1` | With `BB_FRAME_TIMES`, each GPU submission's time from timestamp queries. |
 | `BB_SCRIPT_PROFILE=REPORT.md` | Profile the scripts by function, file and mod, a report every `BB_SCRIPT_PROFILE_SECS` (10) seconds, or every `BB_SCRIPT_PROFILE_FRAMES` frames. |
