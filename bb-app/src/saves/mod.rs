@@ -11,12 +11,14 @@
 //! 5. bb's own folder (`squirrel_bb::platform::saves_dir`:
 //!    `battle-brothers-modern/savegames` in the user's data folder).
 //!
-//! The choice is said once in the log, with why. Only the saves can go to the
+//! One bb at a time plays from a folder: a second one on it is told so and ends
+//! ([`lock`]). The choice is said once in the log, with why. Only the saves can go to the
 //! original's folder: bb's log and settings stay in its own. The tests keep every run's
 //! saves in a folder of their own (`BB_SAVES_DIR` or `--saves`), never the player's.
 
 #[cfg(windows)]
 mod documents;
+pub mod lock;
 pub mod original;
 
 use std::path::{Path, PathBuf};

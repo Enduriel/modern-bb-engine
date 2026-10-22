@@ -50,6 +50,9 @@
 //!   install that isn't Steam's on Linux) `battle-brothers-modern/savegames` in the
 //!   user's data folder. `--saves DIR`, else `BB_SAVES_DIR`, else `saves.dir` in the
 //!   settings names another folder. The log says which and why (see `bb_app::saves`).
+//!   Only one bb at a time plays from a folder: a second one started on it says Battle
+//!   Brothers is already running, in the message box too, and ends
+//!   (`bb_app::saves::lock`).
 //! - The game logs to `log.html` in the original's format (and CEF to `cef.log`), in
 //!   `battle-brothers-modern/` in the user's data folder, or the folder `--logs` names;
 //!   the earlier sessions' logs are kept there in `logs/`, zipped. The terminal gets
@@ -124,6 +127,9 @@ enum Failure {
 	Arguments(String),
 	/// Anything else, as bb started or once the game ran: in the message box too.
 	Game(String, When),
+	/// A start bb refused, in these words, in the message box too: another bb plays
+	/// from the same saves.
+	Refused(String),
 }
 
 impl From<String> for Failure {
@@ -297,6 +303,21 @@ fn main() -> ExitCode {
 		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
 		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
 		// environment): the stats logger, the renderer's and the page's start after it.
+		// One bb at a time on a saves folder, held until bb ends, taken before CEF starts.
+		// A relaunch (the not-found window's) ended before here, so its new bb isn't
+		// refused by the one that started it.
+		let _saves_lock = match &options.saves {
+			Some(dir) => match bb_app::saves::lock::SavesLock::take(dir) {
+				Ok(Some(lock)) => Some(lock),
+				Ok(None) => return Err(Failure::Refused(already_running(dir))),
+				Err(e) => {
+					let line = format!("saves: no lock on {}, so another bb could use it too: {e}", dir.display());
+					squirrel_bb::html_log::engine(squirrel_bb::html_log::Class::Warning, "Saves", &line);
+					None
+				}
+			},
+			None => None,
+		};
 		options.steam = unsafe { bb_app::steam::start(&options.data_dir, &steam) };
 		// Heap profiles every so often, under a preloaded jemalloc (`BB_HEAP_PROFILE_DIR`).
 		bb_app::heap_profile::spawn_periodic_from_env();
@@ -322,7 +343,7 @@ fn main() -> ExitCode {
 	// the game with the requirements), not only in the log and on stderr.
 	let message = match &result {
 		Err(Failure::Game(e, when)) => Some(bb_app::failure::message(e, *when, data_dir.as_deref(), log_dir.as_deref())),
-		Err(Failure::Arguments(e)) => Some(e.clone()),
+		Err(Failure::Arguments(e) | Failure::Refused(e)) => Some(e.clone()),
 		Ok(_) => None,
 	};
 	if let Some(logs) = logs {
@@ -350,5 +371,15 @@ fn main() -> ExitCode {
 			eprintln!("error: {e}");
 			ExitCode::FAILURE
 		}
+		Err(Failure::Refused(e)) => fail(bb_app::failure::title(&e, When::Starting), &e),
 	}
+}
+
+/// The player's message when another bb plays from the saves in `dir`.
+fn already_running(dir: &Path) -> String {
+	format!(
+		"Battle Brothers is already running, with its saves in {}.\n\nOnly one game at a time can use \
+		 those saves: switch to the one that's running, or close it and start the game again.",
+		dir.display()
+	)
 }

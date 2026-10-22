@@ -853,6 +853,35 @@ fn a_command_line_error_is_not_shown_in_a_message_box() {
 	assert!(!shown.exists(), "no message box: {}", std::fs::read_to_string(&shown).unwrap_or_default());
 }
 
+/// One bb at a time on a saves folder: while its folder is held (here by
+/// the test, through the lock bb takes), a second bb on it says the game is already
+/// running, in the message box too (a stand-in zenity), and ends before any window or
+/// CEF; one on another folder plays meanwhile.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_second_bb_on_the_same_saves_is_refused() {
+	let dir = run_dir("second_instance");
+	let (saves, other, settings, shot) = (dir.join("saves"), dir.join("other_saves"), dir.join("settings.cfg"), dir.join("shot.png"));
+	let _first = bb_app::saves::lock::SavesLock::take(&saves).unwrap().expect("the saves' lock");
+	let path = fake_tool(&dir, "zenity", "");
+	let env = [("PATH", path.as_str()), ("BB_ERROR_DIALOG", "1")];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &["--settings", settings.to_str().unwrap()], &env) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	let what = format!("Battle Brothers is already running, with its saves in {}.", saves.display());
+	assert!(run.stderr.contains(&what), "{}", run.stderr);
+	// CEF never started: it wrote no log.
+	let cef = std::fs::metadata(dir.join("logs").join("cef.log")).map_or(0, |m| m.len());
+	assert_eq!(cef, 0, "CEF started: {}", run.stderr);
+	let shown = std::fs::read_to_string(dir.join("bin").join("zenity.args")).expect("the message box was shown");
+	assert!(shown.contains("--error") && shown.contains(&what), "{shown}");
+	let html = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
+	assert!(html.contains("is already running"), "{html}");
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--saves", other.to_str().unwrap(), "--shot", "3", shot.to_str().unwrap()];
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	assert!(shot.exists(), "the other folder's game drew");
+}
+
 /// A Steam library of the run's own (`lib/steamapps`) with the game in it: the install's
 /// archives and `gfx` linked into a data folder of its own (so it's this library's,
 /// not the real one's), and Steam's manifest for it. Returns the data folder and the
