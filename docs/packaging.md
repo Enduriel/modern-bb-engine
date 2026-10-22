@@ -115,7 +115,7 @@ and `inputs.txt` as the artifact `bb-<target>`:
 
    | File | From |
    | --- | --- |
-   | `bb` (`bb.exe`) | the build, stripped on Linux |
+   | `bb` (`bb.exe`) | the build, stripped on Linux; `bb.exe` carries the game's icon (below) |
    | `libcef.so`, `icudtl.dat`, `resources.pak`, `chrome_100_percent.pak`, `chrome_200_percent.pak`, `v8_context_snapshot.bin` | CEF's distribution (`libcef.so` stripped) |
    | `locales/en-US.pak` | CEF's English locale only |
    | `libsteam_api.so` / `steam_api64.dll` / `libsteam_api.dylib` | the pinned crate |
@@ -124,6 +124,23 @@ and `inputs.txt` as the artifact `bb-<target>`:
 
 4. Packs it as `<out>/bb-<target>.tar.gz` (Windows: `.zip`, with a `tar` that writes
    zips, as Windows' and macOS's do) and prints both sizes.
+
+## The game's icon
+
+`bb` shows the original's icon (`bb-app/assets/bb.ico`, from `BattleBrothers.exe`: 16, 32
+and 48 pixels; its README says where it comes from):
+
+- **Windows:** `bb.exe` carries it as its icon resource, for Explorer and the taskbar.
+  `bb-app/build.rs` writes the compiled resource (`.res`) itself and hands it to the
+  linker (link.exe and lld-link both take one), so no resource compiler is needed, on
+  Windows or cross-building. The windows load it from there.
+- **Linux, X11:** the windows' `_NET_WM_ICON` (the 48-pixel image).
+- **Linux, Wayland:** the windows' toplevels, through the compositor's
+  `xdg-toplevel-icon-v1` (KDE has it; GNOME and gamescope don't, and show their default
+  icon). For the taskbar's icon by app id a desktop file would be needed; there is none
+  yet.
+- **macOS:** `bb.app/Contents/Resources/bb.icns` (`CFBundleIconFile`), which
+  `bb-package` writes from the same file.
 
 ## Left out, and why
 
@@ -200,6 +217,7 @@ bb-aarch64-apple-darwin/
   bb.app/Contents/
     Info.plist
     MacOS/bb, libsteam_api.dylib
+    Resources/bb.icns                                  (the game's icon)
     Frameworks/Chromium Embedded Framework.framework   (English locale only)
     Frameworks/bb Helper.app, Frameworks/bb Helper (Renderer).app
   licenses/

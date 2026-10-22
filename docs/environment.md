@@ -67,6 +67,7 @@ gives.
 | `BB_TEST_PRESENT_EVERY=K/N` (or `N`, as `2/N`) | Draw and present the first `K` of every `N` frames whatever they show (the window tests' frame-pacing cases). |
 | `BB_GAME_QUEUE_TURN=PATH` | A turn in the shared game-display queue that the runner (`scripts/test_all.py`) already holds, so `window.rs` waits once. |
 | `BB_UI_DISPLAY`, `BB_UI_DISPLAY_STATUS` | Set by the tests' display wrapper: where a wrapped process runs (a headless gamescope by default) and where it writes its exit status. |
+| `BB_ICON_TEST=1` | Lets the (ignored) tests that read the game's icon back from a window run (`bb_app::icon`), with `--include-ignored`; only inside a display of its own: a headless gamescope's X server for the X11 one, a headless KWin for the Wayland one (`BB_ICON_WAYLAND=none`: a compositor without the protocol, as gamescope's; `BB_ICON_HOLD=SECONDS` keeps the window up). |
 | `BB_CLIPBOARD_TEST=1` | Lets the (ignored) tests that copy to and paste from a real clipboard run, with `--include-ignored`; only inside a display of its own (a headless gamescope, or a headless KWin for the Wayland one). |
 | `BB_SCENE_KEY_MODS=1` | Run `bb-engine`'s scene-key test with the install's mods. |
 | `BB_PACKAGE_RPATH` | See [packaging](packaging.md). |
