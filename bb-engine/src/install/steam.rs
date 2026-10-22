@@ -70,7 +70,7 @@ fn in_steam_dir(dir: &Path, looked: &mut Vec<Looked>) -> Vec<PathBuf> {
 		let library = match library {
 			Ok(library) => library,
 			Err(e) => {
-				looked.push(Looked::new(STEAM, place.clone(), format!("a library can't be read ({e})")));
+				looked.push(unreadable_library(&place, e));
 				continue;
 			}
 		};
@@ -98,6 +98,23 @@ fn in_steam_dir(dir: &Path, looked: &mut Vec<Looked>) -> Vec<PathBuf> {
 	found
 }
 
+/// Why a library Steam lists was skipped. A library that isn't there at all (a drive
+/// that's gone, unplugged or now something else: Steam keeps listing it) is said as
+/// such, not as an error reading Steam.
+fn unreadable_library(steam_place: &str, e: steamlocate::Error) -> Looked {
+	match e {
+		steamlocate::Error::Io { inner, path } if inner.kind() == std::io::ErrorKind::NotFound => {
+			let library = if path.ends_with("steamapps") { path.parent().unwrap_or(&path) } else { &path };
+			Looked::new(
+				STEAM,
+				format!("Steam library {}", library.display()),
+				"Steam lists it, but it isn't there (a drive or folder that's gone)",
+			)
+		}
+		e => Looked::new(STEAM, steam_place, format!("a library can't be read ({e})")),
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -121,6 +138,23 @@ mod tests {
 		assert!(in_steam_dir(&steam, &mut looked).is_empty());
 		assert_eq!(looked.len(), 1, "{looked:?}");
 		assert!(looked[0].outcome.contains("no data/data_001.dat"), "{looked:?}");
+	}
+
+	#[test]
+	fn a_listed_library_that_is_gone_is_skipped_as_such() {
+		let tree = Tree::new("steam_library_gone");
+		let steam = tree.steam("Steam", "Battle Brothers", true);
+		let gone = tree.root().join("gone");
+		let vdf = steam.join("steamapps/libraryfolders.vdf");
+		let folders = std::fs::read_to_string(&vdf).unwrap();
+		let entry = format!("\t\"1\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n}}\n", gone.display().to_string().replace('\\', "\\\\"));
+		std::fs::write(&vdf, folders.trim_end().strip_suffix('}').unwrap().to_string() + &entry).unwrap();
+		let mut looked = Vec::new();
+		let found = in_steam_dir(&steam, &mut looked);
+		assert_eq!(found, vec![steam.join("steamapps/common/Battle Brothers/data")], "{looked:?}");
+		assert_eq!(looked.len(), 1, "{looked:?}");
+		assert_eq!(looked[0].place, format!("Steam library {}", gone.display()), "{looked:?}");
+		assert!(looked[0].outcome.contains("isn't there"), "{looked:?}");
 	}
 
 	#[test]
