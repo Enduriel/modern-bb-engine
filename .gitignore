@@ -4,7 +4,8 @@
 **/*.rs.bk
 
 # squirrel-sys is its own git repository (remote: Enduriel/squirrel-sys), present here
-# as a sibling build dependency (modern_bb_engine/squirrel/Cargo.toml: ../../squirrel-sys).
+# as a build dependency (squirrel/Cargo.toml: ../squirrel-sys; Cargo.toml excludes it from
+# the workspace).
 # Managed separately, not vendored into this repo.
 /squirrel-sys
 

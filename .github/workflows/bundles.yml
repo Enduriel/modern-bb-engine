@@ -1,5 +1,5 @@
 # Release bundles: one per target, each built natively on its own runner by the same
-# script as locally (modern_bb_engine/scripts/bundle.py, see docs/packaging.md), and
+# script as locally (scripts/bundle.py, see docs/packaging.md), and
 # uploaded as an artifact. Builds and packages only: the test suite needs the game's
 # Steam data, which isn't on GitHub's runners.
 #
@@ -16,7 +16,7 @@ permissions:
 
 env:
   # >>> squirrel-sys: the one place CI gets it from. <<<
-  # It is a separate repository, built from beside this one (squirrel-sys/). The
+  # It is a separate repository, checked out inside this one (squirrel-sys/). The
   # repository must hold this commit, and its `squirrel` submodule's commit too
   # (squirrel-sys's .gitmodules says where that comes from). As of 2026-10-21 neither
   # Enduriel/squirrel-sys nor albertodemichelis/squirrel has the local commits this
@@ -47,7 +47,6 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: modern_bb_engine
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       BUNDLE_CACHE: ${{ github.workspace }}/bundle-cache
@@ -76,7 +75,6 @@ jobs:
 
       - name: Linux build and run-time libraries
         if: runner.os == 'Linux'
-        working-directory: .
         # cmake/ninja/clang build squirrel-sys (bindgen needs libclang); ALSA is bb's
         # sound; the rest is what libcef.so links, for the smoke check.
         run: |
@@ -94,7 +92,7 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-${{ matrix.target }}-${{ runner.arch }}-${{ hashFiles('modern_bb_engine/Cargo.lock') }}
+          key: cargo-${{ matrix.target }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ matrix.target }}-${{ runner.arch }}-
 
       # CEF's archive, Steam's pinned crate and ninja, all checked against their pins on
@@ -106,7 +104,7 @@ jobs:
             bundle-cache/cef/*/*.tar.bz2
             bundle-cache/steam/*.crate
             bundle-cache/downloads
-          key: bundle-${{ matrix.target }}-${{ hashFiles('modern_bb_engine/scripts/bundle.py', 'modern_bb_engine/bb-steam/src/pinned.rs') }}
+          key: bundle-${{ matrix.target }}-${{ hashFiles('scripts/bundle.py', 'bb-steam/src/pinned.rs') }}
 
       - name: Bundle
         run: python scripts/bundle.py --target "${{ matrix.target }}" --cache "$BUNDLE_CACHE" --out "$BUNDLE_OUT"

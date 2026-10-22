@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DIFF = ROOT / "modern_bb_engine" / "target" / "release" / "examples" / "frame_diff"
+DIFF = ROOT / "target" / "release" / "examples" / "frame_diff"
 
 
 def main():

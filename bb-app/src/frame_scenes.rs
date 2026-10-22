@@ -30,7 +30,7 @@ const STEP: Duration = Duration::from_secs(180);
 
 /// The frame parity scenes' script, the probe's own.
 pub fn default_scenes() -> PathBuf {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/frames/scenes.nut")
+	Path::new(env!("CARGO_MANIFEST_DIR")).join("../parity/frames/scenes.nut")
 }
 
 /// One of the script's `::probeSteps`.

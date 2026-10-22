@@ -17,7 +17,7 @@ BB_PROBE_RUNNER is a probe runner that launches the original game (not part of t
 repository).
 """
 import os, re, sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[2] / "modern_bb_engine"
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 def rust_const(path, name):
     s = (ROOT / path).read_text()
     m = re.search(r'const ' + name + r': &str = r#"(.*?)"#;', s, re.S)

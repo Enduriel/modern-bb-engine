@@ -2,7 +2,7 @@
 """test_all.py's runner stops what its binaries started, however it ends: a binary that
 started a child of its own (window.rs starts gamescope and bb) leaves nothing running.
 
-    python3 modern_bb_engine/scripts/test_all_stop_test.py
+    python3 scripts/test_all_stop_test.py
 """
 
 import os

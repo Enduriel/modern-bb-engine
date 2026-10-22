@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the release bundle for one target, from a clean checkout, the same way locally and on CI.
 
-    modern_bb_engine/scripts/bundle.py --target TRIPLE [--out DIR] [--cache DIR] [-j N]
+    scripts/bundle.py --target TRIPLE [--out DIR] [--cache DIR] [-j N]
 
 Targets: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc,
 aarch64-pc-windows-msvc, aarch64-apple-darwin. Each builds natively on its own OS and
@@ -10,7 +10,7 @@ also cross-build on Linux through cargo-xwin, as `windows_cross.py` does.
 
 1. Checks the inputs: the Rust toolchain `rust-toolchain.toml` names (installed with the
    target's standard library through rustup), `Cargo.lock` current (`--locked`) and
-   naming the pinned cef-dll-sys, squirrel-sys beside the repository (its commit is
+   naming the pinned cef-dll-sys, squirrel-sys in the repository (ignored; its commit is
    recorded), and the build tools (cmake, ninja: the pinned release is fetched into the
    cache when none is on the path).
 2. Fetches CEF's distribution for the target (`CEF`: one version, each platform's archive
@@ -51,7 +51,7 @@ import zipfile
 from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parent.parent
-REPO = WORKSPACE.parent
+REPO = WORKSPACE
 SQUIRREL_SYS = REPO / "squirrel-sys"
 
 TARGETS = {
@@ -204,9 +204,9 @@ def check_lock(env):
 
 
 def squirrel_sys():
-	"""squirrel-sys beside the repository, and its commit (with its squirrel submodule's)."""
+	"""squirrel-sys in the repository (ignored), and its commit (with its squirrel submodule's)."""
 	if not (SQUIRREL_SYS / "Cargo.toml").is_file():
-		fail(f"no squirrel-sys at {SQUIRREL_SYS} (a separate repository, checked out beside modern_bb_engine)")
+		fail(f"no squirrel-sys at {SQUIRREL_SYS} (a separate repository, checked out in the repository's root, ignored)")
 	if not (SQUIRREL_SYS / "squirrel" / "CMakeLists.txt").is_file():
 		fail(f"squirrel-sys has no squirrel submodule checked out ({SQUIRREL_SYS / 'squirrel'})")
 	described = []

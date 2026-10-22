@@ -2,7 +2,7 @@
 """Cross-build the workspace for Windows on Linux, and run what can run under Proton.
 
     systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=10G \
-        modern_bb_engine/scripts/windows_cross.py [--run] [--package]
+        scripts/windows_cross.py [--run] [--package]
 
 The target is `x86_64-pc-windows-msvc` (`rustup target add x86_64-pc-windows-msvc`),
 built with cargo-xwin: clang-cl compiles the C and C++ (the Squirrel VM, CEF's C++

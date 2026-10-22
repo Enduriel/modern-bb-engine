@@ -45,7 +45,7 @@ struct Allowance {
 /// `parity/frames/regression.txt`: a line per scene, `scene percent [x,y,w,h ...]`;
 /// `default` for the scenes not listed.
 fn allowances() -> Result<Vec<(String, Allowance)>, String> {
-	let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/frames/regression.txt");
+	let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../parity/frames/regression.txt");
 	let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
 	let mut out = Vec::new();
 	for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {

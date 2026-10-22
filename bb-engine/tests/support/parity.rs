@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// The repo's `parity/` directory.
 pub fn parity_dir() -> PathBuf {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity")
+	Path::new(env!("CARGO_MANIFEST_DIR")).join("../parity")
 }
 
 /// As the probe runner prints log rows: whitespace runs collapsed, trimmed.

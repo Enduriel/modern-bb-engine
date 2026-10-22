@@ -2,10 +2,9 @@
 """Where the script objects' memory goes, from a census of the Squirrel VM's
 heap (`SQVM::write_census`, written by the `script_memory` example):
 
-    cd modern_bb_engine
     cargo run --release -p bb-engine --features census --example script_memory -- --mods \\
         --saves DIR --save NAME --census census.txt
-    python3 ../parity/perf/script_memory.py census.txt
+    python3 parity/perf/script_memory.py census.txt
 
 It splits the heap by object kind and by role in the BB class layout: instance level
 tables, their member tables `m` (and what those hold), the inherited methods bound to each

@@ -227,7 +227,7 @@ AUTOPLAY_DRIVER = None
 
 
 def autoplay_driver():
-    src = open(os.path.join(HERE, "../../modern_bb_engine/bb-engine/src/harness.rs")).read()
+    src = open(os.path.join(HERE, "../../bb-engine/src/harness.rs")).read()
     body = src.split('const AUTOPLAY: &str = r#"', 1)[1].split('"#;', 1)[0]
     return body + ('\n::__autoplayTick <- function( _d ) { try { ::__autoplay(); } catch (e) { ::logInfo("autoplay: " + e); } '
                    '::Time.scheduleEvent(::TimeUnit.Real, 100, ::__autoplayTick, null); };\n'

@@ -5,7 +5,7 @@ cef` and `cargo test -p bb-app --features ui` run, the same test binaries, side 
 Run it inside a resource-limited scope, from anywhere, e.g.:
 
     systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=10G \
-        modern_bb_engine/scripts/test_all.py
+        scripts/test_all.py
 
 The default profile is `test-release` (the workspace's Cargo.toml): release's
 optimisation, built incrementally: after an edit to squirrel-bb both builds take ~20 s,

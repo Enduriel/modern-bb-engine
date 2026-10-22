@@ -8,7 +8,6 @@ The profiles come from `memory_inventory`, which dumps one at each point of its 
 when it runs under jemalloc with profiling on. Built without the UI: CEF doesn't run under a
 preloaded jemalloc (it crashes at start), so the page's processes aren't in these.
 
-    cd modern_bb_engine
     cargo build --release -p bb-app --example memory_inventory
     mkdir -p /path/to/profiles
     LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 MALLOC_CONF=prof:true,lg_prof_sample:16 \\

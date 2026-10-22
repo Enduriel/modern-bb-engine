@@ -1152,7 +1152,7 @@ fn stub_report(p: &Play) {
 	for (name, count) in &calls {
 		report += &format!("  {count:>8}  {name}\n");
 	}
-	let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/missing_natives.txt");
+	let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("../parity/missing_natives.txt");
 	let lacking: Vec<String> = std::fs::read_to_string(&missing)
 		.unwrap_or_default()
 		.lines()

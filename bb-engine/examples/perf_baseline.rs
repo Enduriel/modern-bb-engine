@@ -42,7 +42,7 @@ const START_CAMPAIGN: &str = r#"::RootState.get("MainMenuState").campaign_menu_m
 });"#;
 
 fn perf_dir() -> PathBuf {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("../../parity/perf")
+	Path::new(env!("CARGO_MANIFEST_DIR")).join("../parity/perf")
 }
 
 /// `VmRSS` or `VmHWM` of this process, in MB.

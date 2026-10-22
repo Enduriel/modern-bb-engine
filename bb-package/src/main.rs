@@ -36,7 +36,7 @@ struct Options {
 	archive: bool,
 }
 
-/// The workspace folder (`modern_bb_engine`).
+/// The workspace folder (the repository's root).
 fn workspace() -> PathBuf {
 	Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("bb-package sits in the workspace").to_path_buf()
 }
