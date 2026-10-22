@@ -72,4 +72,4 @@ pub use ui_page::IOSurface;
 #[cfg(windows)]
 pub use ui_page::D3D11Texture;
 pub use ui_page::{CopyStats as UiCopyStats, Region as UiRegion, UiPage};
-pub use world_renderer::{Atlases, Clock, Discard, FrameStats, WorldMap, WorldRenderer};
+pub use world_renderer::{Atlases, Clock, Composed, Discard, FrameStats, WorldMap, WorldRenderer};

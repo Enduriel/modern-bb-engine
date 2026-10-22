@@ -40,6 +40,9 @@ pub enum Atlases {
 	DrawReady,
 	/// Load every atlas the frame needs first (screenshots, tests).
 	WaitForAll,
+	/// Ask for what isn't loaded yet in the background and draw what is, without waiting
+	/// for any of it: for a draw that's made again until nothing waits (a portrait).
+	Ask,
 }
 
 /// A scene the game discarded, whose textures go (see [`crate::residency`]).
@@ -49,6 +52,17 @@ pub enum Discard {
 	Battle,
 	/// The campaign was left (`World.clearScene`).
 	Campaign,
+}
+
+/// A portrait composed ([`WorldRenderer::compose_portrait_with`]): its picture (or
+/// what's made of it, `T`).
+#[derive(Debug)]
+pub enum Composed<T = Image> {
+	Image(T),
+	/// Nothing in it can be drawn.
+	Nothing,
+	/// An atlas it needs is still loading.
+	Loading,
 }
 
 /// What one frame drew.
@@ -469,7 +483,7 @@ impl WorldRenderer {
 				}
 				Some(p) => {
 					let asked = p.send_asks();
-					if !asked.is_empty() {
+					if !asked.is_empty() && atlases == Atlases::DrawReady {
 						p.pump_until(gpu, mips, &asked, std::time::Instant::now() + crate::pages::WAIT_BUDGET);
 					}
 					!asked.is_empty()
@@ -491,7 +505,7 @@ impl WorldRenderer {
 				Atlases::WaitForAll => {
 					let _ = self.textures.get_now(path, upload);
 				}
-				Atlases::DrawReady => {
+				Atlases::DrawReady | Atlases::Ask => {
 					let _ = self.textures.get_or_upload(path, upload);
 				}
 			}
@@ -775,7 +789,7 @@ impl WorldRenderer {
 		for path in world_textures(scene.fog_of_war).filter(|_| map) {
 			let ready = match atlases {
 				Atlases::WaitForAll => self.textures.get_now(path, upload).is_ok(),
-				Atlases::DrawReady => self.textures.get_or_upload(path, upload).is_some(),
+				Atlases::DrawReady | Atlases::Ask => self.textures.get_or_upload(path, upload).is_some(),
 			};
 			passes_waiting += usize::from(!ready);
 			self.residency.drawn(path, Drawer::World);
@@ -996,7 +1010,7 @@ impl WorldRenderer {
 				Atlases::WaitForAll => {
 					let _ = self.textures.get_now(&path, upload);
 				}
-				Atlases::DrawReady => {
+				Atlases::DrawReady | Atlases::Ask => {
 					let _ = self.textures.get_or_upload(&path, upload);
 				}
 			}
@@ -1049,7 +1063,7 @@ impl WorldRenderer {
 				Atlases::WaitForAll => {
 					let _ = self.textures.get_now(&path, upload);
 				}
-				Atlases::DrawReady => {
+				Atlases::DrawReady | Atlases::Ask => {
 					let _ = self.textures.get_or_upload(&path, upload);
 				}
 			}
@@ -1118,17 +1132,37 @@ impl WorldRenderer {
 		hidden: &[String],
 		registry: &SpriteRegistry,
 	) -> Result<Option<Image>, String> {
+		match self.compose_portrait_with(gpu, portrait, hidden, registry, Atlases::WaitForAll)? {
+			Composed::Image(image) => Ok(Some(image)),
+			Composed::Nothing | Composed::Loading => Ok(None),
+		}
+	}
+
+	/// As [`compose_portrait`](Self::compose_portrait), with `atlases` saying whether
+	/// to wait for them: with [`Atlases::Ask`], [`Composed::Loading`] while one is still
+	/// loading (asked for, in the background), to be composed again later.
+	pub fn compose_portrait_with(
+		&mut self,
+		gpu: &Gpu,
+		portrait: &squirrel_bb::scene::ScenePortrait,
+		hidden: &[String],
+		registry: &SpriteRegistry,
+		atlases: Atlases,
+	) -> Result<Composed, String> {
 		let crate::portrait::PortraitFrame { width, height, center } = crate::portrait::portrait_frame(portrait, hidden, registry);
 		if width == 0 || height == 0 {
-			return Ok(None);
+			return Ok(Composed::Nothing);
 		}
 		let map = crate::portrait::portrait_quads(portrait, hidden, registry);
 		self.record_usage(&map, 1.0, None);
 		self.index(registry);
 		let target = RenderTarget::new(gpu, width, height);
 		let uniforms = SceneUniforms::centered(center, width as f32, height as f32);
-		self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), Atlases::WaitForAll, Drawer::Other, (1.0, None));
-		target.read(gpu).map(Some)
+		let stats = self.draw_quads(gpu, &target, &map, &uniforms, Some([0.0; 4]), atlases, Drawer::Other, (1.0, None));
+		if stats.waiting > 0 {
+			return Ok(Composed::Loading);
+		}
+		target.read(gpu).map(Composed::Image)
 	}
 
 	/// Draw the mouse cursor's sprite `brush` over what `target` holds, its frame `since`

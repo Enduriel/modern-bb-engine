@@ -16,10 +16,14 @@
 //! - Any other handler: the load fails (an image's `error`, an XHR's status 0), and
 //!   the error `Failed to find procedural content handler "<name>".` is logged (tag
 //!   `UI`), as in the original.
+//!
+//! A portrait whose sprites' atlases aren't loaded yet doesn't wait for them on the
+//! game's thread: they're asked for in the background, and the portrait is answered by
+//! a later frame's draw, once they're in ([`Procedural::Loading`]).
 
 use bb_engine::harness::GameEngine;
 use bb_render::portrait::{PortraitKind, PortraitRequest, handler, handler_name};
-use bb_render::{Gpu, WorldRenderer, write_png};
+use bb_render::{Atlases, Composed, Gpu, WorldRenderer, write_png};
 use squirrel_bb::html_log::{self, Class};
 
 /// What a procedural image request gets.
@@ -29,6 +33,8 @@ pub enum Procedural {
 	Image(Vec<u8>),
 	/// A failed load (an image's `error`, an XHR's status 0).
 	Fail,
+	/// A portrait whose atlases are still loading: asked again by a later frame.
+	Loading,
 }
 
 /// The original's image for a `tacticalentity(...)` it can't draw, byte for byte: a
@@ -45,17 +51,20 @@ pub const FALLBACK_PNG: &[u8] = &[
 	0xc6, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 ];
 
-/// The answer to `path` (after `procedural/`, still percent-encoded). Like the
-/// original's, a portrait's pixels are as drawn (colour premultiplied), not
-/// unpremultiplied for the PNG.
-pub fn answer(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, path: &str) -> Procedural {
+/// The answer to `path` (after `procedural/`, still percent-encoded), its atlases
+/// waited for or not as `atlases` says ([`Atlases::Ask`]: [`Procedural::Loading`] while
+/// one loads). Like the original's, a portrait's pixels are as drawn (colour
+/// premultiplied), not unpremultiplied for the PNG.
+pub fn answer(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, path: &str, atlases: Atlases) -> Procedural {
 	let Some(kind) = handler(path) else {
 		let text = format!("Failed to find procedural content handler \"{}\".", handler_name(path));
 		html_log::line(Class::Error, "UI", text);
 		return Procedural::Fail;
 	};
-	if let Some(png) = portrait_png(renderer, gpu, engine, path) {
-		return Procedural::Image(png);
+	match portrait_png(renderer, gpu, engine, path, atlases) {
+		Some(Composed::Image(png)) => return Procedural::Image(png),
+		Some(Composed::Loading) => return Procedural::Loading,
+		Some(Composed::Nothing) | None => {}
 	}
 	html_log::line(Class::Warning, "UI", format!("Failed to load procedural content \"procedural/{path}\"."));
 	match kind {
@@ -64,16 +73,24 @@ pub fn answer(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, path
 	}
 }
 
-/// The portrait's PNG, or `None` for no entity of the path's kind with its id, or
-/// nothing to draw.
-fn portrait_png(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, path: &str) -> Option<Vec<u8>> {
+/// The portrait's PNG (or that its atlases are loading), or `None` for no entity of the
+/// path's kind with its id, or nothing to draw.
+fn portrait_png(
+	renderer: &mut WorldRenderer,
+	gpu: &Gpu,
+	engine: &GameEngine,
+	path: &str,
+	atlases: Atlases,
+) -> Option<Composed<Vec<u8>>> {
 	let request = PortraitRequest::parse(path)?;
 	let portrait = engine.portrait(request.kind, request.id)?;
 	let image = engine
 		.sprites()
-		.with(|registry| renderer.compose_portrait(gpu, &portrait, &request.hidden, registry));
+		.with(|registry| renderer.compose_portrait_with(gpu, &portrait, &request.hidden, registry, atlases));
 	let image = match image {
-		Ok(image) => image?,
+		Ok(Composed::Image(image)) => image,
+		Ok(Composed::Loading) => return Some(Composed::Loading),
+		Ok(Composed::Nothing) => return None,
 		Err(e) => {
 			eprintln!("portrait {path}: {e}");
 			return None;
@@ -81,5 +98,5 @@ fn portrait_png(renderer: &mut WorldRenderer, gpu: &Gpu, engine: &GameEngine, pa
 	};
 	let mut png = Vec::new();
 	write_png(&mut png, &image).ok()?;
-	Some(png)
+	Some(Composed::Image(png))
 }

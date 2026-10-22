@@ -20,6 +20,8 @@ pub struct Front {
 	/// The frame rate for the FPS display, shown at the next step (see [`Front::set_fps`]).
 	fps: Option<u32>,
 	profiling: Option<crate::script_profile::ScriptProfiling>,
+	/// Procedural images (portraits) whose atlases were still loading.
+	loading_procedural: Vec<bb_ui::host::ProceduralRequest>,
 }
 
 impl Front {
@@ -99,6 +101,7 @@ impl Front {
 			drawn: false,
 			fps: None,
 			profiling: crate::script_profile::ScriptProfiling::from_env(&archives),
+			loading_procedural: Vec::new(),
 		})
 	}
 
@@ -245,12 +248,16 @@ impl Front {
 	}
 
 	/// Answer the procedural images (portraits) the page asked for with `compose`, given
-	/// the engine and the path after `procedural/`.
-	pub fn serve_procedural(&self, mut compose: impl FnMut(&GameEngine, &str) -> crate::procedural::Procedural) {
-		for request in self.session.take_procedural() {
+	/// the engine and the path after `procedural/`: those still loading are asked again
+	/// at the next call.
+	pub fn serve_procedural(&mut self, mut compose: impl FnMut(&GameEngine, &str) -> crate::procedural::Procedural) {
+		let mut requests = std::mem::take(&mut self.loading_procedural);
+		requests.extend(self.session.take_procedural());
+		for request in requests {
 			match compose(self.session.engine(), &request.path) {
 				crate::procedural::Procedural::Image(png) => request.answer(Some(png)),
 				crate::procedural::Procedural::Fail => request.fail(),
+				crate::procedural::Procedural::Loading => self.loading_procedural.push(request),
 			}
 		}
 	}

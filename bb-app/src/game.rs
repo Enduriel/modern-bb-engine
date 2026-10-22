@@ -425,7 +425,7 @@ impl Game {
 		let procedural = bb_render::frame_timing::span("portraits");
 		let renderer = &mut self.renderer;
 		self.front
-			.serve_procedural(|engine, path| crate::procedural::answer(renderer, gpu, engine, path));
+			.serve_procedural(|engine, path| crate::procedural::answer(renderer, gpu, engine, path, Atlases::Ask));
 		drop(procedural);
 		let drawn_cursor = self.cursor_show() == CursorShow::Drawn;
 		let (width, height) = (target.width, target.height);
