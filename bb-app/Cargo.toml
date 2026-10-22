@@ -53,12 +53,21 @@ wayland-client = { version = "0.31.15", features = ["system"] }
 wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 
 # Windows: the player's Documents folder from the shell's known folders, for the
-# original's savegames folder (`saves::documents`); the version bb-render uses,
-# with the features for the call.
+# original's savegames folder (`saves::documents`), and the process's console, job and
+# crash filter (`win_process`); the version bb-render uses,
+# with the features for the calls.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", default-features = false, features = [
 	"Win32_Foundation",
+	"Win32_Security",
+	"Win32_Storage_FileSystem",
 	"Win32_System_Com",
+	"Win32_System_Console",
+	"Win32_System_Diagnostics_Debug",
+	"Win32_System_JobObjects",
+	"Win32_System_Kernel",
+	"Win32_System_LibraryLoader",
+	"Win32_System_Threading",
 	"Win32_UI_Shell",
 ] }
 

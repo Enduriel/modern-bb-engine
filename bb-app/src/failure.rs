@@ -42,19 +42,26 @@ pub fn message(error: &str, data_dir: Option<&Path>, logs: Option<&Path>) -> Str
 /// first one's box is up adds none). Call once, in the game's own process (not the
 /// browser's child processes).
 pub fn show_panics(logs: Option<std::path::PathBuf>) {
-	static SHOWN: AtomicBool = AtomicBool::new(false);
 	let default = std::panic::take_hook();
 	std::panic::set_hook(Box::new(move |info| {
 		default(info);
-		if SHOWN.swap(true, Ordering::Relaxed) {
-			return;
-		}
-		let mut text = format!("Battle Brothers crashed: {info}");
-		if let Some(logs) = &logs {
-			text.push_str(&format!("\n\nDetails: log.html in {}", logs.display()));
-		}
-		requirements::dialog::show("Battle Brothers crashed", &text);
+		show_crash(&info.to_string(), logs.as_deref());
 	}));
+}
+
+/// Tell the player bb crashed (`what` went wrong; `logs`: the log's folder), in the
+/// message box, once in the process: a panic, or a native crash on Windows
+/// (`win_process::crash`); a second crash while the first one's box is up adds none.
+pub fn show_crash(what: &str, logs: Option<&Path>) {
+	static SHOWN: AtomicBool = AtomicBool::new(false);
+	if SHOWN.swap(true, Ordering::Relaxed) {
+		return;
+	}
+	let mut text = format!("Battle Brothers crashed: {what}");
+	if let Some(logs) = logs {
+		text.push_str(&format!("\n\nDetails: log.html in {}", logs.display()));
+	}
+	requirements::dialog::show("Battle Brothers crashed", &text);
 }
 
 #[cfg(test)]

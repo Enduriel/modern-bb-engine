@@ -147,12 +147,13 @@ pub fn open_url(url: &str) -> Result<(), String> {
 	use std::process::Stdio;
 	let mut command = url_launcher(url).ok_or("no browser launcher on this system")?;
 	let program = command.get_program().to_string_lossy().into_owned();
-	let mut child = command
-		.stdin(Stdio::null())
-		.stdout(Stdio::null())
-		.stderr(Stdio::null())
-		.spawn()
-		.map_err(|e| format!("{program}: {e}"))?;
+	command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+	// On Windows the browser it may start must outlive bb's processes' job.
+	#[cfg(windows)]
+	let child = crate::win_process::job::spawn_outside(&mut command);
+	#[cfg(not(windows))]
+	let child = command.spawn();
+	let mut child = child.map_err(|e| format!("{program}: {e}"))?;
 	std::thread::Builder::new()
 		.name("url-launcher".into())
 		.spawn(move || child.wait())

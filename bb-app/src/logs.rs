@@ -49,11 +49,14 @@ impl Logs {
 		self.files.cef.clone()
 	}
 
-	/// The session ends: a fatal `error` gets the original's critical line, then the
-	/// page is closed.
+	/// The session ends: a fatal `error` gets the original's critical line, else a line
+	/// that it ended well (everything torn down), then the page is closed. A log that
+	/// ends without either (and without the page's end) is a session that crashed or was
+	/// killed.
 	pub fn close(self, error: Option<&str>) {
-		if let Some(error) = error {
-			html_log::critical(error);
+		match error {
+			Some(error) => html_log::critical(error),
+			None => html_log::engine(Class::Info, "Core", "Shut down"),
 		}
 		html_log::close();
 	}

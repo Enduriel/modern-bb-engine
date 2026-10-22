@@ -81,6 +81,14 @@
 //!   a UI build has loaded CEF's library by then: the release bundles' smoke check.
 //! - Every environment variable, these and the ones for measuring, comparing and the
 //!   tests: `docs/environment.md`.
+//! - On Windows bb is a GUI program, in every build (debug ones too, so what a developer
+//!   runs is what a player double-clicks): no console window opens with it. Run from a
+//!   console, it writes to that console, and redirected output stays redirected
+//!   (`bb_app::win_process::console`); the processes it starts end with it, and a native
+//!   crash is logged and shown (`bb_app::win_process`).
+
+// No console window with the game (ignored elsewhere).
+#![windows_subsystem = "windows"]
 
 mod app;
 mod window_mode;
@@ -236,6 +244,10 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// A GUI program on Windows (no console opens when it's double-clicked): its output
+	// goes to the console it was run from, if any (`bb_app::win_process::console`).
+	#[cfg(windows)]
+	bb_app::win_process::console::attach();
 	if std::env::args().nth(1).as_deref() == Some("--version") {
 		println!("{}", bb_app::version());
 		return ExitCode::SUCCESS;
@@ -257,6 +269,14 @@ fn main() -> ExitCode {
 			}
 		}
 		bb_app::failure::show_panics(logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf));
+		#[cfg(windows)]
+		{
+			bb_app::win_process::crash::report_crashes(logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf));
+			// Before any process of bb's starts (CEF's, a relaunch).
+			if let Err(e) = bb_app::win_process::job::end_children_with_bb() {
+				squirrel_bb::html_log::engine(squirrel_bb::html_log::Class::Warning, "Core", &format!("bb's processes may outlive it: {e}"));
+			}
+		}
 		let mut settings = load_settings(&options);
 		let chosen = data.chosen.or_else(|| settings.chosen_data_dir());
 		options.data_dir = match bb_app::install::find(data.data, chosen) {

@@ -447,11 +447,13 @@ impl App {
 	/// Stop with `error`.
 	fn fail(&mut self, event_loop: &ActiveEventLoop, error: String) {
 		self.error.get_or_insert(error);
-		self.quit(event_loop);
+		self.quit(event_loop, "an error ended the game");
 	}
 
-	/// Leave the loop.
-	fn quit(&mut self, event_loop: &ActiveEventLoop) {
+	/// Leave the loop, saying `why` in the log (a session that ends without such a line
+	/// didn't quit: it crashed or was killed).
+	fn quit(&mut self, event_loop: &ActiveEventLoop, why: &str) {
+		html_log::engine(Class::Info, "Core", &format!("Quitting: {why}"));
 		if let Some(running) = self.running.take() {
 			running.close();
 		}
@@ -926,18 +928,18 @@ impl App {
 			.and_then(|frames| match &self.options.shot {
 				// The scripts finished their last state (the main menu's Quit, or Escape
 				// there): the game is over, as the original's.
-				_ if running.game.quit() => Ok(true),
+				_ if running.game.quit() => Ok(Some("the game's scripts ended (the main menu's Quit)")),
 				Some((after, path)) if frames >= *after => {
 					let image = running.target.read(&running.gpu)?;
 					save_png(path.to_string_lossy().as_ref(), &image)?;
 					eprintln!("wrote {}", path.display());
-					Ok(true)
+					Ok(Some("the screenshot was taken (--shot)"))
 				}
-				_ => Ok(false),
+				_ => Ok(None),
 			});
 		match result {
-			Ok(true) => self.quit(event_loop),
-			Ok(false) => {}
+			Ok(Some(why)) => self.quit(event_loop, why),
+			Ok(None) => {}
 			Err(e) => self.fail(event_loop, e),
 		}
 	}
@@ -991,7 +993,7 @@ impl ApplicationHandler for App {
 			other => running.event(other).map(|()| false),
 		};
 		match result {
-			Ok(true) => self.quit(event_loop),
+			Ok(true) => self.quit(event_loop, "the window was closed"),
 			Ok(false) => {}
 			Err(e) => self.fail(event_loop, e),
 		}
