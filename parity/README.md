@@ -18,7 +18,6 @@ perf/                        performance baselines, see below
 ## Running
 
 ```bash
-cd modern_bb_engine
 cargo test --release -p bb-engine --test parity              # compare (needs the Steam install)
 cargo test --release -p bb-engine --test ui_payloads         # the UI payloads
 PARITY_DUMP=/tmp/ours cargo test --release -p bb-engine --test parity   # also write our output

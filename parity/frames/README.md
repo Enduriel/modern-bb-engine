@@ -44,7 +44,6 @@ python3 "$BB_PROBE_RUNNER" parity/frames/scenes.nut \
     --size 2560x1440 --shots OUT/original --out OUT/original
 
 # Ours, at the same mode
-cd modern_bb_engine
 cargo run --release -p bb-app --features ui --example frame_scenes -- OUT/ours --screen 2560x1440
 
 # Every scene: per scene a heatmap and side-by-side crops of the largest regions, and
@@ -52,7 +51,7 @@ cargo run --release -p bb-app --features ui --example frame_scenes -- OUT/ours -
 # OUT/ours2 ...) to leave out what differs between its own runs; give the original
 # several (see below).
 cargo build --release -p bb-render --example frame_diff
-python3 ../parity/frames/diff.py OUT/ours OUT/original OUT/diff \
+python3 parity/frames/diff.py OUT/ours OUT/original OUT/diff \
     --original2 OUT/original2 --ours2 OUT/ours2
 ```
 
@@ -81,7 +80,6 @@ own frames from before, so a change to what the game draws fails the suite witho
 probe of the original:
 
 ```bash
-cd modern_bb_engine
 cargo test --release -p bb-app --features ui --test frame_regression
 ```
 

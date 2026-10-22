@@ -5,7 +5,6 @@ the game's UI with, and Steam's library, which `bb` uses for achievements on a S
 install. `bb-package` builds one:
 
 ```bash
-cd modern_bb_engine
 cargo run --release -p bb-package                                    # for this machine
 cargo run --release -p bb-package -- --target x86_64-pc-windows-msvc # another target
 ```
@@ -21,11 +20,10 @@ already built for the target), `--no-archive`. It needs `curl` and `tar` on the 
 
 ## Release bundles: `scripts/bundle.py`
 
-One entry point for every target, run from a checkout with squirrel-sys beside it
-(`<repo>/squirrel-sys`):
+One entry point for every target, run from a checkout with squirrel-sys inside it
+(`<repo>/squirrel-sys`, ignored):
 
 ```bash
-cd modern_bb_engine
 systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=10G \
     scripts/bundle.py --target x86_64-unknown-linux-gnu [--out DIR] [--cache DIR] [-j N]
 ```
@@ -164,7 +162,7 @@ German and recording every shared object its processes mapped:
   lld-link. The runner sets that environment up:
 
   ```bash
-  modern_bb_engine/scripts/windows_cross.py --no-ui --package
+  scripts/windows_cross.py --no-ui --package
   ```
 
   or by hand, with `cargo xwin env --target x86_64-pc-windows-msvc` evaluated in the
