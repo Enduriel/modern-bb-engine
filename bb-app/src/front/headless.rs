@@ -62,6 +62,9 @@ impl Front {
 			engine.run_script("::RootState.get(\"MainMenuState\").hide();", "hide the main menu")?;
 			engine.run_script("::World.State.m.MenuStack.popAll(true);", "close the opening event")?;
 		}
+		// Started: from now on a script error is reported (above) and the game goes on, as
+		// the original's (see `squirrel_bb::ScriptErrors`).
+		engine.set_script_errors(squirrel_bb::ScriptErrors::GoOn);
 		Ok(Front { engine, profiling })
 	}
 

@@ -24,6 +24,7 @@ use std::rc::Rc;
 
 use squirrel::{SQVM, SqStrongRef, SqTable};
 
+use crate::ScriptErrors;
 use crate::input_events::{InputClasses, KeyInput, MouseInput};
 use crate::module::Instantiator;
 
@@ -100,6 +101,8 @@ struct Machine {
 	methods: Vec<(&'static str, SqStrongRef)>,
 	/// The mouse and key event classes (`onMouseInput` / `onKeyInput`).
 	input: Option<InputClasses>,
+	/// What an error raised in a state's hook does (see [`ScriptErrors`]).
+	script_errors: ScriptErrors,
 }
 
 /// A host scene update, run by `State.updateScene()`.
@@ -220,9 +223,12 @@ fn add_child(
 		frame,
 		finishing: false,
 	});
-	let siblings = machine.borrow().siblings_of(id);
+	let (siblings, errors) = {
+		let m = machine.borrow();
+		(m.siblings_of(id), m.script_errors)
+	};
 	for sibling in siblings {
-		ignore_missing(sibling.call_method(vm, "onSiblingAdded", (name.to_string(),)))?;
+		errors.settle(ignore_missing(sibling.call_method(vm, "onSiblingAdded", (name.to_string(),))))?;
 	}
 	machine.borrow_mut().pending_init.push(child.clone());
 	Ok(child)
@@ -231,14 +237,14 @@ fn add_child(
 /// Run the queued `onInit`s, including those of states added meanwhile.
 fn init_pending(machine: &Rc<RefCell<Machine>>, vm: &SQVM) -> Result<(), String> {
 	loop {
-		let next = {
+		let (next, errors) = {
 			let mut m = machine.borrow_mut();
 			if m.pending_init.is_empty() {
 				return Ok(());
 			}
-			m.pending_init.remove(0)
+			(m.pending_init.remove(0), m.script_errors)
 		};
-		next.call_method(vm, "onInit", ())?;
+		errors.settle(next.call_method(vm, "onInit", ()))?;
 	}
 }
 
@@ -280,6 +286,7 @@ impl RootState {
 				pending_init: Vec::new(),
 				methods: Vec::new(),
 				input: None,
+				script_errors: ScriptErrors::Fail,
 			})),
 		}
 	}
@@ -312,8 +319,8 @@ impl RootState {
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				let id = vm.this_identity();
 				m.borrow_mut().set_hidden(id, false);
-				let target = m.borrow().by_id(id);
-				target.map_or(Ok(()), |t| t.call_method(vm, "onShow", ()))
+				let (target, errors) = (m.borrow().by_id(id), m.borrow().script_errors);
+				errors.settle(target.map_or(Ok(()), |t| t.call_method(vm, "onShow", ())))
 			})
 		};
 		let hide = {
@@ -321,8 +328,8 @@ impl RootState {
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				let id = vm.this_identity();
 				m.borrow_mut().set_hidden(id, true);
-				let target = m.borrow().by_id(id);
-				target.map_or(Ok(()), |t| t.call_method(vm, "onHide", ()))
+				let (target, errors) = (m.borrow().by_id(id), m.borrow().script_errors);
+				errors.settle(target.map_or(Ok(()), |t| t.call_method(vm, "onHide", ())))
 			})
 		};
 		// finish(): a child only gets flagged; the update pass finishes it in its turn
@@ -336,7 +343,8 @@ impl RootState {
 					return Ok(());
 				}
 				let target = m.borrow_mut().remove(id);
-				target.map_or(Ok(()), |t| t.call_method(vm, "onFinish", ()))
+				let errors = m.borrow().script_errors;
+				errors.settle(target.map_or(Ok(()), |t| t.call_method(vm, "onFinish", ())))
 			})
 		};
 		let send_to_siblings = {
@@ -344,17 +352,17 @@ impl RootState {
 			vm.make_closure(
 				move |vm: &SQVM, msg: squirrel::Retained| -> Result<(), String> {
 					// Each sibling hears `onSiblingSentMessage(senderName, message)`.
-					let (sender, siblings) = {
+					let (sender, siblings, errors) = {
 						let machine = m.borrow();
 						let id = vm.this_identity();
-						(machine.name_of(id), machine.siblings_of(id))
+						(machine.name_of(id), machine.siblings_of(id), machine.script_errors)
 					};
 					for sibling in siblings {
-						ignore_missing(sibling.call_method(
+						errors.settle(ignore_missing(sibling.call_method(
 							vm,
 							"onSiblingSentMessage",
 							(sender.clone(), msg.0.clone()),
-						))?;
+						)))?;
 					}
 					Ok(())
 				},
@@ -412,7 +420,8 @@ impl RootState {
 				for id in ids {
 					let target = m.borrow_mut().remove(id);
 					if let Some(t) = target {
-						t.call_method(vm, "onFinish", ())?;
+						let errors = m.borrow().script_errors;
+						errors.settle(t.call_method(vm, "onFinish", ()))?;
 					}
 				}
 				Ok(())
@@ -504,6 +513,12 @@ impl RootState {
 		true
 	}
 
+	/// What an error raised in a state's hook does from now on: fail the call that ran
+	/// it (the frame, the native), or go on as the original's (see [`ScriptErrors`]).
+	pub fn set_script_errors(&self, policy: ScriptErrors) {
+		self.machine.borrow_mut().script_errors = policy;
+	}
+
 	/// Set what `State.updateScene()` runs each frame (the host's scene updates).
 	pub fn set_scene_update(&self, update: impl Fn(&SQVM) -> Result<(), String> + 'static) {
 		self.machine.borrow_mut().scene_update = Some(Rc::new(update));
@@ -535,13 +550,13 @@ impl RootState {
 				(!c.finishing && !c.frame.hidden).then(|| c.frame.on_update.clone()).flatten()
 			};
 			if let Some(on_update) = hook {
-				on_update.call(vm, ())?;
+				self.settle(on_update.call(vm, ()))?;
 			}
 			let finishing = self.machine.borrow().children.iter().any(|c| c.id == id && c.finishing);
 			if finishing {
 				let state = self.machine.borrow_mut().remove(id);
 				if let Some(state) = state {
-					state.call_method(vm, "onFinish", ())?;
+					self.settle(state.call_method(vm, "onFinish", ()))?;
 				}
 			}
 		}
@@ -552,7 +567,7 @@ impl RootState {
 	pub fn render(&self, vm: &SQVM) -> Result<(), String> {
 		let renders = self.machine.borrow().visible_hooks(|f| f.on_render.clone());
 		for on_render in renders {
-			on_render.call(vm, ())?;
+			self.settle(on_render.call(vm, ()))?;
 		}
 		Ok(())
 	}
@@ -591,7 +606,8 @@ impl RootState {
 			children.chain(m.root.iter().filter(|r| !r.hidden).map(|r| r.state.clone())).collect()
 		};
 		for state in targets {
-			if state.call_method_ret::<bool, _>(vm, method, (event.clone(),))?.unwrap_or(false) {
+			// A hook that threw handled nothing: the next state gets the event.
+			if self.settle(state.call_method_ret::<bool, _>(vm, method, (event.clone(),)))?.unwrap_or(false) {
 				return Ok(true);
 			}
 		}
@@ -619,7 +635,13 @@ impl RootState {
 		let was = std::mem::replace(&mut self.machine.borrow_mut().bg_suspended, true);
 		let result = callback.call(vm, ());
 		self.machine.borrow_mut().bg_suspended = was;
-		result
+		self.settle(result)
+	}
+
+	/// `result` of a state's hook, as the policy leaves it (see [`ScriptErrors`]).
+	fn settle<T: Default>(&self, result: Result<T, String>) -> Result<T, String> {
+		let errors = self.machine.borrow().script_errors;
+		errors.settle(result)
 	}
 
 	/// The root state instance, if booted.

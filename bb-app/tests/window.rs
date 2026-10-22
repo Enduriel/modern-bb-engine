@@ -320,6 +320,42 @@ fn bb_ends_when_the_scripts_quit() {
 	assert_eq!(run.status, "0", "bb's exit status\n{}", run.stderr);
 }
 
+/// A script error once the game runs is reported and the game goes on, as the
+/// original's: here vanilla's own, in the world state's `onFinish` when an event opened
+/// as the world quit (it once ended `bb`, as "couldn't start", now and then under load:
+/// see bb-engine's `quit_with_event_open.rs`). The event fires right after `exitGame()`,
+/// as the world's update may fire one in the frames before the loading screen animates.
+/// `bb` comes back to the main menu, quits from it and ends cleanly.
+#[test]
+fn bb_goes_on_after_a_script_error_as_the_world_quits() {
+	let dir = run_dir("quit_event");
+	let settings = dir.join("settings.cfg");
+	// The menu stack emptied first, and the event screen's hiding over (with the page it
+	// animates), then the quit: an event screen that is still animating opens no event.
+	// (The world may have opened one of its own meanwhile: that one does as well.)
+	let exit = r#"if (!("__exited" in getroottable()) && ("State" in ::World) && ::World.State != null && ::World.State.m.WorldScreen != null && !::World.State.isInLoadingScreen()) {
+	if (!("__emptied" in getroottable())) { ::__emptied <- true; ::World.State.m.MenuStack.popAll(true); }
+	else if (!::World.State.m.EventScreen.isAnimating()) { ::__exited <- true; ::World.State.exitGame(); local fired = ::World.Events.fire("event.early_access_scenario_intro"); ::logWarning("an event is open: " + (fired || ::World.State.m.MenuStack.hasBacksteps())); } }"#;
+	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__exited" in getroottable()) && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
+	let exits: Vec<String> = (1..=80).map(|i| (i * 30).to_string()).collect();
+	let quits: Vec<String> = (1..=100).map(|i| (i * 60).to_string()).collect();
+	let mut args = vec!["--new-campaign", "--settings", settings.to_str().unwrap()];
+	for frame in &exits {
+		args.extend(["--at", frame.as_str(), exit]);
+	}
+	for frame in &quits {
+		args.extend(["--at", frame.as_str(), quit]);
+	}
+	let Some(run) = run_bb(&dir, (1280, 720), &args) else { return };
+	assert_eq!(run.status, "0", "bb's exit status\n{}", run.stderr);
+	assert!(run.stderr.contains("an event is open: true"), "{}", run.stderr);
+	let reported = "Script Error: the index 'updateAssetsInformation' does not exist";
+	assert_eq!(run.stderr.matches(reported).count(), 1, "the error reported once\n{}", run.stderr);
+	let log = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
+	assert!(log.contains("the index 'updateAssetsInformation' does not exist"), "in log.html too");
+	assert!(!run.stderr.contains("couldn't start"), "{}", run.stderr);
+}
+
 /// The scripts' video mode, set as the Options screen sets it, goes on the window at
 /// once: a window resized (no smaller than the Options screen's smallest resolution,
 /// and the scripts' mode follows the window), then borderless over the monitor; and the

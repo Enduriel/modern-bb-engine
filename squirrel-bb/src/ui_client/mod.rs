@@ -38,11 +38,18 @@ pub struct UiClient {
 	turn_bar: TurnSequenceBar,
 	/// The screen the turn order bar module is connected under.
 	turn_bar_screen: Option<String>,
+	/// What an error in a script callback does to the pump (see [`crate::ScriptErrors`]).
+	script_errors: crate::ScriptErrors,
 }
 
 impl UiClient {
 	pub fn new() -> Self {
 		Self::default()
+	}
+
+	/// What an error in a script callback the pump calls does from now on.
+	pub fn set_script_errors(&mut self, policy: crate::ScriptErrors) {
+		self.script_errors = policy;
 	}
 
 	/// Answer everything recorded since the last pump: new connections first, then
@@ -54,7 +61,8 @@ impl UiClient {
 			match module {
 				None => {
 					if let Some(receiver) = bridge.receiver(&screen, None) {
-						notify(vm, &receiver, "onScreenConnected").map_err(|e| format!("{screen}.{e}"))?;
+						let connected = notify(vm, &receiver, "onScreenConnected").map_err(|e| format!("{screen}.{e}"));
+						self.script_errors.settle(connected)?;
 						if screen == modern_hooks::SCREEN {
 							modern_hooks::on_connected(vm, &receiver)?;
 						}
@@ -81,7 +89,8 @@ impl UiClient {
 				_ => continue,
 			};
 			if let Some(receiver) = bridge.receiver(&call.screen, call.module.as_deref()) {
-				notify(vm, &receiver, callback).map_err(|e| format!("{}.{e}", call.screen))?;
+				let notified = notify(vm, &receiver, callback).map_err(|e| format!("{}.{e}", call.screen));
+				self.script_errors.settle(notified)?;
 			}
 		}
 		if let Some(screen) = &self.turn_bar_screen {

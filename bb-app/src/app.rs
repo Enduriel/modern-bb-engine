@@ -277,8 +277,9 @@ pub struct App {
 	settings: Settings,
 	/// Wakes the loop when the browser wants its work run (macOS; see `about_to_wait`).
 	proxy: EventLoopProxy<()>,
-	/// The first error, which ends the loop.
-	pub error: Option<String>,
+	/// The first error, which ends the loop, and whether it came as the game started or
+	/// once it ran.
+	pub error: Option<(String, bb_app::failure::When)>,
 }
 
 impl Drop for App {
@@ -465,9 +466,10 @@ impl App {
 		Ok(running)
 	}
 
-	/// Stop with `error`.
+	/// Stop with `error`: one as the game starts (`start`, before it runs) or once it runs.
 	fn fail(&mut self, event_loop: &ActiveEventLoop, error: String) {
-		self.error.get_or_insert(error);
+		let when = if self.running.is_some() { bb_app::failure::When::Running } else { bb_app::failure::When::Starting };
+		self.error.get_or_insert((error, when));
 		self.quit(event_loop, "an error ended the game");
 	}
 

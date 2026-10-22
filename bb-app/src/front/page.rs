@@ -93,6 +93,9 @@ impl Front {
 		if let Start::NewCampaign(seed) = &boot.start {
 			session.start_campaign(seed)?;
 		}
+		// Started: from now on a script error is reported and the game goes on, as the
+		// original's (see `squirrel_bb::ScriptErrors`).
+		session.engine().set_script_errors(squirrel_bb::ScriptErrors::GoOn);
 		let archives = crate::game::archives(boot.data_dir, boot.mods).map_err(|e| e.to_string())?;
 		Ok(Front {
 			session,

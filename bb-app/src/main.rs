@@ -96,6 +96,7 @@ mod window_mode;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use bb_app::failure::When;
 use bb_app::game::Start;
 use bb_app::steam::SteamOptions;
 use bb_app::install::Asked;
@@ -121,13 +122,13 @@ struct DataArguments {
 enum Failure {
 	/// The command line's (see the module's notes): on stderr only.
 	Arguments(String),
-	/// Anything else: in the message box too.
-	Start(String),
+	/// Anything else, as bb started or once the game ran: in the message box too.
+	Game(String, When),
 }
 
 impl From<String> for Failure {
 	fn from(error: String) -> Failure {
-		Failure::Start(error)
+		Failure::Game(error, When::Starting)
 	}
 }
 
@@ -313,34 +314,37 @@ fn main() -> ExitCode {
 		squirrel_bb::startup::mark("wgpu instance");
 		let mut app = app::App::new(options, settings, instance, event_loop.create_proxy());
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
-		app.error.take().map_or(Ok(Ended::Played), |e| Err(Failure::Start(e)))
+		app.error.take().map_or(Ok(Ended::Played), |(e, when)| Err(Failure::Game(e, when)))
 	};
 	let result = run();
 	let log_dir = logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf);
 	// Every failure a player can meet is told to them in words (a machine that can't run
 	// the game with the requirements), not only in the log and on stderr.
 	let message = match &result {
-		Err(Failure::Start(e)) => Some(bb_app::failure::message(e, data_dir.as_deref(), log_dir.as_deref())),
+		Err(Failure::Game(e, when)) => Some(bb_app::failure::message(e, *when, data_dir.as_deref(), log_dir.as_deref())),
 		Err(Failure::Arguments(e)) => Some(e.clone()),
 		Ok(_) => None,
 	};
 	if let Some(logs) = logs {
 		logs.close(message.as_deref());
 	}
-	let fail = |text: &str| {
+	let fail = |title: &str, text: &str| {
 		eprintln!("\n{text}");
-		bb_app::requirements::dialog::show(bb_app::failure::TITLE, text);
+		bb_app::requirements::dialog::show(title, text);
 		ExitCode::FAILURE
 	};
 	match result {
 		Ok(Ended::Played | Ended::Closed) => ExitCode::SUCCESS,
 		Ok(Ended::Relaunch(extra)) => match bb_app::install::relaunch::relaunch(&extra) {
 			Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
-			Err(e) => fail(&bb_app::failure::message(&e, data_dir.as_deref(), log_dir.as_deref())),
+			Err(e) => fail(
+				bb_app::failure::title(&e, When::Starting),
+				&bb_app::failure::message(&e, When::Starting, data_dir.as_deref(), log_dir.as_deref()),
+			),
 		},
-		Err(Failure::Start(e)) => {
+		Err(Failure::Game(e, when)) => {
 			eprintln!("error: {e}");
-			fail(message.as_deref().unwrap_or(&e))
+			fail(bb_app::failure::title(&e, when), message.as_deref().unwrap_or(&e))
 		}
 		Err(Failure::Arguments(e)) => {
 			eprintln!("error: {e}");
