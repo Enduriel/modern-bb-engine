@@ -135,7 +135,9 @@ impl Front {
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
 		// The FPS display's new value, with the page parked, as the scripts' calls are.
 		if let Some(fps) = self.fps.take() {
+			let park = bb_render::frame_timing::span("page park");
 			self.session.park();
+			drop(park);
 			self.session.set_fps(&fps.to_string());
 		}
 		let session = &self.session;
