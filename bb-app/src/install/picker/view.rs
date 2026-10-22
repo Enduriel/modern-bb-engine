@@ -91,6 +91,8 @@ impl View {
 			// Paste reaches the folder's box from the player's other programs.
 			clipboard: Arc::new(crate::clipboard::SystemClipboard::for_window(&event_loop.owned_display_handle())),
 			sink: Some(crate::front::gpu_page::sink(page.clone())),
+			// The folder dialog (Chromium's, on Windows) opens attached to this window.
+			parent_window: win32_handle(&window),
 			..HostConfig::default()
 		};
 		// No archives: the page loads nothing from the game (there is none yet).
@@ -265,3 +267,12 @@ fn css_size(size: PhysicalSize<u32>, scale: f64) -> (i32, i32) {
 	let css = |px: u32| ((f64::from(px) / scale).round() as i32).max(1);
 	(css(size.width), css(size.height))
 }
+/// The window's `HWND` on Windows (the page's dialogs' parent); `None` elsewhere.
+fn win32_handle(window: &Window) -> Option<isize> {
+	use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+	match window.window_handle().ok()?.as_raw() {
+		RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+		_ => None,
+	}
+}
+

@@ -155,7 +155,7 @@ impl Picker {
 		let Some(view) = &self.view else { return };
 		let typed = expand_home(typed);
 		let start = (!typed.as_os_str().is_empty() && typed.is_dir()).then_some(typed.as_path());
-		self.dialog.open(view.host(), "Choose the folder Battle Brothers is installed in", start);
+		self.dialog.open(view.host(), view.window(), "Choose Battle Brothers' folder", start);
 	}
 
 	/// A tick of the window: the page's requests, its frame if it painted, and the

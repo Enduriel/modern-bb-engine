@@ -1,6 +1,8 @@
 //! What the player is told when bb can't go on: every error that ends its start or its
 //! run, and a panic, in a message box ([`requirements::dialog`]) besides stderr and the
-//! log, since a player who double-clicked bb sees neither.
+//! log, since a player who double-clicked bb sees neither. Not the command line's
+//! errors (an unknown argument, a bad value, `--data` or `BB_DATA_DIR` naming no
+//! install): a double-click passes none, so they go to stderr only (`main.rs`).
 //!
 //! - A machine that can't run the game: what it lacks, and the minimum requirements
 //!   ([`requirements::explain`]).

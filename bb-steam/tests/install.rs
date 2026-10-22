@@ -46,16 +46,6 @@ fn a_manifest_for_another_folder_is_not_this_install() {
 	assert!(steam_install(&data).is_err());
 }
 
-/// A macOS app bundle's data, in the game's folder in the library, is the install's.
-#[test]
-fn a_mac_app_bundles_data_is_steam() {
-	let data = library("mac", Some(MANIFEST));
-	let bundled = data.parent().unwrap().join("Battle Brothers.app/Contents/Resources/data");
-	fs::create_dir_all(&bundled).unwrap();
-	let install = steam_install(&bundled).expect("a Steam install");
-	assert!(install.game_dir.ends_with("common/Battle Brothers"), "{}", install.game_dir.display());
-}
-
 /// A GOG install (no steamapps/common around it) is never Steam's.
 #[test]
 fn a_gog_install_is_not() {

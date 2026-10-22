@@ -22,6 +22,8 @@ pub(super) struct Opening {
 	pub external_frames: bool,
 	/// Chromium's frame rate for the page (`windowless_frame_rate`).
 	pub frame_rate: i32,
+	/// The window the page's dialogs belong to ([`HostConfig::parent_window`](super::HostConfig)).
+	pub parent_window: Option<isize>,
 }
 
 impl Opening {
@@ -39,7 +41,7 @@ impl Opening {
 		if register_scheme_handler_factory(Some(&SCHEME.into()), None, Some(&mut factory)) != 1 {
 			return Err("could not register the coui:// scheme".into());
 		}
-		let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
+		let mut window_info = WindowInfo::default().set_as_windowless(parent_window(self.parent_window));
 		window_info.external_begin_frame_enabled = self.external_frames.into();
 		// Paints arrive as GPU buffers (`OnAcceleratedPaint`), never as pixels in memory.
 		window_info.shared_texture_enabled = 1;
@@ -75,4 +77,15 @@ impl Opening {
 		}
 		Ok(())
 	}
+}
+
+/// The page's parent window as CEF takes it: the `HWND` on Windows; none elsewhere.
+#[cfg(windows)]
+fn parent_window(handle: Option<isize>) -> sys::cef_window_handle_t {
+	handle.map_or(Default::default(), |hwnd| hwnd as sys::cef_window_handle_t)
+}
+
+#[cfg(not(windows))]
+fn parent_window(_handle: Option<isize>) -> sys::cef_window_handle_t {
+	Default::default()
 }

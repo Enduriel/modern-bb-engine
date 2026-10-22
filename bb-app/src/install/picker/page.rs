@@ -36,12 +36,14 @@ pub fn url(looked: &[Looked], settings_file: Option<&std::path::Path>) -> String
 	format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
 }
 
-/// Where Steam installs the game on this system, as the page's example.
+/// The game's folder as the page's example: where Steam installs it on Windows and
+/// Linux. The game has no macOS build, so on macOS a copy of the Windows game's files in
+/// the player's home folder (Steam on a Mac doesn't install it).
 fn example() -> &'static str {
 	if cfg!(windows) {
 		r"C:\Program Files (x86)\Steam\steamapps\common\Battle Brothers"
 	} else if cfg!(target_os = "macos") {
-		"~/Library/Application Support/Steam/steamapps/common/Battle Brothers"
+		"~/Games/Battle Brothers"
 	} else {
 		"~/.local/share/Steam/steamapps/common/Battle Brothers"
 	}

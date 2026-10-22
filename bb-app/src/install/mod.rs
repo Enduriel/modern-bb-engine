@@ -24,9 +24,10 @@ use squirrel_bb::html_log::{self, Class};
 use crate::settings::Settings;
 
 /// Find the install to play: `--data`'s folder (`argument`), else as the lookup goes on
-/// with the folder chosen earlier from `settings`. Says which, and from where, in the log.
-pub fn find(argument: Option<PathBuf>, settings: &Settings) -> Result<Install, NotFound> {
-	let install = Lookup::from_env(argument, settings.chosen_data_dir()).find()?;
+/// with the folder chosen earlier (`chosen`: the settings', or the one the player just
+/// chose when it couldn't be kept). Says which, and from where, in the log.
+pub fn find(argument: Option<PathBuf>, chosen: Option<PathBuf>) -> Result<Install, NotFound> {
+	let install = Lookup::from_env(argument, chosen).find()?;
 	for passed in &install.passed_over {
 		log(Class::Warning, &format!("passed over {} ({}): {}", passed.source, passed.place, passed.outcome));
 	}
@@ -49,12 +50,14 @@ pub fn by_hand(settings_file: Option<&Path>) -> Option<String> {
 	))
 }
 
-/// A data folder as the game installs it on this system, for the examples.
+/// A data folder where a player's copy might be on this system, for the examples. On
+/// macOS, where the game has no build of its own, a copy of the Windows game's files in
+/// the player's home folder.
 pub fn example_data_dir() -> &'static str {
 	if cfg!(windows) {
 		r"C:\GOG Games\Battle Brothers\data"
 	} else if cfg!(target_os = "macos") {
-		"/Applications/Battle Brothers/data"
+		"/Users/you/Games/Battle Brothers/data"
 	} else {
 		"/home/you/GOG Games/Battle Brothers/data"
 	}
@@ -90,8 +93,8 @@ pub fn ask(looked: &[Looked], settings: &mut Settings, options: picker::Options)
 #[cfg(not(feature = "ui"))]
 pub fn ask(looked: &[Looked], settings: &mut Settings, _options: ()) -> Result<Asked, String> {
 	let mut text = format!(
-		"{}\n\nStart bb with --data and the game's data folder (the `data` folder in the folder Battle Brothers \
-		 is installed in).",
+		"{}\n\nStart bb with --data and the game's data folder (the `data` folder in Battle Brothers' \
+		 folder).",
 		NotFound::Nowhere(looked.to_vec())
 	);
 	if let Some(by_hand) = by_hand(settings.path()) {
@@ -101,10 +104,12 @@ pub fn ask(looked: &[Looked], settings: &mut Settings, _options: ()) -> Result<A
 }
 
 /// The arguments the relaunched bb needs beyond this run's: the folder, if it couldn't
-/// be kept in the settings (where the lookup finds it otherwise).
+/// be kept in the settings (where the lookup finds it otherwise). As `--chosen-data`,
+/// not `--data`: it's the player's choice, so a folder gone by then is passed over and
+/// asked for again, as the settings' would be, not a command line's error.
 pub fn relaunch_arguments(asked: &Asked) -> Vec<std::ffi::OsString> {
 	match asked {
-		Asked::Chosen { data_dir, kept: Err(_) } => vec!["--data".into(), data_dir.into()],
+		Asked::Chosen { data_dir, kept: Err(_) } => vec!["--chosen-data".into(), data_dir.into()],
 		_ => Vec::new(),
 	}
 }
@@ -113,4 +118,17 @@ pub fn relaunch_arguments(asked: &Asked) -> Vec<std::ffi::OsString> {
 fn log(class: Class, text: &str) {
 	eprintln!("install: {text}");
 	html_log::line(class, "Install", text);
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn a_folder_not_kept_is_passed_on_as_the_players_choice() {
+		let chosen = |kept| Asked::Chosen { data_dir: PathBuf::from("/games/BB/data"), kept };
+		assert_eq!(relaunch_arguments(&chosen(Err("read-only".into()))), ["--chosen-data", "/games/BB/data"]);
+		assert!(relaunch_arguments(&chosen(Ok(()))).is_empty());
+		assert!(relaunch_arguments(&Asked::Closed).is_empty());
+	}
 }

@@ -173,7 +173,7 @@ pub fn steam_data_dir() -> Option<PathBuf> {
 pub fn chosen(folder: &Path) -> Result<PathBuf, String> {
 	layout::data_dir_in(folder).ok_or_else(|| {
 		format!(
-			"{} isn't Battle Brothers' folder: there's no data{}{} in it. Choose the folder the game is installed in.",
+			"{} isn't Battle Brothers' folder: there's no data{}{} in it. Choose the game's folder: the one with its data folder in it.",
 			folder.display(),
 			std::path::MAIN_SEPARATOR,
 			layout::MARKER

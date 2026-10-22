@@ -6,10 +6,10 @@
 //! - the game's folder, with `data/data_001.dat` in it (Steam's and GOG's Windows
 //!   layout, and what a player picks);
 //! - the `data` folder itself (what `--data` names);
-//! - the game's `win32` folder, where its `BattleBrothers.exe` is, beside `data`;
-//! - a macOS app bundle (`*.app`), or a folder with one in it, holding `data` in
-//!   `Contents/Resources` or `Contents`. Not seen on a real Mac install yet: the layouts
-//!   a bundle's resources take, so a Mac copy is found if it is one.
+//! - the game's `win32` folder, where its `BattleBrothers.exe` is, beside `data`.
+//!
+//! The game has no macOS build: a Mac player runs bb on a copy of the Windows game's
+//! files, so the Windows layout is the only one on every OS.
 
 use std::path::{Path, PathBuf};
 
@@ -20,9 +20,7 @@ pub const MARKER: &str = "data_001.dat";
 pub fn data_dir_in(folder: &Path) -> Option<PathBuf> {
 	let candidates = [folder.join("data"), folder.to_path_buf()]
 		.into_iter()
-		.chain(win32_sibling(folder))
-		.chain(bundle_data_dirs(folder))
-		.chain(bundles_in(folder).into_iter().flat_map(|bundle| bundle_data_dirs(&bundle)));
+		.chain(win32_sibling(folder));
 	candidates.into_iter().find(|dir| is_data_dir(dir))
 }
 
@@ -35,24 +33,6 @@ pub fn is_data_dir(dir: &Path) -> bool {
 fn win32_sibling(folder: &Path) -> Option<PathBuf> {
 	let named = folder.file_name()?.to_string_lossy().eq_ignore_ascii_case("win32");
 	named.then(|| folder.parent().map(|game| game.join("data")))?
-}
-
-/// Where an app bundle's data folder may be.
-fn bundle_data_dirs(bundle: &Path) -> [PathBuf; 2] {
-	let contents = bundle.join("Contents");
-	[contents.join("Resources").join("data"), contents.join("data")]
-}
-
-/// The app bundles directly in `folder`, by name (a deterministic order).
-fn bundles_in(folder: &Path) -> Vec<PathBuf> {
-	let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
-	let mut bundles: Vec<PathBuf> = entries
-		.flatten()
-		.map(|e| e.path())
-		.filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) && p.is_dir())
-		.collect();
-	bundles.sort();
-	bundles
 }
 
 #[cfg(test)]
@@ -82,16 +62,5 @@ mod tests {
 		// A folder named like the marker is not the marker.
 		std::fs::create_dir_all(game.join("data").join(MARKER)).unwrap();
 		assert_eq!(data_dir_in(&game), None);
-	}
-
-	#[test]
-	fn a_mac_app_bundle_is_looked_into() {
-		let tree = Tree::new("layout_mac");
-		let game = tree.root().join("Battle Brothers");
-		let data = game.join("Battle Brothers.app/Contents/Resources/data");
-		std::fs::create_dir_all(&data).unwrap();
-		std::fs::write(data.join(MARKER), b"").unwrap();
-		assert_eq!(data_dir_in(&game), Some(data.clone()), "the game's folder, with the bundle in it");
-		assert_eq!(data_dir_in(&game.join("Battle Brothers.app")), Some(data), "the bundle itself");
 	}
 }

@@ -258,6 +258,13 @@ pub struct HostConfig {
 	/// The display connection Chromium paints through; `None`: this process's
 	/// ([`Display::from_env`]).
 	pub display: Option<Display>,
+	/// Windows: the window (its `HWND`) the page's dialogs belong to, so the folder
+	/// dialog ([`UiHost::choose_folder`]) opens attached to it, never behind it. CEF
+	/// owns a windowless page's dialogs by the parent it was created with
+	/// (`file_dialog_manager.cc`: `set_owning_widget(browser_->GetWindowHandle())`,
+	/// which is `WindowInfo::parent_window` for a windowless browser). Ignored
+	/// elsewhere: no dialog bb opens there goes through CEF.
+	pub parent_window: Option<isize>,
 }
 
 impl Default for HostConfig {
@@ -279,6 +286,7 @@ impl Default for HostConfig {
 			clipboard: Arc::new(MemoryClipboard::default()),
 			sink: None,
 			display: None,
+			parent_window: None,
 		}
 	}
 }
@@ -358,6 +366,7 @@ impl UiHost {
 			url: config.url.clone(),
 			external_frames: config.frames.external(),
 			frame_rate: config.frames.clock_rate(),
+			parent_window: config.parent_window,
 		};
 		let (devtools_port, ozone) = (config.devtools_port, display.ozone());
 		let switches = config.sink.as_ref().map(|sink| sink.browser_switches()).unwrap_or_default();

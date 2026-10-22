@@ -16,10 +16,14 @@
 //!   `BB_DATA_DIR`'s, else the folder the player chose before, else the game in Steam's
 //!   libraries (see `bb_app::install`). None found: a window says where bb looked and
 //!   asks for the game's folder (or, built without `ui`, the message box says so), and
-//!   bb starts again with the folder chosen, which it keeps for next time.
+//!   bb starts again with the folder chosen, which it keeps for next time (if it can't,
+//!   it passes the folder to itself as `--chosen-data DIR`, the folder chosen before).
 //! - Whatever ends the start (a machine that can't run the game, a game folder that
 //!   won't load), the player is told in a message box too, not only on stderr and in
-//!   the log (`bb_app::failure`).
+//!   the log (`bb_app::failure`). Except the command line's errors (an unknown argument,
+//!   a missing or bad value, and `--data` or `BB_DATA_DIR` naming a folder without the
+//!   game): a player who double-clicks bb passes neither, so those go to stderr (and the
+//!   log, once it's open) only.
 //! - Built with `--features ui`, the game's real UI is drawn over it and takes the input
 //!   it's under, and the game stops at the main menu, where the player starts or loads
 //!   a campaign. `--devtools` serves Chrome DevTools for its page on localhost at that
@@ -88,11 +92,36 @@ use winit::event_loop::EventLoop;
 /// The map seed of a campaign started at once, unless `--seed` gives one.
 const DEFAULT_SEED: &str = "rust-engine-test";
 
+/// What the command line names for the lookup (`bb_app::install`).
+#[derive(Default)]
+struct DataArguments {
+	/// `--data`'s folder.
+	data: Option<PathBuf>,
+	/// `--chosen-data`'s: the folder the player chose in the not-found window, when it
+	/// couldn't be kept in the settings (bb passes it to itself as it starts again). It
+	/// stands for the folder chosen before, so it isn't the command line's.
+	chosen: Option<PathBuf>,
+}
+
+/// Why a run ended in error.
+enum Failure {
+	/// The command line's (see the module's notes): on stderr only.
+	Arguments(String),
+	/// Anything else: in the message box too.
+	Start(String),
+}
+
+impl From<String> for Failure {
+	fn from(error: String) -> Failure {
+		Failure::Start(error)
+	}
+}
+
 /// The options, Steam's, the log folder (`None`: the system has no data folder), and
-/// `--data`'s folder. The options' data folder is left for the lookup (`bb_app::install`).
-fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, Option<PathBuf>), String> {
+/// the folders for the lookup. The options' data folder is left for the lookup.
+fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArguments), String> {
 	let mut steam = SteamOptions::from_env();
-	let mut data = None;
+	let mut data = DataArguments::default();
 	let mut options = app::Options {
 		data_dir: PathBuf::new(),
 		// Without the page there's no menu to click.
@@ -116,7 +145,8 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, Option<Path
 	while let Some(arg) = args.next() {
 		let mut value = || args.next().ok_or(format!("{arg} needs a value"));
 		match arg.as_str() {
-			"--data" => data = Some(PathBuf::from(value()?)),
+			"--data" => data.data = Some(PathBuf::from(value()?)),
+			"--chosen-data" => data.chosen = Some(PathBuf::from(value()?)),
 			"--seed" => options.start = Start::NewCampaign(value()?),
 			"--new-campaign" => {
 				if let Start::Menu = options.start {
@@ -208,8 +238,8 @@ fn main() -> ExitCode {
 	let mut logs = None;
 	// The game's data folder, once found (the failure message names it).
 	let mut data_dir = None;
-	let mut run = || -> Result<Ended, String> {
-		let (mut options, steam, log_dir, data) = options()?;
+	let mut run = || -> Result<Ended, Failure> {
+		let (mut options, steam, log_dir, data) = options().map_err(Failure::Arguments)?;
 		if let Some(dir) = log_dir {
 			match bb_app::logs::Logs::start(&dir) {
 				Ok(started) => {
@@ -221,7 +251,8 @@ fn main() -> ExitCode {
 		}
 		bb_app::failure::show_panics(logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf));
 		let mut settings = load_settings(&options);
-		options.data_dir = match bb_app::install::find(data, &settings) {
+		let chosen = data.chosen.or_else(|| settings.chosen_data_dir());
+		options.data_dir = match bb_app::install::find(data.data, chosen) {
 			Ok(install) => install.data_dir,
 			Err(NotFound::Nowhere(looked)) => {
 				let picker = picker_options(&options);
@@ -230,7 +261,8 @@ fn main() -> ExitCode {
 					asked => Ok(Ended::Relaunch(bb_app::install::relaunch_arguments(&asked))),
 				};
 			}
-			Err(bad) => return Err(bad.to_string()),
+			// `--data` or `BB_DATA_DIR`: neither is a double-clicking player's.
+			Err(bad @ NotFound::BadOverride(_)) => return Err(Failure::Arguments(bad.to_string())),
 		};
 		data_dir = Some(options.data_dir.clone());
 		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
@@ -253,13 +285,17 @@ fn main() -> ExitCode {
 		squirrel_bb::startup::mark("wgpu instance");
 		let mut app = app::App::new(options, settings, instance, event_loop.create_proxy());
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
-		app.error.take().map_or(Ok(Ended::Played), Err)
+		app.error.take().map_or(Ok(Ended::Played), |e| Err(Failure::Start(e)))
 	};
 	let result = run();
 	let log_dir = logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf);
-	// Every failure is told to the player in words (a machine that can't run the game
-	// with the requirements), not only in the log and on stderr.
-	let message = result.as_ref().err().map(|e| bb_app::failure::message(e, data_dir.as_deref(), log_dir.as_deref()));
+	// Every failure a player can meet is told to them in words (a machine that can't run
+	// the game with the requirements), not only in the log and on stderr.
+	let message = match &result {
+		Err(Failure::Start(e)) => Some(bb_app::failure::message(e, data_dir.as_deref(), log_dir.as_deref())),
+		Err(Failure::Arguments(e)) => Some(e.clone()),
+		Ok(_) => None,
+	};
 	if let Some(logs) = logs {
 		logs.close(message.as_deref());
 	}
@@ -274,9 +310,13 @@ fn main() -> ExitCode {
 			Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
 			Err(e) => fail(&bb_app::failure::message(&e, data_dir.as_deref(), log_dir.as_deref())),
 		},
-		Err(e) => {
+		Err(Failure::Start(e)) => {
 			eprintln!("error: {e}");
 			fail(message.as_deref().unwrap_or(&e))
+		}
+		Err(Failure::Arguments(e)) => {
+			eprintln!("error: {e}");
+			ExitCode::FAILURE
 		}
 	}
 }

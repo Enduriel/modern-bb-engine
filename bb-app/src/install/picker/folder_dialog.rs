@@ -1,16 +1,22 @@
 //! The system's folder dialog for the not-found window, each system's own way:
 //!
 //! - Windows: Chromium's (the page's browser, CEF's `RunFileDialog`: the system's
-//!   folder picker); its answer comes as the host's `Event::FolderChosen`.
+//!   folder picker); its answer comes as the host's `Event::FolderChosen`. It belongs
+//!   to bb's window (the page's parent window, `HostConfig::parent_window`), so it
+//!   opens in front of it.
 //! - Linux: `zenity`, else `kdialog` (GNOME's and KDE's dialog tools; Steam's runtime and
 //!   most desktops have one), as the message box does (`requirements::dialog`). CEF's
 //!   own can't open here: it refuses with the multi-threaded message loop bb runs it
 //!   with ("Default dialog implementation is not available", CEF's
 //!   `file_dialog_manager.cc`, seen 2026-10-22). Neither tool: the dialog is
-//!   unavailable, and the page asks for the folder typed.
+//!   unavailable, and the page asks for the folder typed. On X11, the dialog is attached
+//!   to bb's window (`--attach`): kdialog's makes it transient for it; zenity 4 takes
+//!   the option and ignores it (older ones attach). On Wayland, nothing names the
+//!   window to them.
 //! - macOS: AppleScript's `choose folder` (`osascript`), as the message box uses it.
 //!   CEF's would want a window of its own to hang the panel on, which the page (drawn
-//!   offscreen) hasn't.
+//!   offscreen) hasn't. The script activates itself first, so the dialog comes to the
+//!   front rather than behind bb's window.
 //!
 //! The tools run on a thread of their own, so the window goes on drawing meanwhile.
 
@@ -18,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use bb_ui::host::UiHost;
+use winit::window::Window;
 
 /// How the dialog closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,8 +49,9 @@ impl FolderDialog {
 		self.answer.is_some() || self.in_browser
 	}
 
-	/// Open it, titled `title`, at `start` if given (nothing if it's open already).
-	pub fn open(&mut self, host: &UiHost, title: &str, start: Option<&Path>) {
+	/// Open it over `window`, titled `title`, at `start` if given (nothing if it's open
+	/// already).
+	pub fn open(&mut self, host: &UiHost, window: &Window, title: &str, start: Option<&Path>) {
 		if self.is_open() {
 			return;
 		}
@@ -53,11 +61,11 @@ impl FolderDialog {
 			return;
 		}
 		let (tx, rx) = mpsc::channel();
-		let (title, start) = (title.to_string(), start.map(Path::to_path_buf));
+		let (title, start, owner) = (title.to_string(), start.map(Path::to_path_buf), x11_window(window));
 		let spawned = std::thread::Builder::new()
 			.name("folder dialog".into())
 			.spawn(move || {
-				let _ = tx.send(run_tool(&title, start.as_deref()));
+				let _ = tx.send(run_tool(&title, start.as_deref(), owner));
 			});
 		match spawned {
 			Ok(_) => self.answer = Some(rx),
@@ -93,10 +101,22 @@ impl FolderDialog {
 	}
 }
 
-/// Run the system's dialog tool and wait for its answer.
+/// The window's X11 id, for the dialog tools' `--attach`; `None` on Wayland and elsewhere.
+fn x11_window(window: &Window) -> Option<u64> {
+	use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+	match window.window_handle().ok()?.as_raw() {
+		RawWindowHandle::Xlib(handle) => Some(handle.window as u64),
+		RawWindowHandle::Xcb(handle) => Some(u64::from(handle.window.get())),
+		_ => None,
+	}
+}
+
+/// Run the system's dialog tool and wait for its answer, attached to the X11 window
+/// `owner` if given.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn run_tool(title: &str, start: Option<&Path>) -> Answer {
+fn run_tool(title: &str, start: Option<&Path>, owner: Option<u64>) -> Answer {
 	let start = start.map(|p| p.to_string_lossy().into_owned());
+	let attach = owner.map(|id| format!("--attach={id}"));
 	// zenity wants a trailing slash to open inside a folder rather than at it.
 	let zenity_start = start.as_ref().map(|s| format!("--filename={}/", s.trim_end_matches('/')));
 	let tools: [(&str, Vec<String>); 2] = [
@@ -104,13 +124,16 @@ fn run_tool(title: &str, start: Option<&Path>) -> Answer {
 			"zenity",
 			["--file-selection".to_string(), "--directory".into(), format!("--title={title}")]
 				.into_iter()
+				.chain(attach.clone())
 				.chain(zenity_start)
 				.collect(),
 		),
 		(
 			"kdialog",
-			["--title".to_string(), title.into(), "--getexistingdirectory".into()]
+			["--title".to_string(), title.into()]
 				.into_iter()
+				.chain(attach)
+				.chain(["--getexistingdirectory".to_string()])
 				.chain(start.clone())
 				.collect(),
 		),
@@ -125,7 +148,7 @@ fn run_tool(title: &str, start: Option<&Path>) -> Answer {
 }
 
 #[cfg(target_os = "macos")]
-fn run_tool(title: &str, start: Option<&Path>) -> Answer {
+fn run_tool(title: &str, start: Option<&Path>, _owner: Option<u64>) -> Answer {
 	// AppleScript string literals: backslashes and quotes escaped.
 	let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
 	let mut script = format!("POSIX path of (choose folder with prompt {}", quote(title));
@@ -133,11 +156,12 @@ fn run_tool(title: &str, start: Option<&Path>) -> Answer {
 		script.push_str(&format!(" default location (POSIX file {})", quote(&start.to_string_lossy())));
 	}
 	script.push(')');
-	tool_answer(std::process::Command::new("osascript").args(["-e", &script])).unwrap_or(Answer::Unavailable)
+	// `activate` first: the dialog is osascript's, which otherwise may open behind bb.
+	tool_answer(std::process::Command::new("osascript").args(["-e", "activate", "-e", &script])).unwrap_or(Answer::Unavailable)
 }
 
 #[cfg(not(unix))]
-fn run_tool(_title: &str, _start: Option<&Path>) -> Answer {
+fn run_tool(_title: &str, _start: Option<&Path>, _owner: Option<u64>) -> Answer {
 	Answer::Unavailable
 }
 

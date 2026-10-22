@@ -724,11 +724,12 @@ fn bb_without_the_ui_says_where_it_looked() {
 	assert!(shown.contains(&format!("add this line to {}", settings.display())) && shown.contains("install.data_dir = "), "{shown}");
 }
 
-/// Any error that ends the start reaches the player in the message box, not only the
-/// log: here `--data` naming a folder without the game.
+/// The command line's errors go to stderr (and the log) only, never a message box: a
+/// player who double-clicks bb passes no arguments. Here `--data` naming a folder
+/// without the game, and an unknown argument.
 #[cfg(target_os = "linux")]
 #[test]
-fn a_failed_start_is_shown_in_a_message_box() {
+fn a_command_line_error_is_not_shown_in_a_message_box() {
 	let dir = run_dir("bad_data");
 	let path = fake_tool(&dir, "zenity", "");
 	let env = [("PATH", path.as_str()), ("BB_ERROR_DIALOG", "1")];
@@ -736,8 +737,12 @@ fn a_failed_start_is_shown_in_a_message_box() {
 	assert_eq!(run.status, "1", "{}", run.stderr);
 	let what = "--data names no Battle Brothers install";
 	assert!(run.stderr.contains(what), "{}", run.stderr);
-	let shown = std::fs::read_to_string(dir.join("bin").join("zenity.args")).expect("the message box was shown");
-	assert!(shown.contains("--error") && shown.contains(what), "{shown}");
 	let html = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
 	assert!(html.contains(what), "{html}");
+	let shown = dir.join("bin").join("zenity.args");
+	assert!(!shown.exists(), "no message box: {}", std::fs::read_to_string(&shown).unwrap_or_default());
+	let Some(run) = run_bb_with(&dir, (1280, 720), &["--no-such-argument"], &env) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	assert!(run.stderr.contains("unknown argument --no-such-argument"), "{}", run.stderr);
+	assert!(!shown.exists(), "no message box: {}", std::fs::read_to_string(&shown).unwrap_or_default());
 }
