@@ -29,6 +29,7 @@ pub mod settings;
 pub mod shown;
 pub mod stats;
 pub mod steam;
+pub mod surface_trouble;
 pub mod system_cursor;
 pub mod wheel;
 pub mod world_scale;

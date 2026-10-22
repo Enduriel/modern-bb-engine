@@ -175,6 +175,20 @@ impl Gpu {
 		}
 	}
 
+	/// Run `f` with the device's errors on this thread caught rather than sent to wgpu's
+	/// uncaught-error handler (which panics): `f`'s result, and the first error it
+	/// raised. For calls whose failure the caller can recover from (a window surface's
+	/// configure and present, which fail when the system won't take the swapchain).
+	pub fn catching_errors<T>(&self, f: impl FnOnce() -> T) -> (T, Option<wgpu::Error>) {
+		// Scopes are a stack per thread: popped in reverse.
+		let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+		let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
+		let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+		let value = f();
+		let errors = [block_on(validation.pop()), block_on(internal.pop()), block_on(memory.pop())];
+		(value, errors.into_iter().flatten().next())
+	}
+
 	/// Block until the GPU has finished all submitted work.
 	pub fn wait(&self) -> Result<(), String> {
 		self.device

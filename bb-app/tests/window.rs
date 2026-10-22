@@ -364,6 +364,62 @@ fn the_video_mode_applies_live() {
 	assert!(kept.contains("video.borderless = false\n"), "the borderless mode wasn't kept:\n{kept}");
 }
 
+/// The scripts' video mode switched between a window, fullscreen and back, with VSync
+/// off and on again: each change configures the surface anew after frames were
+/// presented (where Direct3D 12 has failed a game), and the game draws
+/// on without the surface failing.
+#[test]
+fn the_video_mode_switches_fullscreen_and_vsync_live() {
+	let dir = run_dir("switches");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let start = "video.width = 1280\nvideo.height = 720\nvideo.fullscreen = false\nvideo.borderless = false\nvideo.vsync = true\n";
+	std::fs::write(&settings, start).expect("the settings");
+	let set = |change: &str| format!("local m = ::Settings.getVideoMode(); {change} ::Settings.setVideoMode(m);");
+	let steps = [
+		(10, set("m.Fullscreen = true; m.Width = 1600; m.Height = 900;")),
+		(20, set("m.VSync = false;")),
+		(30, set("m.Fullscreen = false; m.Width = 1280; m.Height = 720;")),
+		(40, set("m.VSync = true;")),
+	];
+	let frames: Vec<String> = steps.iter().map(|(at, _)| at.to_string()).collect();
+	let mut args = vec!["--new-campaign", "--settings", settings.to_str().unwrap()];
+	for ((_, code), frame) in steps.iter().zip(&frames) {
+		args.extend(["--at", frame.as_str(), code.as_str()]);
+	}
+	args.extend(["--shot", "60", shot.to_str().unwrap()]);
+	let Some(run) = run_bb(&dir, (1600, 900), &args) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let placements: Vec<&str> = run.stderr.lines().filter(|l| l.starts_with("video: ")).collect();
+	assert_eq!(placements[1..], ["video: 1600x900 Borderless", "video: 1280x720 Window { decorated: true, width: 1280, height: 768 }"], "{placements:?}");
+	assert!(!run.stderr.contains("the window's surface failed"), "{}", run.stderr);
+	// The window no smaller than the Options screen's smallest resolution (1024x768).
+	assert_eq!(png_size(&shot), (1280, 768), "back in a window");
+}
+
+/// A surface the system won't configure (as Direct3D 12 has refused one:
+/// "Invalid surface", which wgpu's default handler made a panic) doesn't end the game:
+/// it's logged, configured again each frame until it takes, and the game draws on. The
+/// refusals here are wgpu's own, for an empty surface (`BB_TEST_SURFACE_FAILS`): the
+/// window's first configures, then a frame's after the window is up.
+#[test]
+fn bb_rides_out_a_surface_the_system_refuses() {
+	let dir = run_dir("surface_refused");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let start = "video.width = 1280\nvideo.height = 720\nvideo.fullscreen = false\nvideo.borderless = false\nvideo.vsync = true\n";
+	std::fs::write(&settings, start).expect("the settings");
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--shot", "30", shot.to_str().unwrap()];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &[("BB_TEST_SURFACE_FAILS", "12")]) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let failed = run.stderr.matches("the window's surface failed (configure)").count();
+	assert_eq!(failed, 1, "the first failure logged, the retries not:\n{}", run.stderr);
+	// Both in log.html (the recovery, information, goes to stdout rather than stderr).
+	let log = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
+	assert!(log.contains("the window's surface failed (configure)"), "{log}");
+	assert!(log.contains("the window's surface is configured again, after 12 failed attempts"), "{log}");
+	// The window no smaller than 1024x768 (see `the_video_mode_applies_live`).
+	assert_eq!(png_size(&shot), (1280, 768), "drawn on after it");
+}
+
 /// A game that starts borderless over the monitor, with VSync off (a settings file
 /// asking for both; the first run after a restart once hung there, after the swapchain
 /// was made again for the borderless window), draws its frames and ends.

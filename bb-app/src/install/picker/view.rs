@@ -29,6 +29,9 @@ pub struct View {
 	_icon: crate::icon::Shown,
 	surface: Option<wgpu::Surface<'static>>,
 	config: wgpu::SurfaceConfiguration,
+	/// The surface's last configure or present failed: the next draw configures it
+	/// again first (see `crate::surface_trouble`, the game window's backstop).
+	unconfigured: bool,
 	gpu: Gpu,
 	presenter: Presenter,
 	target: RenderTarget,
@@ -80,7 +83,6 @@ impl View {
 			view_formats: Vec::new(),
 			color_space: wgpu::SurfaceColorSpace::Auto,
 		};
-		surface.configure(&gpu.device, &config);
 		let page = UiPage::new(&gpu)?;
 		let scale = window.scale_factor();
 		let (width, height) = css_size(size, scale);
@@ -103,7 +105,7 @@ impl View {
 		let host = UiHost::start(Arc::new(files), host_config).map_err(requirements::page_error)?;
 		host.wait_open(OPEN_TIMEOUT).map_err(requirements::page_error)?;
 		host.resize(width, height, scale);
-		Ok(View {
+		let mut view = View {
 			target: RenderTarget::new(&gpu, config.width, config.height),
 			presenter: Presenter::new(&gpu, format),
 			layer: UiLayer::new(&gpu, page),
@@ -111,12 +113,15 @@ impl View {
 			_icon: icon,
 			surface: Some(surface),
 			config,
+			unconfigured: false,
 			gpu,
 			host: Some(host),
 			drawn_paints: 0,
 			pointer: (0, 0),
 			modifiers: Modifiers::default(),
-		})
+		};
+		view.configure();
+		Ok(view)
 	}
 
 	pub fn host(&self) -> &UiHost {
@@ -144,9 +149,7 @@ impl View {
 		}
 		self.config.width = size.width;
 		self.config.height = size.height;
-		if let Some(surface) = &self.surface {
-			surface.configure(&self.gpu.device, &self.config);
-		}
+		self.configure();
 		self.target = RenderTarget::new(&self.gpu, size.width, size.height);
 		let scale = self.window().scale_factor();
 		let (width, height) = css_size(size, scale);
@@ -155,16 +158,43 @@ impl View {
 		self.drawn_paints = u64::MAX;
 	}
 
+	/// Configure the surface as `config` says; a failure is logged and tried again at
+	/// the next draw, rather than wgpu's panic.
+	fn configure(&mut self) {
+		let Some(surface) = &self.surface else { return };
+		let ((), error) = self.gpu.catching_errors(|| surface.configure(&self.gpu.device, &self.config));
+		self.surface_failed("configure", error);
+	}
+
+	/// After a configure or present: whether it failed (with `error`), logged when the
+	/// surface was fine before it.
+	fn surface_failed(&mut self, what: &str, error: Option<wgpu::Error>) {
+		if let (Some(e), false) = (&error, self.unconfigured) {
+			let text = e.to_string().split_whitespace().collect::<Vec<_>>().join(" ");
+			squirrel_bb::html_log::engine(squirrel_bb::html_log::Class::Warning, "Renderer", &format!("the window's surface failed ({what}): {text}"));
+		}
+		self.unconfigured = error.is_some();
+		if self.unconfigured {
+			self.drawn_paints = u64::MAX;
+		}
+	}
+
 	/// Draw the page's latest paint and present it.
 	pub fn draw(&mut self) {
 		self.drawn_paints = self.host().paints();
 		self.target.clear(&self.gpu);
 		self.layer.draw(&self.gpu, &self.target);
+		if self.unconfigured {
+			self.configure();
+			if self.unconfigured {
+				return;
+			}
+		}
 		let Some(surface) = &self.surface else { return };
 		let texture = match surface.get_current_texture() {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
 			wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-				surface.configure(&self.gpu.device, &self.config);
+				self.configure();
 				self.drawn_paints = u64::MAX;
 				return;
 			}
@@ -177,7 +207,10 @@ impl View {
 		let rect = (0, 0, self.config.width, self.config.height);
 		self.presenter.draw(&self.gpu, &self.target, &view, rect);
 		self.window().pre_present_notify();
-		self.gpu.queue.present(texture);
+		let ((), error) = self.gpu.catching_errors(|| self.gpu.queue.present(texture));
+		if error.is_some() {
+			self.surface_failed("present", error);
+		}
 	}
 
 	/// Save the frame as last drawn to `path` (a PNG).

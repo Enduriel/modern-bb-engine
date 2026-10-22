@@ -21,11 +21,13 @@ use bb_app::game::{Boot, Game, Start, Store};
 use bb_app::game_cursor::CursorShow;
 use bb_app::system_cursor::{self, Cursor, Shower};
 use bb_app::steam::SteamStats;
+use bb_app::surface_trouble::{Outcome, SurfaceTrouble};
 use bb_app::settings::Settings;
 use bb_app::wheel::{self, Notches};
 use bb_app::pacing::Pacer;
 use bb_app::{keys, platform, screen_scale};
 use squirrel_bb::VideoMode;
+use squirrel_bb::html_log::{self, Class};
 
 use crate::window_mode::{self, Monitor};
 
@@ -97,6 +99,13 @@ struct Running {
 	_icon: bb_app::icon::Shown,
 	surface: wgpu::Surface<'static>,
 	config: wgpu::SurfaceConfiguration,
+	/// The surface's configure or present failed, and it hasn't been configured since:
+	/// each frame configures it again instead of drawing (see `bb_app::surface_trouble`).
+	surface_trouble: Option<SurfaceTrouble>,
+	/// With `BB_TEST_SURFACE_FAILS=N`, the next N configures ask for an empty surface,
+	/// which wgpu refuses as it refused a player's: the window tests' check that the
+	/// game rides it out.
+	failing_configures: u32,
 	gpu: Gpu,
 	presenter: Presenter,
 	/// The present modes the surface offers.
@@ -367,7 +376,6 @@ impl App {
 			view_formats: Vec::new(),
 			color_space: wgpu::SurfaceColorSpace::Auto,
 		};
-		surface.configure(&gpu.device, &config);
 		let presenter = Presenter::new(&gpu, format);
 		let frame_rect = display::frame_rect((config.width, config.height), game.screen());
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
@@ -381,6 +389,8 @@ impl App {
 			_icon: icon,
 			surface,
 			config,
+			surface_trouble: None,
+			failing_configures: std::env::var("BB_TEST_SURFACE_FAILS").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
 			gpu,
 			presenter,
 			present_modes: capabilities.present_modes.clone(),
@@ -422,6 +432,7 @@ impl App {
 			steam: self.options.steam.clone(),
 			frame_times: FrameTimes::from_env(),
 		};
+		running.configure();
 		running.resize(size);
 		running.follow_monitor_refresh();
 		// The browser's work runs on this thread on macOS: wake the loop when it's due
@@ -501,13 +512,30 @@ impl Running {
 		}
 		self.config.width = size.width;
 		self.config.height = size.height;
-		self.surface.configure(&self.gpu.device, &self.config);
-		// The new surface shows nothing yet.
-		self.game.forget_shown();
+		self.configure();
 		if self.placement.follows_window() {
 			let (width, height) = screen_scale::to_screen((size.width, size.height), self.screen_scale());
 			self.game.video().set_screen_size(i64::from(width), i64::from(height));
 		}
+	}
+
+	/// Configure the surface as `config` says. The new surface shows nothing yet. A
+	/// failure doesn't end the game: the frames configure it again until it takes (see
+	/// `bb_app::surface_trouble`).
+	fn configure(&mut self) {
+		let mut config = self.config.clone();
+		if self.failing_configures > 0 {
+			self.failing_configures -= 1;
+			config.width = 0;
+		}
+		let ((), error) = self.gpu.catching_errors(|| self.surface.configure(&self.gpu.device, &config));
+		self.game.forget_shown();
+		let now = Instant::now();
+		let outcome = match error {
+			Some(e) => SurfaceTrouble::failed(&mut self.surface_trouble, "configure", &error_text(&e), now),
+			None => SurfaceTrouble::configured(&mut self.surface_trouble, now),
+		};
+		log_surface(outcome);
 	}
 
 	/// Put the scripts' video mode on the window when they set one (`setVideoMode`), and
@@ -538,8 +566,7 @@ impl Running {
 		let present_mode = display::present_mode(mode.vsync, &self.present_modes);
 		if present_mode != self.config.present_mode {
 			self.config.present_mode = present_mode;
-			self.surface.configure(&self.gpu.device, &self.config);
-			self.game.forget_shown();
+			self.configure();
 			self.pacer.set_display_paced(present_mode == wgpu::PresentMode::Fifo);
 		}
 	}
@@ -695,14 +722,25 @@ impl Running {
 			self.stats_waiting.0 += 1;
 			self.stats_waiting.1 += drawn.waiting;
 		}
+		// A surface the system refused: configured again instead of drawn to, until it
+		// takes or the game gives up on it.
+		if let Some(trouble) = &self.surface_trouble {
+			if let Some(error) = trouble.given_up(Instant::now()) {
+				return Err(error);
+			}
+			self.configure();
+			if self.surface_trouble.is_some() {
+				self.paced(now, false);
+				return Ok(self.frames);
+			}
+		}
 		let acquire_span = bb_render::frame_timing::span("acquire");
 		let acquired = self.surface.get_current_texture();
 		drop(acquire_span);
 		let texture = match acquired {
 			wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
 			wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-				self.surface.configure(&self.gpu.device, &self.config);
-				self.game.forget_shown();
+				self.configure();
 				self.paced(now, false);
 				return Ok(self.frames);
 			}
@@ -722,7 +760,11 @@ impl Running {
 			eprintln!("frame {} not presented (BB_TEST_UNPRESENTED)", self.frames);
 			drop(texture);
 		} else {
-			self.gpu.queue.present(texture);
+			let ((), error) = self.gpu.catching_errors(|| self.gpu.queue.present(texture));
+			if let Some(e) = error {
+				self.game.forget_shown();
+				log_surface(SurfaceTrouble::failed(&mut self.surface_trouble, "present", &error_text(&e), Instant::now()));
+			}
 		}
 		drop(present_span);
 		if !after_presented {
@@ -985,6 +1027,20 @@ impl ApplicationHandler for App {
 				}
 			}
 		}
+	}
+}
+
+/// A wgpu error on one line (its text lists its causes on lines of their own).
+fn error_text(error: &wgpu::Error) -> String {
+	error.to_string().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The surface's trouble starting or ending, in log.html and on stderr.
+fn log_surface(outcome: Outcome) {
+	match outcome {
+		Outcome::Fine => {}
+		Outcome::Warn(line) => html_log::engine(Class::Warning, "Renderer", &line),
+		Outcome::Recovered(line) => html_log::engine(Class::Info, "Renderer", &line),
 	}
 }
 
