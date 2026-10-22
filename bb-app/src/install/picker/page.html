@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Battle Brothers</title>
+<style>
+	:root {
+		color-scheme: dark;
+		--ground: #17130f;
+		--panel: #241d16;
+		--edge: #4a3b2a;
+		--text: #e8dcc4;
+		--muted: #b3a387;
+		--accent: #c9a25e;
+		--refused: #e0846a;
+	}
+	html, body {
+		margin: 0;
+		height: 100%;
+		background: var(--ground);
+		color: var(--text);
+		font: 16px/1.45 sans-serif;
+	}
+	body {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-sizing: border-box;
+		padding: 24px;
+	}
+	main {
+		width: 100%;
+		max-width: 760px;
+		background: var(--panel);
+		border: 1px solid var(--edge);
+		border-radius: 6px;
+		padding: 28px 32px;
+		box-sizing: border-box;
+	}
+	h1 {
+		margin: 0 0 12px;
+		font: bold 26px/1.2 serif;
+		color: var(--accent);
+	}
+	p {
+		margin: 10px 0;
+	}
+	ul {
+		margin: 6px 0 14px;
+		padding-left: 20px;
+		color: var(--muted);
+		font-size: 14px;
+		max-height: 140px;
+		overflow-y: auto;
+		overflow-wrap: anywhere;
+	}
+	code {
+		font-family: monospace;
+		color: var(--text);
+	}
+	.row {
+		display: flex;
+		gap: 8px;
+		margin-top: 14px;
+	}
+	input {
+		flex: 1;
+		min-width: 0;
+		font: inherit;
+		color: var(--text);
+		background: var(--ground);
+		border: 1px solid var(--edge);
+		border-radius: 4px;
+		padding: 7px 10px;
+	}
+	input:focus {
+		outline: 2px solid var(--accent);
+		outline-offset: -1px;
+	}
+	button {
+		font: inherit;
+		color: var(--text);
+		background: #352a1f;
+		border: 1px solid var(--edge);
+		border-radius: 4px;
+		padding: 7px 16px;
+		cursor: pointer;
+	}
+	button:hover {
+		border-color: var(--accent);
+	}
+	button.primary {
+		background: #6b4e24;
+		border-color: var(--accent);
+	}
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 18px;
+	}
+	#bb-error {
+		min-height: 1.45em;
+		color: var(--refused);
+		overflow-wrap: anywhere;
+	}
+	.note {
+		color: var(--muted);
+		font-size: 14px;
+	}
+</style>
+</head>
+<body>
+<main>
+	<h1>Battle Brothers wasn't found</h1>
+	<p>This engine plays your own copy of Battle Brothers, from its game files. It looked for them here:</p>
+	<ul id="bb-looked"></ul>
+	<p>Choose the folder Battle Brothers is installed in: the one with the <code>data</code> folder in it,
+		such as <code id="bb-example"></code>.</p>
+	<div class="row">
+		<input id="bb-path" type="text" spellcheck="false" placeholder="The game's folder">
+		<button id="bb-browse">Browse…</button>
+	</div>
+	<p id="bb-error"></p>
+	<p class="note">It's remembered: the game starts at once next time.</p>
+	<div class="actions">
+		<button id="bb-quit">Quit</button>
+		<button id="bb-use" class="primary">Play</button>
+	</div>
+</main>
+<script>
+(function () {
+	'use strict';
+	var looked = /*LOOKED*/[];
+	var example = /*EXAMPLE*/'';
+	var list = document.getElementById('bb-looked');
+	looked.forEach(function (text) {
+		var item = document.createElement('li');
+		item.textContent = text;
+		list.appendChild(item);
+	});
+	document.getElementById('bb-example').textContent = example;
+	var path = document.getElementById('bb-path');
+	var error = document.getElementById('bb-error');
+
+	// Every request goes to bb as `engine.SendMessage('bbInstall', 0, action, value)`;
+	// bb answers by calling the functions below.
+	function send(action, value) {
+		engine.SendMessage('bbInstall', 0, action, value === undefined ? '' : value);
+	}
+
+	function use() {
+		var folder = path.value.trim();
+		if (!folder) {
+			refused('Type or paste the game\'s folder, or choose it with Browse.');
+			return;
+		}
+		error.textContent = '';
+		send('use', folder);
+	}
+
+	function refused(why) {
+		error.textContent = why;
+		path.focus();
+	}
+
+	window.bbInstall = {
+		// The folder dialog's choice: used at once.
+		picked: function (folder) {
+			path.value = folder;
+			use();
+		},
+		// The dialog closed without a folder, or none could open (`unavailable`: this
+		// system has no folder dialog bb can show): the folder can be typed instead.
+		cancelled: function (unavailable) {
+			refused(unavailable
+				? 'No folder dialog can open on this system (bb uses zenity or kdialog on Linux): type or paste the game\'s folder above.'
+				: 'No folder was chosen. You can also type or paste the game\'s folder above.');
+		},
+		refused: refused
+	};
+
+	document.getElementById('bb-browse').addEventListener('click', function () {
+		send('browse', path.value.trim());
+	});
+	document.getElementById('bb-use').addEventListener('click', use);
+	document.getElementById('bb-quit').addEventListener('click', function () {
+		send('quit');
+	});
+	path.addEventListener('keydown', function (event) {
+		if (event.key === 'Enter') {
+			use();
+		}
+	});
+	path.focus();
+})();
+</script>
+</body>
+</html>

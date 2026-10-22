@@ -260,11 +260,8 @@ impl Drop for App {
 }
 
 impl App {
-	pub fn new(options: Options, instance: wgpu::Instance, proxy: EventLoopProxy<()>) -> Self {
-		let settings = match &options.settings {
-			Some(path) => Settings::load(Some(path.clone())),
-			None => Settings::load_default(),
-		};
+	/// The game as `options` say, with the player's `settings` (from `options.settings`).
+	pub fn new(options: Options, settings: Settings, instance: wgpu::Instance, proxy: EventLoopProxy<()>) -> Self {
 		App {
 			options,
 			instance,

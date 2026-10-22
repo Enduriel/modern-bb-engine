@@ -17,6 +17,10 @@ zip = { version = "1.1.4", default-features = false, features = ["deflate"] }
 # Local time for the archived logs' zip entries, and their names' UTC stamps (already
 # squirrel-bb's, with the same features).
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-bundle-platform"] }
+# Finding the game's Steam install: Steam's folder, its libraries and the game's in them
+# (`install::steam`). Pinned: what it reads is Steam's
+# own files, whose handling we check against this version.
+steamlocate = "=2.1.1"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

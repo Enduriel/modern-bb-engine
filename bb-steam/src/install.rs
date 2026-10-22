@@ -1,8 +1,10 @@
 //! Whether an install of the game is Steam's: the rule that decides if bb loads Steam's
 //! library at all.
 //!
-//! **The rule:** the data folder bb runs (`<game>/data`) sits in a Steam library, as
-//! `<library>/steamapps/common/<installdir>/data`, and that library's
+//! **The rule:** the data folder bb runs (`<game>/data`, or a macOS app bundle's in the
+//! game's folder, `<game>/<name>.app/Contents/Resources/data` or `.../Contents/data`)
+//! sits in a Steam library, as `<library>/steamapps/common/<installdir>/data`, and that
+//! library's
 //! `steamapps/appmanifest_365360.acf` names `<installdir>` as its install folder. Steam
 //! writes that manifest for every game it installs, and only Steam does, so a GOG or
 //! other copy (even one copied out of a Steam library) is never taken for Steam's. The
@@ -32,7 +34,7 @@ pub fn manifest_name() -> String {
 pub fn steam_install(data_dir: &Path) -> Result<SteamInstall, String> {
 	let data_dir = fs::canonicalize(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
 	let not = |why: &str| Err(format!("{} is not in a Steam library ({why})", data_dir.display()));
-	let Some(game_dir) = data_dir.parent() else { return not("no game folder above it") };
+	let Some(game_dir) = game_dir_of(&data_dir) else { return not("no game folder above it") };
 	let Some(common) = game_dir.parent().filter(|d| named(d, "common")) else {
 		return not("its game folder is not in a `common` folder");
 	};
@@ -50,6 +52,18 @@ pub fn steam_install(data_dir: &Path) -> Result<SteamInstall, String> {
 		return not(&format!("{} installs the game in `{install_dir}`", manifest_name()));
 	}
 	Ok(SteamInstall { steamapps: steamapps.to_path_buf(), game_dir: game_dir.to_path_buf() })
+}
+
+/// The game's folder above its data folder: the parent, or the folder an app bundle
+/// holding it is in (`<game>/<name>.app/Contents[/Resources]/data`).
+fn game_dir_of(data_dir: &Path) -> Option<&Path> {
+	let parent = data_dir.parent()?;
+	let contents = if named(parent, "Resources") { parent.parent()? } else { parent };
+	let bundle = contents.parent().filter(|_| named(contents, "Contents"));
+	match bundle.filter(|b| b.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
+		Some(bundle) => bundle.parent(),
+		None => Some(parent),
+	}
 }
 
 /// Whether the folder's own name is `name`, ignoring ASCII case.

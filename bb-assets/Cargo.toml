@@ -11,3 +11,8 @@ images = ["dep:png"]
 
 [dependencies]
 png = { version = "0.18.1", optional = true }
+
+[dev-dependencies]
+# The local Steam install of the game, for the tests that read it (as bb-engine's
+# `install` finds it; the version pinned there).
+steamlocate = "=2.1.1"

@@ -9,9 +9,17 @@
 //! bb --version
 //! ```
 //!
-//! Boots the install's game files (the Steam install by default) and plays them: the
-//! main menu, the world map or the battle, the mouse and keys going to the game.
+//! Boots the install's game files and plays them: the main menu, the world map or the
+//! battle, the mouse and keys going to the game.
 //!
+//! - The install is the one `--data` names (its data folder, or the game's folder), else
+//!   `BB_DATA_DIR`'s, else the folder the player chose before, else the game in Steam's
+//!   libraries (see `bb_app::install`). None found: a window says where bb looked and
+//!   asks for the game's folder (or, built without `ui`, the message box says so), and
+//!   bb starts again with the folder chosen, which it keeps for next time.
+//! - Whatever ends the start (a machine that can't run the game, a game folder that
+//!   won't load), the player is told in a message box too, not only on stderr and in
+//!   the log (`bb_app::failure`).
 //! - Built with `--features ui`, the game's real UI is drawn over it and takes the input
 //!   it's under, and the game stops at the main menu, where the player starts or loads
 //!   a campaign. `--devtools` serves Chrome DevTools for its page on localhost at that
@@ -67,22 +75,26 @@
 mod app;
 mod window_mode;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use bb_app::game::Start;
 use bb_app::steam::SteamOptions;
-use bb_engine::harness::STEAM_DATA_DIR;
+use bb_app::install::Asked;
+use bb_app::settings::Settings;
+use bb_engine::install::NotFound;
 use winit::event_loop::EventLoop;
 
 /// The map seed of a campaign started at once, unless `--seed` gives one.
 const DEFAULT_SEED: &str = "rust-engine-test";
 
-/// The options, Steam's, and the log folder (`None`: the system has no data folder).
-fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
+/// The options, Steam's, the log folder (`None`: the system has no data folder), and
+/// `--data`'s folder. The options' data folder is left for the lookup (`bb_app::install`).
+fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, Option<PathBuf>), String> {
 	let mut steam = SteamOptions::from_env();
+	let mut data = None;
 	let mut options = app::Options {
-		data_dir: PathBuf::from(STEAM_DATA_DIR),
+		data_dir: PathBuf::new(),
 		// Without the page there's no menu to click.
 		start: if cfg!(feature = "ui") { Start::Menu } else { Start::NewCampaign(DEFAULT_SEED.to_string()) },
 		mods: false,
@@ -104,7 +116,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 	while let Some(arg) = args.next() {
 		let mut value = || args.next().ok_or(format!("{arg} needs a value"));
 		match arg.as_str() {
-			"--data" => options.data_dir = PathBuf::from(value()?),
+			"--data" => data = Some(PathBuf::from(value()?)),
 			"--seed" => options.start = Start::NewCampaign(value()?),
 			"--new-campaign" => {
 				if let Start::Menu = options.start {
@@ -146,8 +158,39 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>), String> {
 			_ => return Err(format!("unknown argument {arg}")),
 		}
 	}
-	Ok((options, steam, logs))
+	Ok((options, steam, logs, data))
 }
+
+/// How a run ended without an error.
+enum Ended {
+	/// The game was played (and quit).
+	Played,
+	/// The player closed the not-found window.
+	Closed,
+	/// The player chose the game's folder: bb starts again with these arguments more.
+	Relaunch(Vec<std::ffi::OsString>),
+}
+
+/// The settings `options` name (`--settings`), or the system's.
+fn load_settings(options: &app::Options) -> Settings {
+	match &options.settings {
+		Some(path) => Settings::load(Some(path.clone())),
+		None => Settings::load_default(),
+	}
+}
+
+/// What the not-found window runs with, from the command line.
+#[cfg(feature = "ui")]
+fn picker_options(options: &app::Options) -> bb_app::install::picker::Options {
+	bb_app::install::picker::Options {
+		shot: options.shot.clone(),
+		at_page: options.at_page.clone(),
+		cef_log: options.cef_log.clone(),
+	}
+}
+
+#[cfg(not(feature = "ui"))]
+fn picker_options(_options: &app::Options) {}
 
 fn main() -> ExitCode {
 	bb_app::platform::allow_tracing_if_asked();
@@ -163,8 +206,10 @@ fn main() -> ExitCode {
 	bb_app::platform::tune_allocator();
 	squirrel_bb::startup::mark("main");
 	let mut logs = None;
-	let mut run = || -> Result<(), String> {
-		let (mut options, steam, log_dir) = options()?;
+	// The game's data folder, once found (the failure message names it).
+	let mut data_dir = None;
+	let mut run = || -> Result<Ended, String> {
+		let (mut options, steam, log_dir, data) = options()?;
 		if let Some(dir) = log_dir {
 			match bb_app::logs::Logs::start(&dir) {
 				Ok(started) => {
@@ -174,6 +219,20 @@ fn main() -> ExitCode {
 				Err(e) => eprintln!("no log file: {e}"),
 			}
 		}
+		bb_app::failure::show_panics(logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf));
+		let mut settings = load_settings(&options);
+		options.data_dir = match bb_app::install::find(data, &settings) {
+			Ok(install) => install.data_dir,
+			Err(NotFound::Nowhere(looked)) => {
+				let picker = picker_options(&options);
+				return match bb_app::install::ask(&looked, &mut settings, picker)? {
+					Asked::Closed => Ok(Ended::Closed),
+					asked => Ok(Ended::Relaunch(bb_app::install::relaunch_arguments(&asked))),
+				};
+			}
+			Err(bad) => return Err(bad.to_string()),
+		};
+		data_dir = Some(options.data_dir.clone());
 		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
 		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
 		// environment): the stats logger, the renderer's and the page's start after it.
@@ -192,27 +251,32 @@ fn main() -> ExitCode {
 			wgpu::InstanceDescriptor::new_with_display_handle_from_env(display),
 		));
 		squirrel_bb::startup::mark("wgpu instance");
-		let mut app = app::App::new(options, instance, event_loop.create_proxy());
+		let mut app = app::App::new(options, settings, instance, event_loop.create_proxy());
 		event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
-		app.error.take().map_or(Ok(()), Err)
+		app.error.take().map_or(Ok(Ended::Played), Err)
 	};
 	let result = run();
-	// A machine that can't run the game is told so in words, with the requirements.
-	let explained = result.as_ref().err().and_then(|e| {
-		bb_app::requirements::explain(e, logs.as_ref().and_then(bb_app::logs::Logs::dir))
-	});
+	let log_dir = logs.as_ref().and_then(bb_app::logs::Logs::dir).map(Path::to_path_buf);
+	// Every failure is told to the player in words (a machine that can't run the game
+	// with the requirements), not only in the log and on stderr.
+	let message = result.as_ref().err().map(|e| bb_app::failure::message(e, data_dir.as_deref(), log_dir.as_deref()));
 	if let Some(logs) = logs {
-		logs.close(explained.as_deref().or(result.as_ref().err().map(String::as_str)));
+		logs.close(message.as_deref());
 	}
+	let fail = |text: &str| {
+		eprintln!("\n{text}");
+		bb_app::requirements::dialog::show(bb_app::failure::TITLE, text);
+		ExitCode::FAILURE
+	};
 	match result {
-		Ok(()) => ExitCode::SUCCESS,
+		Ok(Ended::Played | Ended::Closed) => ExitCode::SUCCESS,
+		Ok(Ended::Relaunch(extra)) => match bb_app::install::relaunch::relaunch(&extra) {
+			Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+			Err(e) => fail(&bb_app::failure::message(&e, data_dir.as_deref(), log_dir.as_deref())),
+		},
 		Err(e) => {
 			eprintln!("error: {e}");
-			if let Some(text) = explained {
-				eprintln!("\n{text}");
-				bb_app::requirements::dialog::show("Battle Brothers can't start", &text);
-			}
-			ExitCode::FAILURE
+			fail(message.as_deref().unwrap_or(&e))
 		}
 	}
 }

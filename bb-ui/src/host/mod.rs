@@ -44,6 +44,7 @@ mod client;
 mod damage;
 mod display;
 mod edit_keys;
+mod file_dialog;
 #[cfg(target_os = "linux")]
 mod fonts;
 mod frame;

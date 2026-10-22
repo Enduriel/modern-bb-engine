@@ -11,3 +11,8 @@ edition = "2024"
 # dlopen/dlsym on Unix (for this binding only).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.186"
+
+[dev-dependencies]
+# The local Steam install of the game, for the tests that read it (as bb-engine's
+# `install` finds it; the version pinned there).
+steamlocate = "=2.1.1"

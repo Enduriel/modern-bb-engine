@@ -19,6 +19,9 @@ use file::SettingsText;
 /// The settings file's name in its folder.
 const FILE_NAME: &str = "settings.cfg";
 
+/// The key of the data folder the player chose.
+const CHOSEN_DATA_DIR: &str = "install.data_dir";
+
 /// The settings file, where it is and what it says.
 pub struct Settings {
 	path: Option<PathBuf>,
@@ -82,6 +85,19 @@ impl Settings {
 		self.text.get("render.retina_world").is_some_and(|v| matches!(v, "true" | "1" | "on" | "yes"))
 	}
 
+	/// The game's data folder the player chose when bb found none
+	/// (`install.data_dir`; see `bb_app::install`).
+	pub fn chosen_data_dir(&self) -> Option<PathBuf> {
+		self.text.get(CHOSEN_DATA_DIR).filter(|v| !v.is_empty()).map(PathBuf::from)
+	}
+
+	/// Keep `dir` as the data folder the player chose, in the file at once.
+	pub fn keep_chosen_data_dir(&mut self, dir: &Path) -> Result<(), String> {
+		let text = dir.to_str().ok_or_else(|| format!("{} isn't valid UTF-8, which the settings file needs", dir.display()))?;
+		self.text.set(CHOSEN_DATA_DIR, text);
+		self.save()
+	}
+
 	/// Keep what the scripts saved (`Settings.save`), in the file at once.
 	pub fn keep(&mut self, saved: &SavedSettings) -> Result<(), String> {
 		video::write(&mut self.text, &saved.video);
@@ -137,7 +153,12 @@ mod tests {
 		assert!(!Settings::load(Some(path.clone())).retina_world(), "the world at the screen's size by default");
 		let text = std::fs::read_to_string(&path).expect("the file") + "render.retina_world = true\n";
 		std::fs::write(&path, text).expect("write");
-		assert!(Settings::load(Some(path)).retina_world());
+		assert!(Settings::load(Some(path.clone())).retina_world());
+		assert_eq!(Settings::load(Some(path.clone())).chosen_data_dir(), None, "none chosen yet");
+		let chosen = Path::new("/games/Battle Brothers/data");
+		Settings::load(Some(path.clone())).keep_chosen_data_dir(chosen).expect("save");
+		assert_eq!(Settings::load(Some(path.clone())).chosen_data_dir().as_deref(), Some(chosen));
+		assert!(Settings::load(Some(path)).retina_world(), "the rest kept");
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }

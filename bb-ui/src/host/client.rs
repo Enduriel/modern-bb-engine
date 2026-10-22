@@ -58,6 +58,9 @@ pub enum Event {
 	Closed,
 	/// The renderer process died.
 	RendererGone(String),
+	/// The folder dialog ([`UiHost::choose_folder`](super::UiHost::choose_folder)) closed:
+	/// the folder chosen, or `None` (cancelled, or no dialog could open).
+	FolderChosen(Option<std::path::PathBuf>),
 }
 
 /// State shared between the CEF threads and the game thread.

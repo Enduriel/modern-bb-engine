@@ -608,3 +608,128 @@ fn bb_says_so_when_chromium_cant_paint_on_the_gpu() {
 		run.stderr
 	);
 }
+
+/// An empty folder in the run's folder: where `BB_STEAM_DIR` points to hide this
+/// machine's Steam install from `bb` (there's no Steam in it). The tests give `bb` an
+/// empty `BB_DATA_DIR` too, and a settings file of their own (no folder chosen before).
+fn no_steam(dir: &Path) -> String {
+	let none = dir.join("no_steam");
+	std::fs::create_dir_all(&none).expect("an empty folder");
+	none.to_string_lossy().into_owned()
+}
+
+/// A stand-in for `tool` on `bb`'s `PATH` (in the run's folder `bin`) that writes its
+/// arguments to `<tool>.args` there and prints `prints`: the message box's and the folder
+/// dialog's tools, answered without a display. Returns the `PATH` to give `bb`.
+#[cfg(target_os = "linux")]
+fn fake_tool(dir: &Path, tool: &str, prints: &str) -> String {
+	let bin = dir.join("bin");
+	std::fs::create_dir_all(&bin).unwrap();
+	let args = bin.join(format!("{tool}.args"));
+	let script = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nprintf '%s\\n' '{prints}'\n", args.display());
+	let path = bin.join(tool);
+	std::fs::write(&path, script).unwrap();
+	std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+	format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default())
+}
+
+/// The game's folder (above its data folder), for the folder dialog to answer.
+fn game_folder() -> String {
+	Path::new(STEAM_DATA_DIR).parent().expect("the game's folder").to_string_lossy().into_owned()
+}
+
+/// With no install to be found (no Steam, nothing chosen before), `bb` with the page says
+/// so in a window of its own, with where it looked, and waits for the player.
+#[cfg(feature = "ui")]
+#[test]
+fn bb_asks_for_the_game_folder_when_it_finds_none() {
+	let dir = run_dir("not_found");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let none = no_steam(&dir);
+	// The page's text, through its console (its errors reach stderr).
+	let report = "console.error('page says: ' + document.querySelector('h1').textContent + ' / ' + document.getElementById('bb-looked').textContent)";
+	let args = ["--settings", settings.to_str().unwrap(), "--at-page", "5", report, "--shot", "10", shot.to_str().unwrap()];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &[("BB_STEAM_DIR", &none), ("BB_DATA_DIR", "")]) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	assert!(run.stderr.contains("Battle Brothers wasn't found. Looked in:"), "{}", run.stderr);
+	let page = format!("page says: Battle Brothers wasn't found / Steam in {none}: not installed there");
+	assert!(run.stderr.contains(&page), "{page}:\n{}", run.stderr);
+	assert!(shot.exists(), "the window's shot");
+	let html = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
+	assert!(html.contains("wasn't found"), "{html}");
+}
+
+/// The player's folder: one without the game is refused on the page, with why; the one
+/// the folder dialog picks (its `win32` folder, where the original's exe is) is kept in
+/// the settings, and `bb` starts again and plays it, at the main menu. The dialog is a
+/// stand-in for zenity, Linux's.
+#[cfg(all(feature = "ui", target_os = "linux"))]
+#[test]
+fn the_folder_the_player_picks_is_checked_kept_and_played() {
+	let dir = run_dir("picked");
+	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
+	let none = no_steam(&dir);
+	let win32 = format!("{}/win32", game_folder());
+	let path = fake_tool(&dir, "zenity", &win32);
+	// Each step only on the not-found page: the started game runs them too, in its own.
+	let on_page = |js: &str| format!("if (window.bbInstall) {{ {js} }}");
+	let wrong = on_page(&format!(
+		"document.getElementById('bb-path').value = {:?}; document.getElementById('bb-use').click();",
+		dir.display().to_string()
+	));
+	let refused = on_page("console.error('refused: ' + document.getElementById('bb-error').textContent);");
+	let browse = on_page("document.getElementById('bb-browse').click();");
+	let report = r#"::logWarning("started at the " + (::RootState.get("MainMenuState") != null ? "menu" : "world"));"#;
+	let args = [
+		"--settings", settings.to_str().unwrap(),
+		"--at-page", "5", &wrong,
+		"--at-page", "10", &refused,
+		"--at-page", "15", &browse,
+		"--at", "30", report,
+		"--shot", "40", shot.to_str().unwrap(),
+	];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &[("BB_STEAM_DIR", &none), ("BB_DATA_DIR", ""), ("PATH", &path)]) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	assert!(run.stderr.contains(&format!("refused: {} isn't Battle Brothers' folder", dir.display())), "{}", run.stderr);
+	let asked = std::fs::read_to_string(dir.join("bin").join("zenity.args")).expect("the folder dialog was opened");
+	assert!(asked.contains("--directory"), "{asked}");
+	assert!(run.stderr.contains("install: the game's data: ") && run.stderr.contains("(from the folder chosen earlier)"), "{}", run.stderr);
+	assert!(run.stderr.contains("started at the menu"), "{}", run.stderr);
+	let kept = std::fs::read_to_string(&settings).expect("the settings");
+	assert!(kept.contains(&format!("install.data_dir = {}", STEAM_DATA_DIR)), "{kept}");
+}
+
+/// Without the page (a developer's build) there's no window to ask in: `bb` ends with
+/// where it looked and how to name the folder, in the message box too.
+#[cfg(all(not(feature = "ui"), target_os = "linux"))]
+#[test]
+fn bb_without_the_ui_says_where_it_looked() {
+	let dir = run_dir("not_found_plain");
+	let none = no_steam(&dir);
+	let path = fake_tool(&dir, "zenity", "");
+	let env = [("BB_STEAM_DIR", none.as_str()), ("BB_DATA_DIR", ""), ("PATH", path.as_str()), ("BB_ERROR_DIALOG", "1")];
+	let settings = dir.join("settings.cfg");
+	let Some(run) = run_bb_with(&dir, (1280, 720), &["--settings", settings.to_str().unwrap()], &env) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	assert!(run.stderr.contains("Battle Brothers wasn't found. Looked in:"), "{}", run.stderr);
+	let shown = std::fs::read_to_string(dir.join("bin").join("zenity.args")).expect("the message box was shown");
+	assert!(shown.contains("--error") && shown.contains("Start bb with --data"), "{shown}");
+}
+
+/// Any error that ends the start reaches the player in the message box, not only the
+/// log: here `--data` naming a folder without the game.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_start_is_shown_in_a_message_box() {
+	let dir = run_dir("bad_data");
+	let path = fake_tool(&dir, "zenity", "");
+	let env = [("PATH", path.as_str()), ("BB_ERROR_DIALOG", "1")];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &["--data", dir.to_str().unwrap()], &env) else { return };
+	assert_eq!(run.status, "1", "{}", run.stderr);
+	let what = "--data names no Battle Brothers install";
+	assert!(run.stderr.contains(what), "{}", run.stderr);
+	let shown = std::fs::read_to_string(dir.join("bin").join("zenity.args")).expect("the message box was shown");
+	assert!(shown.contains("--error") && shown.contains(what), "{shown}");
+	let html = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
+	assert!(html.contains(what), "{html}");
+}

@@ -10,21 +10,29 @@ use std::{fmt, io};
 use squirrel_bb::{Engine, GameSettings, NativeConfig, installed_dlc};
 
 use crate::assets::{load_fog_stamp, load_sprites};
+use crate::install;
 use crate::mounts::Mounts;
 use crate::probe_aside;
 use crate::{DatScriptSource, ScriptCache};
 
-/// The game's data directory: `$BB_DATA_DIR`, else that of a default Linux Steam
-/// install. Read once. A stopgap until a platform layer finds installs.
+/// The game's data directory: `$BB_DATA_DIR`, else that of this machine's Steam install
+/// ([`install::steam_data_dir`]), else [`NO_INSTALL`] (a path that doesn't exist, so a
+/// test checking for it says why it can't run). Looked up once.
 pub static STEAM_DATA_DIR: &EnvDir = &STEAM_DATA;
-static STEAM_DATA: EnvDir = EnvDir::new("BB_DATA_DIR", "~/.local/share/Steam/steamapps/common/Battle Brothers/data");
+static STEAM_DATA: EnvDir = EnvDir::new(install::DATA_DIR_VAR, || {
+	install::steam_data_dir().map_or_else(|| NO_INSTALL.to_string(), |dir| dir.to_string_lossy().into_owned())
+});
+
+/// [`STEAM_DATA_DIR`] on a machine without the game: no Steam install, and no
+/// `BB_DATA_DIR`.
+pub const NO_INSTALL: &str = "<no Battle Brothers install: Steam has none, and BB_DATA_DIR is unset>";
 
 /// Saves the original wrote, for the tests of loading and writing its format: its
 /// campaigns as capture probes saved them, with its own dumps of their state (see the
 /// README there): `$BB_ORIGINAL_SAVES` (unset: a path that doesn't exist). Not in the
 /// repository (each save is ~6.7 MB); tests skip without them.
 pub static ORIGINAL_SAVES_DIR: &EnvDir = &ORIGINAL_SAVES;
-static ORIGINAL_SAVES: EnvDir = EnvDir::new("BB_ORIGINAL_SAVES", "<BB_ORIGINAL_SAVES is unset>");
+static ORIGINAL_SAVES: EnvDir = EnvDir::new("BB_ORIGINAL_SAVES", || "<BB_ORIGINAL_SAVES is unset>".to_string());
 
 /// Says a test may skip when this machine lacks what it needs (the Steam install, a
 /// mod, a GPU, gamescope): `BB_ALLOW_SKIPS=1`, for machines without them. Unset, a test
@@ -70,16 +78,16 @@ pub fn skip_case(name: &str, why: impl fmt::Display) -> std::process::ExitCode {
 }
 
 /// A directory the environment can override: the variable's value if it's set, else a
-/// default; read on first use. Usable where the `&str` constants it replaced were
+/// default (made on first use); read on first use. Usable where the `&str` constants it replaced were
 /// (`Path::new`, `PathBuf::from`, formatting).
 pub struct EnvDir {
 	var: &'static str,
-	default: &'static str,
+	default: fn() -> String,
 	path: OnceLock<String>,
 }
 
 impl EnvDir {
-	const fn new(var: &'static str, default: &'static str) -> Self {
+	const fn new(var: &'static str, default: fn() -> String) -> Self {
 		EnvDir { var, default, path: OnceLock::new() }
 	}
 
@@ -87,7 +95,7 @@ impl EnvDir {
 		self.path.get_or_init(|| {
 			std::env::var_os(self.var)
 				.and_then(|v| v.into_string().ok())
-				.unwrap_or_else(|| self.default.to_string())
+				.unwrap_or_else(self.default)
 		})
 	}
 }

@@ -46,6 +46,16 @@ fn a_manifest_for_another_folder_is_not_this_install() {
 	assert!(steam_install(&data).is_err());
 }
 
+/// A macOS app bundle's data, in the game's folder in the library, is the install's.
+#[test]
+fn a_mac_app_bundles_data_is_steam() {
+	let data = library("mac", Some(MANIFEST));
+	let bundled = data.parent().unwrap().join("Battle Brothers.app/Contents/Resources/data");
+	fs::create_dir_all(&bundled).unwrap();
+	let install = steam_install(&bundled).expect("a Steam install");
+	assert!(install.game_dir.ends_with("common/Battle Brothers"), "{}", install.game_dir.display());
+}
+
 /// A GOG install (no steamapps/common around it) is never Steam's.
 #[test]
 fn a_gog_install_is_not() {
@@ -65,18 +75,17 @@ fn skip(what: &str) {
 	}
 }
 
-/// The developer's real Steam install, when there is one (read-only: only its folders
-/// and manifest are looked at).
+/// The real Steam install on this host, as `steamlocate` finds it (read-only: only its
+/// folders and manifest are looked at).
 #[test]
 fn the_real_steam_install_is_steam() {
-	let Some(home) = std::env::var_os("HOME") else {
-		skip("HOME");
+	let found = steamlocate::SteamDir::locate().ok().and_then(|steam| {
+		let (game, library) = steam.find_app(365_360).ok()??;
+		Some(library.resolve_app_dir(&game).join("data"))
+	});
+	let Some(data) = found.filter(|data| data.is_dir()) else {
+		skip("no Steam install of the game on this machine");
 		return;
 	};
-	let data = Path::new(&home).join(".local/share/Steam/steamapps/common/Battle Brothers/data");
-	if !data.is_dir() {
-		skip(&format!("no Steam install at {}", data.display()));
-		return;
-	}
 	steam_install(&data).expect("the Steam install");
 }

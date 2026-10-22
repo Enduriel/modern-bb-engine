@@ -16,6 +16,7 @@
 //!   * [`probe_aside`] — the installed mods and storages while a probe run holds them aside
 //!   * [`mod_corpus`] — the pinned mod corpus the corpus tests mount
 //!   * [`heap`] — the C heap's usage, for the memory tests and tools
+//!   * [`install`] — finding the player's copy of the game (overrides, the chosen folder, Steam)
 //!   * [`script_profile`] — reports of where the scripts' time goes, by function and mod
 //!
 //! Next: the 3.0.4 → current-version bytecode transcoder (the game ships Squirrel
@@ -29,6 +30,7 @@ pub mod files;
 pub mod game_queue;
 pub mod harness;
 pub mod heap;
+pub mod install;
 pub mod log_files;
 pub mod mod_corpus;
 pub mod mounts;

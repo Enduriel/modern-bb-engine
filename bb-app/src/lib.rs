@@ -4,6 +4,7 @@
 
 pub mod clipboard;
 pub mod display;
+pub mod failure;
 #[cfg(feature = "ui")]
 pub mod frame_scenes;
 pub mod fps;
@@ -11,6 +12,7 @@ pub mod front;
 pub mod game;
 pub mod game_cursor;
 pub mod heap_profile;
+pub mod install;
 pub mod keys;
 pub mod logs;
 pub mod pacing;
