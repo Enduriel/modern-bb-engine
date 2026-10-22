@@ -192,6 +192,28 @@ fn draws_tiled_backgrounds_as_the_original(session: &UiSession) -> Result<(), St
 	if !reversed {
 		differences.push("card: menu: its picture's rows aren't drawn in reverse".into());
 	}
+	// The marks follow the page's changes: the card hidden and shown again (as a screen
+	// is) keeps them, and two boxes trading classes trade them.
+	let marks = |session: &UiSession| -> Result<Json, String> {
+		session.eval("Array.prototype.map.call(document.querySelectorAll('#bb-tile-card > div'), function (e) { return e.hasAttribute('data-bb-tiled'); })")
+	};
+	let before = marks(session)?;
+	session.eval("document.getElementById('bb-tile-card').style.display = 'none'; true")?;
+	session.run_frames(0.5)?;
+	session.eval("document.getElementById('bb-tile-card').style.display = ''; true")?;
+	session.run_frames(0.5)?;
+	if marks(session)? != before {
+		differences.push("card: hidden and shown again, its boxes' marks changed".into());
+	}
+	session.eval(
+		"(function () { var card = document.getElementById('bb-tile-card'); window.__menu = card.querySelector('.bb-tile-menu'); \
+		window.__exact = card.querySelector('.bb-tile-exact'); __menu.className = 'bb-tile-exact'; __exact.className = 'bb-tile-menu'; return true; })()",
+	)?;
+	session.run_frames(0.5)?;
+	let traded = session.eval("[__menu.hasAttribute('data-bb-tiled'), __exact.hasAttribute('data-bb-tiled')]")?;
+	if traded != Json::Array(vec![Json::Bool(false), Json::Bool(true)]) {
+		differences.push(format!("card: menu and exact traded classes, but not marks ({traded:?})"));
+	}
 	session.eval("document.getElementById('bb-tile-card').remove(); document.getElementById('bb-tile-card-style').remove(); true")?;
 
 	let rows = golden

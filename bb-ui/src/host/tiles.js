@@ -23,6 +23,14 @@
 // The marks follow the boxes: the ones with a background image are watched for size
 // changes, and checked again as the page changes them.
 //
+// Cheaply, for screens of thousands of boxes (the character screen's stash): a box is
+// only looked at when a rule that sets a background image may apply to it (by its
+// selector's last id, class or tag, `mayHaveImage`); it is checked after the frame's
+// own layout, when the size observer reports it (a box the page changed is observed
+// anew for that), never by working out the page's style and layout early; a box
+// without an area is left until it has one (it draws no background); and a batch of
+// checks reads every box before it changes any mark.
+//
 // What scripts see: a marked box's computed `background-image` names the turned
 // picture and the box carries the mark; style sheets hold the twins. Not emulated:
 // images set in `style` attributes (no vanilla or mod script sets one), on
@@ -118,6 +126,121 @@
 		}
 	}
 
+	// ---- Which boxes a rule with a background image may apply to. ----
+
+	// The ids (`#a`), classes (`.a`) and tags (`a`) the last part of a selector that sets
+	// a background image names; `all`: some such selector names none of them (`*`,
+	// `[open]`, `:hover`), or couldn't be read, so every box may have one.
+	var imageKeys = { ids: new Set(), classes: new Set(), tags: new Set(), all: false };
+
+	// The classes named anywhere in a selector that sets a background image: a box's
+	// class changing can change a background only by one of them (`anyClass`: a
+	// selector reads the class attribute some other way, `[class*=…]`).
+	var imageClasses = { names: new Set(), anyClass: false };
+	var CLASS_NAME = /\.([\w\u0080-\uffff-]+)/g;
+
+	// A `style` that names a background or sets a custom property (which a rule's
+	// `var()` may read).
+	var BACKGROUND_STYLE = /background|--/i;
+
+	// What a selector's subject (its last compound selector) must be: `#id`, `.class`
+	// or a tag, or null for none of those outside parentheses and brackets.
+	function subjectKey(selector) {
+		if (selector.indexOf('\\') !== -1 || selector.indexOf('|') !== -1) {
+			return null;
+		}
+		var flat = '';
+		var depth = 0, quote = null;
+		for (var i = 0; i < selector.length; i++) {
+			var c = selector.charAt(i);
+			if (quote !== null) {
+				if (c === quote) {
+					quote = null;
+				}
+			} else if (c === '"' || c === "'") {
+				quote = c;
+			} else if (c === '(' || c === '[') {
+				depth++;
+			} else if (c === ')' || c === ']') {
+				depth--;
+				flat += depth === 0 ? ':' : '';
+			} else if (depth === 0) {
+				flat += c;
+			}
+		}
+		var parts = flat.trim().split(/\s*[\s>+~]\s*/);
+		var subject = parts[parts.length - 1];
+		var key = /#([\w\u0080-\uffff-]+)/.exec(subject) || /\.([\w\u0080-\uffff-]+)/.exec(subject);
+		if (key !== null) {
+			return key[0];
+		}
+		key = /^[a-zA-Z][\w-]*/.exec(subject);
+		return key === null ? null : key[0].toLowerCase();
+	}
+
+	function noteImages(parent) {
+		var rules = parent.cssRules;
+		for (var i = 0; i < rules.length; i++) {
+			var rule = rules[i];
+			if (rule.type === CSSRule.STYLE_RULE) {
+				var value = rule.style.getPropertyValue('background-image');
+				if (value === '' || value === 'none') {
+					continue;
+				}
+				selectors(rule.selectorText).forEach(function (s) {
+					if (s === '' || PSEUDO_ELEMENT.test(s)) {
+						return;
+					}
+					if (s.indexOf('\\') !== -1 || /\[\s*class/i.test(s)) {
+						imageClasses.anyClass = true;
+					}
+					var named;
+					var unquoted = s.replace(/"[^"]*"|'[^']*'/g, '');
+					while ((named = CLASS_NAME.exec(unquoted)) !== null) {
+						imageClasses.names.add(named[1]);
+					}
+					var key = subjectKey(s);
+					if (key === null) {
+						imageKeys.all = true;
+					} else if (key.charAt(0) === '#') {
+						imageKeys.ids.add(key.slice(1));
+					} else if (key.charAt(0) === '.') {
+						imageKeys.classes.add(key.slice(1));
+					} else {
+						imageKeys.tags.add(key);
+					}
+				});
+			} else if (rule.cssRules) {
+				noteImages(rule);
+			} else if (rule.type === CSSRule.IMPORT_RULE) {
+				try {
+					noteImages(rule.styleSheet);
+				} catch (e) {
+					imageKeys.all = true;
+				}
+			}
+		}
+	}
+
+	// Whether a rule with a background image (or the box's own `style`) may give
+	// `element` one.
+	function mayHaveImage(element) {
+		if (imageKeys.all) {
+			return true;
+		}
+		if (imageKeys.tags.has(element.localName.toLowerCase()) || (element.id && imageKeys.ids.has(element.id))) {
+			return true;
+		}
+		var classes = element.classList;
+		for (var i = 0; i < classes.length; i++) {
+			if (imageKeys.classes.has(classes[i])) {
+				return true;
+			}
+		}
+		var own = element.getAttribute('style');
+		return own !== null && BACKGROUND_STYLE.test(own);
+	}
+
 	var seenSheets = new WeakSet();
 	function fixSheets() {
 		var fixed = false;
@@ -133,6 +256,11 @@
 			}
 			seenSheets.add(sheet);
 			fixRules(sheet);
+			try {
+				noteImages(sheet);
+			} catch (e) {
+				imageKeys.all = true;
+			}
 			fixed = true;
 		}
 		return fixed;
@@ -158,7 +286,7 @@
 				sizes.set(url, [image.naturalWidth, image.naturalHeight]);
 				var those = waiting.get(url);
 				waiting.delete(url);
-				those.forEach(update);
+				those.forEach(watch);
 			};
 			image.src = url;
 		}
@@ -241,8 +369,7 @@
 	// first tile doesn't reach across the border box. Coherent measures against the
 	// border box whatever `background-clip` says (probed: a tile that covers the padding
 	// box inside a border still draws upside down).
-	function tiles(element) {
-		var style = getComputedStyle(element);
+	function tiles(element, style) {
 		var match = /url\((['"]?)(.*?)\1\)/.exec(first(style.backgroundImage));
 		var repeat = repeats(first(style.backgroundRepeat));
 		if (match === null || !(repeat[0] || repeat[1])) {
@@ -265,49 +392,119 @@
 			(repeat[1] && !(y <= e && y + tile[1] >= area[3] - e));
 	}
 
-	function update(element) {
-		var tiled = element.isConnected && tiles(element);
-		if (tiled !== element.hasAttribute(FLAG)) {
+	// Boxes with a background image, watched for size changes (which report each box
+	// once it has a size, after layout and before it is painted).
+	var watched = new WeakSet();
+
+	// The marks a batch of checks decided, by box: set (true) or taken off (false).
+	// Changed once the batch has read what it needs, so the page's style and layout are
+	// worked out once a batch rather than again after every box's mark.
+	function mark(marks) {
+		marks.forEach(function (tiled, element) {
 			if (tiled) {
 				element.setAttribute(FLAG, '');
 			} else {
 				element.removeAttribute(FLAG);
 			}
+		});
+	}
+
+	function unwatch(element, marks) {
+		if (watched.has(element)) {
+			watched.delete(element);
+			resizes.unobserve(element);
+		}
+		if (element.hasAttribute(FLAG)) {
+			marks.set(element, false);
 		}
 	}
 
-	// Boxes with a background image, watched for size changes (which report each box
-	// once it has a size, after layout and before it is painted).
-	var watched = new WeakSet();
-	var resizes = new ResizeObserver(function (entries) {
-		for (var i = 0; i < entries.length; i++) {
-			update(entries[i].target);
+	// Check a watched box's mark. One without an area (hidden, or not laid out) draws no
+	// background, so it keeps its mark until it has one: its size changes then.
+	function check(element, marks) {
+		if (!element.isConnected || !(element.offsetWidth > 0 && element.offsetHeight > 0)) {
+			return;
 		}
+		var style = getComputedStyle(element);
+		if (style.backgroundImage.indexOf('url(') === -1) {
+			unwatch(element, marks);
+			return;
+		}
+		var tiled = tiles(element, style);
+		if (tiled !== element.hasAttribute(FLAG)) {
+			marks.set(element, tiled);
+		}
+	}
+
+	// Every check runs here, after the frame's layout and before its paint: the boxes'
+	// styles and sizes are worked out already, so reading them costs little.
+	var resizes = new ResizeObserver(function (entries) {
+		var marks = new Map();
+		for (var i = 0; i < entries.length; i++) {
+			check(entries[i].target, marks);
+		}
+		mark(marks);
 	});
 
-	function consider(element) {
-		if (getComputedStyle(element).backgroundImage.indexOf('url(') === -1) {
-			if (watched.has(element)) {
-				watched.delete(element);
-				resizes.unobserve(element);
-			}
-			if (element.hasAttribute(FLAG)) {
-				element.removeAttribute(FLAG);
-			}
-		} else if (!watched.has(element)) {
-			watched.add(element);
-			resizes.observe(element);
+	// Have `element` checked after the next frame's layout (if it has a size then): a
+	// box observed anew is reported once it has one.
+	function watch(element) {
+		if (watched.has(element)) {
+			resizes.unobserve(element);
 		} else {
-			update(element);
+			watched.add(element);
+		}
+		resizes.observe(element);
+	}
+
+	// A box the page changed: watched (and so checked) if a rule may give it a
+	// background image.
+	function consider(element, marks) {
+		if (mayHaveImage(element)) {
+			watch(element);
+		} else if (watched.has(element) || element.hasAttribute(FLAG)) {
+			unwatch(element, marks);
 		}
 	}
 
-	function considerAll(root) {
-		consider(root);
+	function considerAll(root, marks) {
+		consider(root, marks);
 		var all = root.getElementsByTagName('*');
 		for (var i = 0; i < all.length; i++) {
-			consider(all[i]);
+			consider(all[i], marks);
 		}
+	}
+
+	// Whether a box's class changing (from the record's old value to what it is now)
+	// can change a background in it or below it: a class some rule with a background
+	// image names came or went. Any other change shows as before.
+	function classesMatter(record) {
+		if (imageKeys.all || imageClasses.anyClass) {
+			return true;
+		}
+		var before = (record.oldValue || '').split(/\s+/).filter(function (name) { return name !== ''; });
+		var now = record.target.classList;
+		for (var i = 0; i < before.length; i++) {
+			if (imageClasses.names.has(before[i]) && !now.contains(before[i])) {
+				return true;
+			}
+		}
+		for (var j = 0; j < now.length; j++) {
+			if (imageClasses.names.has(now[j]) && before.indexOf(now[j]) === -1) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Whether one of `roots` holds `element`, which it then covers.
+	function inside(element, roots) {
+		for (var node = element.parentNode; node !== null; node = node.parentNode) {
+			if (roots.has(node)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// A box taken out of the page stops being watched (the page may put it back).
@@ -342,22 +539,35 @@
 					}
 				}
 			} else if (record.attributeName === 'class') {
-				roots.add(record.target);
-			} else {
+				if (classesMatter(record)) {
+					roots.add(record.target);
+				}
+			} else if (
+				// A `style` that names no background before or after only changes the
+				// box's size or whether it shows, which its size changing reports.
+				BACKGROUND_STYLE.test(record.oldValue || '') || BACKGROUND_STYLE.test(record.target.getAttribute('style') || '')) {
 				boxes.add(record.target);
 			}
 		}
+		var marks = new Map();
 		roots.forEach(function (root) {
-			if (root.isConnected) {
-				considerAll(root);
+			if (root.isConnected && !inside(root, roots)) {
+				considerAll(root, marks);
 			}
 		});
 		boxes.forEach(function (element) {
 			if (element.isConnected) {
-				consider(element);
+				consider(element, marks);
 			}
 		});
+		mark(marks);
 	});
+
+	function considerPage() {
+		var marks = new Map();
+		considerAll(document.documentElement, marks);
+		mark(marks);
+	}
 
 	function start() {
 		fixSheets();
@@ -365,16 +575,17 @@
 			subtree: true,
 			childList: true,
 			attributes: true,
+			attributeOldValue: true,
 			attributeFilter: ['class', 'style']
 		});
-		considerAll(document.documentElement);
+		considerPage();
 	}
 
 	// A style sheet that arrives later (mods add theirs) can give any box a background.
 	document.addEventListener('load', function (e) {
 		if (e.target && (e.target.tagName === 'LINK' || e.target.tagName === 'STYLE') && fixSheets() &&
 			document.readyState !== 'loading') {
-			considerAll(document.documentElement);
+			considerPage();
 		}
 	}, true);
 	document.addEventListener('DOMContentLoaded', start);
