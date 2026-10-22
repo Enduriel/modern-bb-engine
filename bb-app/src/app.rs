@@ -157,6 +157,8 @@ struct Running {
 	stats_unchanged: u32,
 	/// The frames the UI page had rested through at the last log.
 	stats_rested: u64,
+	/// The page's copy stats at the last log.
+	stats_copies: bb_render::UiCopyStats,
 	/// Since the last log, the frames that drew sprites without their atlas (still
 	/// loading), and those sprites.
 	stats_waiting: (u32, usize),
@@ -195,6 +197,8 @@ struct Running {
 struct FrameTimes {
 	out: std::io::BufWriter<std::fs::File>,
 	wait_gpu: bool,
+	/// The page's copy stats at the last line.
+	copies: bb_render::UiCopyStats,
 }
 
 impl FrameTimes {
@@ -205,6 +209,7 @@ impl FrameTimes {
 		Some(FrameTimes {
 			out: std::io::BufWriter::new(file),
 			wait_gpu: std::env::var_os("BB_FRAME_TIMES_GPU").is_some_and(|v| v != "0"),
+			copies: bb_render::UiCopyStats::default(),
 		})
 	}
 
@@ -212,8 +217,11 @@ impl FrameTimes {
 	/// the camera's zoom, the quads drawn, then each span, all in milliseconds.
 	/// `t` is the engine's real time at the frame, the clock scripts read
 	/// (`Time.getRealTimeF`), so a script's log lines can mark phases in the file. Then
-	/// the counters, as `name#=N`.
-	fn write(&mut self, frame: u64, interval: f64, work: Duration, zoom: f32, quads: usize, t: f64) {
+	/// the counters, as `name#=N`. Last, what the page's paints cost since the last
+	/// line, on the browser's thread (`copies`, the page's stats so far): `page_paints#`,
+	/// `page_copy` (the paint callbacks' time: importing, copying and waiting for the
+	/// GPU), `page_imports#`, and the reads back (`page_reads#`, `page_read`).
+	fn write(&mut self, frame: u64, interval: f64, work: Duration, zoom: f32, quads: usize, t: f64, copies: bb_render::UiCopyStats) {
 		use std::io::Write;
 		let ms = |d: Duration| d.as_secs_f64() * 1000.0;
 		let mut line = format!("{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads} t={t:.4}", ms(work));
@@ -222,6 +230,18 @@ impl FrameTimes {
 		}
 		for (name, n) in bb_render::frame_timing::take_counts() {
 			line.push_str(&format!(" {}#={n}", name.replace(' ', "_")));
+		}
+		let page = copies.since(&self.copies);
+		self.copies = copies;
+		if page.paints + page.reads + page.failures > 0 {
+			line.push_str(&format!(
+				" page_paints#={} page_copy={:.3} page_imports#={} page_reads#={} page_read={:.3}",
+				page.paints,
+				ms(page.copy + page.import),
+				page.imports,
+				page.reads,
+				ms(page.read_time)
+			));
 		}
 		let _ = writeln!(self.out, "{line}");
 	}
@@ -418,6 +438,7 @@ impl App {
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
 			stats_rested: 0,
+			stats_copies: bb_render::UiCopyStats::default(),
 			stats_waiting: (0, 0),
 			shown_cursor: None,
 			system_cursor: !self.settings.software_cursor(),
@@ -679,6 +700,20 @@ impl Running {
 					the UI page rested through {rested}"
 				);
 			}
+			let copies = self.game.front().copy_stats();
+			let page = copies.since(&std::mem::replace(&mut self.stats_copies, copies));
+			if page.paints > 0 || page.reads > 0 {
+				let each = |time: Duration, n: u64| time.as_secs_f64() * 1000.0 / n.max(1) as f64;
+				eprintln!(
+					"page: {} paints, {:.2} ms each in the paint callback (copying, waiting for the GPU), {} opened; \
+					{} reads back, {:.2} ms each",
+					page.paints,
+					each(page.copy + page.import, page.paints),
+					page.imports,
+					page.reads,
+					each(page.read_time, page.reads)
+				);
+			}
 			self.next_stats = Some(now + Duration::from_secs(5));
 		}
 		let cursor_span = bb_render::frame_timing::span("follow cursor");
@@ -710,7 +745,7 @@ impl Running {
 			self.paced(now, false);
 			if let Some(times) = &mut self.frame_times {
 				let t = self.game.real_seconds();
-				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t);
+				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t, self.game.front().copy_stats());
 			}
 			if self.next_stats.is_some() {
 				self.stats_frames.0 += 1;
@@ -783,7 +818,7 @@ impl Running {
 			self.gpu.take_pass_times(|name, time| bb_render::frame_timing::add(name, time));
 			let zoom = self.game.world_zoom();
 			let t = self.game.real_seconds();
-			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads, t);
+			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads, t, self.game.front().copy_stats());
 		}
 		if self.next_stats.is_some() {
 			self.stats_frames.0 += 1;

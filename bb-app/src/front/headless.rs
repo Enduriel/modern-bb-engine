@@ -144,4 +144,9 @@ impl Front {
 	pub fn layer_bytes(&self) -> u64 {
 		0
 	}
+
+	/// No page, so no paints copied.
+	pub fn copy_stats(&self) -> bb_render::UiCopyStats {
+		bb_render::UiCopyStats::default()
+	}
 }

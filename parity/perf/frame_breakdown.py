@@ -17,7 +17,8 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
   (`/tmp/bb-probe-queue`); only its own processes are killed.
 - The scenes, in order: main menu; load (or the new campaign); the world map paused at
   zoom 1, zoomed out, panned at zoom 1 and zoomed out; running at 1x and 4x; a town;
-  the character screen; a full-view CSS fade injected into the page over the paused map;
+  the character screen; a full-view CSS fade injected into the page over the paused map; a full-view
+  repaint by the page's scripts every animation frame (`ui repaint`);
   a battle (its start, the player's turn idle, its menu open, the character screen open,
   the player's turn in a storm's rain, its menu open in the rain, AI turns). `--day SECS` adds a phase running at
   4x for SECS after the 4x one (28 s crosses a whole day: dusk and dawn).
@@ -82,6 +83,17 @@ FADE_ON = ("(() => { const d = document.createElement('div'); d.id = 'probe-fade
            "s.textContent = '@keyframes probefade { from { opacity: 0 } to { opacity: 0.8 } }'; "
            "document.head.appendChild(s); document.body.appendChild(d); return 1; })()")
 FADE_OFF = "(() => { for (const id of ['probe-fade', 'probe-fade-style']) document.getElementById(id)?.remove(); return 1; })()"
+# A full-view repaint from the page's main thread every animation frame: its colour and text
+# change, so each frame takes script, layout and raster (the fade above is the compositor's
+# alone), as a screen redrawn by its scripts or by hovering does.
+REPAINT_ON = ("(() => { const d = document.createElement('div'); d.id = 'probe-repaint'; "
+              "d.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:99999;pointer-events:none;"
+              "font:20px serif;color:#fff;overflow:hidden;opacity:0.5'; document.body.appendChild(d); let n = 0; "
+              "const step = () => { if (!document.getElementById('probe-repaint')) return; n++; "
+              "d.style.background = 'hsl(' + (n * 7 % 360) + ',40%,30%)'; "
+              "d.textContent = ('frame ' + n + ' ').repeat(400); requestAnimationFrame(step); }; "
+              "requestAnimationFrame(step); return 1; })()")
+REPAINT_OFF = "(() => { document.getElementById('probe-repaint')?.remove(); return 1; })()"
 
 
 def opt(args, name, default=None):
@@ -185,6 +197,12 @@ def build(args, rate):
         t.wait(0.5)
         t.phase("ui fade", secs)
         t.run_page(FADE_OFF)
+        t.wait(1)
+    if want("ui repaint"):
+        t.run_page(REPAINT_ON)
+        t.wait(0.5)
+        t.phase("ui repaint", secs)
+        t.run_page(REPAINT_OFF)
         t.wait(1)
     if want("battle"):
         t.run(ENGAGE)
