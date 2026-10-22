@@ -190,6 +190,14 @@ German and recording every shared object its processes mapped:
   `scripts/bundle.py --target x86_64-pc-windows-msvc` does the same with its pins
   (2026-10-21: the packaged `bb.exe` reached the main menu under Proton, and
   `bb.exe --version` ran).
+  `bb.exe` is a GUI program (`windows_subsystem`, in every build): double-clicked, no
+  console window opens behind the game. Run from a console it writes there (it attaches
+  to its parent's), and output redirected to a file or a pipe stays redirected, so
+  `bb.exe --version > out.txt` and the smoke check read it as before. A GUI program
+  doesn't hold the prompt: in cmd `start /wait bb.exe …`, in PowerShell
+  `bb.exe … | Out-Host` waits for it. CEF's child processes run `bb.exe` again, so they
+  are GUI programs too (no console of their own), and they end with bb, however bb ends
+  (a job object, `bb_app::win_process::job`).
   The package: `bb.exe` (19 MB, static C runtime: no Visual C++ runtime needed) beside
   every DLL and resource at the top of CEF's folder, `steam_api64.dll`, the English
   locale; 378.7 MiB, 170.7 MiB as `.zip` (made with `zip` on Linux). The packaged
