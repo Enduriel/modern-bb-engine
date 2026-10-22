@@ -59,19 +59,31 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 	// Behind the probes' games, which run in a headless gamescope too: two at once can
 	// hang one's teardown.
 	let _turn = bb_engine::game_queue::Ticket::wait(Duration::from_secs(3600)).expect("a turn for gamescope");
-	match start_bb(dir, (width, height), refresh, args, env) {
-		Started::Ran(run) => Some(run),
+	let run = match start_bb(dir, (width, height), refresh, args, env) {
+		Started::Ran(run) => run,
 		// Seen when a run's environment reached gamescope too: a software Vulkan driver
 		// chosen for `bb` (lavapipe) left gamescope no GPU it can drive. It no longer
 		// does, so this is unexplained: one more try, saying so, then a failure.
 		Started::NoBackend(log) => {
 			eprintln!("gamescope couldn't create its backend; trying once more. Its log:\n{log}");
 			match start_bb(dir, (width, height), refresh, args, env) {
-				Started::Ran(run) => Some(run),
+				Started::Ran(run) => run,
 				Started::NoBackend(log) | Started::Failed(log) => panic!("gamescope couldn't start bb, twice; its log:\n{log}"),
 			}
 		}
 		Started::Failed(log) => panic!("gamescope couldn't start bb; its log:\n{log}"),
+	};
+	assert_saves_in(dir, &run);
+	Some(run)
+}
+
+/// Every run keeps its saves in its own folder `dir`, never the player's (`bb`'s default
+/// is the original game's savegames folder, the player's real saves): each `saves:` line
+/// `bb` printed names a folder in `dir`, or memory.
+fn assert_saves_in(dir: &Path, run: &Run) {
+	for line in run.stderr.lines().filter_map(|l| l.strip_prefix("saves: ")) {
+		let ours = line.starts_with(&*dir.to_string_lossy()) || line.starts_with("in memory only");
+		assert!(ours, "a run's saves outside its folder {}: {line}\n{}", dir.display(), run.stderr);
 	}
 }
 
@@ -110,9 +122,11 @@ fn start_bb(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args:
 		// Its log goes to the run's folder, never the player's.
 		.arg("--logs")
 		.arg(dir.join("logs"))
+		// Vanilla unless the run asks for the mods (`--mods`, after this: the last wins).
+		.arg("--no-mods")
 		.args(args)
-		// Saves (and mods' storages) stay in the run's folder unless it names another:
-		// never the user's.
+		// Saves (and mods' storages) stay in the run's folder unless it names another
+		// there: never the player's (checked, `assert_saves_in`).
 		.env("BB_SAVES_DIR", dir.join("saves"))
 		// So a run that hangs can have its stacks read (`dump_stacks`).
 		.env("BB_ALLOW_TRACE", "1")
@@ -745,4 +759,68 @@ fn a_command_line_error_is_not_shown_in_a_message_box() {
 	assert_eq!(run.status, "1", "{}", run.stderr);
 	assert!(run.stderr.contains("unknown argument --no-such-argument"), "{}", run.stderr);
 	assert!(!shown.exists(), "no message box: {}", std::fs::read_to_string(&shown).unwrap_or_default());
+}
+
+/// A Steam library of the run's own (`lib/steamapps`) with the game in it: the install's
+/// archives and `gfx` linked into a data folder of its own (so it's this library's,
+/// not the real one's), and Steam's manifest for it. Returns the data folder and the
+/// library's `steamapps`. Its mods aren't linked: the run is vanilla.
+#[cfg(target_os = "linux")]
+fn fake_steam_library(dir: &Path) -> (PathBuf, PathBuf) {
+	let steamapps = dir.join("lib").join("steamapps");
+	let data = steamapps.join("common").join("Battle Brothers").join("data");
+	std::fs::create_dir_all(&data).expect("the fake library");
+	for entry in std::fs::read_dir(STEAM_DATA_DIR).expect("the install's data folder").flatten() {
+		let name = entry.file_name();
+		let text = name.to_string_lossy();
+		if (text.starts_with("data_") && text.ends_with(".dat")) || text == "gfx" {
+			std::os::unix::fs::symlink(entry.path(), data.join(&name)).expect("a link to the install's file");
+		}
+	}
+	let manifest = "\"AppState\"\n{\n\t\"appid\"\t\t\"365360\"\n\t\"installdir\"\t\t\"Battle Brothers\"\n}\n";
+	std::fs::write(steamapps.join("appmanifest_365360.acf"), manifest).expect("the fake manifest");
+	(data, steamapps)
+}
+
+/// With nothing naming a folder for the saves, `bb` keeps them in the original game's
+/// savegames folder, the player's own: on Linux, in the Proton prefix of the Steam
+/// install played (here a fake library's, never the real one). A campaign saved lands
+/// there. Without the prefix (the original never ran there), bb's own folder.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_saves_go_to_the_original_games_folder_by_default() {
+	let dir = run_dir("default_saves");
+	let (data, steamapps) = fake_steam_library(&dir);
+	let user = steamapps.join("compatdata/365360/pfx/drive_c/users/steamuser");
+	std::fs::create_dir_all(&user).expect("the fake prefix");
+	let savegames = user.join("Documents/Battle Brothers/savegames");
+	let settings = dir.join("settings.cfg");
+	let save = r#"local up = ("State" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::World.State.isInLoadingScreen();
+if (up && !("__saved" in getroottable())) { ::__saved <- true; ::World.State.saveCampaign("bb_probe_default_saves"); ::logWarning("saved the campaign"); ::World.State.m.MenuStack.popAll(true); ::World.State.exitGame(); }"#;
+	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__saved" in getroottable()) && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
+	let frames: Vec<String> = (1..=400).map(|i| (i * 30).to_string()).collect();
+	let mut args = vec!["--data", data.to_str().unwrap(), "--new-campaign", "--settings", settings.to_str().unwrap()];
+	for frame in &frames {
+		args.extend(["--at", frame.as_str(), save, "--at", frame.as_str(), quit]);
+	}
+	// `BB_SAVES_DIR` empty: as if not set (the harness sets it to the run's folder).
+	let xdg = dir.join("xdg").to_string_lossy().into_owned();
+	let env = [("BB_SAVES_DIR", ""), ("XDG_DATA_HOME", xdg.as_str())];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &env) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let line = format!("saves: {} (from the original game's savegames folder)", savegames.display());
+	assert!(run.stderr.contains(&line), "{line}:\n{}", run.stderr);
+	assert!(run.stderr.contains("saved the campaign"), "{}", run.stderr);
+	assert!(savegames.join("bb_probe_default_saves.sav").is_file(), "the save in the prefix's savegames folder");
+
+	// No prefix: bb's own folder in the user's data folder (here the run's).
+	std::fs::remove_dir_all(steamapps.join("compatdata")).expect("the fake prefix removed");
+	let shot = dir.join("shot.png");
+	let args = ["--data", data.to_str().unwrap(), "--settings", settings.to_str().unwrap(), "--shot", "20", shot.to_str().unwrap()];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &env) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	let own = Path::new(&xdg).join("battle-brothers-modern/savegames");
+	let line = format!("saves: {} (from bb's own folder: no Proton prefix", own.display());
+	assert!(run.stderr.contains(&line), "{line}:\n{}", run.stderr);
+	assert!(!steamapps.join("compatdata").exists(), "no prefix made");
 }

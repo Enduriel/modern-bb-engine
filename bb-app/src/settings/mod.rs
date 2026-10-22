@@ -92,6 +92,12 @@ impl Settings {
 		self.text.get(CHOSEN_DATA_DIR).filter(|v| !v.is_empty()).map(PathBuf::from)
 	}
 
+	/// The folder the player keeps the saves in (`saves.dir`; see `bb_app::saves`),
+	/// if the file names one.
+	pub fn saves_dir(&self) -> Option<PathBuf> {
+		self.text.get(crate::saves::SAVES_DIR).filter(|v| !v.is_empty()).map(PathBuf::from)
+	}
+
 	/// Keep `dir` as the data folder the player chose, in the file at once.
 	pub fn keep_chosen_data_dir(&mut self, dir: &Path) -> Result<(), String> {
 		let text = dir.to_str().ok_or_else(|| format!("{} isn't valid UTF-8, which the settings file needs", dir.display()))?;

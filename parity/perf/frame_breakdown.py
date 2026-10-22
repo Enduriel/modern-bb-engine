@@ -10,7 +10,7 @@ scripts' profile (`BB_SCRIPT_PROFILE`) or a Chromium trace of the page (`cdp_tra
         [--day SECS] [--clear-weather]
 
 - The modded run (the default) loads a copy of `--save` (default: the newest save in
-  bb's savegames folder) named `bb_probe_*`, with the install's mods; `--vanilla`
+  bb's own savegames folder, `battle-brothers-modern/savegames`) named `bb_probe_*`, with the install's mods; `--vanilla`
   starts a new campaign without mods. The saves themselves are only read.
 - Every bb runs inside `gamescope --backend headless` (nothing on the desktop), muted,
   under `systemd-run --user --scope -p CPUQuota=<quota>% -p MemoryMax=8G`, behind the shared game queue
@@ -295,8 +295,8 @@ def main():
     # rests between frames (bb's `BB_PAGE_REST`), so it would change what's measured.
     if "--trace" in args or "--cdp-memory" in args:
         bb += ["--devtools", str(DEVTOOLS)]
-    if not vanilla:
-        bb.append("--mods")
+    if vanilla:
+        bb.append("--no-mods")
     for frame, code in t.at:
         bb += ["--at", str(frame), code]
     for frame, code in t.at_page:

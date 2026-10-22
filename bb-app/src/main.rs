@@ -1,7 +1,7 @@
 //! Battle Brothers on the modern engine, in a window.
 //!
 //! ```text
-//! cargo run --release -p bb-app --features ui -- [--mods] [--new-campaign] [--seed SEED]
+//! cargo run --release -p bb-app --features ui -- [--no-mods] [--new-campaign] [--seed SEED]
 //!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
 //!     [--at-page FRAMES JS]...
@@ -32,18 +32,24 @@
 //!   Start does (the "early access" origin, on map seed `rust-engine-test` unless
 //!   `--seed` gives one; `--seed` alone implies it). Built without `ui` there is no menu
 //!   to click, so `bb` always does this.
-//! - `--mods` mounts the install's mods (every `.zip` in its data folder) over its
-//!   archives, as the original loads them: for the scripts, the UI page, the sprites
-//!   and the sounds.
+//! - The install's mods (every `.zip` in its data folder) are mounted over its archives,
+//!   as the original loads them: for the scripts, the UI page, the sprites and the
+//!   sounds. `--no-mods` (or `BB_NO_MODS=1`) plays vanilla; `--mods` is the default
+//!   (it was once needed, and still turns them on after a `--no-mods`: the last wins).
 //! - `--world-size` makes the campaigns' maps that many tiles across and down instead of
 //!   vanilla's 140x170 (vanilla's worldgen needs more than 130x130).
 //! - `--shot` saves the frame after that many frames and quits; `--at` runs the Squirrel
 //!   `CODE` after that many frames, and `--at-page` the `JS` in the UI page (for scripted
 //!   runs; the page's then runs after the frame's Squirrel).
 //! - `--settings` reads and keeps the settings in that file instead of the system's
-//!   place for them, and `--saves` keeps the saves in that folder instead of the
-//!   system's place for them (`battle-brothers-modern/savegames` in the user's data
-//!   folder; never the original's).
+//!   place for them.
+//! - The saves (and the mods' storages) are kept in the original game's own savegames
+//!   folder, so the player has the same saves in both: on Windows `Battle
+//!   Brothers\savegames` in their Documents, on Linux the same in the Proton prefix of
+//!   the Steam install played (if the original has run there). Otherwise (macOS, an
+//!   install that isn't Steam's on Linux) `battle-brothers-modern/savegames` in the
+//!   user's data folder. `--saves DIR`, else `BB_SAVES_DIR`, else `saves.dir` in the
+//!   settings names another folder. The log says which and why (see `bb_app::saves`).
 //! - The game logs to `log.html` in the original's format (and CEF to `cef.log`), in
 //!   `battle-brothers-modern/` in the user's data folder, or the folder `--logs` names;
 //!   the earlier sessions' logs are kept there in `logs/`, zipped. The terminal gets
@@ -126,7 +132,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArgumen
 		data_dir: PathBuf::new(),
 		// Without the page there's no menu to click.
 		start: if cfg!(feature = "ui") { Start::Menu } else { Start::NewCampaign(DEFAULT_SEED.to_string()) },
-		mods: false,
+		mods: std::env::var_os("BB_NO_MODS").is_none_or(|v| v == "0"),
 		shot: None,
 		mute: false,
 		world_size: None,
@@ -154,6 +160,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArgumen
 				}
 			}
 			"--mods" => options.mods = true,
+			"--no-mods" => options.mods = false,
 			"--mute" => options.mute = true,
 			"--fps" => options.fps = true,
 			"--no-steam" => steam.off = true,
@@ -265,6 +272,7 @@ fn main() -> ExitCode {
 			Err(bad @ NotFound::BadOverride(_)) => return Err(Failure::Arguments(bad.to_string())),
 		};
 		data_dir = Some(options.data_dir.clone());
+		options.saves = bb_app::saves::choose_for(options.saves.take(), &settings, &options.data_dir).map(|c| c.dir);
 		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
 		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
 		// environment): the stats logger, the renderer's and the page's start after it.

@@ -338,7 +338,7 @@ def run_menu(bb, files, prefix, logs):
 	(work / "logs").mkdir(parents=True, exist_ok=True)
 	shot = logs / "ui-menu.png"
 	shot.unlink(missing_ok=True)
-	args = [str(bb), "--no-steam", "--mute", "--data", windows_path(os.environ.get("BB_DATA_DIR", DEFAULT_DATA)),
+	args = [str(bb), "--no-steam", "--mute", "--no-mods", "--data", windows_path(os.environ.get("BB_DATA_DIR", DEFAULT_DATA)),
 		"--logs", windows_path(work / "logs"), "--settings", windows_path(work / "settings.cfg"),
 		"--saves", windows_path(work / "saves"), "--shot", "300", windows_path(shot)]
 	status, text = wine(files, prefix, args, bb.parent, logs / "ui-menu.log", 300)

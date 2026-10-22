@@ -34,7 +34,7 @@ pub struct Options {
 	pub data_dir: PathBuf,
 	/// The main menu, or a new campaign started at once (`--new-campaign`, `--seed`).
 	pub start: Start,
-	/// The install's mods mounted (`--mods`).
+	/// The install's mods mounted (unless `--no-mods`).
 	pub mods: bool,
 	/// Save the frame after this many frames as a PNG and quit (`--shot N PATH`).
 	pub shot: Option<(u64, PathBuf)>,
@@ -51,8 +51,8 @@ pub struct Options {
 	pub at: Vec<(u64, String)>,
 	/// JS to run in the UI page after so many frames (`--at-page FRAMES JS`).
 	pub at_page: Vec<(u64, String)>,
-	/// Where saves go (`--saves DIR`); the system's place for them otherwise
-	/// (`squirrel_bb::platform::saves_dir`), or memory without one.
+	/// Where saves go: `--saves DIR` from the command line, then the folder
+	/// `bb_app::saves` chose; memory without one.
 	pub saves: Option<PathBuf>,
 	/// Whether the install is Steam's (the scripts' `isSteamBuild()`).
 	pub steam_build: bool,
@@ -305,11 +305,7 @@ impl App {
 		#[cfg(feature = "ui")]
 		bb_app::requirements::check_gpu(&gpu)?;
 		let options = &self.options;
-		let saves = options.saves.clone().or_else(squirrel_bb::platform::saves_dir);
-		match &saves {
-			Some(dir) => eprintln!("saves: {}", dir.display()),
-			None => eprintln!("saves: in memory only (no folder for them)"),
-		}
+		let saves = options.saves.clone();
 		let boot = Boot {
 			data_dir: &options.data_dir,
 			start: options.start.clone(),

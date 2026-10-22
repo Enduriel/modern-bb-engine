@@ -21,7 +21,7 @@
 //!   both sides fought by the AI; best last, as the world isn't entered again), or
 //!   `none`.
 //!
-//! - `--save NAME` copies `NAME.sav` from `--saves` (default: bb's savegames folder) into
+//! - `--save NAME` copies `NAME.sav` from `--saves` (default: bb's own savegames folder) into
 //!   a scratch folder as `bb_probe_NAME.sav` and loads that; the original is only read.
 //!   `--new-campaign` starts a new campaign instead (no save needed).
 //! - Each phase steps 120 frames to settle, `--frames` (default 600) unprofiled to time

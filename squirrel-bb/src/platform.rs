@@ -45,14 +45,21 @@ pub fn original_save_fixtures() -> Option<PathBuf> {
 /// Our folder in the system's data folder.
 const FOLDER: &str = "battle-brothers-modern";
 
-/// Where this engine keeps its saves: `$BB_SAVES_DIR`, else `savegames` in our folder
-/// in the per-user data folder (`%APPDATA%` on Windows, `~/Library/Application
-/// Support` on macOS, the XDG data folder elsewhere). Never the original's savegames
-/// folder, whose game would list files it can't read.
+/// The saves' folder of this engine's own: `$BB_SAVES_DIR` (set and not empty), else
+/// [`own_saves_dir`]. Never the original's: `bb` itself defaults to the original's
+/// savegames folder where there is one (`bb_app::saves`); this is the tools' default.
 pub fn saves_dir() -> Option<PathBuf> {
 	std::env::var_os("BB_SAVES_DIR")
+		.filter(|v| !v.is_empty())
 		.map(PathBuf::from)
-		.or_else(|| Some(data_home()?.join(FOLDER).join("savegames")))
+		.or_else(own_saves_dir)
+}
+
+/// `savegames` in our folder in the per-user data folder (`%APPDATA%` on Windows,
+/// `~/Library/Application Support` on macOS, the XDG data folder elsewhere): where
+/// `bb` keeps the saves when the original has no savegames folder on this system.
+pub fn own_saves_dir() -> Option<PathBuf> {
+	Some(data_home()?.join(FOLDER).join("savegames"))
 }
 
 /// Where this engine keeps its log (`log.html`, CEF's `cef.log`, and `logs/` with the

@@ -21,6 +21,7 @@ pub mod platform;
 pub mod point_modes;
 pub mod procedural;
 pub mod requirements;
+pub mod saves;
 pub mod screen_scale;
 pub mod script_profile;
 pub mod settings;
