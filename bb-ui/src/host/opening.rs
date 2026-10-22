@@ -82,7 +82,7 @@ impl Opening {
 /// The page's parent window as CEF takes it: the `HWND` on Windows; none elsewhere.
 #[cfg(windows)]
 fn parent_window(handle: Option<isize>) -> sys::cef_window_handle_t {
-	handle.map_or(Default::default(), |hwnd| hwnd as sys::cef_window_handle_t)
+	handle.map_or(Default::default(), |hwnd| sys::HWND(hwnd as *mut sys::HWND__))
 }
 
 #[cfg(not(windows))]
