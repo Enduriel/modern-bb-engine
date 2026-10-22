@@ -18,7 +18,7 @@ otherwise.
 | `BB_SCRIPT_CACHE=DIR` | Keep the compiled-script cache in `DIR` (default `$XDG_CACHE_HOME/bb-modern-engine/scripts`, else `~/.cache/…`); `off` or `0` turns the cache off. |
 | `BB_SHEET_CACHE=DIR` | Keep the engine's own sprite sheets (each atlas's frames cut out, see `bb_assets::sheet_cache`) in `DIR`, not under the engine's cache folder; `off` keeps none. |
 | `BB_AUDIO_BUFFER=FRAMES` | The sound device's buffer, in frames (default: the device's). |
-| `BB_ERROR_DIALOG=0` | No message box when `bb` can't start (a machine that can't run the game, a game folder that won't load, any other error) or crashes (`bb_app::failure`); the message still goes to stderr and `log.html`. The window tests set it. |
+| `BB_ERROR_DIALOG=0` | No message box when `bb` can't start (a machine that can't run the game, a game folder that won't load, any other error), stops on an error once the game runs, or crashes (`bb_app::failure`); the message still goes to stderr and `log.html`. The window tests set it. |
 
 ## Measuring
 
