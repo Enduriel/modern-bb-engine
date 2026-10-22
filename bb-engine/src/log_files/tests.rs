@@ -160,6 +160,22 @@ fn a_failed_archive_keeps_the_old_log() {
 	fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A problem names the file that couldn't be archived (CEF's log, which Chromium holds
+/// open without letting it be deleted while any of its processes lives, on Windows).
+#[test]
+fn a_problem_names_the_file_it_was_with() {
+	let dir = folder("problem");
+	fs::write(dir.join("log.html"), "the old log").unwrap();
+	// A folder where CEF's log would be: it can't be read as one.
+	fs::create_dir_all(dir.join("cef.log/inside")).unwrap();
+	let files = LogFiles::start(&dir).unwrap();
+	assert_eq!(files.problems.len(), 1, "{:?}", files.problems);
+	let cef = dir.join("cef.log").display().to_string();
+	assert!(files.problems[0].starts_with(&format!("{cef}: ")), "{:?}", files.problems);
+	drop(files);
+	fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn stamps_sort_in_time_order() {
 	let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(1_791_942_453_007);

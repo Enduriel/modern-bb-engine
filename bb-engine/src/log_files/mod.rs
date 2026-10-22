@@ -55,21 +55,23 @@ impl Slot {
 		}
 	}
 
-	/// Archive what an earlier session left here (held: `lock`); the archives made.
-	fn archive_leftovers(&self, lock: &mut File, logs: &Path) -> io::Result<Vec<PathBuf>> {
+	/// Archive what an earlier session left here (held: `lock`); the archives made, or
+	/// what went wrong, naming the file it went wrong with.
+	fn archive_leftovers(&self, lock: &mut File, logs: &Path) -> Result<Vec<PathBuf>, String> {
 		let recorded = archive::read_all(lock).unwrap_or_default();
 		let mut made = Vec::new();
 		for (file, kind, entry) in [(&self.html, "log", "log.html"), (&self.cef, "cef", "cef.log")] {
 			let Ok(meta) = std::fs::metadata(file) else { continue };
-			if meta.len() == 0 {
-				std::fs::remove_file(file)?;
-				continue;
-			}
 			let stamp = Some(recorded.trim())
 				.filter(|s| !s.is_empty())
 				.map(str::to_string)
 				.unwrap_or_else(|| stamp(meta.created().or_else(|_| meta.modified()).unwrap_or_else(|_| SystemTime::now())));
-			made.push(archive(file, logs, kind, &stamp, entry)?);
+			let kept = if meta.len() == 0 {
+				std::fs::remove_file(file).map(|()| None)
+			} else {
+				archive(file, logs, kind, &stamp, entry).map(Some)
+			};
+			made.extend(kept.map_err(|e| format!("{}: {e}", file.display()))?);
 		}
 		Ok(made)
 	}
@@ -116,7 +118,7 @@ impl LogFiles {
 				Ok(made) => archived.extend(made),
 				Err(e) => {
 					// Its logs stay; a later start tries again.
-					problems.push(format!("{}: {e}", slot.html.display()));
+					problems.push(e);
 					continue;
 				}
 			}
