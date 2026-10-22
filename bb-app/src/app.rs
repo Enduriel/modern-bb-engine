@@ -803,6 +803,8 @@ impl Running {
 			if let Some(e) = error {
 				self.game.forget_shown();
 				log_surface(SurfaceTrouble::failed(&mut self.surface_trouble, "present", &error_text(&e), Instant::now()));
+			} else {
+				self.game.presented();
 			}
 		}
 		drop(present_span);

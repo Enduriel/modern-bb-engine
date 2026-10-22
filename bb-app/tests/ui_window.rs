@@ -548,6 +548,8 @@ fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64) -> Resu
 	for _ in 0..(seconds * 60.0) as u32 {
 		game.step(1000.0 / 60.0)?;
 		game.draw(gpu, target);
+		// Each frame drawn is one a window presents (the FPS display counts them).
+		game.presented();
 		std::thread::sleep(Duration::from_millis(5));
 	}
 	Ok(())
@@ -691,26 +693,38 @@ fn fps_shown(game: &Game) -> Result<Option<String>, String> {
 	Ok(value.as_str().map(str::to_string))
 }
 
-/// The FPS display: once shown, vanilla's FPS module shows the frames the
-/// game runs a second, here about 20 (frames 50 ms apart); hidden, it's gone. It's left
-/// on after.
+/// The FPS display: once shown, vanilla's FPS module shows the frames
+/// presented a second, here about 20 (frames 50 ms apart, each presented); with only
+/// every other one presented, about 10, and the game's steps beside it (`10 (20)`);
+/// hidden, it's gone. It's left on after.
 fn shows_the_frame_rate_when_asked(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
 	game.show_fps(true)?;
-	let start = std::time::Instant::now();
-	let mut frames = 0u32;
-	while start.elapsed() < Duration::from_secs(2) {
-		game.step(50.0)?;
-		game.draw(gpu, target);
-		frames += 1;
-		std::thread::sleep(Duration::from_millis(50));
+	for every in [1u32, 2] {
+		let start = std::time::Instant::now();
+		let mut frames = 0u32;
+		while start.elapsed() < Duration::from_secs(2) {
+			game.step(50.0)?;
+			game.draw(gpu, target);
+			if frames % every == 0 {
+				game.presented();
+			}
+			frames += 1;
+			std::thread::sleep(Duration::from_millis(50));
+		}
+		let rate = f64::from(frames) / start.elapsed().as_secs_f64();
+		let shown = fps_shown(game)?.ok_or("no FPS display once shown")?;
+		let (presented, steps) = match shown.split_once(" (") {
+			Some((presented, steps)) => (presented, steps.strip_suffix(')').unwrap_or("?")),
+			None => (shown.as_str(), shown.as_str()),
+		};
+		let number = |text: &str| text.parse::<f64>().map_err(|_| format!("the FPS display shows {shown:?}"));
+		let (presented, steps) = (number(presented)?, number(steps)?);
+		let want = rate / f64::from(every);
+		if (presented - want).abs() > want * 0.3 || (steps - rate).abs() > rate * 0.3 || (every > 1) != shown.contains('(') {
+			return Err(format!("the FPS display shows {shown:?}, the frames ran at {rate:.1} a second, every {every} presented"));
+		}
+		println!("  the FPS display showed {shown} (frames at {rate:.1} a second, every {every} presented)");
 	}
-	let rate = f64::from(frames) / start.elapsed().as_secs_f64();
-	let shown = fps_shown(game)?.ok_or("no FPS display once shown")?;
-	let value: f64 = shown.parse().map_err(|_| format!("the FPS display shows {shown:?}"))?;
-	if (value - rate).abs() > rate * 0.3 {
-		return Err(format!("the FPS display shows {value}, the frames ran at {rate:.1} a second"));
-	}
-	println!("  the FPS display showed {value} (frames at {rate:.1} a second)");
 	game.show_fps(false)?;
 	if fps_shown(game)?.is_some() {
 		return Err("the FPS display stayed once hidden".into());

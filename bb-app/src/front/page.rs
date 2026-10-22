@@ -17,8 +17,8 @@ pub struct Front {
 	captured: u32,
 	/// Whether the last game frame was drawn, and so began the page's frame.
 	drawn: bool,
-	/// The frame rate for the FPS display, shown at the next step (see [`Front::set_fps`]).
-	fps: Option<u32>,
+	/// What the FPS display shows next, at the next step (see [`Front::set_fps`]).
+	fps: Option<String>,
 	profiling: Option<crate::script_profile::ScriptProfiling>,
 	/// Procedural images (portraits) whose atlases were still loading.
 	loading_procedural: Vec<bb_ui::host::ProceduralRequest>,
@@ -141,7 +141,7 @@ impl Front {
 			let park = bb_render::frame_timing::span("page park");
 			self.session.park();
 			drop(park);
-			self.session.set_fps(&fps.to_string());
+			self.session.set_fps(&fps);
 		}
 		let session = &self.session;
 		match &mut self.profiling {
@@ -183,7 +183,7 @@ impl Front {
 	}
 
 	/// Show `fps` on the FPS display, at the next step (with the page's other changes).
-	pub fn set_fps(&mut self, fps: u32) {
+	pub fn set_fps(&mut self, fps: String) {
 		self.fps = Some(fps);
 	}
 

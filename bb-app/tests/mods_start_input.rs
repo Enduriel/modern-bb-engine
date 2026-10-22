@@ -76,6 +76,8 @@ fn fps_shows(game: &mut Game, when: &str) -> Result<(), String> {
 			_ => {}
 		}
 		game.step(1000.0 / 60.0)?;
+		// As a window presents each frame (the FPS display counts them).
+		game.presented();
 		std::thread::sleep(Duration::from_millis(16));
 	}
 }

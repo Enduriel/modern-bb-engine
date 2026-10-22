@@ -60,7 +60,10 @@
 //! - The sound plays on the default output device, unless `--mute`.
 //! - `--fps` shows the frame rate in the top-left corner (vanilla's own FPS module,
 //!   which the original never shows), as `ui.show_fps = true` in the settings does;
-//!   Ctrl+Shift+F shows or hides it while playing. It's off by default.
+//!   Ctrl+Shift+F shows or hides it while playing. It's off by default. It counts the
+//!   frames presented, as Steam's overlay does (a still screen, presented once, reads 0
+//!   or near it), with the game's steps a second beside them when they differ: `20 (144)`
+//!   (see `bb_app::fps`). The scripts' `Time.getFPS` is the steps'.
 //! - The game's mouse cursor shows as the system's cursor (the compositor moves it, so
 //!   moving the mouse over a still picture draws nothing); `ui.software_cursor = true`
 //!   in the settings draws it into the frames instead, as the original does (see
@@ -300,9 +303,6 @@ fn main() -> ExitCode {
 		};
 		data_dir = Some(options.data_dir.clone());
 		options.saves = bb_app::saves::choose_for(options.saves.take(), &settings, &options.data_dir).map(|c| c.dir);
-		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
-		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
-		// environment): the stats logger, the renderer's and the page's start after it.
 		// One bb at a time on a saves folder, held until bb ends, taken before CEF starts.
 		// A relaunch (the not-found window's) ended before here, so its new bb isn't
 		// refused by the one that started it.
@@ -318,6 +318,9 @@ fn main() -> ExitCode {
 			},
 			None => None,
 		};
+		options.steam_build = bb_app::steam::is_steam_install(&options.data_dir);
+		// SAFETY: no other thread runs yet (Steam's start sets the app id in the
+		// environment): the stats logger, the renderer's and the page's start after it.
 		options.steam = unsafe { bb_app::steam::start(&options.data_dir, &steam) };
 		// Heap profiles every so often, under a preloaded jemalloc (`BB_HEAP_PROFILE_DIR`).
 		bb_app::heap_profile::spawn_periodic_from_env();

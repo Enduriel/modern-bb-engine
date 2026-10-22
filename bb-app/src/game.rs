@@ -292,7 +292,8 @@ impl Game {
 		self.front.engine().time().real_seconds()
 	}
 
-	/// Advance the game by `ms` of real time: a frame, as the FPS display counts them.
+	/// Advance the game by `ms` of real time: a step, as the FPS display counts them
+	/// beside the frames presented ([`Game::presented`]).
 	pub fn step(&mut self, ms: f64) -> Result<(), String> {
 		let _span = bb_render::frame_timing::span("step");
 		if let Some(fps) = self.fps.as_mut().and_then(|meter| meter.frame(std::time::Instant::now())) {
@@ -312,6 +313,13 @@ impl Game {
 	/// Whether the FPS display shows.
 	pub fn fps_shown(&self) -> bool {
 		self.fps.is_some()
+	}
+
+	/// The last step's frame was presented on the window: the FPS display counts it.
+	pub fn presented(&mut self) {
+		if let Some(fps) = &mut self.fps {
+			fps.presented();
+		}
 	}
 
 	/// The cursor moved to `(x, y)` in the game's screen pixels. The states see every

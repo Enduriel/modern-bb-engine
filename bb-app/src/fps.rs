@@ -1,50 +1,66 @@
-//! The frame rate the FPS display shows: the game's frames a second,
-//! measured over a quarter of a second at a time.
+//! The frame rate the FPS display shows: the frames presented a
+//! second, measured over a quarter of a second at a time, and beside it, when it
+//! differs, the game's steps a second: `20 (144)`.
 //!
-//! A frame is one turn of the game's loop, stepped and shown. Since a frame that would
-//! show just what the last did is left undrawn (the last stays up, paced as the drawn
-//! ones are), it counts too: the display shows the rate the game runs at, not how
-//! often the picture changes.
+//! A step is one turn of the game's loop. A frame that would show just what the last
+//! did is left undrawn and unpresented (the last stays up, paced as the drawn ones are):
+//! the step counts, the frame doesn't. So the display shows what the player sees, as an
+//! overlay that counts presents (Steam's) does, and a still screen reads 0 or a little
+//! more (the display's own changes are presented). The scripts' `Time.getFPS` stays the
+//! step rate.
 //!
-//! The display changes only when the rate it shows does, so it doesn't make frames to
-//! draw on its own beyond a few a second.
+//! The display changes only when what it shows does, so it doesn't make frames to draw
+//! on its own beyond a few a second.
 
 use std::time::{Duration, Instant};
 
 /// How long each measurement lasts: the display changes at most four times a second.
 const SPAN: Duration = Duration::from_millis(250);
 
-/// Counts frames and says when the rate shown changes.
+/// Counts steps and presented frames and says when what the display shows changes.
 #[derive(Debug, Default)]
 pub struct FpsMeter {
-	/// When the measurement began (the frame before its first), and its frames since.
+	/// When the measurement began (the step before its first), and its steps and
+	/// presented frames since.
 	since: Option<Instant>,
-	frames: u32,
-	/// The rate shown last.
-	shown: Option<u32>,
+	steps: u32,
+	presented: u32,
+	/// What was shown last.
+	shown: Option<String>,
 }
 
 impl FpsMeter {
-	/// A frame started at `now`. Returns the rate to show, when a measurement ends with a
-	/// rate other than the one shown.
-	pub fn frame(&mut self, now: Instant) -> Option<u32> {
+	/// A step started at `now`. Returns what to show, when a measurement ends with
+	/// other than what is shown.
+	pub fn frame(&mut self, now: Instant) -> Option<String> {
 		let Some(since) = self.since else {
 			self.since = Some(now);
 			return None;
 		};
-		self.frames += 1;
+		self.steps += 1;
 		let span = now.saturating_duration_since(since);
 		if span < SPAN {
 			return None;
 		}
-		// The frames' intervals over the time they took.
-		let rate = (f64::from(self.frames) / span.as_secs_f64()).round() as u32;
+		// The steps' intervals over the time they took, and the frames presented in it
+		// (each after its step).
+		let rate = |n: u32| (f64::from(n) / span.as_secs_f64()).round() as u32;
+		let (presented, steps) = (rate(self.presented), rate(self.steps));
+		let text = if presented == steps { presented.to_string() } else { format!("{presented} ({steps})") };
 		self.since = Some(now);
-		self.frames = 0;
-		(self.shown != Some(rate)).then(|| {
-			self.shown = Some(rate);
-			rate
+		self.steps = 0;
+		self.presented = 0;
+		(self.shown.as_ref() != Some(&text)).then(|| {
+			self.shown = Some(text.clone());
+			text
 		})
+	}
+
+	/// The step's frame was presented.
+	pub fn presented(&mut self) {
+		if self.since.is_some() {
+			self.presented += 1;
+		}
 	}
 }
 
@@ -52,23 +68,43 @@ impl FpsMeter {
 mod tests {
 	use super::*;
 
-	/// Frames every `interval` from `start` for `count` frames: the rates shown.
-	fn run(meter: &mut FpsMeter, start: Instant, interval: Duration, count: u32) -> Vec<u32> {
-		(0..count).filter_map(|i| meter.frame(start + interval * i)).collect()
+	/// Steps every `interval` from `start` for `count` steps, every `every`th presented
+	/// (0: none): what is shown.
+	fn run(meter: &mut FpsMeter, start: Instant, interval: Duration, count: u32, every: u32) -> Vec<String> {
+		let mut shown = Vec::new();
+		for i in 0..count {
+			shown.extend(meter.frame(start + interval * i));
+			if every > 0 && i % every == 0 {
+				meter.presented();
+			}
+		}
+		shown
 	}
 
 	#[test]
 	fn shows_the_rate_and_only_its_changes() {
 		let start = Instant::now();
 		let mut meter = FpsMeter::default();
-		// 180 Hz for two seconds: the rate once, then nothing new.
+		// 180 Hz for two seconds, each presented: the rate once, then nothing new.
 		let hz180 = Duration::from_nanos(1_000_000_000 / 180);
-		assert_eq!(run(&mut meter, start, hz180, 360), vec![180]);
+		assert_eq!(run(&mut meter, start, hz180, 360, 1), vec!["180"]);
 		// Then 60 Hz: the measurement across the change in between, then 60.
 		let start = start + hz180 * 360;
-		let shown = run(&mut meter, start, Duration::from_nanos(16_666_667), 120);
-		assert_eq!(shown.last(), Some(&60), "{shown:?}");
-		assert!(shown.len() <= 2 && shown.iter().all(|&r| (60..180).contains(&r)), "{shown:?}");
+		let shown = run(&mut meter, start, Duration::from_nanos(16_666_667), 120, 1);
+		assert_eq!(shown.last().map(String::as_str), Some("60"), "{shown:?}");
+		assert!(shown.len() <= 2 && shown.iter().all(|r| (60..180).contains(&r.parse::<u32>().unwrap())), "{shown:?}");
+	}
+
+	#[test]
+	fn the_steps_show_beside_the_frames_presented_when_they_differ() {
+		let start = Instant::now();
+		let mut meter = FpsMeter::default();
+		// 160 Hz: 40 steps a measurement, one in 4 presented: 40 frames a second.
+		let hz160 = Duration::from_micros(6250);
+		assert_eq!(run(&mut meter, start, hz160, 320, 4), vec!["40 (160)"]);
+		// A still screen: none presented.
+		let shown = run(&mut meter, start + hz160 * 320, hz160, 160, 0);
+		assert_eq!(shown, vec!["0 (160)"]);
 	}
 
 	#[test]
@@ -76,6 +112,7 @@ mod tests {
 		let start = Instant::now();
 		let mut meter = FpsMeter::default();
 		assert_eq!(meter.frame(start), None);
-		assert_eq!(meter.frame(start + Duration::from_millis(500)), Some(2));
+		meter.presented();
+		assert_eq!(meter.frame(start + Duration::from_millis(500)).as_deref(), Some("2"));
 	}
 }

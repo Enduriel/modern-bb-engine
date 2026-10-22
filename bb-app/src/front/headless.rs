@@ -100,7 +100,7 @@ impl Front {
 	}
 
 	/// Show the frame rate on the FPS display: there is none.
-	pub fn set_fps(&mut self, _fps: u32) {}
+	pub fn set_fps(&mut self, _fps: String) {}
 
 	/// The game discarded a scene: no page to give anything back.
 	pub fn discarded(&mut self) {}
