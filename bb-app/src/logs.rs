@@ -28,6 +28,8 @@ impl Logs {
 			html_log::engine(Class::Warning, "Core", &format!("An earlier log could not be archived and was left in place: {problem}"));
 		}
 		eprintln!("log: {}", files.html.display());
+		// What the engine's libraries warn of (wgpu's backends' system errors among it).
+		crate::log_records::forward();
 		// A panic ends the game: the original's critical line, then the usual report.
 		let report = std::panic::take_hook();
 		std::panic::set_hook(Box::new(move |info| {

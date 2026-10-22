@@ -15,6 +15,7 @@ pub mod heap_profile;
 pub mod icon;
 pub mod install;
 pub mod keys;
+pub mod log_records;
 pub mod logs;
 pub mod pacing;
 pub mod platform;

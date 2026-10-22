@@ -23,6 +23,9 @@ bb-ui = { path = "../bb-ui", optional = true }
 cef-dll-sys = { version = "=154.5.0", optional = true }
 bb-render = { path = "../bb-render" }
 bb-steam = { path = "../bb-steam" }
+# The engine's libraries' warnings in log.html (`log_records`): wgpu's backends report
+# the system's errors only through it. Already in the tree through wgpu, at this version.
+log = "0.4.31"
 squirrel = { path = "../squirrel" }
 squirrel-bb = { path = "../squirrel-bb" }
 wgpu = "30.0.1"
