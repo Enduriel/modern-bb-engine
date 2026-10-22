@@ -22,6 +22,11 @@ const MAGIC: &[u8; 8] = b"BBMESAVE";
 /// Bumped whenever the engine-side layout changes.
 pub(crate) const FORMAT_VERSION: u32 = 7;
 
+/// How much of a save [`Storage::read_meta`] reads first: a page, where the original's
+/// saves keep their metadata (about 200 bytes vanilla's, 1.7 KB the most among 119 saves
+/// of a modded install).
+const HEAD: usize = 4096;
+
 /// The save store.
 pub(crate) enum Storage {
 	Memory(RefCell<BTreeMap<String, Vec<u8>>>),
@@ -54,6 +59,41 @@ impl Storage {
 		match self {
 			Storage::Memory(m) => m.borrow().get(name).cloned().ok_or_else(|| format!("no save named {name}")),
 			Storage::Dir(dir) => std::fs::read(Self::path(dir, name)).map_err(|e| format!("reading save {name}: {e}")),
+		}
+	}
+
+	/// At most the first `limit` bytes of save `name` (all of them if it's shorter).
+	fn read_head(&self, name: &str, limit: usize) -> Result<Vec<u8>, String> {
+		match self {
+			Storage::Memory(m) => {
+				let saves = m.borrow();
+				let bytes = saves.get(name).ok_or_else(|| format!("no save named {name}"))?;
+				Ok(bytes[..bytes.len().min(limit)].to_vec())
+			}
+			Storage::Dir(dir) => {
+				use std::io::Read;
+				let mut head = Vec::with_capacity(limit);
+				std::fs::File::open(Self::path(dir, name))
+					.and_then(|f| f.take(limit as u64).read_to_end(&mut head))
+					.map_err(|e| format!("reading save {name}: {e}"))?;
+				Ok(head)
+			}
+		}
+	}
+
+	/// Save `name`'s format and metadata, as [`decode`] gives them, read from the start of
+	/// the file: the load menu lists every save's, and reading whole saves (about 7 MB
+	/// each) for it took 0.4 to 0.6 s for 120 in bb, where this takes 1 ms (25 ms with
+	/// none of them cached; measured 2026-10-22; the original's took 0.14 s for 130,
+	/// cached). A header that doesn't fit in [`HEAD`]
+	/// (or a file that isn't a save) is read again whole.
+	pub fn read_meta(&self, name: &str) -> Result<(Format, Meta), String> {
+		let head = self.read_head(name, HEAD)?;
+		let whole = head.len() < HEAD;
+		match decode(head, name) {
+			Ok((format, meta, _)) => Ok((format, meta)),
+			Err(e) if whole => Err(e),
+			Err(_) => decode(self.read(name)?, name).map(|(format, meta, _)| (format, meta)),
 		}
 	}
 
@@ -299,6 +339,45 @@ mod tests {
 		match storage {
 			Storage::Dir(dir) => dir.clone(),
 			Storage::Memory(_) => unreachable!(),
+		}
+	}
+
+	/// The load menu's metadata comes from the start of each file, whatever its format,
+	/// its body or the size of its header, and is what decoding the whole file gives.
+	#[test]
+	fn metadata_is_read_from_the_start_of_the_file() {
+		let folder = Folder::new("meta");
+		let storage = Storage::Dir(folder.0.clone());
+		let mut meta = Meta {
+			version: 72,
+			name: "Label".into(),
+			file_name: "bb_probe_big".into(),
+			created: 1_760_000_000,
+			modified: 1_760_000_001,
+			..Meta::default()
+		};
+		meta.set_string("groupname".into(), "Probe Company".into());
+		let body = vec![7u8; 3 << 20];
+		storage.write("bb_probe_big", container::encode(&meta, &body)).unwrap();
+		// A header past the first read (a mod's long metadata) is read whole.
+		let mut long = meta.clone();
+		long.file_name = "bb_probe_long".into();
+		long.set_string("notes".into(), "x".repeat(3 * HEAD));
+		storage.write("bb_probe_long", container::encode(&long, &body)).unwrap();
+		// This engine's own format, shorter than the first read.
+		let mut own = meta.clone();
+		own.file_name = "bb_probe_own".into();
+		storage.write("bb_probe_own", encode(&own, &[1, 2, 3])).unwrap();
+		storage.write("bb_probe_broken", container::encode(&meta, &[])[..20].to_vec()).unwrap();
+		storage.write("bb_probe_junk", vec![0; 2 * HEAD]).unwrap();
+		for name in ["bb_probe_big", "bb_probe_long", "bb_probe_own"] {
+			let (format, whole, _) = decode(storage.read(name).unwrap(), name).unwrap();
+			assert_eq!(storage.read_meta(name).unwrap(), (format, whole), "{name}");
+		}
+		assert_eq!(storage.read_meta("bb_probe_long").unwrap().1.get_string("notes").len(), 3 * HEAD);
+		assert_eq!(storage.read_meta("bb_probe_own").unwrap().0, Format::Own);
+		for name in ["bb_probe_broken", "bb_probe_junk", "bb_probe_missing"] {
+			assert!(storage.read_meta(name).is_err(), "{name}");
 		}
 	}
 

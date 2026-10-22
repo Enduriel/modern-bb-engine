@@ -23,9 +23,10 @@ use super::{Inner, container, now_secs, storage};
 /// The `PersistenceManager` natives, by name.
 pub(super) fn natives(inner: &Rc<Inner>, vm: &mut SQVM) -> Vec<(&'static str, SqStrongRef)> {
 	// The saves' metadata, for the menus (and for mods to find their storages), newest
-	// first: the original (`0x567e80`) reads each listed file's metadata, skipping those
-	// it can't, then `std::sort`s them by modification time (as saved in the file, not
-	// the file system's), latest first. Equal times stay in listing order in up to 32
+	// first: the original (`0x567e80`) reads each listed file's metadata (here only the
+	// start of the file, see `Storage::read_meta`), skipping those it can't, then
+	// `std::sort`s them by modification time (as saved in the file, not the file
+	// system's), latest first. Equal times stay in listing order in up to 32
 	// saves; past that MSVC's introsort can reorder them, which `msvc_sort` repeats.
 	let query_storages = {
 		let inner = inner.clone();
@@ -35,8 +36,8 @@ pub(super) fn natives(inner: &Rc<Inner>, vm: &mut SQVM) -> Vec<(&'static str, Sq
 			let metas: Vec<Meta> = storage
 				.names()
 				.into_iter()
-				.filter_map(|name| storage.read(&name).and_then(|b| storage::decode(b, &name)).ok())
-				.map(|(_, meta, _)| meta)
+				.filter_map(|name| storage.read_meta(&name).ok())
+				.map(|(_, meta)| meta)
 				.collect();
 			let mut order: Vec<usize> = (0..metas.len()).collect();
 			// The times compare as the original's `u64`s.
