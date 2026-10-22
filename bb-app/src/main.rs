@@ -6,6 +6,7 @@
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
 //!     [--at-page FRAMES JS]...
 //!     [--logs DIR] [--no-steam] [--steam-api PATH] [--fps]
+//! bb --version
 //! ```
 //!
 //! Boots the install's game files (the Steam install by default) and plays them: the
@@ -57,6 +58,9 @@
 //!   queries; the frame then waits for the GPU). `BB_SCRIPT_PROFILE=REPORT.md` profiles the
 //!   scripts. Under a preloaded jemalloc with profiling on, `BB_HEAP_PROFILE_DIR=DIR` dumps a
 //!   heap profile every `BB_HEAP_PROFILE_SECS` (10) seconds (builds without `ui`).
+//! - `--version` prints the version, the target it was built for and whether it has the
+//!   UI (`bb 0.1.0 (x86_64-unknown-linux-gnu, ui)`), and exits. It needs no display, but
+//!   a UI build has loaded CEF's library by then: the release bundles' smoke check.
 //! - Every environment variable, these and the ones for measuring, comparing and the
 //!   tests: `docs/environment.md`.
 
@@ -151,6 +155,10 @@ fn main() -> ExitCode {
 	#[cfg(feature = "ui")]
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
+	}
+	if std::env::args().nth(1).as_deref() == Some("--version") {
+		println!("{}", bb_app::version());
+		return ExitCode::SUCCESS;
 	}
 	bb_app::platform::tune_allocator();
 	squirrel_bb::startup::mark("main");

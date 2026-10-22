@@ -71,6 +71,27 @@ pub fn library_for(triple: &str) -> Option<&'static PinnedLibrary> {
 	LIBRARIES.iter().find(|l| l.targets.contains(&triple))
 }
 
+/// A target whose packages carry no Steam library, and why. bb built for it runs with
+/// achievements and stats off, as it does wherever the library is missing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoLibrary {
+	pub target: &'static str,
+	pub why: &'static str,
+}
+
+/// The targets packaged without Steam's library: a deliberate entry each, so a missing
+/// library is never a silent gap.
+pub const WITHOUT_LIBRARY: [NoLibrary; 1] = [NoLibrary {
+	target: "aarch64-pc-windows-msvc",
+	why: "the pinned steamworks-sys has no Windows ARM64 steam_api (only win64's x86_64 \
+	      steam_api64.dll), and an ARM64 process can't load an x86_64 DLL",
+}];
+
+/// Why `triple`'s packages carry no Steam library, if they don't.
+pub fn without_library(triple: &str) -> Option<&'static NoLibrary> {
+	WITHOUT_LIBRARY.iter().find(|n| n.target == triple)
+}
+
 /// Check that `actual` (lowercase hex SHA-256 of `what`) is `expected`.
 pub fn verify(what: &str, actual: &str, expected: &str) -> Result<(), String> {
 	if actual.eq_ignore_ascii_case(expected) {
@@ -90,8 +111,21 @@ mod tests {
 			assert!(library_for(triple).is_some(), "{triple}");
 		}
 		assert!(library_for("i686-pc-windows-msvc").is_none(), "32-bit is not shipped");
-		let this = library_for(env!("BB_STEAM_TARGET")).map(|l| l.file_name);
-		assert_eq!(this, Some(crate::LIBRARY_NAME));
+		let this = env!("BB_STEAM_TARGET");
+		match library_for(this) {
+			Some(library) => assert_eq!(library.file_name, crate::LIBRARY_NAME),
+			None => assert!(without_library(this).is_some(), "{this} has neither a pinned Steam library nor a reason why not"),
+		}
+	}
+
+	/// Every target a release bundle is made for has either a pinned library or a reason
+	/// for none, never both.
+	#[test]
+	fn every_bundled_target_has_a_library_or_a_reason() {
+		for triple in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "aarch64-apple-darwin"] {
+			assert!(library_for(triple).is_some() != without_library(triple).is_some(), "{triple}");
+		}
+		assert_eq!(without_library("aarch64-pc-windows-msvc").map(|n| n.target), Some("aarch64-pc-windows-msvc"));
 	}
 
 	#[test]

@@ -57,7 +57,14 @@ from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parent.parent
 TARGET = "x86_64-pc-windows-msvc"
-RUSTFLAGS_VAR = "CARGO_TARGET_" + TARGET.replace("-", "_").upper() + "_RUSTFLAGS"
+
+
+def rustflags_var(target):
+	"""cargo's per-target RUSTFLAGS variable for `target`."""
+	return "CARGO_TARGET_" + target.replace("-", "_").upper() + "_RUSTFLAGS"
+
+
+RUSTFLAGS_VAR = rustflags_var(TARGET)
 # cargo-xwin 0.23.1 (2026-08-13), and the MSVC CRT and Windows SDK it fetches.
 CARGO_XWIN = "0.23.1"
 XWIN = {"XWIN_VERSION": "17", "XWIN_CRT_VERSION": "14.44.17.14", "XWIN_SDK_VERSION": "10.0.26100"}
@@ -68,6 +75,16 @@ UI_FEATURES = "bb-ui/cef,bb-app/ui"
 UI_PACKAGES = {"bb-ui", "bb-app"}
 # The UCRT's maths functions, which carry FMA3 variants chosen at run time.
 CRT_MATHS = re.compile(r"^(?:(?:a?(?:sin|cos|tan)h?|atan2|pow|exp2?|log(?:10|2)?|cbrt|hypot)f?|__\w*fma3\w*)$")
+# The same, by where the PDB says a function's code comes from (the UCRT's maths sources;
+# ARM64's have more helpers than the names above, `_exp2`, `sin_piby4`, …).
+CRT_MATHS_SOURCE = re.compile(r"[\\/]ucrt[\\/]src[\\/]appcrt[\\/]tran[\\/]", re.I)
+# The fused multiply-add instructions, by the target's architecture (as llvm-objdump
+# prints them): x86's FMA3 (`vfmadd231sd`, …), ARM64's scalar and vector ones (`fmadd`,
+# `fnmsub`, `fmla`, …).
+FMA_INSTRUCTIONS = {
+	"x86_64": re.compile(r"\bv?f(?:n)?m(?:add|sub)\d"),
+	"aarch64": re.compile(r"\bf(?:n)?m(?:add|sub)\b|\bfml[as]\b"),
+}
 # Proton's own D3D, as `proton run` sets it: DXVK for D3D11 (Chromium's ANGLE), vkd3d-proton
 # for D3D12 (wgpu). Wine's built-in ones (wined3d, upstream vkd3d) can't share the page's
 # textures between the two.
@@ -97,17 +114,18 @@ def cargo_xwin(work, given):
 	return tool
 
 
-def cross_env(xwin, work):
+def cross_env(xwin, work, target=TARGET):
 	"""cargo's environment for the Windows target: cargo-xwin's (clang-cl, lld-link, the CRT
 	and SDK, fetched into the work folder the first time), a static C runtime, and CEF's
 	Windows distribution kept in the work folder."""
 	env = dict(os.environ, XWIN_CACHE_DIR=str(work / "xwin"), **XWIN)
-	out = subprocess.run([str(xwin), "xwin", "env", "--target", TARGET], cwd=WORKSPACE, env=env,
+	out = subprocess.run([str(xwin), "xwin", "env", "--target", target], cwd=WORKSPACE, env=env,
 		stdout=subprocess.PIPE, text=True, check=True).stdout
 	for line in out.splitlines():
 		if m := EXPORT.match(line.strip()):
 			env[m.group(1)] = m.group(2)
-	env[RUSTFLAGS_VAR] = f"{env.get(RUSTFLAGS_VAR, '')} {RUSTFLAGS}".strip()
+	var = rustflags_var(target)
+	env[var] = f"{env.get(var, '')} {RUSTFLAGS}".strip()
 	env.pop("RUSTFLAGS", None)
 	env["CEF_PATH"] = str(work / "cef")
 	return env
@@ -146,35 +164,76 @@ def package_of(test):
 	return Path(test["manifest_path"]).parent.name
 
 
-def fused_multiply_adds(exe):
-	"""The FMA instructions in `exe`, by function (from its PDB): (outside the C runtime's
-	maths functions, in them)."""
+def fused_multiply_adds(exe, arch="x86_64"):
+	"""The FMA instructions in `exe` (built for `arch`), by function (from its PDB):
+	(outside the C runtime's maths functions, in them)."""
 	out = subprocess.run(["llvm-objdump", "-d", "--no-show-raw-insn", str(exe)], stdout=subprocess.PIPE, text=True,
 		check=True).stdout
-	addresses = [line.split(":")[0].strip() for line in out.splitlines() if re.search(r"\bv?f(?:n)?m(?:add|sub)\d", line)]
+	fma = FMA_INSTRUCTIONS[arch]
+	addresses = [line.split(":")[0].strip() for line in out.splitlines() if fma.search(line)]
 	if not addresses:
 		return {}, {}
 	names = subprocess.run(["llvm-symbolizer", f"--obj={exe}", "--functions=short", "--no-inlines"],
 		input="".join(f"0x{a}\n" for a in addresses), stdout=subprocess.PIPE, text=True, check=True).stdout
 	# Each address answers with its function's name, its source line, and a blank line.
-	functions = [block.splitlines()[0] for block in names.strip().split("\n\n")]
 	outside, crt = {}, {}
-	for name in functions:
-		counts = crt if CRT_MATHS.match(name) else outside
+	for block in names.strip("\n").split("\n\n"):
+		lines = block.strip("\n").splitlines() + ["", ""]
+		name, source = lines[0], lines[1]
+		if name.startswith("??"):
+			name = "?"  # no line information: llvm-symbolizer prints only `??:0:0`
+		counts = crt if CRT_MATHS.match(name) or CRT_MATHS_SOURCE.search(source) else outside
 		counts[name] = counts.get(name, 0) + 1
 	return outside, crt
 
 
-def check_fmas(bb):
-	"""Whether `bb` has no FMA instruction outside the C runtime's maths (printing what it found)."""
-	outside, crt = fused_multiply_adds(bb)
+def vm_libraries(bb):
+	"""The Squirrel VM's static libraries the build of `bb` (in `<profile>/`) linked."""
+	return sorted(bb.parent.glob("build/squirrel-sys-*/out/lib/*.lib"))
+
+
+def check_vm_fmas(bb, target=TARGET):
+	"""Whether the Squirrel VM's own code (squirrel-sys's libraries) has no FMA at all."""
+	fma = FMA_INSTRUCTIONS[target.split("-")[0]]
+	libraries = vm_libraries(bb)
+	if not libraries:
+		print(f"FAIL no squirrel-sys libraries beside {bb} to check")
+		return False
+	good = True
+	for library in libraries:
+		out = subprocess.run(["llvm-objdump", "-d", "--no-show-raw-insn", str(library)], stdout=subprocess.PIPE,
+			text=True, check=True).stdout
+		count = sum(1 for line in out.splitlines() if fma.search(line))
+		if count:
+			print(f"FAIL {library.name}: {count} fused multiply-adds in the Squirrel VM's code")
+			good = False
+	if good:
+		print(f"ok   the Squirrel VM ({', '.join(l.name for l in libraries)}): no fused multiply-adds")
+	return good
+
+
+def check_fmas(bb, target=TARGET):
+	"""Whether `bb` has no FMA instruction where it matters (printing what it found).
+
+	The Squirrel VM's libraries must have none (`check_vm_fmas`). x86_64: none in all of
+	`bb` outside the C runtime's maths either. ARM64, where FMA is part of the base
+	instruction set: Rust crates fuse explicitly (`mul_add`, NEON intrinsics: kira, glam,
+	naga, cosmic-text, by their nearest symbols on 2026-10-21; exactly rounded, so the same
+	on every ARM64 CPU), so the rest is listed, not refused."""
+	arch = target.split("-")[0]
+	vm = check_vm_fmas(bb, target)
+	outside, crt = fused_multiply_adds(bb, arch)
+	if outside and arch != "x86_64":
+		print(f"note {bb.name}: {sum(outside.values())} fused multiply-adds outside the C runtime's maths and the VM: "
+			+ ", ".join(f"{name or '?'} ({n})" for name, n in sorted(outside.items())))
+		return vm
 	if outside:
 		print(f"FAIL {bb.name} has fused multiply-adds outside the C runtime's maths (the VM's floats must not fuse): "
 			+ ", ".join(f"{name} ({n})" for name, n in sorted(outside.items())))
 		return False
 	print(f"ok   {bb.name}: no fused multiply-adds outside the C runtime's maths ({sum(crt.values())} in "
 		f"{len(crt)} of its functions)")
-	return True
+	return vm
 
 
 def windows_path(path):

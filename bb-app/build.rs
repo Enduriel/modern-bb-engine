@@ -2,8 +2,11 @@
 //! downloaded (an rpath for `libcef.so`), so it runs straight from `target/`. A release
 //! package's build (`BB_PACKAGE_RPATH=origin`, set by `bb-package`) looks beside the
 //! executable instead (`$ORIGIN`), where the package carries `libcef.so`.
+//!
+//! Also tells `bb --version` the Rust target it was built for (`BB_TARGET`).
 
 fn main() {
+	println!("cargo::rustc-env=BB_TARGET={}", std::env::var("TARGET").unwrap_or_default());
 	println!("cargo::rerun-if-env-changed=DEP_CEF_DLL_WRAPPER_CEF_DIR");
 	println!("cargo::rerun-if-env-changed=BB_PACKAGE_RPATH");
 	let Ok(dir) = std::env::var("DEP_CEF_DLL_WRAPPER_CEF_DIR") else {

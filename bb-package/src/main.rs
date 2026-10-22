@@ -9,7 +9,9 @@
 //!    own folder (`BB_PACKAGE_RPATH=origin`).
 //! 2. Fetches the pinned `steamworks-sys` crate from crates.io (once, into the cache),
 //!    checks its SHA-256 and that of the target's Steam library inside it against the
-//!    pins in `bb_steam::pinned`, and refuses anything else ([`steam_library`]).
+//!    pins in `bb_steam::pinned`, and refuses anything else ([`steam_library`]); a
+//!    target listed in `bb_steam::pinned::WITHOUT_LIBRARY` gets none, and its notice
+//!    says why.
 //! 3. Lays out `<out>/bb-<target>/`: `bb`, the CEF files it runs with (stripped on
 //!    Linux, English locale only), Steam's library, and the licences ([`layout`]); on
 //!    macOS `bb.app` with all of that inside but the licences ([`mac_app`]).
@@ -117,7 +119,10 @@ fn package() -> Result<(), String> {
 		None => layout::find_cef_dir(&cef_root(), platform)?,
 	};
 	let bb = build_bb(target, options.build)?;
-	let steam = steam_library::fetch(target, &options.cache)?;
+	let steam = steam_library::for_target(target, &options.cache)?;
+	if let steam_library::Steam::Without(none) = &steam {
+		println!("no Steam library for {target}: {}", none.why.split_whitespace().collect::<Vec<_>>().join(" "));
+	}
 	let name = format!("bb-{target}");
 	let dir = options.out.join(&name);
 	layout::lay_out(&dir, platform, &bb, &cef_dir, &steam)?;

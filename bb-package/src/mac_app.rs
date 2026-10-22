@@ -22,7 +22,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::steam_library::SteamLibrary;
+use crate::steam_library::Steam;
 
 /// The bundle's and the helper's names.
 pub const APP: &str = "bb.app";
@@ -102,7 +102,7 @@ fn keep_resource(name: &str) -> bool {
 
 /// Lay out `bb.app` in `dir` (emptied first) from `bb`, CEF's distribution and Steam's
 /// library, and sign it ad hoc.
-pub fn lay_out(dir: &Path, bb: &Path, cef_dir: &Path, steam: &SteamLibrary) -> Result<(), String> {
+pub fn lay_out(dir: &Path, bb: &Path, cef_dir: &Path, steam: &Steam) -> Result<(), String> {
 	let _ = fs::remove_dir_all(dir);
 	let contents = dir.join(APP).join("Contents");
 	let (macos, frameworks) = (contents.join("MacOS"), contents.join("Frameworks"));
@@ -110,8 +110,10 @@ pub fn lay_out(dir: &Path, bb: &Path, cef_dir: &Path, steam: &SteamLibrary) -> R
 	fs::write(contents.join("Info.plist"), info_plist("bb", IDENTIFIER, false)).map_err(|e| e.to_string())?;
 	let exe = macos.join("bb");
 	crate::layout::copy(bb, &exe)?;
-	crate::layout::copy(&steam.path, &macos.join(steam.pin.file_name))?;
-	crate::steam_library::check_file(&macos.join(steam.pin.file_name), steam.pin.sha256)?;
+	if let Steam::Library(steam) = steam {
+		crate::layout::copy(&steam.path, &macos.join(steam.pin.file_name))?;
+		crate::steam_library::check_file(&macos.join(steam.pin.file_name), steam.pin.sha256)?;
+	}
 
 	let framework = frameworks.join(FRAMEWORK);
 	copy_dir(&cef_dir.join(FRAMEWORK), &framework)?;

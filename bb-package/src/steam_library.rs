@@ -1,17 +1,34 @@
 //! The target's Steam library, from the pinned `steamworks-sys` crate: fetched once
 //! into the cache, and checked against the pins (`bb_steam::pinned`) every time it is
-//! used, the crate and the library alike.
+//! used, the crate and the library alike. A target listed in
+//! `bb_steam::pinned::WITHOUT_LIBRARY` gets none, said in its notice.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use bb_steam::pinned::{self, PinnedLibrary};
+use bb_steam::pinned::{self, NoLibrary, PinnedLibrary};
 
 /// The checked library for a package.
 pub struct SteamLibrary {
 	pub path: PathBuf,
 	pub pin: &'static PinnedLibrary,
+}
+
+/// What a package carries for Steam.
+pub enum Steam {
+	Library(SteamLibrary),
+	/// No library for this target, deliberately (`pinned::WITHOUT_LIBRARY`).
+	Without(&'static NoLibrary),
+}
+
+/// Steam's library for `target`'s package (fetched once and checked), or the reason it
+/// has none; an error for a target that has neither.
+pub fn for_target(target: &str, cache: &Path) -> Result<Steam, String> {
+	match pinned::without_library(target) {
+		Some(none) => Ok(Steam::Without(none)),
+		None => fetch(target, cache).map(Steam::Library),
+	}
 }
 
 /// Check the file at `path` against the `expected` SHA-256.

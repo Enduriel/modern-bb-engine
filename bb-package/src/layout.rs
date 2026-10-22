@@ -8,8 +8,8 @@
 //! SwiftShader/Vulkan files (Chromium's GPU work runs on the system's EGL, and the game
 //! refuses software GPUs; see `docs/packaging.md` for the check that nothing loads them).
 //!
-//! Windows (not yet built or run): every DLL and resource at the top of CEF's folder,
-//! the same locale.
+//! Windows (x86_64 run under Proton, ARM64 built): every DLL and resource at the top of
+//! CEF's folder, the same locale.
 //!
 //! macOS (built and laid out on an M4, not yet run from the package): an app bundle
 //! with CEF's framework and a helper app ([`crate::mac_app`]).
@@ -18,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::steam_library::SteamLibrary;
+use crate::steam_library::Steam;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
@@ -87,6 +87,8 @@ fn cef_files(cef_dir: &Path, platform: Platform) -> Result<Vec<(PathBuf, bool)>,
 				.flatten()
 				.map(|e| PathBuf::from(e.file_name()))
 				.filter(|f| f.extension().is_some_and(|x| ["dll", "dat", "pak", "bin", "json"].iter().any(|k| x.eq_ignore_ascii_case(k))))
+				// cef-dll-sys's record of the archive it unpacked, not CEF's.
+				.filter(|f| f.as_os_str() != "archive.json")
 				.map(|f| (f, false))
 				.collect();
 			files.push((PathBuf::from("locales/en-US.pak"), false));
@@ -133,8 +135,18 @@ fn cef_license(cef_dir: &Path) -> Result<Vec<u8>, String> {
 	Ok(output.stdout)
 }
 
-/// The notice for Steam's library.
-fn steam_notice(steam: &SteamLibrary) -> String {
+/// The notice for Steam's library, or for its absence.
+fn steam_notice(steam: &Steam) -> String {
+	let steam = match steam {
+		Steam::Library(library) => library,
+		Steam::Without(none) => {
+			return format!(
+				"This package carries no Steam library: {why}.\n\
+				 bb runs with Steam's achievements and stats off.\n",
+				why = none.why.split_whitespace().collect::<Vec<_>>().join(" "),
+			);
+		}
+	};
 	format!(
 		"{file} is Valve Corporation's Steamworks SDK redistributable library, from the\n\
 		 steamworks-sys {version} crate on crates.io ({member}),\n\
@@ -150,7 +162,7 @@ fn steam_notice(steam: &SteamLibrary) -> String {
 }
 
 /// Lay the package out in `dir` (emptied first).
-pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam: &SteamLibrary) -> Result<(), String> {
+pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam: &Steam) -> Result<(), String> {
 	if platform == Platform::MacOs {
 		crate::mac_app::lay_out(dir, bb, cef_dir, steam)?;
 		return notices(dir, cef_dir, steam);
@@ -169,13 +181,15 @@ pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam:
 			strip(&to)?;
 		}
 	}
-	copy(&steam.path, &dir.join(steam.pin.file_name))?;
-	crate::steam_library::check_file(&dir.join(steam.pin.file_name), steam.pin.sha256)?;
+	if let Steam::Library(steam) = steam {
+		copy(&steam.path, &dir.join(steam.pin.file_name))?;
+		crate::steam_library::check_file(&dir.join(steam.pin.file_name), steam.pin.sha256)?;
+	}
 	notices(dir, cef_dir, steam)
 }
 
 /// The notices, in `<dir>/licenses`.
-fn notices(dir: &Path, cef_dir: &Path, steam: &SteamLibrary) -> Result<(), String> {
+fn notices(dir: &Path, cef_dir: &Path, steam: &Steam) -> Result<(), String> {
 	let notices = dir.join("licenses");
 	copy(&cef_dir.join("CREDITS.html"), &notices.join("CEF-CREDITS.html"))?;
 	fs::write(notices.join("CEF-LICENSE.txt"), cef_license(cef_dir)?).map_err(|e| e.to_string())?;
