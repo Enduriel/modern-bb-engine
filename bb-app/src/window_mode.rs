@@ -121,7 +121,7 @@ impl Monitor {
 /// fullscreen window asks for the screen's size too, for a system that leaves its size
 /// to it (gamescope does).
 pub fn attributes(placement: Placement, monitor: &Monitor, size: (u32, u32)) -> WindowAttributes {
-	let attributes = Window::default_attributes().with_title("Battle Brothers").with_resizable(true);
+	let attributes = bb_app::icon::with_icon(Window::default_attributes().with_title("Battle Brothers").with_resizable(true));
 	match placement {
 		Placement::Window { decorated, width, height } => attributes
 			.with_decorations(decorated)

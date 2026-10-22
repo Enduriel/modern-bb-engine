@@ -93,6 +93,8 @@ impl Drop for Unfinished {
 
 struct Running {
 	window: Arc<Window>,
+	/// The game's icon on the window, where it takes more than its attributes.
+	_icon: bb_app::icon::Shown,
 	surface: wgpu::Surface<'static>,
 	config: wgpu::SurfaceConfiguration,
 	gpu: Gpu,
@@ -293,6 +295,7 @@ impl App {
 		// Left to the process's end if the start fails from here on (see `Unfinished`).
 		let unfinished = Unfinished(Some((window, surface)));
 		let (window, surface) = unfinished.parts();
+		let icon = bb_app::icon::show(&window, event_loop);
 		// Opened with what the front wants if the adapter has it; whether that's enough is
 		// the requirements' call, which says what is missing.
 		let gpu = Gpu::for_surface_preferring(&self.instance, &surface, bb_app::front::GPU_FEATURES)
@@ -379,6 +382,7 @@ impl App {
 		let (window, surface) = unfinished.finish();
 		let mut running = Running {
 			window,
+			_icon: icon,
 			surface,
 			config,
 			gpu,

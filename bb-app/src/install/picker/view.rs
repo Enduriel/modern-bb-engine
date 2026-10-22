@@ -25,6 +25,8 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct View {
 	/// `None` once taken down (see [`Drop`]).
 	window: Option<Arc<Window>>,
+	/// The game's icon on the window, where it takes more than its attributes.
+	_icon: crate::icon::Shown,
 	surface: Option<wgpu::Surface<'static>>,
 	config: wgpu::SurfaceConfiguration,
 	gpu: Gpu,
@@ -44,11 +46,12 @@ impl View {
 	/// Open the window with the page at `url` in it. Fails as the game's start does on a
 	/// machine that can't run it ([`requirements`]).
 	pub fn open(event_loop: &ActiveEventLoop, instance: &wgpu::Instance, url: String, cef_log: Option<std::path::PathBuf>) -> Result<View, String> {
-		let attributes = Window::default_attributes()
+		let attributes = crate::icon::with_icon(Window::default_attributes())
 			.with_title("Battle Brothers")
 			.with_inner_size(LogicalSize::new(SIZE.0, SIZE.1))
 			.with_min_inner_size(LogicalSize::new(480.0, 420.0));
 		let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+		let icon = crate::icon::show(&window, event_loop);
 		let surface = instance.create_surface(window.clone()).map_err(|e| format!("no surface for the window: {e}"))?;
 		let gpu = Gpu::for_surface_preferring(instance, &surface, UiPage::FEATURES)
 			.map_err(|e| requirements::unsupported(format!("no GPU could draw to the game's window ({e})")))?;
@@ -105,6 +108,7 @@ impl View {
 			presenter: Presenter::new(&gpu, format),
 			layer: UiLayer::new(&gpu, page),
 			window: Some(window),
+			_icon: icon,
 			surface: Some(surface),
 			config,
 			gpu,

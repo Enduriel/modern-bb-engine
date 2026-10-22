@@ -4,6 +4,7 @@
 //! bb.app/Contents/
 //!   Info.plist
 //!   MacOS/bb, libsteam_api.dylib
+//!   Resources/bb.icns                                   (the game's icon, [`crate::icns`])
 //!   Frameworks/Chromium Embedded Framework.framework   (English locale only)
 //!   Frameworks/bb Helper.app/Contents/{Info.plist, MacOS/bb Helper}
 //!   Frameworks/bb Helper (Renderer).app/Contents/{Info.plist, MacOS/bb Helper (Renderer)}
@@ -34,9 +35,10 @@ const FRAMEWORK: &str = "Chromium Embedded Framework.framework";
 /// The bundle identifier (reverse DNS, no domain of anyone else's).
 const IDENTIFIER: &str = "local.battle-brothers-modern.bb";
 
-/// An `Info.plist` for `executable`.
+/// An `Info.plist` for `executable`; a helper's keeps out of the Dock and has no icon.
 fn info_plist(executable: &str, identifier: &str, helper: bool) -> String {
 	let ui_element = if helper { "\t<key>LSUIElement</key>\n\t<string>1</string>\n" } else { "" };
+	let icon = if helper { String::new() } else { format!("\t<key>CFBundleIconFile</key>\n\t<string>{}</string>\n", crate::icns::FILE) };
 	format!(
 		r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -66,7 +68,7 @@ fn info_plist(executable: &str, identifier: &str, helper: bool) -> String {
 	<true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
-{ui_element}</dict>
+{icon}{ui_element}</dict>
 </plist>
 "#,
 		version = env!("CARGO_PKG_VERSION"),
@@ -108,6 +110,9 @@ pub fn lay_out(dir: &Path, bb: &Path, cef_dir: &Path, steam: &Steam) -> Result<(
 	let (macos, frameworks) = (contents.join("MacOS"), contents.join("Frameworks"));
 	fs::create_dir_all(&macos).map_err(|e| format!("{}: {e}", macos.display()))?;
 	fs::write(contents.join("Info.plist"), info_plist("bb", IDENTIFIER, false)).map_err(|e| e.to_string())?;
+	let resources = contents.join("Resources");
+	fs::create_dir_all(&resources).map_err(|e| format!("{}: {e}", resources.display()))?;
+	fs::write(resources.join(crate::icns::FILE), crate::icns::game_icon()?).map_err(|e| e.to_string())?;
 	let exe = macos.join("bb");
 	crate::layout::copy(bb, &exe)?;
 	if let Steam::Library(steam) = steam {
@@ -146,7 +151,9 @@ mod tests {
 		let helper = info_plist(HELPER, "x.helper", true);
 		assert!(main.contains("<key>CFBundleExecutable</key>\n\t<string>bb</string>"));
 		assert!(!main.contains("LSUIElement"));
+		assert!(main.contains("<key>CFBundleIconFile</key>\n\t<string>bb.icns</string>"));
 		assert!(helper.contains("<key>LSUIElement</key>"));
+		assert!(!helper.contains("CFBundleIconFile"));
 		assert!(helper.contains("<string>bb Helper</string>"));
 	}
 

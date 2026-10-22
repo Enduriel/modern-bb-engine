@@ -12,6 +12,7 @@ pub mod front;
 pub mod game;
 pub mod game_cursor;
 pub mod heap_profile;
+pub mod icon;
 pub mod install;
 pub mod keys;
 pub mod logs;

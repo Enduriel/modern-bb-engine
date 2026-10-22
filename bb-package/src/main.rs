@@ -20,6 +20,7 @@
 //! Needs `curl` and `tar` on the path (both ship with Windows 10+, macOS and Linux
 //! distributions), and `strip` on Linux. See `docs/packaging.md`.
 
+mod icns;
 mod layout;
 mod mac_app;
 mod steam_library;
