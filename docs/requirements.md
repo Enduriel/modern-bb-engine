@@ -27,7 +27,14 @@ double-click is enough. It takes the first of these that holds `data/data_001.da
    macOS; on Linux every one of the native, Flatpak and Snap clients'), each of its
    libraries, and the game's folder in the one whose `appmanifest_365360.acf` names
    it. `BB_STEAM_DIR` names Steam's folder instead.
-4. GOG: not yet.
+
+Only Steam's install is found by itself: a GOG copy, or any other,
+is chosen in the window below, or named by hand in the settings file with the line
+`install.data_dir = <the game's data folder>` (the game's folder works too), for
+example `install.data_dir = C:\GOG Games\Battle Brothers\data`. The file is
+`battle-brothers-modern/settings.cfg` in `%APPDATA%` on Windows, in
+`~/Library/Application Support` on macOS, and in `$XDG_CONFIG_HOME` (else `~/.config`)
+on Linux; bb reads it at its next start. The window shows the file's full path.
 
 The log (`log.html` and stderr) says which folder was used and where it came from:
 `install: the game's data: … (from Steam)`. A folder found in Steam is found again at
@@ -40,13 +47,15 @@ macOS app bundle's `Contents/Resources/data` or `Contents/data` (in the folder, 
 bundle itself). The bundle layouts are a guess: a Mac install hasn't been looked at.
 
 **Nothing found:** a window says "Battle Brothers wasn't found", lists where `bb`
-looked and what was there, and asks for the game's folder: typed or pasted into a box,
+looked and what was there, shows the settings file's full path and the line to add to
+it with an example, and asks for the game's folder: typed or pasted into a box,
 or picked with `Browse…`, the system's folder dialog (Windows' own, through Chromium;
 `zenity` or `kdialog` on Linux, and without either the box only; AppleScript's
 `choose folder` on macOS). A folder without the game is refused there, with why. The
 folder chosen is kept, and `bb` starts again with it (on Linux and macOS as the same
 process, on Windows as a child the first waits for). Closing the window ends `bb`.
-Built without the UI, `bb` says where it looked in the message box instead and ends.
+Built without the UI, `bb` says where it looked and the settings line in the message
+box instead, and ends.
 
 ## Why a GPU is required
 
