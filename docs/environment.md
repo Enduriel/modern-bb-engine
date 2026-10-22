@@ -12,7 +12,8 @@ otherwise.
 | --- | --- |
 | `BB_NO_STEAM=1` | Never load Steam's library (as `--no-steam`): achievements and stats stay off. |
 | `BB_STEAM_API=PATH` | Load Steam's library from `PATH` (as `--steam-api`). |
-| `BB_SAVES_DIR=DIR` | Keep the saves in `DIR`, not in `battle-brothers-modern/savegames` in the user's data folder. |
+| `BB_NO_MODS=1` | Play vanilla (as `--no-mods`): the install's mods are mounted by default. |
+| `BB_SAVES_DIR=DIR` | Keep the saves in `DIR` (`--saves` overrides it; empty is as if unset). By default `bb` keeps them in the original game's savegames folder (`Documents\Battle Brothers\savegames` on Windows; on Linux the same in the Proton prefix of the Steam install played, if the original has run there), else in `battle-brothers-modern/savegames` in the user's data folder; `saves.dir` in the settings file names another (see `bb-app/src/saves/mod.rs`). The tests always keep theirs in a folder of their own. |
 | `BB_LOGS_DIR=DIR` | Write `log.html`, `cef.log` and the earlier sessions' `logs/` to `DIR`, not to `battle-brothers-modern/` in the user's data folder (`--logs` does the same). |
 | `BB_SCRIPT_CACHE=DIR` | Keep the compiled-script cache in `DIR` (default `$XDG_CACHE_HOME/bb-modern-engine/scripts`, else `~/.cache/…`); `off` or `0` turns the cache off. |
 | `BB_SHEET_CACHE=DIR` | Keep the engine's own sprite sheets (each atlas's frames cut out, see `bb_assets::sheet_cache`) in `DIR`, not under the engine's cache folder; `off` keeps none. |
