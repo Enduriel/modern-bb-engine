@@ -11,6 +11,43 @@ statement is tagged with where it comes from:
 once with a message box naming what is missing, and writes the same text to stderr
 and to `log.html` (see "When the game refuses to start" below).
 
+## The game itself
+
+The engine plays the player's own copy of Battle Brothers: its game files, the
+`data_*.dat` archives in the game's `data` folder. `bb` finds them by itself, so a
+double-click is enough. It takes the first of these that holds `data/data_001.dat`:
+
+1. `--data DIR`, then `BB_DATA_DIR` (for developers). Either may name the `data` folder
+   or the game's folder. One that holds no game stops `bb` with that error, in the
+   message box.
+2. The folder the player chose the last time nothing was found (`install.data_dir` in
+   bb's `settings.cfg`). If it no longer holds the game, the log says so and the
+   search goes on.
+3. Steam: Steam's folder (Windows' registry; `~/Library/Application Support/Steam` on
+   macOS; on Linux every one of the native, Flatpak and Snap clients'), each of its
+   libraries, and the game's folder in the one whose `appmanifest_365360.acf` names
+   it. `BB_STEAM_DIR` names Steam's folder instead.
+4. GOG: not yet.
+
+The log (`log.html` and stderr) says which folder was used and where it came from:
+`install: the game's data: … (from Steam)`. A folder found in Steam is found again at
+every start, so a game Steam moved to another library is followed. Only a folder the
+player chose is kept.
+
+A folder holds the game if `data_001.dat` is in it, in its `data` folder, in the `data`
+folder beside it (the game's `win32` folder, where `BattleBrothers.exe` is), or in a
+macOS app bundle's `Contents/Resources/data` or `Contents/data` (in the folder, or the
+bundle itself). The bundle layouts are a guess: a Mac install hasn't been looked at.
+
+**Nothing found:** a window says "Battle Brothers wasn't found", lists where `bb`
+looked and what was there, and asks for the game's folder: typed or pasted into a box,
+or picked with `Browse…`, the system's folder dialog (Windows' own, through Chromium;
+`zenity` or `kdialog` on Linux, and without either the box only; AppleScript's
+`choose folder` on macOS). A folder without the game is refused there, with why. The
+folder chosen is kept, and `bb` starts again with it (on Linux and macOS as the same
+process, on Windows as a child the first waits for). Closing the window ends `bb`.
+Built without the UI, `bb` says where it looked in the message box instead and ends.
+
 ## Why a GPU is required
 
 The game's UI is a web page drawn by Chromium. Chromium draws it on the GPU and hands
@@ -138,6 +175,12 @@ The message names the first thing missing:
   frame arrived within 10 s. This is a driver problem the checks can't see in advance.
   Chromium's own log (`cef.log`, beside `log.html`) says why.
 
+Any other error that ends the start (a game folder whose files won't load, `--data`
+naming a folder without the game) is shown the same way, with the game folder `bb` was
+running and where the log is; so is a crash.
+
 The message box uses `zenity`, `kdialog` or `xmessage` on Linux (whichever is
 installed), `osascript` on macOS, and `MessageBoxW` on Windows. `BB_ERROR_DIALOG=0`
-turns it off. The text always goes to stderr and `log.html` as well.
+turns it off. The text always goes to stderr and `log.html` as well. On Linux without
+any of the three tools, and without a display (no `DISPLAY` or `WAYLAND_DISPLAY`), the
+text is only on stderr and in `log.html`.

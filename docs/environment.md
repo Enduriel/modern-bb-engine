@@ -17,7 +17,7 @@ otherwise.
 | `BB_SCRIPT_CACHE=DIR` | Keep the compiled-script cache in `DIR` (default `$XDG_CACHE_HOME/bb-modern-engine/scripts`, else `~/.cache/…`); `off` or `0` turns the cache off. |
 | `BB_SHEET_CACHE=DIR` | Keep the engine's own sprite sheets (each atlas's frames cut out, see `bb_assets::sheet_cache`) in `DIR`, not under the engine's cache folder; `off` keeps none. |
 | `BB_AUDIO_BUFFER=FRAMES` | The sound device's buffer, in frames (default: the device's). |
-| `BB_ERROR_DIALOG=0` | No message box when the machine can't run the game (`bb_app::requirements`); the message still goes to stderr and `log.html`. The window tests set it. |
+| `BB_ERROR_DIALOG=0` | No message box when `bb` can't start (a machine that can't run the game, a game folder that won't load, any other error) or crashes (`bb_app::failure`); the message still goes to stderr and `log.html`. The window tests set it. |
 
 ## Measuring
 
@@ -58,8 +58,9 @@ gives.
 | Variable | What it does |
 | --- | --- |
 | `BB_ALLOW_SKIPS=1` | Let a test skip (saying `skipping: <why>`) when the machine lacks what it needs: the Steam install, a mod, a GPU, gamescope. Unset, such a test fails, and `scripts/test_all.py` fails a run with skips in it. |
-| `BB_DATA_DIR=DIR` | The game's `data` folder the tests and examples use (default: the developer's Linux Steam install). |
-| `BB_STEAM_DIR=DIR` | Steam's folder (default `~/.local/share/Steam`). |
+| `BB_DATA_DIR=DIR` | The game's `data` folder (or the game's folder) `bb`, the tests and the examples use, ahead of the folder the player chose and Steam's install, as `--data` does for `bb` ([how bb finds the game](requirements.md#the-game-itself)). One without the game stops `bb` with that error. Default for the tests and examples: the game in this machine's Steam libraries (`bb_engine::install`). |
+| `BB_STEAM_DIR=DIR` | Steam's folder: `bb` and the tests look for the game in its libraries only, instead of in the Steam folders `steamlocate` finds (a folder without Steam in it hides this machine's install: the window tests' not-found cases). The original's Proton prefix, for the probes and save fixtures, is under it too (default there `~/.local/share/Steam`). |
+| `BB_TEST_FOLDER_DIALOG=DIR` | The not-found window's folder dialog answers `DIR` at once instead of opening (`bb_app::install::picker`). |
 | `BB_ORIGINAL_SAVES=DIR` | Saves the original wrote, for the save-format tests; the tests fail without them (skip with `BB_ALLOW_SKIPS=1`). |
 | `BB_ENGINE_SEED=N` | Seed the engine's own randomness (not the scripts' generator), for runs that must repeat exactly. |
 | `BB_TEST_UNPRESENTED=N` | Draw frame `N` but don't present it (the window tests' stalled-compositor case). |
