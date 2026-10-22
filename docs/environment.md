@@ -65,6 +65,7 @@ gives.
 | `BB_ORIGINAL_SAVES=DIR` | Saves the original wrote, for the save-format tests; the tests fail without them (skip with `BB_ALLOW_SKIPS=1`). |
 | `BB_ENGINE_SEED=N` | Seed the engine's own randomness (not the scripts' generator), for runs that must repeat exactly. |
 | `BB_TEST_UNPRESENTED=N` | Draw frame `N` but don't present it (the window tests' stalled-compositor case). |
+| `BB_TEST_SURFACE_FAILS=N` | The window's next `N` surface configures ask for an empty surface, which wgpu refuses (the window tests' case of a surface the system won't take, `bb_app::surface_trouble`). |
 | `BB_TEST_PRESENT_EVERY=K/N` (or `N`, as `2/N`) | Draw and present the first `K` of every `N` frames whatever they show (the window tests' frame-pacing cases). |
 | `BB_GAME_QUEUE_TURN=PATH` | A turn in the shared game-display queue that the runner (`scripts/test_all.py`) already holds, so `window.rs` waits once. |
 | `BB_UI_DISPLAY`, `BB_UI_DISPLAY_STATUS` | Set by the tests' display wrapper: where a wrapped process runs (a headless gamescope by default) and where it writes its exit status. |

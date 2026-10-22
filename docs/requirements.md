@@ -126,6 +126,11 @@ full-screen UI animations at the display's rate, but the GPU path is required.
   texture, which the game opens on its Direct3D 12 device. `WGPU_BACKEND` naming
   another API makes the game refuse to start (the UI can't reach it).
 
+Fullscreen is a borderless window over the monitor: Direct3D 12 has no exclusive mode,
+and the display's mode is never switched (2026-10-22: a player's first start, exclusive
+at 60 Hz, failed to configure the window's surface; `bb_app::platform`). A fullscreen
+mode of another size than the monitor's is drawn scaled into it, its aspect kept.
+
 **Which GPUs that means** [driver docs; nothing run on real Windows yet]:
 
 | vendor | oldest generation | source |
@@ -196,6 +201,17 @@ The message names the first thing missing:
 
 Any other error that ends the start (a game folder whose files won't load) is shown the
 same way, with the game folder `bb` was running and where the log is; so is a crash.
+
+So is a window the system won't let the game draw to: `the game's window could not be
+drawn to: the system refused its surface for 10 s (…)`. A shorter refusal (wgpu's
+`Surface::configure` or present failing, as during a display change) doesn't end the
+game: `log.html` notes it and its end, and the game configures the surface again every
+frame meanwhile (`bb_app::surface_trouble`).
+
+`log.html` also has the warnings and errors of the engine's libraries (the `log`
+crate's records, tagged with the library: `wgpu_hal`, `wgpu_core`, …; the first 200 of
+a session, all of them on stderr). wgpu's backends report the system's own error there,
+such as the `HRESULT` of a failed `ResizeBuffers`.
 
 The command line's errors are not: an unknown argument, a
 missing or bad value, and `--data` or `BB_DATA_DIR` naming a folder without the game go
