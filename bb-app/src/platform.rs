@@ -18,7 +18,23 @@ pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
 	false
 }
 
-#[cfg(not(all(unix, not(any(target_os = "ios", target_os = "android")))))]
+/// Windows: no. Direct3D 12 has no exclusive fullscreen: wgpu's swapchain is a flip-model
+/// one, which the system already shows without composition (independent flip) when the
+/// window covers the monitor. winit's exclusive mode switches the display's mode under
+/// it (`ChangeDisplaySettingsExW`) instead, and the first start's mode is the desktop's
+/// size at 60 Hz, so a faster monitor is switched to 60 Hz. A player's first start
+/// (NVIDIA, 2026-10-22) failed to configure its surface right after (`Surface::configure`:
+/// "Invalid surface", as the main menu showed), as wgpu's issue 1781 reports for the
+/// same pairing (an exclusive winit window on Direct3D 12, NVIDIA), where it was the only
+/// one that failed.
+/// Fullscreen is a borderless window over the monitor, the game's screen scaled into it
+/// when its size isn't the monitor's (as on Wayland and macOS).
+#[cfg(windows)]
+pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
+	false
+}
+
+#[cfg(not(any(windows, all(unix, not(any(target_os = "ios", target_os = "android"))))))]
 pub fn exclusive_fullscreen(_event_loop: &ActiveEventLoop) -> bool {
 	true
 }
