@@ -18,8 +18,8 @@ The engine plays the player's own copy of Battle Brothers: its game files, the
 double-click is enough. It takes the first of these that holds `data/data_001.dat`:
 
 1. `--data DIR`, then `BB_DATA_DIR` (for developers). Either may name the `data` folder
-   or the game's folder. One that holds no game stops `bb` with that error, in the
-   message box.
+   or the game's folder. One that holds no game stops `bb` with that error, on stderr
+   and in the log only (a command-line error: see below).
 2. The folder the player chose the last time nothing was found (`install.data_dir` in
    bb's `settings.cfg`). If it no longer holds the game, the log says so and the
    search goes on.
@@ -41,10 +41,15 @@ The log (`log.html` and stderr) says which folder was used and where it came fro
 every start, so a game Steam moved to another library is followed. Only a folder the
 player chose is kept.
 
-A folder holds the game if `data_001.dat` is in it, in its `data` folder, in the `data`
-folder beside it (the game's `win32` folder, where `BattleBrothers.exe` is), or in a
-macOS app bundle's `Contents/Resources/data` or `Contents/data` (in the folder, or the
-bundle itself). The bundle layouts are a guess: a Mac install hasn't been looked at.
+A folder holds the game if `data_001.dat` is in it, in its `data` folder, or in the
+`data` folder beside it (the game's `win32` folder, where `BattleBrothers.exe` is).
+
+**macOS:** Battle Brothers has no macOS build, so Steam on a Mac doesn't install it. A
+Mac player points `bb` at a copy of the Windows game's files (the game's folder, with
+`data` and `win32` in it), chosen in the window below or named in the settings file.
+The layout is the Windows one on every OS; the window's example is a folder in the
+player's home folder (`~/Games/Battle Brothers`). How the player gets the files is
+theirs to choose: the window doesn't describe it.
 
 **Nothing found:** a window says "Battle Brothers wasn't found", lists where `bb`
 looked and what was there, shows the settings file's full path and the line to add to
@@ -53,7 +58,12 @@ or picked with `Browse…`, the system's folder dialog (Windows' own, through Ch
 `zenity` or `kdialog` on Linux, and without either the box only; AppleScript's
 `choose folder` on macOS). A folder without the game is refused there, with why. The
 folder chosen is kept, and `bb` starts again with it (on Linux and macOS as the same
-process, on Windows as a child the first waits for). Closing the window ends `bb`.
+process, on Windows as a child the first waits for; if the settings file can't be
+written, bb passes the folder to itself as `--chosen-data`, which counts as the folder
+chosen before). The folder dialog opens attached to bb's window: on Windows it is the
+page's parent window (Chromium owns a windowless page's dialogs by it); on Linux under
+X11 the tools get `--attach` with bb's window (kdialog honours it; zenity 4 ignores it);
+on macOS the AppleScript activates itself first, so its dialog comes to the front. Closing the window ends `bb`.
 Built without the UI, `bb` says where it looked and the settings line in the message
 box instead, and ends.
 
@@ -184,9 +194,13 @@ The message names the first thing missing:
   frame arrived within 10 s. This is a driver problem the checks can't see in advance.
   Chromium's own log (`cef.log`, beside `log.html`) says why.
 
-Any other error that ends the start (a game folder whose files won't load, `--data`
-naming a folder without the game) is shown the same way, with the game folder `bb` was
-running and where the log is; so is a crash.
+Any other error that ends the start (a game folder whose files won't load) is shown the
+same way, with the game folder `bb` was running and where the log is; so is a crash.
+
+The command line's errors are not: an unknown argument, a
+missing or bad value, and `--data` or `BB_DATA_DIR` naming a folder without the game go
+to stderr (and `log.html`, once it's open) only, since a player who double-clicks `bb`
+passes no arguments and sets no variables.
 
 The message box uses `zenity`, `kdialog` or `xmessage` on Linux (whichever is
 installed), `osascript` on macOS, and `MessageBoxW` on Windows. `BB_ERROR_DIALOG=0`
