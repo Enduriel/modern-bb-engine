@@ -12,10 +12,10 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Looked, Source, Store, layout};
+use super::{Looked, Source, layout};
 
 /// Where what Steam has is looked for.
-const STEAM: Source = Source::Store(Store::Steam);
+const STEAM: Source = Source::Steam;
 
 /// The game's Steam app id.
 pub const APP_ID: u32 = 365_360;

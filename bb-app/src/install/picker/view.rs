@@ -17,7 +17,7 @@ use winit::window::Window;
 use crate::requirements;
 
 /// The window's size at first, in the system's points.
-const SIZE: (f64, f64) = (880.0, 620.0);
+const SIZE: (f64, f64) = (880.0, 700.0);
 
 /// How long the page may take to open.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);

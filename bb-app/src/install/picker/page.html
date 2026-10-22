@@ -14,23 +14,26 @@
 		--accent: #c9a25e;
 		--refused: #e0846a;
 	}
+	html {
+		height: 100%;
+	}
 	html, body {
 		margin: 0;
-		height: 100%;
 		background: var(--ground);
 		color: var(--text);
 		font: 16px/1.45 sans-serif;
 	}
+	/* Centred while it fits; scrolled from its top when the window is shorter. */
 	body {
 		display: flex;
-		align-items: center;
-		justify-content: center;
+		min-height: 100%;
 		box-sizing: border-box;
 		padding: 24px;
 	}
 	main {
 		width: 100%;
 		max-width: 760px;
+		margin: auto;
 		background: var(--panel);
 		border: 1px solid var(--edge);
 		border-radius: 6px;
@@ -108,6 +111,17 @@
 		color: var(--muted);
 		font-size: 14px;
 	}
+	pre {
+		margin: 6px 0 0;
+		padding: 8px 10px;
+		background: var(--ground);
+		border: 1px solid var(--edge);
+		border-radius: 4px;
+		font: 13px/1.4 monospace;
+		color: var(--text);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
 </style>
 </head>
 <body>
@@ -122,7 +136,13 @@
 		<button id="bb-browse">Browse…</button>
 	</div>
 	<p id="bb-error"></p>
-	<p class="note">It's remembered: the game starts at once next time.</p>
+	<p class="note">The folder chosen here is remembered: the game starts at once next time.</p>
+	<div id="bb-by-hand" hidden>
+		<p class="note">bb finds Battle Brothers by itself only in Steam. For a GOG copy, or any other, choose its
+			folder above, or name it yourself: add this line to <code id="bb-settings-file"></code> (create the
+			file if it isn't there). bb reads it the next time it starts.</p>
+		<pre id="bb-line"></pre>
+	</div>
 	<div class="actions">
 		<button id="bb-quit">Quit</button>
 		<button id="bb-use" class="primary">Play</button>
@@ -133,6 +153,15 @@
 	'use strict';
 	var looked = /*LOOKED*/[];
 	var example = /*EXAMPLE*/'';
+	// The settings file and its line, to name the folder by hand ('' without a file).
+	var settingsFile = /*SETTINGS_FILE*/'';
+	var key = /*KEY*/'';
+	var exampleData = /*EXAMPLE_DATA*/'';
+	if (settingsFile) {
+		document.getElementById('bb-settings-file').textContent = settingsFile;
+		document.getElementById('bb-line').textContent = key + ' = <the game\'s data folder>\n\nfor example:\n' + key + ' = ' + exampleData;
+		document.getElementById('bb-by-hand').hidden = false;
+	}
 	var list = document.getElementById('bb-looked');
 	looked.forEach(function (text) {
 		var item = document.createElement('li');

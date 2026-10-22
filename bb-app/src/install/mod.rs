@@ -8,13 +8,15 @@
 //! followed there, and the settings hold only what the player decided.
 //!
 //! Asking: with the UI, a window of bb's own ([`picker`]); without it (a developer's
-//! build), the message box saying where bb looked and to start it with `--data`.
+//! build), the message box saying where bb looked. Either way the player is told how to
+//! name the folder by hand ([`by_hand`]): bb finds only Steam's install by itself, so
+//! a GOG copy, or any other, is named in the settings file.
 
 #[cfg(feature = "ui")]
 pub mod picker;
 pub mod relaunch;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bb_engine::install::{Install, Looked, Lookup, NotFound};
 use squirrel_bb::html_log::{self, Class};
@@ -32,6 +34,32 @@ pub fn find(argument: Option<PathBuf>, settings: &Settings) -> Result<Install, N
 	Ok(install)
 }
 
+/// How to name the game's folder by hand: the line to add to the settings file at
+/// `settings_file`, with an example, read at the next start. `None` without a settings
+/// file (no home folder).
+pub fn by_hand(settings_file: Option<&Path>) -> Option<String> {
+	let file = settings_file?;
+	let key = crate::settings::CHOSEN_DATA_DIR;
+	Some(format!(
+		"To name the folder yourself (a GOG copy, or any other bb doesn't find), add this line to \
+		 {}, creating the file if it isn't there:\n\n{key} = <the game's data folder>\n\nfor example\n\n\
+		 {key} = {}\n\nbb reads it the next time it starts.",
+		file.display(),
+		example_data_dir()
+	))
+}
+
+/// A data folder as the game installs it on this system, for the examples.
+pub fn example_data_dir() -> &'static str {
+	if cfg!(windows) {
+		r"C:\GOG Games\Battle Brothers\data"
+	} else if cfg!(target_os = "macos") {
+		"/Applications/Battle Brothers/data"
+	} else {
+		"/home/you/GOG Games/Battle Brothers/data"
+	}
+}
+
 /// What the player chose, after nothing was found.
 pub enum Asked {
 	/// This data folder: kept in the settings (or not, and why), and bb starts again.
@@ -45,7 +73,7 @@ pub enum Asked {
 #[cfg(feature = "ui")]
 pub fn ask(looked: &[Looked], settings: &mut Settings, options: picker::Options) -> Result<Asked, String> {
 	log(Class::Warning, &NotFound::Nowhere(looked.to_vec()).to_string());
-	let Some(data_dir) = picker::ask(looked, options)? else {
+	let Some(data_dir) = picker::ask(looked, settings.path(), options)? else {
 		log(Class::Info, "no game folder chosen: the window was closed");
 		return Ok(Asked::Closed);
 	};
@@ -60,12 +88,16 @@ pub fn ask(looked: &[Looked], settings: &mut Settings, options: picker::Options)
 /// Without the UI there's no window to ask in: the error says where bb looked and how
 /// to name the folder.
 #[cfg(not(feature = "ui"))]
-pub fn ask(looked: &[Looked], _settings: &mut Settings, _options: ()) -> Result<Asked, String> {
-	Err(format!(
+pub fn ask(looked: &[Looked], settings: &mut Settings, _options: ()) -> Result<Asked, String> {
+	let mut text = format!(
 		"{}\n\nStart bb with --data and the game's data folder (the `data` folder in the folder Battle Brothers \
 		 is installed in).",
 		NotFound::Nowhere(looked.to_vec())
-	))
+	);
+	if let Some(by_hand) = by_hand(settings.path()) {
+		text.push_str(&format!("\n\n{by_hand}"));
+	}
+	Err(text)
 }
 
 /// The arguments the relaunched bb needs beyond this run's: the folder, if it couldn't

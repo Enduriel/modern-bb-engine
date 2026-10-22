@@ -7,10 +7,11 @@
 //! 2. The folder the player chose when none was found (kept in bb's settings; the
 //!    caller passes it). One that no longer holds the game (moved, uninstalled) is
 //!    passed over, and the log says so.
-//! 3. The stores' installs, in [`STORES`]' order: Steam's libraries ([`steam`]).
+//! 3. Steam's libraries ([`steam`]). No other store is looked in (GOG's copies and any
+//!    other are found as the player names them).
 //!
 //! Nothing found: the caller tells the player where it looked ([`NotFound`]) and lets
-//! them choose the folder.
+//! them choose the folder, or name it in bb's settings.
 
 pub mod layout;
 pub mod steam;
@@ -32,20 +33,9 @@ pub enum Source {
 	Environment,
 	/// The folder the player chose earlier.
 	Remembered,
-	/// A store's install.
-	Store(Store),
-}
-
-/// The stores whose installs bb finds by itself.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Store {
+	/// Steam's install.
 	Steam,
-	// Gog: GOG Galaxy's and the offline installers' copies. Not yet: the crate that finds
-	// them is being chosen. It goes after Steam in `STORES`.
 }
-
-/// The stores looked in, in order: with several installs, the first found wins.
-pub const STORES: &[Store] = &[Store::Steam];
 
 impl fmt::Display for Source {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -53,7 +43,7 @@ impl fmt::Display for Source {
 			Source::Argument => "--data",
 			Source::Environment => DATA_DIR_VAR,
 			Source::Remembered => "the folder chosen earlier",
-			Source::Store(Store::Steam) => "Steam",
+			Source::Steam => "Steam",
 		})
 	}
 }
@@ -156,15 +146,10 @@ impl Lookup {
 				None => looked.push(Looked::new(Source::Remembered, dir.display().to_string(), no_game())),
 			}
 		}
-		for &store in STORES {
-			let found = match store {
-				Store::Steam => steam::data_dirs(self.steam_dir.as_deref(), &mut looked),
-			};
-			if let Some(data_dir) = found.into_iter().next() {
-				return Ok(Install { data_dir, source: Source::Store(store), passed_over: looked });
-			}
+		match steam::data_dirs(self.steam_dir.as_deref(), &mut looked).into_iter().next() {
+			Some(data_dir) => Ok(Install { data_dir, source: Source::Steam, passed_over: looked }),
+			None => Err(NotFound::Nowhere(looked)),
 		}
-		Err(NotFound::Nowhere(looked))
 	}
 }
 
@@ -222,7 +207,7 @@ mod tests {
 		assert_eq!(found(all), Ok((arg.join("data"), Source::Argument)));
 		assert_eq!(found(lookup(None, Some(&env), Some(&kept), &steam)), Ok((env.join("data"), Source::Environment)));
 		assert_eq!(found(lookup(None, None, Some(&kept), &steam)), Ok((kept.join("data"), Source::Remembered)));
-		assert_eq!(found(lookup(None, None, None, &steam)), Ok((steam_data, Source::Store(Store::Steam))));
+		assert_eq!(found(lookup(None, None, None, &steam)), Ok((steam_data, Source::Steam)));
 	}
 
 	#[test]
@@ -243,7 +228,7 @@ mod tests {
 		let steam = tree.steam("Steam", "Battle Brothers", true);
 		let gone = tree.root().join("moved away");
 		let install = lookup(None, None, Some(&gone), &steam).find().expect("Steam's");
-		assert_eq!(install.source, Source::Store(Store::Steam));
+		assert_eq!(install.source, Source::Steam);
 		assert_eq!(install.passed_over.len(), 1, "{:?}", install.passed_over);
 		assert_eq!(install.passed_over[0].source, Source::Remembered);
 	}
@@ -256,7 +241,7 @@ mod tests {
 		std::fs::create_dir_all(&no_steam).unwrap();
 		let Err(NotFound::Nowhere(looked)) = lookup(None, None, Some(&gone), &no_steam).find() else { panic!("found one") };
 		let sources: Vec<Source> = looked.iter().map(|l| l.source).collect();
-		assert_eq!(sources, [Source::Remembered, Source::Store(Store::Steam)]);
+		assert_eq!(sources, [Source::Remembered, Source::Steam]);
 		let text = NotFound::Nowhere(looked).to_string();
 		assert!(text.starts_with("Battle Brothers wasn't found. Looked in:\n- "), "{text}");
 	}

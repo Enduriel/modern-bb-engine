@@ -55,7 +55,8 @@ pub struct Options {
 
 /// Ask the player for the game's folder, saying bb looked in `looked`: the data folder
 /// chosen (checked), or `None` if they closed the window.
-pub fn ask(looked: &[Looked], options: Options) -> Result<Option<PathBuf>, String> {
+/// The page tells how to name the folder in the settings file at `settings_file` instead.
+pub fn ask(looked: &[Looked], settings_file: Option<&std::path::Path>, options: Options) -> Result<Option<PathBuf>, String> {
 	let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
 	let display = Box::new(event_loop.owned_display_handle());
 	let instance = wgpu::Instance::new(bb_render::Gpu::platform_backends(
@@ -63,7 +64,7 @@ pub fn ask(looked: &[Looked], options: Options) -> Result<Option<PathBuf>, Strin
 	));
 	let mut picker = Picker {
 		instance,
-		url: page::url(looked),
+		url: page::url(looked, settings_file),
 		options,
 		view: None,
 		opened: Instant::now(),

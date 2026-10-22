@@ -17,15 +17,22 @@ pub enum Action {
 	Quit,
 }
 
-/// The page, as a `data:` URL (it loads nothing else).
-pub fn url(looked: &[Looked]) -> String {
+/// The page, as a `data:` URL (it loads nothing else), with how to name the folder in
+/// the settings file at `settings_file` if there is one.
+pub fn url(looked: &[Looked], settings_file: Option<&std::path::Path>) -> String {
 	// `<` escaped: a folder's name can't end the script (`</script>`).
 	let script_text = |json: Json| json.to_text().replace('<', "\\u003c");
 	let looked = script_text(Json::Array(looked.iter().map(|l| Json::Str(l.to_string())).collect()));
 	let example = script_text(Json::Str(example().to_string()));
+	let settings_file = script_text(Json::Str(settings_file.map(|f| f.display().to_string()).unwrap_or_default()));
+	let key = script_text(Json::Str(crate::settings::CHOSEN_DATA_DIR.to_string()));
+	let example_data = script_text(Json::Str(crate::install::example_data_dir().to_string()));
 	let html = include_str!("page.html")
 		.replacen("/*LOOKED*/[]", &looked, 1)
-		.replacen("/*EXAMPLE*/''", &example, 1);
+		.replacen("/*EXAMPLE*/''", &example, 1)
+		.replacen("/*SETTINGS_FILE*/''", &settings_file, 1)
+		.replacen("/*KEY*/''", &key, 1)
+		.replacen("/*EXAMPLE_DATA*/''", &example_data, 1);
 	format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
 }
 
@@ -90,10 +97,12 @@ mod tests {
 	#[test]
 	fn the_page_lists_where_bb_looked() {
 		let looked = [Looked::new(Source::Remembered, "/games/<BB> & co", "gone")];
-		let url = url(&looked);
+		let url = url(&looked, Some(std::path::Path::new("/home/me/.config/battle-brothers-modern/settings.cfg")));
 		assert!(url.starts_with("data:text/html;charset=utf-8,%3C%21doctype"), "{}", &url[..60]);
 		assert!(!url.contains(' ') && !url.contains('<') && !url.contains('#'), "escaped");
 		assert!(url.contains(&percent_encode(r#"var looked = ["/games/\u003cBB> & co: gone"]"#)), "the list, with `<` escaped");
+		assert!(url.contains(&percent_encode(r#"var settingsFile = "/home/me/.config/battle-brothers-modern/settings.cfg";"#)));
+		assert!(url.contains(&percent_encode(r#"var key = "install.data_dir";"#)));
 	}
 
 	#[test]

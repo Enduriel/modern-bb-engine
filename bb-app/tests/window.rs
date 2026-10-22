@@ -641,7 +641,8 @@ fn game_folder() -> String {
 }
 
 /// With no install to be found (no Steam, nothing chosen before), `bb` with the page says
-/// so in a window of its own, with where it looked, and waits for the player.
+/// so in a window of its own, with where it looked and how to name the folder in the
+/// settings file by hand, and waits for the player.
 #[cfg(feature = "ui")]
 #[test]
 fn bb_asks_for_the_game_folder_when_it_finds_none() {
@@ -649,12 +650,16 @@ fn bb_asks_for_the_game_folder_when_it_finds_none() {
 	let (settings, shot) = (dir.join("settings.cfg"), dir.join("shot.png"));
 	let none = no_steam(&dir);
 	// The page's text, through its console (its errors reach stderr).
-	let report = "console.error('page says: ' + document.querySelector('h1').textContent + ' / ' + document.getElementById('bb-looked').textContent)";
+	let report = "console.error('page says: ' + document.querySelector('h1').textContent + ' / ' + document.getElementById('bb-looked').textContent \
+		+ ' / ' + document.getElementById('bb-settings-file').textContent + ' / ' + document.getElementById('bb-line').textContent.split('\\n')[0])";
 	let args = ["--settings", settings.to_str().unwrap(), "--at-page", "5", report, "--shot", "10", shot.to_str().unwrap()];
 	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &[("BB_STEAM_DIR", &none), ("BB_DATA_DIR", "")]) else { return };
 	assert_eq!(run.status, "0", "{}", run.stderr);
 	assert!(run.stderr.contains("Battle Brothers wasn't found. Looked in:"), "{}", run.stderr);
-	let page = format!("page says: Battle Brothers wasn't found / Steam in {none}: not installed there");
+	let page = format!(
+		"page says: Battle Brothers wasn't found / Steam in {none}: not installed there / {} / install.data_dir = <the game's data folder>",
+		settings.display()
+	);
 	assert!(run.stderr.contains(&page), "{page}:\n{}", run.stderr);
 	assert!(shot.exists(), "the window's shot");
 	let html = std::fs::read_to_string(dir.join("logs").join("log.html")).expect("log.html");
@@ -716,6 +721,7 @@ fn bb_without_the_ui_says_where_it_looked() {
 	assert!(run.stderr.contains("Battle Brothers wasn't found. Looked in:"), "{}", run.stderr);
 	let shown = std::fs::read_to_string(dir.join("bin").join("zenity.args")).expect("the message box was shown");
 	assert!(shown.contains("--error") && shown.contains("Start bb with --data"), "{shown}");
+	assert!(shown.contains(&format!("add this line to {}", settings.display())) && shown.contains("install.data_dir = "), "{shown}");
 }
 
 /// Any error that ends the start reaches the player in the message box, not only the

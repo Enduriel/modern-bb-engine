@@ -19,8 +19,9 @@ use file::SettingsText;
 /// The settings file's name in its folder.
 const FILE_NAME: &str = "settings.cfg";
 
-/// The key of the data folder the player chose.
-const CHOSEN_DATA_DIR: &str = "install.data_dir";
+/// The key of the data folder the player chose (or named by hand: the not-found window
+/// tells them this key).
+pub const CHOSEN_DATA_DIR: &str = "install.data_dir";
 
 /// The settings file, where it is and what it says.
 pub struct Settings {
