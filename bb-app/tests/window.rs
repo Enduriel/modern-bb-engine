@@ -612,6 +612,7 @@ fn bb_says_so_when_chromium_cant_paint_on_the_gpu() {
 /// An empty folder in the run's folder: where `BB_STEAM_DIR` points to hide this
 /// machine's Steam install from `bb` (there's no Steam in it). The tests give `bb` an
 /// empty `BB_DATA_DIR` too, and a settings file of their own (no folder chosen before).
+#[cfg(any(feature = "ui", target_os = "linux"))]
 fn no_steam(dir: &Path) -> String {
 	let none = dir.join("no_steam");
 	std::fs::create_dir_all(&none).expect("an empty folder");
@@ -634,6 +635,7 @@ fn fake_tool(dir: &Path, tool: &str, prints: &str) -> String {
 }
 
 /// The game's folder (above its data folder), for the folder dialog to answer.
+#[cfg(all(feature = "ui", target_os = "linux"))]
 fn game_folder() -> String {
 	Path::new(STEAM_DATA_DIR).parent().expect("the game's folder").to_string_lossy().into_owned()
 }
