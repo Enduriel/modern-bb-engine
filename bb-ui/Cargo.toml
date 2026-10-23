@@ -59,6 +59,11 @@ harness = false
 required-features = ["cef"]
 
 [[test]]
+name = "mods_battle_ui"
+harness = false
+required-features = ["cef"]
+
+[[test]]
 name = "ui_parity"
 harness = false
 required-features = ["cef"]

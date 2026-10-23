@@ -3,7 +3,8 @@
 //! mouse click on "New Campaign" opens the new-campaign menu, whose origin list the
 //! mouse wheel scrolls and which "Cancel" closes; Options round-trips its settings;
 //! calls between scripts and page run inline both ways, as in the original, and the
-//! page's own tasks run between the scripts, never inside one. Images with nothing to
+//! page's own tasks run between the scripts, never inside one. A `callSQ` whose script
+//! calls back into the page, which calls the scripts again, gets its own reply, once. Images with nothing to
 //! show paint nothing, bold or italic text in a face without either draws in it as it
 //! is, text advances by whole pixels, and right clicks open no menu, as in Coherent;
 //! scripts inserted at runtime run in Coherent's order. The page's links reach the URL
@@ -267,6 +268,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	scroll_bars_follow_their_content(&session)?;
 	copy_and_paste_use_the_games_clipboard(&session, &clipboard)?;
 	editing_keys_work_with_ctrl_and_cmd(&session, &clipboard)?;
+	nested_call_sq_replies_reach_their_own_calls(&session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -326,6 +328,151 @@ fn throws_in_the_scripts_calls_go_to_coherents_handler(session: &UiSession) -> R
 		mentions("BB_THROWN_ERROR") == errors + 1,
 		format!("a thrown Error was logged {} times", mentions("BB_THROWN_ERROR") - errors),
 	)
+}
+
+/// The page's side of [`nested_call_sq_replies_reach_their_own_calls`]: every reply
+/// that reaches `engine._Result` is kept (its id and how many arguments it had), and
+/// `__bbOuters(n)` makes `n` `callSQ`s to `bbOuter`, each of whose scripts calls the
+/// page's `bbNested`, which makes three `callSQ`s to `bbInner` and one `asyncCallSQ`
+/// to `bbVoid` from inside the outer call. Each promise's value is kept by its tag.
+const NESTED_CALLS_PAGE: &str = r#"(function () {
+	var screen = Screens.MainMenuScreen;
+	window.__bbReplies = [];
+	window.__bbSettled = [];
+	window.__bbVoidIds = [];
+	window.__bbRound = 0;
+	if (!window.__bbResultKept) {
+		var original = engine._Result;
+		engine._Result = function () {
+			__bbReplies.push([arguments[0], arguments.length]);
+			return original.apply(this, arguments);
+		};
+		window.__bbResultKept = true;
+	}
+	function settle(tag) {
+		return function (value) { __bbSettled.push([tag, value === undefined ? 'undefined' : value, arguments.length]); };
+	}
+	screen.bbNested = function (round) {
+		for (var i = 0; i < 3; i++) {
+			SQ.call(screen.mSQHandle, 'bbInner', round * 10 + i, settle('inner ' + round + '.' + i));
+		}
+		SQ.call(screen.mSQHandle, 'bbVoid', round);
+		__bbVoidIds.push(engine._RequestId);
+	};
+	window.__bbOuters = function (n) {
+		for (var k = 0; k < n; k++) {
+			var round = ++__bbRound;
+			SQ.call(screen.mSQHandle, 'bbOuter', round, settle('outer ' + round));
+		}
+	};
+	return 0;
+})()"#;
+
+/// A `callSQ` whose script calls into the page, which calls the scripts back with
+/// `callSQ`s of its own, as the turn bar's first slot does in a battle
+/// (`onEntityEntersFirstSlot` starts the entity's turn, which updates the bar, which
+/// queries the entity's skills and status effects). Every promise resolves once, in a
+/// later task, with its own call's value; none resolves early with nothing, no request
+/// id is answered twice, and the `asyncCallSQ`s are never answered. The original
+/// sends stray empty `_Result` replies, often with older request ids, so there such a
+/// call can resolve `undefined` before its real reply, and with MSU a battle's first
+/// turn locked the turn bar ("Failed to query entity data"; an intentional divergence,
+/// docs/differences.md). Calls made inside the game's call into the page and from the
+/// page's own task (a timer) both.
+fn nested_call_sq_replies_reach_their_own_calls(session: &UiSession) -> Result<(), String> {
+	session.eval(NESTED_CALLS_PAGE)?;
+	session.engine().run_script(
+		r#"
+		local screen = ::RootState.get("MainMenuState").m.MainMenuScreen;
+		::__bbVoids <- 0;
+		screen.bbOuter <- function (_round) {
+			this.m.JSHandle.asyncCall("bbNested", _round);
+			return { outer = _round };
+		};
+		screen.bbInner <- function (_n) { return _n * 7 + 1; };
+		screen.bbVoid <- function (_round) { ::__bbVoids++; };
+		"#,
+		"nested calls",
+	)?;
+	// Inside the game's call into the page, then from a timer of the page's own.
+	const ROUNDS: i64 = 12;
+	session.eval("__bbOuters(6); 0")?;
+	session.eval("setTimeout(function () { __bbOuters(6); }, 0); 0")?;
+	let expected = (ROUNDS * 4) as usize;
+	let settled = || session.eval("__bbSettled.length").map(|n| n.as_f64().unwrap_or(0.0) as usize);
+	let deadline = Instant::now() + Duration::from_secs(10);
+	while settled()? < expected && Instant::now() < deadline {
+		session.run_frames(0.05)?;
+	}
+	// A moment more for anything answered twice or late.
+	session.run_frames(0.5)?;
+
+	let voids = session.engine().run_script("::__bbVoidsSeen <- ::__bbVoids;", "voids").map(|_| {
+		SqTable::root(session.engine().vm()).get::<i64>("__bbVoidsSeen").unwrap_or(-1)
+	})?;
+	ensure(voids == ROUNDS, format!("the scripts' bbVoid ran {voids} times, not {ROUNDS}"))?;
+
+	let state = session.eval(
+		"({ settled: __bbSettled, replies: __bbReplies, voids: __bbVoidIds, \
+		pending: __bbVoidIds.filter(function (id) { return engine._ActiveRequests[id] !== undefined; }).length })",
+	)?;
+	let field = |name: &str| state.get(name).and_then(Json::as_array).map(<[Json]>::to_vec).unwrap_or_default();
+	let settled = field("settled");
+	let mut problems = Vec::new();
+	for round in 1..=ROUNDS {
+		let mut want = vec![(format!("outer {round}"), format!("{{\"outer\":{round}}}"))];
+		for i in 0..3 {
+			let n = round * 10 + i;
+			want.push((format!("inner {round}.{i}"), (n * 7 + 1).to_string()));
+		}
+		for (tag, value) in want {
+			let got: Vec<&Json> = settled
+				.iter()
+				.filter(|s| s.as_array().and_then(|a| a.first()).and_then(Json::as_str) == Some(tag.as_str()))
+				.collect();
+			match got.as_slice() {
+				[one] => {
+					let one = one.as_array().unwrap_or_default();
+					let (got_value, arguments) = (one.get(1).map(Json::to_text).unwrap_or_default(), one.get(2).and_then(Json::as_f64));
+					if got_value != value || arguments != Some(1.0) {
+						problems.push(format!("{tag} resolved with {got_value} ({arguments:?} arguments), not {value}"));
+					}
+				}
+				[] => problems.push(format!("{tag} never resolved")),
+				more => problems.push(format!("{tag} resolved {} times", more.len())),
+			}
+		}
+	}
+	let replies = field("replies");
+	let ids: Vec<i64> = replies
+		.iter()
+		.filter_map(|r| r.as_array().and_then(|a| a.first()).and_then(Json::as_f64))
+		.map(|id| id as i64)
+		.collect();
+	for (i, id) in ids.iter().enumerate() {
+		if ids[..i].contains(id) {
+			problems.push(format!("request {id} was answered more than once"));
+		}
+	}
+	for reply in &replies {
+		let arguments = reply.as_array().and_then(|a| a.get(1)).and_then(Json::as_f64);
+		if arguments != Some(2.0) {
+			problems.push(format!("a reply without a value (or with more than one): {}", reply.to_text()));
+		}
+	}
+	for id in field("voids").iter().filter_map(Json::as_f64) {
+		if ids.contains(&(id as i64)) {
+			problems.push(format!("asyncCallSQ request {id} was answered"));
+		}
+	}
+	if replies.len() != expected {
+		problems.push(format!("{} replies, not {expected}", replies.len()));
+	}
+	let pending = state.get("pending").and_then(Json::as_f64);
+	if pending != Some(ROUNDS as f64) {
+		problems.push(format!("{pending:?} of the {ROUNDS} asyncCallSQ requests still pending"));
+	}
+	ensure(problems.is_empty(), format!("nested callSQ replies:\n{}", problems.join("\n")))
 }
 
 /// The page's list of a scroll bar (vanilla's `createList`), its bar and thumb.
