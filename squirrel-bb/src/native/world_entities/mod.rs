@@ -1218,6 +1218,13 @@ impl WorldEntities {
 		self.machine.borrow().entities.len()
 	}
 
+	/// Whether the world holds entities (a campaign), for a host hook that outlives this
+	/// borrow.
+	pub(crate) fn populated_reader(&self) -> impl Fn() -> bool + 'static {
+		let m = self.machine.clone();
+		move || !m.borrow().entities.is_empty()
+	}
+
 	/// Number of registered thinkers (host/test inspection).
 	pub fn thinker_count(&self) -> usize {
 		self.machine.borrow().thinkers.len()

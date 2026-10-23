@@ -207,7 +207,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		let saves = SaveSystem::new();
 		saves.install(&mut vm);
 		// After the natives it wraps (the clearScenes and World.load).
-		let collector = crate::collect::Collector::install(&mut vm);
+		let collector = crate::collect::Collector::install(&mut vm, world_entities.populated_reader());
 		// The world scene's drawing: what the player discovers, and the picture a
 		// presave asked for.
 		let render_world = world_entities.scene_render_hook();
