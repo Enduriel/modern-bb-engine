@@ -231,6 +231,7 @@ fn run(o: &Options) -> Result<(), String> {
 		}
 	}
 	let before = renderer_memory();
+	let rested = run.game.front().page_rested();
 
 	frame_timing::enable();
 	let _ = frame_timing::take();
@@ -278,6 +279,8 @@ fn run(o: &Options) -> Result<(), String> {
 		}
 	}
 	let after = renderer_memory();
+	let rested = run.game.front().page_rested() - rested;
+	println!("the page rested through {rested} frames");
 	frames.remove(0);
 	report(o, &frames, before, after, turns_ended)?;
 	Ok(())
