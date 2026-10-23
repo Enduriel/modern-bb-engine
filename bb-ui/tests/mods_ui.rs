@@ -191,13 +191,11 @@ fn matches_the_originals_modded_screens(session: &UiSession) -> Result<(), Strin
 	};
 	session.run_frames(3.0)?;
 	check("modded_main_menu")?;
-	// The cursor where the original's sat while the goldens were taken (the probe's
-	// headless display put it at (640, 360); probed: `probes/mouse_events.js`). Dev
-	// Console's element inspector box hides on any mouseover. In the original the box
-	// comes (late JS) after the cursor's last one, so it shows on the menu, and MSU's
-	// screen opening under the cursor hides it. Ours has had no cursor, so moving in
-	// now does the same: the box shows on the menu and is hidden by the next screen.
-	session.move_to(640, 360)?;
+	// No cursor, as the original had none while the goldens were taken: its page got no
+	// mouse event at all (probed 2026-10-23: `probes/mouse_events.js`; on 2026-10-20 the
+	// probe's headless display still sent a mousemove every frame at (640, 360)). Dev
+	// Console's element inspector box hides on any mouseover, so with none it shows on
+	// both screens.
 	// As the probe does (a jQuery click): Modern Hooks' error popup lies over the menu's
 	// middle at opacity 0 in both engines, and both hit-test it (probed:
 	// `probes/hit_opacity.js`), so a mouse click there lands on the popup.
