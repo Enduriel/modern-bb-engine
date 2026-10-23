@@ -823,6 +823,31 @@ mod tests {
 		tactical_quads(scene, &registry, &view).quads
 	}
 
+	/// A sprite's offset moves it as far as moving the unit would (a raised shield,
+	/// Shieldwall's `moveSpriteOffset` to (0, 10), sits 10 units higher).
+	#[test]
+	fn a_sprite_offset_moves_the_sprite_like_the_unit() {
+		let scene_with = |offset: (f32, f32), lift: f64| {
+			let mut unit = entity(1, 1, "unit", false, false);
+			unit.sprites[0].offset = offset;
+			unit.pos.1 += lift;
+			TacticalScene {
+				width: 2,
+				height: 1,
+				tiles: vec![tile(0, true), tile(1, true)],
+				entities: vec![unit],
+				..TacticalScene::default()
+			}
+		};
+		let corners = |scene: &TacticalScene| {
+			quads_of(scene).into_iter().filter(|q| name_of(q) == "unit").map(|q| q.corners).collect::<Vec<_>>()
+		};
+		let raised = corners(&scene_with((0.0, 10.0), 0.0));
+		assert!(!raised.is_empty(), "the unit is drawn");
+		assert_ne!(raised, corners(&scene_with((0.0, 0.0), 0.0)), "the offset moves it");
+		assert_eq!(raised, corners(&scene_with((0.0, 0.0), 10.0)), "as far as the unit 10 units higher");
+	}
+
 	#[test]
 	fn units_out_of_sight_are_not_drawn_and_objects_are_desaturated() {
 		let scene = TacticalScene {

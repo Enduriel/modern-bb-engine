@@ -35,21 +35,37 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 	};
 	// moveSpriteOffset(sprite, from, to, duration, start): slides a sprite's offset from
 	// `from` to `to` over `duration` seconds of virtual time since `start`, and says
-	// whether it has arrived (disassembled, 0x4a8be0): t = (f32 virtual time − start) /
-	// duration, arrived at t ≥ 1; a sprite the unit doesn't have counts as arrived.
-	// Scripts end animations on it (raising a shield turns the render callback off) and
-	// ghosts, ghouls and spiders draw their next jitter target then. Headless only the
-	// answer matters; the offset isn't drawn.
+	// whether it has arrived (disassembled, 0x4a8be0; `moveSpriteScale` is its twin): t =
+	// (f32 virtual time − start) / duration; before t ≥ 1 the offset is `from + (to −
+	// from)·t`, from then on `to`; a sprite the unit doesn't have counts as arrived.
+	// Raising a shield (Shieldwall) and the rooted net slide this way, and ghosts,
+	// ghouls and spiders jitter; scripts end animations on the answer (a raised shield
+	// turns the render callback off) and read the offset back (`getSpriteOffset`: a
+	// shield whose offset is still 0 is raised again).
 	let move_sprite_offset = {
 		let m = m.clone();
 		vm.make_closure(
-			move |vm: &SQVM, sprite: String, _from: Retained, _to: Retained, duration: Number, start: Number| -> Result<bool, String> {
-				let has = m.borrow().record(vm.this_identity()).is_some_and(|r| r.sprites.contains_key(&sprite));
-				if !has {
-					return Ok(true);
-				}
+			move |vm: &SQVM, sprite: String, from: Retained, to: Retained, duration: Number, start: Number| -> Result<bool, String> {
+				let (class, handle) = {
+					let machine = m.borrow();
+					let handle = machine.record(vm.this_identity()).and_then(|r| r.sprites.get(&sprite).cloned());
+					(machine.sprite_class.clone(), handle)
+				};
+				let (Some(class), Some(handle)) = (class, handle) else { return Ok(true) };
 				let now = virtual_seconds(vm)? as f32;
-				Ok((now - start.0 as f32) / duration.0 as f32 >= 1.0)
+				let t = (now - start.0 as f32) / duration.0 as f32;
+				let xy = |v: &Retained| {
+					let axis = |a: &str| v.0.get_member::<Number>(vm, a).map_or(0.0, |n| n.0 as f32);
+					(axis("X"), axis("Y"))
+				};
+				let (from, to) = (xy(&from), xy(&to));
+				let (offset, done) = if t >= 1.0 {
+					(to, true)
+				} else {
+					((from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t), false)
+				};
+				class.with_payload(vm, &handle, |s| s.offset = (f64::from(offset.0), f64::from(offset.1)));
+				Ok(done)
 			},
 		)
 	};
