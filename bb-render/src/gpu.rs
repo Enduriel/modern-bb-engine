@@ -5,7 +5,7 @@
 
 use std::future::Future;
 use std::pin::pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
@@ -26,6 +26,9 @@ pub struct Gpu {
 	/// With `BB_GPU_TIMES=1` (and timestamps on the adapter), the named submissions'
 	/// GPU times (see [`Gpu::submit`]).
 	pass_timer: Option<PassTimer>,
+	/// Held while a surface is configured, and by the other threads that submit (the UI
+	/// page's, see [`Gpu::other_thread_submits`]) while they submit.
+	submits: Arc<Mutex<()>>,
 }
 
 impl Gpu {
@@ -127,7 +130,32 @@ impl Gpu {
 			device_type: info.device_type,
 			backend: info.backend,
 			surface_adapter: for_surface.then_some(adapter),
+			submits: Arc::default(),
 		})
+	}
+
+	/// Configure `surface` as `config` says: the error it raised, if it failed (see
+	/// [`Gpu::catching_errors`]). wgpu waits for the GPU to finish all submitted work
+	/// before it configures, and fails the configure ("Failed to wait for GPU to come
+	/// idle") if a submission came in meanwhile, from another thread: the UI page's
+	/// copies of the browser's paints, on CEF's thread. They wait while it configures.
+	pub fn configure_surface(&self, surface: &wgpu::Surface, config: &wgpu::SurfaceConfiguration) -> Option<wgpu::Error> {
+		let _alone = self.other_thread_submits();
+		let ((), error) = self.catching_errors(|| surface.configure(&self.device, config));
+		error
+	}
+
+	/// Held by a thread other than the one that configures the window's surface while
+	/// it submits, and while the surface is configured (see
+	/// [`Gpu::configure_surface`]): each waits for the other.
+	pub fn other_thread_submits(&self) -> MutexGuard<'_, ()> {
+		lock(&self.submits)
+	}
+
+	/// What [`Gpu::other_thread_submits`] holds, for an object that submits from
+	/// another thread and keeps no reference to the `Gpu`.
+	pub(crate) fn submits_gate(&self) -> Arc<Mutex<()>> {
+		self.submits.clone()
 	}
 
 	/// The formats, present modes and alpha modes `surface` supports on this device's
@@ -196,6 +224,11 @@ impl Gpu {
 			.map(|_| ())
 			.map_err(|e| e.to_string())
 	}
+}
+
+/// `gate` locked, poisoned or not (it guards no data).
+pub(crate) fn lock(gate: &Mutex<()>) -> MutexGuard<'_, ()> {
+	gate.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The largest memory block wgpu's allocator shares between resources: anything larger

@@ -571,7 +571,7 @@ impl Running {
 			self.failing_configures -= 1;
 			config.width = 0;
 		}
-		let ((), error) = self.gpu.catching_errors(|| self.surface.configure(&self.gpu.device, &config));
+		let error = self.gpu.configure_surface(&self.surface, &config);
 		self.game.forget_shown();
 		let now = Instant::now();
 		let outcome = match error {

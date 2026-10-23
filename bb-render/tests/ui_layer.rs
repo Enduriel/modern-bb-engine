@@ -130,3 +130,23 @@ fn a_paint_changes_only_what_it_says_changed() {
 	let (_, bgra) = page.read(UiRegion { x: 0, y: 0, width: 2, height: 2 }).unwrap().unwrap();
 	assert_eq!(bgra, red.repeat(4));
 }
+
+/// The page's copies (on CEF's thread) don't submit while the window's surface is
+/// configured: wgpu fails a configure when another thread's submission comes in while
+/// it waits for the GPU ("Failed to wait for GPU to come idle"), which under load made
+/// the window tests' surface fail for real.
+#[test]
+fn the_page_submits_nothing_while_a_surface_is_configured() {
+	let Some((gpu, page)) = page_gpu() else { return };
+	let (copied, done) = std::sync::mpsc::channel();
+	let configuring = gpu.other_thread_submits();
+	let painter = std::thread::spawn(move || {
+		page.write_for_tests(3, 1, &[0; 12], &whole(3, 1));
+		copied.send(()).expect("the test waits");
+	});
+	let wait = std::time::Duration::from_millis(300);
+	assert!(done.recv_timeout(wait).is_err(), "the page copied while a surface was configured");
+	drop(configuring);
+	done.recv_timeout(std::time::Duration::from_secs(10)).expect("the page copies once the configure is done");
+	painter.join().expect("the painter");
+}

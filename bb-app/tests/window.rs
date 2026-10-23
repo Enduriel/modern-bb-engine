@@ -6,6 +6,7 @@
 //! queued once hands its turn down, `BB_GAME_QUEUE_TURN`). Every run logs into its own
 //! folder (`--logs`).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -45,11 +46,28 @@ fn run_bb_with(dir: &Path, size: (u32, u32), args: &[&str], env: &[(&str, &str)]
 
 /// [`run_bb_with`] on a display refreshing `refresh` times a second (gamescope's own
 /// default otherwise).
-fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
+fn run_bb_at(dir: &Path, size: (u32, u32), refresh: Option<u32>, args: &[&str], env: &[(&str, &str)]) -> Option<Run> {
 	if !Path::new(STEAM_DATA_DIR).exists() {
 		bb_engine::harness::skip(format!("{STEAM_DATA_DIR} not present"));
 		return None;
 	}
+	let mut command: Vec<OsString> = vec![bb_binary().into()];
+	// Tests never start Steam, even with its library beside the test's bb. Its log goes
+	// to the run's folder, never the player's. Vanilla unless the run asks for the mods
+	// (`--mods`, after this: the last wins).
+	command.extend(["--mute", "--no-steam", "--logs"].map(OsString::from));
+	command.push(dir.join("logs").into());
+	command.push("--no-mods".into());
+	command.extend(args.iter().map(OsString::from));
+	let run = run_in_gamescope(dir, size, refresh, &command, env)?;
+	assert_saves_in(dir, &run);
+	Some(run)
+}
+
+/// Run `command` (a program and its arguments, with `env` set for it) in a headless
+/// gamescope of `width` × `height` refreshing `refresh` times a second, or `None` to
+/// skip (only with skips allowed): no gamescope.
+fn run_in_gamescope(dir: &Path, size: (u32, u32), refresh: Option<u32>, command: &[OsString], env: &[(&str, &str)]) -> Option<Run> {
 	let gamescope = Command::new("gamescope").arg("--help").stdout(Stdio::null()).stderr(Stdio::null()).status();
 	if let Err(e) = gamescope {
 		bb_engine::harness::skip(format!("no gamescope ({e})"));
@@ -59,21 +77,20 @@ fn run_bb_at(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args
 	// Behind the probes' games, which run in a headless gamescope too: two at once can
 	// hang one's teardown.
 	let _turn = bb_engine::game_queue::Ticket::wait(Duration::from_secs(3600)).expect("a turn for gamescope");
-	let run = match start_bb(dir, (width, height), refresh, args, env) {
+	let run = match start_in_gamescope(dir, size, refresh, command, env) {
 		Started::Ran(run) => run,
 		// Seen when a run's environment reached gamescope too: a software Vulkan driver
 		// chosen for `bb` (lavapipe) left gamescope no GPU it can drive. It no longer
 		// does, so this is unexplained: one more try, saying so, then a failure.
 		Started::NoBackend(log) => {
 			eprintln!("gamescope couldn't create its backend; trying once more. Its log:\n{log}");
-			match start_bb(dir, (width, height), refresh, args, env) {
+			match start_in_gamescope(dir, size, refresh, command, env) {
 				Started::Ran(run) => run,
 				Started::NoBackend(log) | Started::Failed(log) => panic!("gamescope couldn't start bb, twice; its log:\n{log}"),
 			}
 		}
 		Started::Failed(log) => panic!("gamescope couldn't start bb; its log:\n{log}"),
 	};
-	assert_saves_in(dir, &run);
 	Some(run)
 }
 
@@ -95,8 +112,8 @@ enum Started {
 	Failed(String),
 }
 
-/// One gamescope run of `bb` for [`run_bb_at`], which holds the turn.
-fn start_bb(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args: &[&str], env: &[(&str, &str)]) -> Started {
+/// One gamescope run of `command` for [`run_in_gamescope`], which holds the turn.
+fn start_in_gamescope(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, command: &[OsString], env: &[(&str, &str)]) -> Started {
 	let (started, status, stderr) = (dir.join("started"), dir.join("status"), dir.join("stderr"));
 	let log = std::fs::File::create(dir.join("gamescope.log")).expect("gamescope's log");
 	// gamescope doesn't pass its child's status on: the shell writes it, and first that
@@ -112,19 +129,10 @@ fn start_bb(dir: &Path, (width, height): (u32, u32), refresh: Option<u32>, args:
 			"-c",
 			r#": > "$BB_TEST_STARTED"; "$0" "$@" 2>"$BB_TEST_STDERR"; echo $? > "$BB_TEST_STATUS""#,
 		])
-		// `bb`'s own environment, through `env`: gamescope's stays the test's.
+		// The program's own environment, through `env`: gamescope's stays the test's.
 		.arg("env")
 		.args(env.iter().map(|(k, v)| format!("{k}={v}")))
-		.arg(bb_binary())
-		.arg("--mute")
-		// Tests never start Steam, even with its library beside the test's bb.
-		.arg("--no-steam")
-		// Its log goes to the run's folder, never the player's.
-		.arg("--logs")
-		.arg(dir.join("logs"))
-		// Vanilla unless the run asks for the mods (`--mods`, after this: the last wins).
-		.arg("--no-mods")
-		.args(args)
+		.args(command)
 		// Saves (and mods' storages) stay in the run's folder unless it names another
 		// there: never the player's (checked, `assert_saves_in`).
 		.env("BB_SAVES_DIR", dir.join("saves"))
@@ -454,6 +462,132 @@ fn bb_rides_out_a_surface_the_system_refuses() {
 	assert!(log.contains("the window's surface is configured again, after 12 failed attempts"), "{log}");
 	// The window no smaller than 1024x768 (see `the_video_mode_applies_live`).
 	assert_eq!(png_size(&shot), (1280, 768), "drawn on after it");
+}
+
+/// The window's surface configures while another thread submits (the UI page's copies of
+/// the browser's paints, on CEF's thread): wgpu waits for the GPU to go idle before it
+/// configures a surface, and fails the configure ("Failed to wait for GPU to come idle")
+/// if a submission came in meanwhile. Under load that failed `bb`'s window for real, on
+/// top of `bb_rides_out_a_surface_the_system_refuses`'s refusals. Configured
+/// as `bb` does it (`Gpu::configure_surface`), it never fails; configured plainly, beside
+/// it, it does, which shows the test reaches the race. The test runs itself again in a
+/// headless gamescope, for a window.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_surface_configures_while_another_thread_submits() {
+	const INNER: &str = "BB_TEST_SURFACE_RACE";
+	if std::env::var_os(INNER).is_some() {
+		return surface_race::run();
+	}
+	let dir = run_dir("surface_race");
+	let name = "the_surface_configures_while_another_thread_submits";
+	let exe = std::env::current_exe().expect("the test binary");
+	let command = [exe.into(), name.into(), "--exact".into(), "--nocapture".into(), "--test-threads=1".into()];
+	let Some(run) = run_in_gamescope(&dir, (640, 480), None, &command, &[(INNER, "1")]) else { return };
+	let summary: Vec<&str> = run.stderr.lines().filter(|l| l.starts_with("surface race:")).collect();
+	eprintln!("{}", summary.join("\n"));
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	assert!(!summary.is_empty(), "the test didn't run in gamescope:\n{}", run.stderr);
+}
+
+/// [`the_surface_configures_while_another_thread_submits`] in its gamescope.
+#[cfg(target_os = "linux")]
+mod surface_race {
+	use std::sync::Arc;
+	use std::sync::atomic::{AtomicBool, Ordering};
+	use std::time::{Duration, Instant};
+
+	use bb_render::{Gpu, UiPage, UiRegion};
+	use winit::platform::wayland::EventLoopBuilderExtWayland;
+
+	/// Configures with the page submitting all along on another thread.
+	const CONFIGURES: u32 = 500;
+	/// The plain configures' limits, while none has failed yet.
+	const PLAIN_TRIES: u32 = 5000;
+	const PLAIN_TIME: Duration = Duration::from_secs(30);
+
+	pub fn run() {
+		let event_loop = winit::event_loop::EventLoop::builder()
+			.with_wayland()
+			.with_any_thread(true)
+			.build()
+			.expect("gamescope's Wayland display");
+		#[allow(deprecated)]
+		let window = Arc::new(
+			event_loop
+				.create_window(winit::window::Window::default_attributes().with_title("bb surface race"))
+				.expect("a window"),
+		);
+		let display = Box::new(event_loop.owned_display_handle());
+		let instance =
+			wgpu::Instance::new(Gpu::platform_backends(wgpu::InstanceDescriptor::new_with_display_handle_from_env(display)));
+		let surface = instance.create_surface(window.clone()).expect("a surface");
+		let gpu = Gpu::for_surface_with(&instance, &surface, UiPage::FEATURES).expect("a GPU for the page");
+		let page = UiPage::new(&gpu).expect("the page");
+		let capabilities = gpu.surface_capabilities(&surface).expect("the surface's capabilities");
+		let size = window.inner_size();
+		let mut config = wgpu::SurfaceConfiguration {
+			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+			format: capabilities.formats[0],
+			width: size.width.max(1),
+			height: size.height.max(1),
+			present_mode: wgpu::PresentMode::Fifo,
+			desired_maximum_frame_latency: 2,
+			alpha_mode: capabilities.alpha_modes[0],
+			view_formats: Vec::new(),
+			color_space: wgpu::SurfaceColorSpace::Auto,
+		};
+		// The page copying paints (each submitted, then waited for) as fast as it can.
+		let stop = Arc::new(AtomicBool::new(false));
+		let painter = std::thread::spawn({
+			let (page, stop) = (page.clone(), stop.clone());
+			move || {
+				let (side, mut paints) = (64, 0u64);
+				let paint = vec![0x80; (side * side * 4) as usize];
+				let whole = [UiRegion { x: 0, y: 0, width: side, height: side }];
+				while !stop.load(Ordering::Relaxed) {
+					page.write_for_tests(side, side, &paint, &whole);
+					paints += 1;
+				}
+				paints
+			}
+		});
+		// Each configure a size other than the last's, so each makes a new swapchain.
+		let mut configure = |gated: bool| {
+			config.width = if config.width == size.width.max(1) { config.width / 2 + 1 } else { size.width.max(1) };
+			let error = if gated {
+				gpu.configure_surface(&surface, &config)
+			} else {
+				gpu.catching_errors(|| surface.configure(&gpu.device, &config)).1
+			};
+			error.map(|e| e.to_string())
+		};
+		let started = Instant::now();
+		let (mut plain, mut plain_failed) = (0, None);
+		while plain_failed.is_none() && plain < PLAIN_TRIES && started.elapsed() < PLAIN_TIME {
+			plain += 1;
+			plain_failed = configure(false);
+		}
+		let plain_time = started.elapsed();
+		let started = Instant::now();
+		let failures: Vec<String> = (0..CONFIGURES).filter_map(|_| configure(true)).collect();
+		let gated_time = started.elapsed();
+		stop.store(true, Ordering::Relaxed);
+		let paints = painter.join().expect("the painter");
+		// Left to the process's end, as `bb` leaves them: under gamescope's Vulkan layer
+		// the surface's teardown destroys the window's own, and the window's crashes.
+		std::mem::forget(surface);
+		std::mem::forget(window);
+		eprintln!(
+			"surface race: a plain configure failed after {plain} ({plain_time:.1?}): {}; \
+			{} of {CONFIGURES} gated ones failed ({gated_time:.1?}); the page copied {paints} paints",
+			plain_failed.as_deref().unwrap_or("none did"),
+			failures.len()
+		);
+		assert!(failures.is_empty(), "configures failed with the page submitting: {failures:?}");
+		let failed = plain_failed.expect("no plain configure failed: the test didn't reach the race");
+		assert!(failed.contains("come idle"), "a plain configure failed otherwise: {failed}");
+	}
 }
 
 /// A game that starts borderless over the monitor, with VSync off (a settings file

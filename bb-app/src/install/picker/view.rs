@@ -162,7 +162,7 @@ impl View {
 	/// the next draw, rather than wgpu's panic.
 	fn configure(&mut self) {
 		let Some(surface) = &self.surface else { return };
-		let ((), error) = self.gpu.catching_errors(|| surface.configure(&self.gpu.device, &self.config));
+		let error = self.gpu.configure_surface(surface, &self.config);
 		self.surface_failed("configure", error);
 	}
 

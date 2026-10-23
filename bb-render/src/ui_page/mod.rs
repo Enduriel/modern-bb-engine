@@ -19,6 +19,8 @@
 //! that buffer. It runs on CEF's thread (on macOS the main thread, which runs CEF's work
 //! for the game); the device and queue are
 //! shared with the game's thread, whose submissions it is ordered with by the queue.
+//! It doesn't submit while the game's thread configures the window's surface, which
+//! another thread's submission would fail ([`Gpu::configure_surface`]).
 //!
 //! The pixels themselves are read back only on demand ([`UiPage::read`]): a small
 //! region for "is the cursor over the UI" (bb-ui caches it per paint), the whole page
@@ -121,6 +123,8 @@ pub(crate) struct PageTexture {
 struct Inner {
 	device: wgpu::Device,
 	queue: wgpu::Queue,
+	/// Held while submitting (see [`Gpu::configure_surface`]).
+	submits: Arc<Mutex<()>>,
 	page: Mutex<Option<PageTexture>>,
 	generations: AtomicU64,
 	stats: Mutex<CopyStats>,
@@ -164,6 +168,7 @@ impl UiPage {
 			inner: Arc::new(Inner {
 				device: gpu.device.clone(),
 				queue: gpu.queue.clone(),
+				submits: gpu.submits_gate(),
 				page: Mutex::new(None),
 				generations: AtomicU64::new(0),
 				stats: Mutex::new(CopyStats::default()),
@@ -234,7 +239,7 @@ impl UiPage {
 				copied.0 += 1;
 				copied.1 += u64::from(rect.width) * u64::from(rect.height);
 			}
-			self.inner.queue.submit([encoder.finish()])
+			self.submit(encoder)
 		};
 		// The source goes back to the browser's pool when the paint's callback returns.
 		self.wait(submitted)?;
@@ -244,6 +249,13 @@ impl UiPage {
 		stats.pixels += copied.1;
 		stats.copy += started.elapsed();
 		Ok(())
+	}
+
+	/// Submit `encoder`'s commands, not while the window's surface is configured (see
+	/// [`Gpu::configure_surface`]): this runs on CEF's thread.
+	fn submit(&self, encoder: wgpu::CommandEncoder) -> wgpu::SubmissionIndex {
+		let _gate = crate::gpu::lock(&self.inner.submits);
+		self.inner.queue.submit([encoder.finish()])
 	}
 
 	fn wait(&self, submission: wgpu::SubmissionIndex) -> Result<(), String> {
@@ -295,7 +307,7 @@ impl UiPage {
 				},
 				wgpu::Extent3d { width: region.width, height: region.height, depth_or_array_layers: 1 },
 			);
-			let submitted = self.inner.queue.submit([encoder.finish()]);
+			let submitted = self.submit(encoder);
 			(buffer, region, stride, submitted)
 		};
 		buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
