@@ -733,6 +733,7 @@ impl Game {
 				eprintln!("font {}: {e}", font.path);
 			}
 		}
+		let discard_span = bb_render::frame_timing::span("scene discard");
 		for discard in discards {
 			match discard {
 				squirrel_bb::Discard::Battle => self.renderer.discard(Discard::Battle),
@@ -745,11 +746,14 @@ impl Game {
 				squirrel_bb::Discard::Load => {}
 			}
 		}
+		drop(discard_span);
 		// What the scene's objects, sounds and the page's browser side freed goes back
 		// to the system (see `platform::trim_allocator`).
 		if discarded {
+			let _span = bb_render::frame_timing::span("trim");
 			crate::platform::trim_allocator();
 		}
+		let _prefetch = bb_render::frame_timing::span("prefetch");
 		let sprites = engine.sprites();
 		let renderer = &mut self.renderer;
 		sprites.with(|registry| renderer.prefetch(registry, sprites.take_hints()));
