@@ -371,6 +371,12 @@ def harness_false_tests(meta):
 		for test in manifest.get("test", []):
 			if test.get("harness") is False:
 				found.add((package["name"], test["name"]))
+				# nextest lists a binary's tests by running it with `--list`: one that
+				# doesn't answer it would run whole, display and all, while being listed.
+				source = Path(package["manifest_path"]).parent / test.get("path", f"tests/{test['name']}.rs")
+				if "harness::list_case(" not in source.read_text(errors="replace"):
+					sys.exit(f"{source}: a harness = false test must answer nextest's --list first thing in its "
+						"main (bb_engine::harness::list_case)")
 	return found
 
 
