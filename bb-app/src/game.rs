@@ -325,8 +325,11 @@ impl Game {
 	/// The cursor moved to `(x, y)` in the game's screen pixels. The states see every
 	/// move (see [`crate::front`]).
 	pub fn mouse_moved(&mut self, x: i64, y: i64) -> Result<(), String> {
+		bb_render::frame_timing::count("mouse moves", 1);
 		self.cursor = (x, y);
+		let page = bb_render::frame_timing::span("input page");
 		self.front.cursor(x, y);
+		drop(page);
 		// Every pointer move is `MouseState.Moved`, button held or not (disassembled).
 		self.mouse(MouseInput {
 			id: 6,
@@ -341,7 +344,10 @@ impl Game {
 	/// the UI, or to the states.
 	pub fn mouse_button(&mut self, id: i64, down: bool) -> Result<(), String> {
 		let (x, y) = self.cursor;
-		if self.front.button(x, y, id, down) {
+		let page = bb_render::frame_timing::span("input page");
+		let to_page = self.front.button(x, y, id, down);
+		drop(page);
+		if to_page {
 			return Ok(());
 		}
 		self.mouse(MouseInput {
@@ -356,7 +362,10 @@ impl Game {
 	/// The wheel turned a notch, `up` or down: for the UI, or the states.
 	pub fn wheel(&mut self, up: bool) -> Result<(), String> {
 		let (x, y) = self.cursor;
-		if self.front.wheel(x, y, up) {
+		let page = bb_render::frame_timing::span("input page");
+		let to_page = self.front.wheel(x, y, up);
+		drop(page);
+		if to_page {
 			return Ok(());
 		}
 		self.mouse(MouseInput {
@@ -406,8 +415,12 @@ impl Game {
 		Ok(())
 	}
 
+	/// `input` to the states now, between frames: the page parked first.
 	fn mouse(&mut self, input: MouseInput) -> Result<(), String> {
+		let park = bb_render::frame_timing::span("input park");
 		self.front.park();
+		drop(park);
+		let _scripts = bb_render::frame_timing::span("input scripts");
 		self.engine().root_state().mouse_input(self.engine().vm(), input).map(|_| ())
 	}
 

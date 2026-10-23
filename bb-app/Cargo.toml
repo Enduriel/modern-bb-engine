@@ -82,6 +82,10 @@ name = "frame_scenes"
 required-features = ["ui"]
 
 [[example]]
+name = "battle_hover"
+required-features = ["ui"]
+
+[[example]]
 name = "held_key"
 required-features = ["ui"]
 
