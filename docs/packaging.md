@@ -48,7 +48,12 @@ What it does, failing on the first mismatch:
    CEF's CDN into `<cache>/cef/154.0.34/`, checked by SHA-256 (pinned in the script)
    and SHA-1 (CEF's index's); `CEF_PATH` points cef-dll-sys's build there, so it
    unpacks that archive instead of fetching its own. A folder unpacked earlier is kept
-   only if its `archive.json` names the pinned archive.
+   only if its `archive.json` names the pinned archive. cef-dll-sys's build fetches with
+   `download-cef` (CEF's index when it unpacks; the archive too in an ordinary build,
+   checked by the index's SHA-1). The workspace patches in its own copy,
+   `vendor/download-cef` (3.0.0; `[patch.crates-io]`, what changed in its `README.md`):
+   its HTTPS trusts the system's roots (rustls on ring, `rustls-native-certs`), never a
+   bundled CA list, and fails naming why when the system has none.
 3. **Compiler.** Linux and macOS: the system's. Windows on Windows: Visual Studio's
    environment for the target's architecture (vswhere + `vcvarsall`, cross from x64 to
    ARM64 if need be). Windows on Linux: cargo-xwin with its CRT and SDK, as pinned in
