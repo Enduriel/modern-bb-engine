@@ -39,6 +39,9 @@ pub struct Game {
 	/// How many of the fonts mods registered the renderer has.
 	fonts: usize,
 	cursor: (i64, i64),
+	/// The pointer moved since its last move was delivered (see
+	/// [`mouse_moved`](Self::mouse_moved)).
+	moved: bool,
 	/// The game's cursor shown as the system's where it can be (see [`game_cursor`]),
 	/// rather than drawn; and its pictures.
 	system_cursor: bool,
@@ -197,6 +200,7 @@ impl Game {
 			battle_map: false,
 			left_map: None,
 			cursor: (0, 0),
+			moved: false,
 			system_cursor: false,
 			cursor_pictures: CursorPictures::new(files),
 			cursor_scale: 1.0,
@@ -299,7 +303,40 @@ impl Game {
 		if let Some(fps) = self.fps.as_mut().and_then(|meter| meter.frame(std::time::Instant::now())) {
 			self.front.set_fps(fps);
 		}
+		self.queue_move();
 		self.front.step(ms.clamp(0.0, MAX_FRAME_MS))
+	}
+
+	/// The pointer's last move since the last frame, to the page now and to the states
+	/// in this frame, after its keys (see [`mouse_moved`](Self::mouse_moved)).
+	fn queue_move(&mut self) {
+		if let Some(input) = self.take_move() {
+			self.engine().queue_mouse(input);
+		}
+	}
+
+	/// The pointer's last move since the last frame, delivered now, before a button or
+	/// the wheel: they come after the move to where they happened, as the original's
+	/// queue keeps its events in order.
+	fn deliver_move(&mut self) -> Result<(), String> {
+		match self.take_move() {
+			Some(input) => self.mouse(input),
+			None => Ok(()),
+		}
+	}
+
+	/// The pointer's move not yet delivered, if it moved: handed to the page now, and
+	/// given back for the states.
+	fn take_move(&mut self) -> Option<MouseInput> {
+		if !std::mem::take(&mut self.moved) {
+			return None;
+		}
+		bb_render::frame_timing::count("mouse moves delivered", 1);
+		let (x, y) = self.cursor;
+		let page = bb_render::frame_timing::span("input page");
+		self.front.cursor(x, y);
+		drop(page);
+		Some(MouseInput { id: 6, state: 2, x, y, modifier: self.modifier })
 	}
 
 	/// Show the FPS display (vanilla's FPS module, which the original never shows), or
@@ -322,27 +359,25 @@ impl Game {
 		}
 	}
 
-	/// The cursor moved to `(x, y)` in the game's screen pixels. The states see every
-	/// move (see [`crate::front`]).
+	/// The cursor moved to `(x, y)` in the game's screen pixels. The moves since the
+	/// last frame are merged: the page and the states get the last one as the next frame
+	/// starts (the states after its keys, see `Engine::queue_mouse`), or before a button
+	/// or the wheel. Every pointer move is `MouseState.Moved`, button held or not
+	/// (disassembled). The original's states get a few moves a frame, not one a system
+	/// event: its system merges them (probed 2026-10-23: 1 to 4 a frame at 60 fps from a
+	/// thousand moves a second, consecutive positions), and its input manager hands each
+	/// on in order at the frame (`0x5b6220`, `0x551550`).
 	pub fn mouse_moved(&mut self, x: i64, y: i64) -> Result<(), String> {
 		bb_render::frame_timing::count("mouse moves", 1);
 		self.cursor = (x, y);
-		let page = bb_render::frame_timing::span("input page");
-		self.front.cursor(x, y);
-		drop(page);
-		// Every pointer move is `MouseState.Moved`, button held or not (disassembled).
-		self.mouse(MouseInput {
-			id: 6,
-			state: 2,
-			x,
-			y,
-			modifier: self.modifier,
-		})
+		self.moved = true;
+		Ok(())
 	}
 
 	/// Button `id` (1 left, 2 right, 3 middle, 4 back, 5 forward) went down or up: to
 	/// the UI, or to the states.
 	pub fn mouse_button(&mut self, id: i64, down: bool) -> Result<(), String> {
+		self.deliver_move()?;
 		let (x, y) = self.cursor;
 		let page = bb_render::frame_timing::span("input page");
 		let to_page = self.front.button(x, y, id, down);
@@ -361,6 +396,7 @@ impl Game {
 
 	/// The wheel turned a notch, `up` or down: for the UI, or the states.
 	pub fn wheel(&mut self, up: bool) -> Result<(), String> {
+		self.deliver_move()?;
 		let (x, y) = self.cursor;
 		let page = bb_render::frame_timing::span("input page");
 		let to_page = self.front.wheel(x, y, up);

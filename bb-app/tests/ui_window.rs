@@ -300,7 +300,9 @@ fn system_cursor_moves_draw_nothing(game: &mut Game, gpu: &Gpu, target: &RenderT
 	if game.cursor_show() != CursorShow::Drawn {
 		return Err("the scripts moved the cursor away from the mouse, but it isn't drawn".into());
 	}
+	// The move reaches the scripts as the next frame starts (`Game::mouse_moved`).
 	game.mouse_moved(18, 16)?;
+	game.step(1000.0 / 60.0)?;
 	if game.cursor_show() != show {
 		return Err(format!("back at the mouse, {:?} shows", game.cursor_show()));
 	}
@@ -775,6 +777,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 
 	// Over the event: the UI's. A click there goes to the page and closes the event.
 	game.mouse_moved(i64::from(bx), i64::from(by))?;
+	// The move reaches the page and the scripts as the next frame starts.
+	game.step(1000.0 / 60.0)?;
 	if !mouse_over_ui(&game)? {
 		return Err("UI.isMouseOver() is false over the event".into());
 	}
@@ -813,6 +817,7 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	})?;
 	// Not the UI's, and clicks go to the states.
 	game.mouse_moved(i64::from(mx), i64::from(my))?;
+	game.step(1000.0 / 60.0)?;
 	if mouse_over_ui(&game)? {
 		return Err(format!("UI.isMouseOver() is true over the map at {mx}, {my}"));
 	}

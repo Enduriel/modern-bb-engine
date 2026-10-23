@@ -76,6 +76,9 @@ pub struct Engine<S: ScriptSource> {
 	audio: crate::native::audio::Audio,
 	/// The keys the host reported, dispatched each frame (see [`crate::key_queue`]).
 	keys: crate::key_queue::KeyQueue,
+	/// The mouse events the host queued for the next frame, dispatched after its keys
+	/// (see [`queue_mouse`](Self::queue_mouse)).
+	mouse: RefCell<Vec<crate::input_events::MouseInput>>,
 	/// The mouse cursor the scripts chose (no VM handles).
 	ui_cursor: crate::native::ui_cursor::UiCursor,
 	time: TimeService,
@@ -258,6 +261,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			user_stats: natives.user_stats.clone(),
 			audio,
 			keys: Default::default(),
+			mouse: Default::default(),
 			ui_cursor,
 			time,
 			scene_steps: Default::default(),
@@ -556,6 +560,16 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.keys.set_focused(focused);
 	}
 
+	/// A mouse event for the states at the next frame, after its keys, as the original's
+	/// input manager dispatches its queue once a frame: the keys, then the mouse's
+	/// events in order (`0x551550`, disassembled 2026-10-23). A host merges the pointer's
+	/// moves into one a frame (the original's system merges them to a few, probed
+	/// 2026-10-23) and delivers a move before a click at once, so the click comes after
+	/// the move to where it happened.
+	pub fn queue_mouse(&self, input: crate::input_events::MouseInput) {
+		self.mouse.borrow_mut().push(input);
+	}
+
 	/// A key typed `c` with the `modifier` mask held (each of the system's repeats
 	/// again): the UI gets it from the next frame, after the key (see [`queue_key`]).
 	///
@@ -601,7 +615,8 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// (order probed 2026-10-13): advance the clocks and fire due scheduled events, run
 	/// `onUpdate` then `onRender` on every visible state, then the background task once.
 	/// The queued keys reach the states after the clocks, as the original dispatches
-	/// its input before the scene (held keys again every frame, see [`queue_key`]).
+	/// its input before the scene (held keys again every frame, see [`queue_key`]),
+	/// then the queued mouse events ([`queue_mouse`](Self::queue_mouse)).
 	/// The sprites with a torque turn after the updates, as the scene updates.
 	///
 	/// [`queue_key`]: Self::queue_key
@@ -636,7 +651,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	}
 
 	/// The rest of a frame begun with [`begin_frame`](Self::begin_frame): `keys` to the
-	/// states, then the scene.
+	/// states, then the queued mouse events, then the scene.
 	pub fn finish_frame(&self, real_delta_ms: f64, keys: &[crate::key_queue::QueuedInput]) -> Result<(), String> {
 		use crate::frame_timing::span;
 		let clock = span("engine clock+keys");
@@ -646,6 +661,13 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			}
 		}
 		drop(clock);
+		let mouse = std::mem::take(&mut *self.mouse.borrow_mut());
+		if !mouse.is_empty() {
+			let _scripts = span("input scripts");
+			for input in mouse {
+				self.root_state.mouse_input(&self.vm, input)?;
+			}
+		}
 		let update = span("scripts update");
 		self.root_state.update(&self.vm)?;
 		drop(update);

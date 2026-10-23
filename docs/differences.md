@@ -74,6 +74,7 @@ No mod can rely on the original's behaviour in these cases.
 | Sprite animations and the scripts' random numbers | Animated swamp bubbles on screen shift what 0-argument `Math.rand()` returns | Animations have their own random numbers | Only through 0-argument `Math.rand()`, which doesn't repeat in the original either |
 | Fog of war drift on the world map | Moves every frame | Moves up to 60 times a second, fewer when zoomed far out | No: only when sub-pixel moves land |
 | Battle animations (the active unit's hop, clouds, rain, fades) | Drawn at 60 fps | Drawn in 1/60 s steps (longer when nearly still), so a still screen needs no new frames | No: the game's state still moves every frame |
+| Mouse moves to the scripts | Each move the system reports, at the next frame after its keys; the system merges a fast mouse's moves to a few a frame (1 to 4 at 60 fps, probed) | The last move of each frame, once, after its keys; a click or the wheel still comes after a move to where it happened | Only by counting `onMouseInput` moves in a frame |
 | The UI page when nothing changes | Runs every frame | Rests until it has work: a mouse move can reach it a frame later | Only as frame-sized delays |
 | Loaded textures | Every texture loaded is kept for the session | Only what is drawn stays on the GPU; a sprite whose picture isn't ready can show a frame late | No |
 | Decoded sounds | Decoded again every time they play | Up to 32 MB of decoded sound is kept | No |
@@ -112,6 +113,7 @@ original to compare:
 | Loading every script (vanilla and a large mod stack) | ~470 ms | ~65 ms | With the compiled-script cache |
 | Idle at the main menu, 32 mods, 180 Hz | 16.6% of a core | 1.3% | CPU, % of one core |
 | A battle's idle turn, 32 mods, 180 Hz | 22.6% of a core | 14.6% | CPU, % of one core |
+| A battle with a 1000 Hz mouse moving, 32 mods, 180 Hz | 2.0 ms a frame running the scripts' mouse handlers, between frames (6 moves a frame) | 0.6 ms, in the frame (one move) | `battle_hover` example, 2026-10-23 |
 | A 280 × 280 world map, one frame | - | 0.38 ms (0.28 ms at vanilla size) | Headless: a frame's cost doesn't grow with the map |
 
 ## Not changed (yet)
