@@ -47,6 +47,22 @@ pub fn reported_refresh_paces() -> bool {
 	cfg!(target_os = "macos")
 }
 
+/// Whether the system holds back a redraw asked for after a present until the compositor
+/// has taken that frame (Wayland's frame callback, which winit waits for once
+/// `pre_present_notify` asked for it): there the compositor paces the frame after a
+/// presented one, at the display's refresh (see `pacing`). X11, Windows and macOS hand a
+/// redraw over at once (macOS with the window's display cycle, the pace it reports).
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
+pub fn compositor_paces_redraws(event_loop: &ActiveEventLoop) -> bool {
+	use winit::platform::wayland::ActiveEventLoopExtWayland;
+	event_loop.is_wayland()
+}
+
+#[cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))]
+pub fn compositor_paces_redraws(_event_loop: &ActiveEventLoop) -> bool {
+	false
+}
+
 /// With `BB_ALLOW_TRACE=1`, any process of the user's may attach a debugger to this one
 /// (Linux, where Yama's `ptrace_scope` 1 otherwise lets only its ancestors): the window
 /// tests read the stacks of a run that hangs. The browser's processes, which run this

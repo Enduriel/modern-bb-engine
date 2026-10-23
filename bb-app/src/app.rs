@@ -430,6 +430,7 @@ impl App {
 		let target = RenderTarget::new(&gpu, frame_rect.2, frame_rect.3);
 		let mut pacer = Pacer::new(None, config.present_mode == wgpu::PresentMode::Fifo);
 		pacer.trust_reported(platform::reported_refresh_paces());
+		pacer.compositor_paces(platform::compositor_paces_redraws(event_loop));
 		let cursor_scale = window.scale_factor();
 		let cursor_shower = Shower::new(window);
 		let (window, surface) = unfinished.finish();

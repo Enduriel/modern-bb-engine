@@ -112,20 +112,33 @@ fn the_pace_stays_within_a_displays_bounds() {
 	assert_eq!(pacer.interval(None), SLOWEST);
 }
 
-/// A FIFO display (VSync on) as gamescope's: each refresh shows the next frame presented,
-/// if one is queued; three swapchain images (two frames in flight), so a frame's image is
-/// free once the frame two before it shows; and nothing holds a redraw back for the
-/// compositor (no frame callback), so after a present that found room the next frame
-/// can start at once.
+/// A FIFO display (VSync on): each refresh shows the next frame presented, if one is
+/// queued; three swapchain images (two frames in flight), so a frame's image is free once
+/// the frame two before it shows. Without frame callbacks (X11, Windows), nothing holds a
+/// redraw back for the compositor, so after a present that found room the next frame can
+/// start at once; with them (Wayland: gamescope's, as the window tests run), the redraw
+/// after a present waits until the presented frame shows.
 struct Display {
 	refresh: Duration,
 	/// The first refresh.
 	start: Instant,
 	/// When each frame presented shows.
 	shown: Vec<Instant>,
+	callbacks: bool,
 }
 
 impl Display {
+	fn new(refresh: Duration, start: Instant) -> Self {
+		Display { refresh, start, shown: Vec::new(), callbacks: false }
+	}
+
+	/// The same, with frame callbacks or not, which `pacer` is told (see
+	/// [`Pacer::compositor_paces`]).
+	fn with_callbacks(refresh: Duration, start: Instant, callbacks: bool, pacer: &mut Pacer) -> Self {
+		pacer.compositor_paces(callbacks);
+		Display { callbacks, ..Display::new(refresh, start) }
+	}
+
 	/// The first refresh at or after `at`.
 	fn refresh_after(&self, at: Instant) -> Instant {
 		let n = at.saturating_duration_since(self.start).as_nanos().div_ceil(self.refresh.as_nanos());
@@ -147,34 +160,71 @@ impl Display {
 }
 
 /// Frames as the window makes them, `secs` of them, on `display`, those that
-/// `presented(i)` says changed drawn and presented (all of them while measuring): each
-/// held back until it's due (its timer 50 µs late), stepping 0.2 ms, then for a drawn
-/// frame the swapchain's image (waiting for one free), and 0.3 ms to draw and present.
-/// Returns each frame's start.
+/// `presented(i)` says changed drawn and presented (all of them while measuring): see
+/// [`Window`]. Returns each frame's start.
 fn frames(pacer: &mut Pacer, display: &mut Display, secs: f64, presented: impl Fn(usize) -> bool) -> Vec<Instant> {
-	let (step, draw, timer_late) = (Duration::from_micros(200), Duration::from_micros(300), Duration::from_micros(50));
 	let end = display.start + Duration::from_secs_f64(secs);
-	let mut ready = display.start;
-	let mut starts = Vec::new();
-	for i in 0.. {
-		let (at, waited) = match pacer.due(None) {
-			Some(due) if due > ready => (due + timer_late, true),
-			_ => (ready, false),
-		};
-		if at >= end {
-			break;
-		}
-		let presented = presented(i) || pacer.measuring();
-		ready = at + step;
-		if presented {
-			let acquired = display.image_free().map_or(ready, |free| free.max(ready));
-			ready = acquired + draw;
-			display.present(ready);
-		}
-		pacer.frame(at, presented, waited, None);
-		starts.push(at);
+	Window::new(display).run(pacer, end, presented, |_, _| Duration::ZERO)
+}
+
+/// The window making frames on a display: each held back until it's due (its timer 50 µs
+/// late), and after a presented frame until that frame shows where the display has
+/// frame callbacks; then stepping (frame `i` takes `step(i)`: 0.2 ms), then for a drawn
+/// frame the swapchain's image (waiting for one free), and 0.3 ms to draw and present.
+struct Window<'a> {
+	display: &'a mut Display,
+	step: fn(usize) -> Duration,
+	/// When the last frame's work was done.
+	ready: Instant,
+	presented: bool,
+	/// The frames so far.
+	frames: usize,
+}
+
+impl<'a> Window<'a> {
+	fn new(display: &'a mut Display) -> Self {
+		let ready = display.start;
+		Window { display, step: |_| Duration::from_micros(200), ready, presented: false, frames: 0 }
 	}
-	starts
+
+	/// Frames until `end`, those that `presented(i)` says changed (frame `i` of all so far)
+	/// drawn and presented; on a loaded system frame `i`, when it would start at `at`,
+	/// starts `load(i, at)` later (its thread woken late, by the clock's timer or the
+	/// compositor's callback alike). Returns each frame's start.
+	fn run(
+		&mut self,
+		pacer: &mut Pacer,
+		end: Instant,
+		presented: impl Fn(usize) -> bool,
+		load: impl Fn(usize, Instant) -> Duration,
+	) -> Vec<Instant> {
+		let (draw, timer_late) = (Duration::from_micros(300), Duration::from_micros(50));
+		let mut starts = Vec::new();
+		loop {
+			let i = self.frames;
+			let (mut at, waited) = match pacer.due(None) {
+				Some(due) if due > self.ready => (due + timer_late, true),
+				_ => (self.ready, false),
+			};
+			if self.display.callbacks && self.presented {
+				at = at.max(*self.display.shown.last().unwrap() + timer_late);
+			}
+			at += load(i, at);
+			if at >= end {
+				return starts;
+			}
+			self.presented = presented(i) || pacer.measuring();
+			self.ready = at + (self.step)(i);
+			if self.presented {
+				let acquired = self.display.image_free().map_or(self.ready, |free| free.max(self.ready));
+				self.ready = acquired + draw;
+				self.display.present(self.ready);
+			}
+			pacer.frame(at, self.presented, waited, None);
+			starts.push(at);
+			self.frames += 1;
+		}
+	}
 }
 
 /// Steps a second over the second half of a run.
@@ -198,18 +248,19 @@ fn the_game_steps_once_a_refresh_whichever_frames_are_presented() {
 		("none", |_| false),
 		("all", |_| true),
 	];
-	for refresh in [HZ_180, HZ_60] {
+	for (refresh, callbacks) in [(HZ_180, false), (HZ_60, false), (HZ_180, true), (HZ_60, true)] {
 		for (name, presented) in patterns {
 			let start = Instant::now();
 			let mut pacer = Pacer::new(None, true);
-			let mut display = Display { refresh, start: start + refresh / 3, shown: Vec::new() };
+			let mut display = Display::with_callbacks(refresh, start + refresh / 3, callbacks, &mut pacer);
 			let starts = frames(&mut pacer, &mut display, 4.0, presented);
 			let hz = 1.0 / refresh.as_secs_f64();
 			let rate = rate(&starts);
-			assert!((rate - hz).abs() < hz * 0.005, "{name} on a {hz:.0} Hz display: {rate:.1} steps a second");
+			let on = format!("{name} on a {hz:.0} Hz display, callbacks {callbacks}");
+			assert!((rate - hz).abs() < hz * 0.005, "{on}: {rate:.1} steps a second");
 			// No step comes much sooner than a refresh after the last.
 			let shortest = starts[starts.len() / 2..].windows(2).map(|w| w[1] - w[0]).min().unwrap();
-			assert!(shortest > refresh * 9 / 10, "{name} on a {hz:.0} Hz display: a step {shortest:?} after the last");
+			assert!(shortest > refresh * 9 / 10, "{on}: a step {shortest:?} after the last");
 		}
 	}
 }
@@ -220,21 +271,21 @@ fn the_game_steps_once_a_refresh_whichever_frames_are_presented() {
 /// now and then).
 #[test]
 fn a_run_of_presented_frames_is_paced_by_the_display() {
-	for refresh in [HZ_180, HZ_60] {
+	for (refresh, callbacks) in [(HZ_180, false), (HZ_60, false), (HZ_180, true), (HZ_60, true)] {
 		let start = Instant::now();
 		let mut pacer = Pacer::new(None, true);
-		let mut display = Display { refresh, start: start + refresh / 3, shown: Vec::new() };
+		let mut display = Display::with_callbacks(refresh, start + refresh / 3, callbacks, &mut pacer);
 		// Undrawn frames for about a second, after measuring, then all presented.
 		let undrawn = (1.0 / refresh.as_secs_f64()) as usize;
 		let starts = frames(&mut pacer, &mut display, 4.0, |i| i >= undrawn);
 		let shown = &display.shown[display.shown.len() / 2..];
-		assert!(shown.windows(2).all(|w| w[1] - w[0] == refresh), "a refresh without a new frame");
+		assert!(shown.windows(2).all(|w| w[1] - w[0] == refresh), "a refresh without a new frame (callbacks {callbacks})");
 		// From the presented run on, a step per refresh, and two more as the display's
-		// queue took its two frames in flight.
+		// queue took its two frames in flight (none with frame callbacks).
 		let first = starts[undrawn];
 		let steps = starts.len() - undrawn;
 		let refreshes = (*starts.last().unwrap() - first).as_secs_f64() / refresh.as_secs_f64() + 1.0;
-		assert!((steps as f64 - refreshes).abs() < 2.5, "{steps} steps in {refreshes:.1} refreshes");
+		assert!((steps as f64 - refreshes).abs() < 2.5, "{steps} steps in {refreshes:.1} refreshes (callbacks {callbacks})");
 	}
 }
 
@@ -278,7 +329,7 @@ fn slow_frames(pacer: &mut Pacer, from: Instant, every: Duration, n: u32) -> Ins
 /// The steps a second, a long while after `secs` of busy frames (each one presented) on a
 /// 180 Hz display that starts at `from`.
 fn busy_rate_at_180(pacer: &mut Pacer, from: Instant, secs: f64) -> f64 {
-	let mut display = Display { refresh: HZ_180, start: from + HZ_180 / 3, shown: Vec::new() };
+	let mut display = Display::new(HZ_180, from + HZ_180 / 3);
 	rate(&frames(pacer, &mut display, secs, |_| true))
 }
 
@@ -315,7 +366,7 @@ fn a_faster_display_after_measuring_is_followed() {
 	for reports in [true, false] {
 		let start = Instant::now();
 		let mut pacer = Pacer::new(reports.then_some(HZ_60), true);
-		let mut display = Display { refresh: HZ_60, start: start + HZ_60 / 3, shown: Vec::new() };
+		let mut display = Display::new(HZ_60, start + HZ_60 / 3);
 		let _ = frames(&mut pacer, &mut display, 2.0, |_| true);
 		assert_eq!(pacer.interval(None), HZ_60);
 		if reports {
@@ -335,21 +386,21 @@ fn a_right_measure_is_kept() {
 	type Pattern = fn(usize) -> bool;
 	let patterns: [(&str, Pattern); 4] =
 		[("all", |_| true), ("every other", |i| i % 2 == 0), ("runs of 200", |i| i % 300 < 200), ("none", |_| false)];
-	for refresh in [HZ_180, HZ_60] {
+	for (refresh, callbacks) in [(HZ_180, false), (HZ_60, false), (HZ_180, true), (HZ_60, true)] {
 		for (name, presented) in patterns {
 			let start = Instant::now();
 			let mut pacer = Pacer::new(None, true);
-			let mut display = Display { refresh, start: start + refresh / 3, shown: Vec::new() };
+			let mut display = Display::with_callbacks(refresh, start + refresh / 3, callbacks, &mut pacer);
 			let _ = frames(&mut pacer, &mut display, 6.0, presented);
-			assert_eq!(pacer.remeasured, 0, "{name} at {refresh:?}");
-			assert_eq!(pacer.interval(None), refresh, "{name} at {refresh:?}");
+			assert_eq!(pacer.remeasured, 0, "{name} at {refresh:?}, callbacks {callbacks}");
+			assert_eq!(pacer.interval(None), refresh, "{name} at {refresh:?}, callbacks {callbacks}");
 		}
 	}
 	// A cap longer than the refresh paces presented frames; the display holds none back.
 	let cap = Some(Duration::from_secs_f64(1.0 / 144.0));
 	let start = Instant::now();
 	let mut pacer = Pacer::new(None, true);
-	let mut display = Display { refresh: HZ_180, start: start + HZ_180 / 3, shown: Vec::new() };
+	let mut display = Display::new(HZ_180, start + HZ_180 / 3);
 	let _ = frames(&mut pacer, &mut display, 0.5, |_| true);
 	let mut t = start + Duration::from_secs(1);
 	for _ in 0..1000 {
@@ -359,6 +410,82 @@ fn a_right_measure_is_kept() {
 		t += Duration::from_micros(500);
 	}
 	assert_eq!(pacer.remeasured, 0, "with a 144 cap");
+}
+
+/// A pseudo-random fraction in [0, 1) for frame `i` (the same every run).
+fn noise(i: usize) -> f64 {
+	let x = (i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+	((x ^ (x >> 29)).wrapping_mul(0xbf58_476d_1ce9_e4e5) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// The system loaded from `from` to `to` (seconds after `start`): two frames in three
+/// start late, by up to 5 ms (their thread woken late, by the timer or the frame
+/// callback alike).
+fn burst(start: Instant, from: f64, to: f64) -> impl Fn(usize, Instant) -> Duration {
+	move |i, at| {
+		let t = at.saturating_duration_since(start).as_secs_f64();
+		let late = noise(i);
+		if (from..to).contains(&t) && late < 2.0 / 3.0 { Duration::from_secs_f64(late * 1.5 * 0.005) } else { Duration::ZERO }
+	}
+}
+
+/// The measure of the refresh ratcheted up under load and never came back. A frame the
+/// clock held back can't start before it's due, a measured refresh after the last: with
+/// its interval measured whenever it started late (its timer late under load, or the
+/// frame callback after the clock on Wayland), more than half came in long in a load
+/// burst, the measure grew, and every interval after was at least as long. On gamescope's
+/// Wayland at 180 Hz it climbed to 8.00 ms (5.57, 5.95, 6.26, 6.49, 7.02, 7.27, 7.91) in a
+/// burst, and a still screen afterwards stepped ~116 times a second. A load burst may
+/// lengthen the measure while it lasts; after it, with the mouse moving (each frame
+/// presented), the measure is the display's again, and the still screen steps once a
+/// refresh. With frame callbacks or without, the timers' lateness as the load.
+#[test]
+fn a_load_burst_doesnt_slow_the_game_for_good() {
+	for callbacks in [true, false] {
+		let start = Instant::now();
+		let mut pacer = Pacer::new(None, true);
+		let mut display = Display::with_callbacks(HZ_180, start + HZ_180 / 3, callbacks, &mut pacer);
+		// The mouse moving: every frame presented, a second calm, a second loaded, half a
+		// second calm again; then the mouse still for a second, nothing presented.
+		let load = burst(start, 1.0, 2.0);
+		let mut window = Window::new(&mut display);
+		let mut measures = Vec::new();
+		for tenth in 1..=25 {
+			let _ = window.run(&mut pacer, start + Duration::from_millis(tenth * 100), |_| true, &load);
+			measures.push(pacer.refresh());
+		}
+		let still = window.run(&mut pacer, start + Duration::from_millis(3_500), |_| false, &load);
+		let ms = |d: &Duration| format!("{:.2}", d.as_secs_f64() * 1000.0);
+		let measured: Vec<String> = measures.iter().map(ms).collect();
+		eprintln!("callbacks {callbacks}: the measure every 0.1 s: {}", measured.join(" "));
+		let after = pacer.refresh();
+		assert!(after.abs_diff(HZ_180) < Duration::from_micros(20), "callbacks {callbacks}: {} ms after the burst", ms(&after));
+		// The still second: a step a refresh.
+		let rate = (still.len() - 1) as f64 / still[still.len() - 1].duration_since(still[0]).as_secs_f64();
+		assert!((rate - 180.0).abs() < 1.0, "callbacks {callbacks}: {rate:.1} steps a second after the burst");
+	}
+}
+
+/// A measure too long is noticed though frames now and then are late from their own work
+/// (here two in twenty take 9 ms each, as a loaded system's periodic bursts): a frame the
+/// clock didn't hold back is no sign that the display held it back, nor two in a row
+/// further apart than a refresh. Taken as one, each such frame kept the measure a while
+/// longer, for good, and their intervals were measured too.
+#[test]
+fn a_frame_late_now_and_then_doesnt_keep_a_stale_measure() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(None, true);
+	let t = slow_frames(&mut pacer, start, Duration::from_millis(8), 20);
+	assert_eq!(pacer.refresh(), Duration::from_millis(8));
+	let mut display = Display::new(HZ_180, t + HZ_180 / 3);
+	let mut window = Window::new(&mut display);
+	window.step = |i| Duration::from_micros(if i % 20 >= 18 { 9_000 } else { 200 });
+	let starts = window.run(&mut pacer, t + Duration::from_secs(4), |_| true, |_, _| Duration::ZERO);
+	assert!(pacer.refresh().abs_diff(HZ_180) < Duration::from_micros(20), "measured {:?}", pacer.refresh());
+	// A step a refresh, but for at most a refresh the two slow frames lose each time
+	// (the display's queue makes up for some): 171-180 a second, not 9.3 ms's 108.
+	let rate = rate(&starts);
+	assert!((171.0..180.0).contains(&rate), "{rate:.1} steps a second");
 }
 
 /// macOS: redraws come late with the window's display cycle, so presented frames 25 ms
