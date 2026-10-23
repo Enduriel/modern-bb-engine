@@ -105,7 +105,12 @@ fn shieldwall_raises_the_shield_and_lowers_it_after() {
 		.run_script("::__u.getSkills().add(::new(\"scripts/skills/effects/shieldwall_effect\"));", "shieldwall")
 		.expect("shieldwall");
 	assert!(flag(&engine, "IsRaisingShield"), "raising");
+	let start = shield(&engine).2;
 	let up = frames(&engine, 0.5);
+	// There after RaiseShieldDuration, and not before (as the original: 0.15 s, its
+	// probe's samples a frame behind).
+	let at = up.iter().find(|s| s.1 == 10.0).map(|s| s.2 - start).expect("raised");
+	assert!((0.15..0.2).contains(&at), "raised {at:.3} s in");
 	// Slid up, not jumped: some frame in between (0.15 s is 9 frames).
 	assert!(up.iter().any(|&(x, y, _)| x == 0.0 && y > 0.0 && y < 10.0), "on its way up: {up:?}");
 	assert!(up.windows(2).all(|w| w[1].1 >= w[0].1), "only up: {up:?}");
@@ -120,7 +125,10 @@ fn shieldwall_raises_the_shield_and_lowers_it_after() {
 
 	engine.run_script("::__u.getSkills().removeByID(\"effects.shieldwall\");", "down").expect("down");
 	assert!(flag(&engine, "IsLoweringShield"), "lowering");
+	let start = shield(&engine).2;
 	let down = frames(&engine, 0.8);
+	let at = down.iter().find(|s| s.1 == 0.0).map(|s| s.2 - start).expect("lowered");
+	assert!((0.4..0.45).contains(&at), "lowered {at:.3} s in (LowerShieldDuration 0.4 s)");
 	assert!(down.iter().any(|&(_, y, _)| y > 0.0 && y < 10.0), "on its way down: {down:?}");
 	assert!(down.windows(2).all(|w| w[1].1 <= w[0].1), "only down: {down:?}");
 	assert_eq!(down.last().map(|s| (s.0, s.1)), Some((0.0, 0.0)), "back down");
