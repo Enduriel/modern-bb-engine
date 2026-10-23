@@ -63,7 +63,7 @@ fn info_plist(executable: &str, identifier: &str, helper: bool) -> String {
 	<key>CFBundleVersion</key>
 	<string>{version}</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>11.0</string>
+	<string>12.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
