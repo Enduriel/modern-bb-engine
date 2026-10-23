@@ -137,6 +137,11 @@ impl<S: ScriptSource + 'static> ModuleSystem<S> {
 	/// (`scriptFilenameByHash` / `scriptHashByFilename`). Call once, before any
 	/// game script runs.
 	pub fn install(&self, vm: &mut SQVM) {
+		// The VM's lookup cache (global reads and inherited methods through the class
+		// levels), on unless `BB_LOOKUP_CACHE=0` (to compare without it).
+		if std::env::var("BB_LOOKUP_CACHE").is_ok_and(|v| v == "0") {
+			vm.set_lookup_cache(false);
+		}
 		{
 			let state = self.state.clone();
 			vm.register("include", move |vm: &SQVM, path: &str| {

@@ -21,6 +21,8 @@ mod close_tests;
 #[cfg(test)]
 mod float_format_tests;
 #[cfg(test)]
+mod lookup_cache_tests;
+#[cfg(test)]
 mod stdlib_parity_tests;
 
 pub use interrupt::{INTERRUPTED, Interrupter};
@@ -124,6 +126,14 @@ impl SQVM {
 	/// running call's stack stay. Returns how many objects it freed.
 	pub fn collect_garbage(&self) -> i64 {
 		unsafe { squirrel_sys::sq_collectgarbage(self.ptr) }
+	}
+
+	/// Whether a lookup that misses a table and its delegate (a global read from a class
+	/// method, a method inherited from two levels up) is answered from the VM's lookup
+	/// cache where it can be: on by default. Scripts can't tell (the cache's entries go
+	/// stale as the tables they depend on change); off is for comparing.
+	pub fn set_lookup_cache(&self, enable: bool) {
+		unsafe { squirrel_sys::sq_setlookupcache(self.ptr, enable.into()) }
 	}
 
 	/// Write a census of the VM's heap to `path`: every collectable object with its size

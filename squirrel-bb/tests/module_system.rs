@@ -644,3 +644,79 @@ fn lazy_levels_look_like_plain_ones() {
 	assert!(plain.contains("patched 10 false -1 true true patched class"), "{plain}");
 	assert!(plain.contains("members 10 false true 99"), "{plain}");
 }
+
+/// The VM's lookup cache answers global reads and inherited methods through
+/// the class levels from where they ended last time. Warmed, it must follow what mods do
+/// to the levels afterwards (Modern Hooks patches an instance's or a class's levels late):
+/// the same log with and without it, over lazy and plain levels.
+#[test]
+fn lookups_through_the_levels_follow_late_patches() {
+	const SCRIPT: &str = r#"
+	::Const <- { X = 1 };
+	local out = [];
+	local o = ::new("scripts/test/leaf2");
+	local log = function(label) { for (local i = 0; i < 3; i++) out.push(label + ": " + o.useAll()); };
+	log("warm");
+	// A method given to an ancestor level of the instance (past its first), then one
+	// written over.
+	o.mid2.base2.kind <- function() { return "base patched"; };
+	log("level slot added");
+	o.mid2.base2.top2.getX = function() { return "patched X"; };
+	log("level slot written");
+	// A global shadowed by a level, then not.
+	o.mid2.base2.Const <- { X = 99 };
+	log("global shadowed");
+	delete o.mid2.base2.Const;
+	log("shadow deleted");
+	::Const = { X = 5 };
+	log("root written");
+	// A field shadowed in an ancestor's `m`.
+	o.mid2.base2.m.ID <- 7;
+	log("m shadowed");
+	// The class patched after the instance exists: the instance keeps what it was made
+	// from, a new one gets the patch.
+	::leaf2_class.mid2.base2.kind = function() { return "class patched"; };
+	::leaf2_class.mid2.base2.top2.getID = function() { return "class getID"; };
+	log("class patched, old instance");
+	o = ::new("scripts/test/leaf2");
+	log("class patched, new instance");
+	// Instances made and freed (tables made again where freed ones were).
+	for (local i = 0; i < 300; i++) {
+		local n = ::new("scripts/test/leaf2");
+		if (i % 2) n.mid2.base2.kind <- function() { return "odd"; };
+		out.push(i + ": " + n.useAll() + " " + n.useAll());
+	}
+	::__out <- out.reduce(@(a, b) a + "\n" + b);
+	"#;
+	let run = |cache: bool, lazy: bool| {
+		let (vm, modules) = vm_with(&[
+			("scripts/test/top2", "this.top2 <- { m = { ID = 0 }, function getX() { return this.Const.X; } function getID() { return this.m.ID; } function kind() { return \"top\"; } };"),
+			("scripts/test/base2", "this.base2 <- this.inherit(\"scripts/test/top2\", { m = { Extra = 2 }, function create() {} });"),
+			("scripts/test/mid2", "this.mid2 <- this.inherit(\"scripts/test/base2\", { m = { Level = 1 }, function create() {} });"),
+			("scripts/test/leaf2", "this.leaf2 <- this.inherit(\"scripts/test/mid2\", { m = {}, function create() { this.mid2.create(); } function useAll() { return this.getX() + \" \" + this.getID() + \" \" + this.kind() + \" \" + this.Const.X + \" \" + this.m.ID + \" \" + this.m.Level; } }); ::leaf2_class <- this.leaf2;"),
+		]);
+		vm.set_lookup_cache(cache);
+		modules.set_lazy_levels(lazy);
+		modules.set_lazy_members(lazy);
+		vm.run_script(SCRIPT, "late_patches").expect("the script runs");
+		squirrel::SqTable::root(&vm).get::<String>("__out").expect("its output")
+	};
+	let reference = run(false, false);
+	for (cache, lazy) in [(true, true), (true, false), (false, true)] {
+		assert_eq!(run(cache, lazy), reference, "cache {cache}, lazy {lazy}");
+	}
+	for want in [
+		"warm: 1 0 top 1 0 1",
+		"level slot added: 1 0 base patched 1 0 1",
+		"level slot written: patched X 0 base patched 1 0 1",
+		"global shadowed: patched X 0 base patched 99 0 1",
+		"shadow deleted: patched X 0 base patched 1 0 1",
+		"root written: patched X 0 base patched 5 0 1",
+		"m shadowed: patched X 7 base patched 5 7 1",
+		"class patched, old instance: patched X 7 base patched 5 7 1",
+		"class patched, new instance: 5 class getID class patched 5 0 1",
+		"1: 5 class getID odd 5 0 1 5 class getID odd 5 0 1",
+	] {
+		assert!(reference.contains(want), "{want:?} missing from:\n{reference}");
+	}
+}
