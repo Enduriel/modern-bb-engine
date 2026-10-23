@@ -240,6 +240,10 @@ fn apply(m: &Rc<RefCell<EntityMachine>>, idx: usize, f: &Flags) {
 	rec.ignore_collision = f.ignore_collision;
 	rec.important = f.important;
 	rec.z_offset = f.z_offset;
+	// This format keeps neither the layer nor the key: a location (not drawn on top) is
+	// in the details layer, as vanilla's are, at the key a spawn there gives.
+	rec.in_details = !f.rendered_top;
+	rec.key = super::draw_key::spawned(f.pos.1);
 }
 
 /// Read an entity's saved sprites and labels into its handles, creating any its
@@ -289,13 +293,17 @@ fn restore_handles(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, cx: &L
 				v_align: rd.f64()?,
 				size: rd.f64()?,
 				z: rd.f64()?,
+				key_offset: super::draw_key::label(m.borrow().entities[idx].z_offset),
 			};
 			name
 		};
 		let existing = m.borrow().entities[idx].labels.get(name.as_str()).cloned();
 		match existing {
 			Some(handle) => {
-				label_class.with_payload(vm, &handle, |l| *l = data);
+				// Its key as its `addLabel` made it.
+				label_class.with_payload(vm, &handle, |l| {
+					*l = LabelData { key_offset: l.key_offset, ..data }
+				});
 			}
 			None => {
 				let handle = label_class.instantiate(vm, data);

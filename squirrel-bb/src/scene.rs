@@ -255,6 +255,12 @@ pub struct SceneEntity {
 	pub pos: (f64, f64),
 	/// Shown to the player: not faded out by fog of war or discovery.
 	pub shown: bool,
+	/// In the scene's details layer (a location or settlement, sorted among the map's
+	/// details), not the entities layer drawn over it (a party).
+	pub in_details: bool,
+	/// Its sprites' sort key in its layer (a higher key draws first): its own and its
+	/// Z offset. A sprite that keeps its screen size draws 2000 lower.
+	pub key: i64,
 	/// Its sprites, in the order they were added (back to front).
 	pub sprites: Vec<SceneSprite>,
 	/// Its text labels (e.g. a settlement's name).
@@ -264,6 +270,8 @@ pub struct SceneEntity {
 /// One of an entity's text labels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneLabel {
+	/// Its sort key in its entity's layer (a higher key draws first).
+	pub key: i64,
 	/// Shared with the entity (a frame's scene copies no text).
 	pub name: std::rc::Rc<str>,
 	/// One glyph per byte, as the original draws it: scripts' bytes, not necessarily

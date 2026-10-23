@@ -169,8 +169,10 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	let set_z_offset = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, z: i64| {
-			if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-				rec.z_offset = z;
+			if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity())
+				&& std::mem::replace(&mut rec.z_offset, z) != z
+			{
+				crate::native::world_scene_changes::note();
 			}
 		})
 	};

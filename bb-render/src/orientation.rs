@@ -45,6 +45,7 @@ pub fn orientation_quads(registry: &SpriteRegistry, overlays: &[SceneOrientation
 		atlases,
 		labels_from,
 		details_end: 0,
+		details_keys: Vec::new(),
 	})
 }
 

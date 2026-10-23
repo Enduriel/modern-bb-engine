@@ -102,6 +102,8 @@ fn entity(id: i64, pos: (f64, f64), sprites: Vec<SceneSprite>) -> SceneEntity {
 		id,
 		pos,
 		shown: true,
+		in_details: false,
+		key: pos.1 as i64 - 20,
 		sprites,
 		labels: Vec::new(),
 	}

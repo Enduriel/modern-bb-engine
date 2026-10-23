@@ -224,6 +224,7 @@ pub fn portrait_quads(portrait: &ScenePortrait, hidden: &[String], sprites: &Spr
 		atlases,
 		labels_from,
 		details_end: 0,
+		details_keys: Vec::new(),
 	}
 }
 

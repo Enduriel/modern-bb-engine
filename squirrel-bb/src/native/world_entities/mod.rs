@@ -42,6 +42,7 @@ use crate::native::sprite_anim::Anim;
 use crate::native::sprite_class::{self, Flag, Kind, Num, SpriteHandle, SpriteState};
 use crate::native::sprite_color::{SpriteColor, real_time};
 
+mod draw_key;
 mod footprints;
 mod hover;
 mod movement;
@@ -153,6 +154,9 @@ struct LabelData {
 	v_align: f64,
 	size: f64,
 	z: f64,
+	/// Its sort key from its entity's (a child `Text` node's own key, see
+	/// [`draw_key::label`]).
+	key_offset: i64,
 }
 
 impl Default for LabelData {
@@ -169,6 +173,7 @@ impl Default for LabelData {
 			v_align: 0.0,
 			size: 0.0,
 			z: 0.0,
+			key_offset: draw_key::label(0),
 		}
 	}
 }
@@ -192,8 +197,15 @@ struct EntityRecord {
 	/// World pixel position (a tile centre until `setPos` moves it).
 	pos: (f64, f64),
 	/// `setRenderedTop`: true by default (parties); locations clear it in `onInit`.
-	/// Decides which half of the spatial queries finds the entity (see `world_query`).
+	/// Decides which half of the spatial queries finds the entity (see `world_query`);
+	/// where it's drawn is [`EntityRecord::in_details`].
 	rendered_top: bool,
+	/// In the scene's details layer (`World.spawnLocation`), drawn among the map's
+	/// details; otherwise in the entities layer (`World.spawnEntity`), drawn over them
+	/// (see [`draw_key`]).
+	in_details: bool,
+	/// Its sort key in its layer (the original's `+0x10`, see [`draw_key`]).
+	key: i64,
 	/// Multiplier on the radius it can be seen from (`get/setVisibility`, default 1.0).
 	visibility: f32,
 	visible: bool,
@@ -359,6 +371,8 @@ fn create_entity(
 			pos: world_layout::tile_pos(q, r + q / 2),
 			// The original's constructor defaults.
 			rendered_top: true,
+			in_details: false,
+			key: draw_key::spawned(world_layout::tile_pos(q, r + q / 2).1),
 			visibility: 1.0,
 			visible: true,
 			discovered: false,
@@ -446,7 +460,10 @@ fn spawn(
 	occupy: bool,
 ) -> Result<SqStrongRef, String> {
 	let id = machine.borrow().ids.next();
-	let (entity, _) = create_entity(machine, vm, path, id, q, r)?;
+	let (entity, idx) = create_entity(machine, vm, path, id, q, r)?;
+	// A location goes in the scene's details layer, a party in its entities layer
+	// (`0x4f0260`, `0x4f0170`).
+	machine.borrow_mut().entities[idx].in_details = occupy;
 	// Like the original, a spawned location occupies its tile (cleared again by the
 	// script's `onFinish` when it dies); a spawned party does not (probed 2026-10-13).
 	if occupy {
@@ -818,10 +835,7 @@ impl WorldEntities {
 				let xy = crate::native::vec::xy(vm, &pos.0);
 				let (q, r) = world.grid.world_to_tile(xy.0, xy.1);
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
-					if std::mem::replace(&mut rec.pos, xy) != xy {
-						crate::native::world_scene_changes::note();
-					}
-					(rec.q, rec.r) = (q, r);
+					draw_key::set_pos(rec, xy, (q, r));
 				}
 				Ok(())
 			})
@@ -877,7 +891,8 @@ impl WorldEntities {
 				let class = m.borrow().label_class.clone()?;
 				// The original's label is a scene entity (a child `Text`), which takes an id.
 				m.borrow().ids.next();
-				let label = class.instantiate(vm, LabelData::default());
+				let z_offset = m.borrow().record(vm.this_identity()).map_or(0, |rec| rec.z_offset);
+				let label = class.instantiate(vm, LabelData { key_offset: draw_key::label(z_offset), ..LabelData::default() });
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					rec.labels.insert(name.into(), label.clone());
 				}
@@ -1327,6 +1342,8 @@ impl WorldEntities {
 			.map(|rec| crate::scene::SceneEntity {
 				id: rec.id,
 				pos: rec.pos,
+				in_details: rec.in_details,
+				key: rec.key + rec.z_offset,
 				// In sight, or still fading out of it (see `render`): a shown sprite's fade
 				// (a hidden one's never finishes, as it isn't drawn).
 				shown: rec.render.shown()
@@ -1360,6 +1377,7 @@ impl WorldEntities {
 					.filter_map(|(name, handle)| {
 						label_class.with_payload(vm, handle, |l| crate::scene::SceneLabel {
 							name: name.clone(),
+							key: rec.key + l.key_offset,
 							text: l.text.clone(),
 							// Labels don't fade: they show while the entity is in sight.
 							visible: l.visible && rec.render.shown(),

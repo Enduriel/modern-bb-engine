@@ -11,7 +11,7 @@
 use std::rc::Rc;
 
 use bb_assets::SpriteRegistry;
-use squirrel_bb::scene::{SceneLabel, WorldScene};
+use squirrel_bb::scene::{SceneEntity, SceneLabel, WorldScene};
 
 use crate::labels::label_quads;
 use crate::sprite::Quad;
@@ -21,6 +21,10 @@ use crate::world::{
 	CLOUD_SHADOW_SCALE, Layer, Look, REGION_TEXT_COLOR, REGION_TEXT_SCALE, SPRITE_REACH, WorldFonts, WorldView, sprite_quad, unlit,
 };
 
+/// How much lower than its entity's key a sprite that keeps its screen size draws
+/// (`setSpriteScaling(name, false)`, `0x4e7c5e`).
+const UNSCALED_SPRITE_KEY: i64 = 2000;
+
 /// The kinds of items, in the order a scene's are pushed (see [`items`]). Each kind's
 /// items are matched with the last frame's on their own (`crate::kept_sprites`).
 pub(crate) const KINDS: usize = 8;
@@ -28,9 +32,10 @@ pub(crate) const KINDS: usize = 8;
 /// One thing the moving layer draws, with everything its quads are made from.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Item {
-	/// An entity's sprite at its anchor (the entity's position). Its look's scale has
-	/// the zoom in it for a sprite that keeps its screen size (`setSpriteScaling`).
-	Sprite { brush: Rc<str>, frame: u32, anchor: [f32; 2], offset: [f32; 2], look: Look, unlit: bool },
+	/// An entity's sprite at its anchor (the entity's position), in its entity's layer
+	/// at its sort key (see [`items`]). Its look's scale has the zoom in it for a sprite
+	/// that keeps its screen size (`setSpriteScaling`).
+	Sprite { brush: Rc<str>, frame: u32, anchor: [f32; 2], offset: [f32; 2], look: Look, unlit: bool, layer: Layer, key: i64 },
 	/// A cloud and its shadow.
 	Cloud { brush: &'static str, pos: [f32; 2], scale: f32, alpha: f32, color: u32, key: i64 },
 	/// A region's name, at `pixel` world units per screen pixel.
@@ -40,8 +45,9 @@ pub(crate) enum Item {
 	Particle { brush: Rc<str>, pos: [f32; 2], color: u32, scale: f32, rotation: f32 },
 	/// A bird and its shadow.
 	Bird { brush: &'static str, pos: [f32; 2], key: i64, frame: u32 },
-	/// An entity's label at its anchor, at `pixel` world units per screen pixel.
-	Label { label: SceneLabel, anchor: [f32; 2], pixel: f32 },
+	/// An entity's label at its anchor, at `pixel` world units per screen pixel, in its
+	/// entity's layer at its own key.
+	Label { label: SceneLabel, anchor: [f32; 2], pixel: f32, layer: Layer },
 }
 
 /// One of an item's quads: its scene layer, its sort key (a higher key draws first),
@@ -98,9 +104,12 @@ impl Item {
 			Some(out.len() - 1)
 		};
 		match self {
-			Item::Sprite { brush, frame, anchor, offset, look, unlit: dark } => {
-				if let Some(at) = push(Layer::Entities, anchor[1] as i64, brush, *frame, *anchor, *offset, *look) {
-					out[at].quad.flags = unlit(*dark);
+			// At its entity's key as it is: an entity's sprites don't add their brush's
+			// depth bias (`0x4e7ac0`).
+			Item::Sprite { brush, frame, anchor, offset, look, unlit: dark, layer, key } => {
+				if let Some((texture, _, quad)) = sprite_quad(sprites, brush, *frame, *anchor, *offset, *look) {
+					let quad = Quad { flags: unlit(*dark), ..quad };
+					out.push(ItemQuad { layer: *layer, key: *key, texture, quad });
 				}
 			}
 			// Each a shadow and the cloud over it (`0x4e3ed0`). The shadow's key is 2000
@@ -185,17 +194,25 @@ impl Item {
 				let look = Look { alpha: f32::from(BIRD_ALPHA), ..Look::PLAIN };
 				push(Layer::Effects, *key, brush, *frame, *pos, [0.0; 2], look);
 			}
-			// Above everything.
-			Item::Label { label, anchor, pixel } => {
+			// A child of its entity's, in its layer at its own key (see `squirrel_bb`'s
+			// `world_entities::draw_key`).
+			Item::Label { label, anchor, pixel, layer } => {
 				let Some(font) = fonts.label else { return };
 				out.extend(
 					label_quads(label, *anchor, *pixel, font, fonts.shaper)
 						.into_iter()
-						.map(|(texture, quad)| ItemQuad { layer: Layer::Labels, key: anchor[1] as i64, texture, quad }),
+						.map(|(texture, quad)| ItemQuad { layer: *layer, key: label.key, texture, quad }),
 				);
 			}
 		}
 	}
+}
+
+/// An entity's layer: a location's is the details layer, sorted among the map's
+/// details; a party's the entities layer, over them (see `squirrel_bb`'s
+/// `world_entities::draw_key`).
+fn layer_of(entity: &SceneEntity) -> Layer {
+	if entity.in_details { Layer::Details } else { Layer::Entities }
 }
 
 /// `scene`'s items at `view` (whose zoom the labels, the region names and the sprites
@@ -212,10 +229,12 @@ pub(crate) fn items<'s>(scene: &'s WorldScene, view: &WorldView, fonts: WorldFon
 	let shown = || scene.entities.iter().filter(|e| e.shown);
 	let sprites = shown().flat_map(move |entity| {
 		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
+		let layer = layer_of(entity);
 		entity.sprites.iter().filter(|s| s.visible && !s.brush.is_empty()).map(move |sprite| {
 			// `setSpriteScaling(name, false)`: the sprite keeps its screen size at any
-			// zoom (the settlement banner).
+			// zoom (the settlement banner), and draws 2000 lower (`0x4e7c5e`).
 			let zoom_scale = if sprite.scaling { 1.0 } else { 1.0 / zoom };
+			let key = if sprite.scaling { entity.key } else { entity.key - UNSCALED_SPRITE_KEY };
 			let [_, r, g, b] = sprite.color.to_be_bytes();
 			Item::Sprite {
 				brush: sprite.brush.clone(),
@@ -230,6 +249,8 @@ pub(crate) fn items<'s>(scene: &'s WorldScene, view: &WorldView, fonts: WorldFon
 					tint: [r, g, b],
 				},
 				unlit: sprite.ignore_ambient,
+				layer,
+				key,
 			}
 		})
 	});
@@ -265,11 +286,108 @@ pub(crate) fn items<'s>(scene: &'s WorldScene, view: &WorldView, fonts: WorldFon
 	let birds = scene.birds.iter().map(|b| Item::Bird { brush: b.brush, pos: [b.pos.0, b.pos.1], key: b.key, frame: b.frame });
 	let labels = shown().filter(move |_| label_font).flat_map(move |entity| {
 		let anchor = [entity.pos.0 as f32, entity.pos.1 as f32];
+		let layer = layer_of(entity);
 		entity
 			.labels
 			.iter()
 			.filter(|l| l.visible && !l.text.is_empty())
-			.map(move |label| Item::Label { label: label.clone(), anchor, pixel })
+			.map(move |label| Item::Label { label: label.clone(), anchor, pixel, layer })
 	});
 	sprites.chain(clouds).chain(regions).chain(footprints).chain(waves).chain(particles).chain(birds).chain(labels)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::test_sprites::registry;
+	use squirrel_bb::scene::SceneSprite;
+
+	fn sprite(brush: &str, scaling: bool) -> SceneSprite {
+		SceneSprite {
+			name: brush.into(),
+			brush: brush.into(),
+			color: 0xffff_ffff,
+			scale: 1.0,
+			visible: true,
+			offset: (0.0, 0.0),
+			flipped: false,
+			rotation: 0.0,
+			ignore_ambient: false,
+			scaling,
+			colorization: true,
+			frame: 0,
+		}
+	}
+
+	fn label(key: i64) -> SceneLabel {
+		SceneLabel {
+			key,
+			name: "name".into(),
+			text: b"A".as_slice().into(),
+			visible: true,
+			color: 0xffff_ffff,
+			offset: (0.0, 0.0),
+		}
+	}
+
+	/// A location's sprites and label are in the details layer, a party's in the
+	/// entities layer: each sprite at its entity's key (no depth bias), one that keeps
+	/// its screen size 2000 lower, a label at its own.
+	#[test]
+	fn an_entitys_sprites_and_labels_draw_in_its_layer_at_its_key() {
+		let entity = |id: i64, in_details: bool, key: i64| SceneEntity {
+			id,
+			pos: (0.0, key as f64),
+			shown: true,
+			in_details,
+			key,
+			sprites: vec![sprite("rock", true), sprite("mark", false)],
+			labels: vec![label(key - 2100)],
+		};
+		let scene = WorldScene {
+			entities: vec![entity(1, true, -20), entity(2, false, 8)],
+			..WorldScene::default()
+		};
+		let mut advances = [0u8; 256];
+		advances[b'A' as usize] = 10;
+		let font = bb_assets::BitmapFont {
+			atlas_width: 512,
+			atlas_height: 256,
+			cell_width: 22,
+			cell_height: 20,
+			first: 32,
+			advances,
+		};
+		let fonts = WorldFonts {
+			label: Some(crate::labels::LabelFont { font: &font, texture: "gfx/fonts/f.png" }),
+			region: None,
+			shaper: None,
+		};
+		let view = WorldView { fit: 1.0, center: [0.0, 0.0], zoom: 1.0, width: 800, height: 600 };
+		let registry = registry();
+		let mut out = Vec::new();
+		let mut drawn = Vec::new();
+		for item in items(&scene, &view, fonts) {
+			out.clear();
+			item.quads(&registry, fonts, &mut out);
+			let what = match &item {
+				Item::Sprite { brush, .. } => brush.to_string(),
+				Item::Label { .. } => "label".to_string(),
+				_ => unreachable!(),
+			};
+			drawn.extend(out.iter().map(|q| (what.clone(), q.layer, q.key)));
+		}
+		drawn.dedup();
+		assert_eq!(
+			drawn,
+			[
+				("rock".to_string(), Layer::Details, -20),
+				("mark".to_string(), Layer::Details, -2020),
+				("rock".to_string(), Layer::Entities, 8),
+				("mark".to_string(), Layer::Entities, -1992),
+				("label".to_string(), Layer::Details, -2120),
+				("label".to_string(), Layer::Entities, -2092),
+			]
+		);
+	}
 }

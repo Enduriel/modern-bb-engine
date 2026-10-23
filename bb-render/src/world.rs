@@ -13,8 +13,9 @@
 //! original keeps one quadtree per scene layer). Details sort back to front on the key
 //! their spawn gave them (`spawnDetail`, `0x4fb707`): `int(y) + depth_bias + z level`
 //! minus the spawn tile's axial-r parity, which decides between neighbouring tiles'
-//! pieces (the mountains' overlaps show it); ties keep spawn order, and entities sort
-//! north to south, which is not yet checked.
+//! pieces (the mountains' overlaps show it); ties keep spawn order. A location's sprites
+//! are in the details layer too, a party's in the entities layer, at their entity's key
+//! (see `squirrel_bb`'s `world_entities::draw_key` and [`crate::world_items`]).
 //! Region names are text nodes in the details layer whose key stays 0 (`0x4f0350`),
 //! so they draw over the details.
 
@@ -179,7 +180,8 @@ pub(crate) enum Layer {
 	Entities,
 	/// Clouds and their shadows (the original's effects layer).
 	Effects,
-	/// Entity labels, above everything.
+	/// What draws over the fog of war. None of the world map's: an entity's labels are
+	/// in its layer (see `squirrel_bb`'s `world_entities::draw_key`).
 	Labels,
 }
 
@@ -200,6 +202,9 @@ pub struct WorldQuads {
 	/// Where the details layer ends in `quads` (the map's kept terrain and details draw
 	/// around what of it is built each frame, see `crate::kept_map`).
 	pub details_end: usize,
+	/// The sort keys of `quads` up to `details_end`, for drawing them among the kept
+	/// map's (built around a kept map only, see `world_quads_around_map`).
+	pub details_keys: Vec<i64>,
 }
 
 /// The quads that draw `scene` in `view`.
@@ -294,6 +299,11 @@ fn quads_of<'a>(
 		.iter()
 		.position(|&i| drawables[i as usize].layer > Layer::Details)
 		.unwrap_or(order.len());
+	// Only around a kept map: built whole, there's nothing to draw among.
+	let details_keys = match tiles {
+		true => Vec::new(),
+		false => order[..details_end].iter().map(|&i| drawables[i as usize].key).collect(),
+	};
 	// The atlases in first-use order.
 	let mut atlases = AtlasList::default();
 	let mut index = vec![usize::MAX; ids.paths.len()];
@@ -312,6 +322,7 @@ fn quads_of<'a>(
 		atlases,
 		labels_from,
 		details_end,
+		details_keys,
 	}
 }
 
@@ -534,6 +545,8 @@ mod tests {
 			id: 1,
 			pos: (0.0, 0.0),
 			shown: true,
+			in_details: false,
+			key: 0,
 			sprites: vec![SceneSprite {
 				name: "banner".into(),
 				brush: "rock".into(),

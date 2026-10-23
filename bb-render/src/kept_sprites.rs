@@ -119,6 +119,9 @@ pub(crate) struct KeptSprites {
 	uploaded: Vec<u32>,
 	entries: Vec<u32>,
 	calls: [Vec<(Range<u32>, Vec<From>)>; PARTS],
+	/// The sort keys of the first part's entries (the details layer's, which come first
+	/// in the order list), for drawing them among the kept map's.
+	detail_keys: Vec<i64>,
 	/// Bind groups by the sources they bind, with the views they were made with.
 	groups: FastMap<Vec<From>, (Vec<wgpu::TextureView>, wgpu::BindGroup)>,
 	/// Per kind during a frame's matching: the next kept item, and once one didn't match,
@@ -422,6 +425,7 @@ impl KeptSprites {
 	) -> Drawn {
 		let mut drawn = Drawn::default();
 		self.entries.clear();
+		self.detail_keys.clear();
 		for calls in &mut self.calls {
 			calls.clear();
 		}
@@ -441,6 +445,9 @@ impl KeptSprites {
 				Layer::Details | Layer::Terrain => 0,
 				Layer::Entities | Layer::Effects => 1,
 			};
+			if part == 0 {
+				self.detail_keys.push(q.key);
+			}
 			let entry = self.entries.len() as u32;
 			let calls = &mut self.calls[part];
 			let fits = calls.last().is_some_and(|(range, slots)| range.end == entry && (slots.contains(&from) || slots.len() < SLOTS));
@@ -477,6 +484,12 @@ impl KeptSprites {
 		drawn
 	}
 
+	/// The sort keys of the first part's quads, in its order (the order list's first
+	/// entries).
+	pub(crate) fn detail_keys(&self) -> &[i64] {
+		&self.detail_keys
+	}
+
 	/// Part `part`'s calls (see [`PARTS`]): each a range of the order list and its bind
 	/// group.
 	pub(crate) fn calls(&self, part: usize) -> Vec<(Range<u32>, &wgpu::BindGroup)> {
@@ -508,6 +521,8 @@ mod tests {
 			id,
 			pos: (x, 0.0),
 			shown: true,
+			in_details: false,
+			key: 0,
 			sprites: vec![SceneSprite {
 				name: "body".into(),
 				brush: "unit".into(),

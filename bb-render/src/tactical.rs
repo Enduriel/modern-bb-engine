@@ -721,6 +721,7 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 		atlases: b.atlases,
 		labels_from,
 		details_end: 0,
+		details_keys: Vec::new(),
 	}
 }
 

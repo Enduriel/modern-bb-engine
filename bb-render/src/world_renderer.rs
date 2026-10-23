@@ -17,7 +17,7 @@ use squirrel_bb::scene::tactical::TacticalScene;
 
 use crate::fast_hash::FastMap;
 use crate::fog::FogPass;
-use crate::kept_map::{self, Built, KeptMap, Placing};
+use crate::kept_map::{self, Built, KeptMap, Piece, Placing};
 use crate::kept_sprites::{self, KeptSprites, Locating};
 use crate::gpu::Gpu;
 use crate::fonts::shaper::{GLYPH_PAGE, TextShaper, glyph_page};
@@ -132,6 +132,9 @@ enum Moving {
 struct FrameQuads {
 	resolved: Vec<Option<(From, Quad)>>,
 	parts: [Vec<Quad>; 3],
+	/// The sort keys of the first part's quads (the details layer's), for drawing them
+	/// among the kept map's.
+	detail_keys: Vec<i64>,
 }
 
 /// The world map for [`WorldRenderer::draw_kept`]: what it's kept from.
@@ -518,14 +521,17 @@ impl WorldRenderer {
 	/// The textures `resolved` draws from, and its quads pointing at them in order, into
 	/// `parts`: those before `splits[0]` into the first, those from there to `splits[1]`
 	/// into the second, and so on (a quad not drawn, waiting or its atlas failed with no
-	/// stand-in, is left out).
+	/// stand-in, is left out). The keys of those in the first part that are the details
+	/// layer's (`map.details_keys`) go to `detail_keys`.
 	fn bind<'a>(
 		&'a self,
 		map: &crate::world::WorldQuads,
 		resolved: &[Option<(From, Quad)>],
 		splits: &[usize],
 		parts: &mut [Vec<Quad>],
+		detail_keys: &mut Vec<i64>,
 	) -> (Vec<&'a GpuTexture>, FrameStats) {
+		detail_keys.clear();
 		let mut stats = FrameStats::default();
 		let mut ready: Vec<&'a GpuTexture> = Vec::new();
 		let mut slots: FastMap<From, Option<usize>> = FastMap::default();
@@ -555,7 +561,12 @@ impl WorldRenderer {
 				Some(ready.len() - 1)
 			});
 			match slot {
-				Some(texture) => parts[splits.iter().filter(|&&s| s <= i).count()].push(Quad { texture, ..*quad }),
+				Some(texture) => {
+					parts[splits.iter().filter(|&&s| s <= i).count()].push(Quad { texture, ..*quad });
+					if let Some(&key) = map.details_keys.get(i) {
+						detail_keys.push(key);
+					}
+				}
 				None => stats.waiting += 1,
 			}
 		}
@@ -866,7 +877,10 @@ impl WorldRenderer {
 			});
 		}
 		let (ready, mut stats) = match &world {
-			Some(world) => self.bind(world, &frame.resolved, &[world.details_end, world.labels_from], &mut frame.parts),
+			Some(world) => {
+				let splits = [world.details_end, world.labels_from];
+				self.bind(world, &frame.resolved, &splits, &mut frame.parts, &mut frame.detail_keys)
+			}
 			None => {
 				let (pages, textures, white, glyphs) = (&self.pages, &self.textures, &self.white, &self.glyph_pages);
 				let paths = self.moving.atlas_paths().to_vec();
@@ -899,9 +913,9 @@ impl WorldRenderer {
 			..view.uniforms()
 		};
 		let sprites_span = crate::frame_timing::span("sprites draw");
-		// One pass: the water, the map's terrain and details keyed from 0 up, the details
-		// layer's own (region names, footprints), the map's details keyed below 0, the
-		// entities and the effects, the fog of war where its mask has it, then the labels.
+		// One pass: the water, the map's terrain and details with the rest of the details
+		// layer among them by key (locations, region names, footprints), the entities and
+		// the effects, the fog of war where its mask has it, then the labels.
 		let water = self
 			.textures
 			.slot(WATER_TEXTURE)
@@ -913,22 +927,42 @@ impl WorldRenderer {
 			.and_then(Slot::texture)
 			.filter(|_| scene.fog_of_war)
 			.and_then(|fog| self.fog.prepare(gpu, view, fog, scene.extent, self.clock.real, ambient));
-		let (before, after) = (self.kept.calls(&shown, true), self.kept.calls(&shown, false));
 		let moving_calls: [Vec<_>; kept_sprites::PARTS] = std::array::from_fn(|part| match world {
 			None => self.moving.calls(part),
 			Some(_) => Vec::new(),
 		});
 		let [details, map, labels] = &frame.parts;
-		let parts = match world {
-			Some(_) => [Part::Kept(&before), Part::Streamed(details), Part::Kept(&after), Part::Streamed(map), Part::Streamed(labels)],
-			None => [
-				Part::Kept(&before),
-				Part::Instanced(&moving_calls[0]),
-				Part::Kept(&after),
-				Part::Instanced(&moving_calls[1]),
-				Part::Instanced(&moving_calls[2]),
-			],
+		let detail_keys = match world {
+			Some(_) => &frame.detail_keys,
+			None => self.moving.detail_keys(),
 		};
+		let pieces = self.kept.interleave(&shown, detail_keys);
+		// The moving details' calls cut to each run (instances: ranges of the order list,
+		// whose details come first).
+		let runs: Vec<Vec<_>> = match world {
+			Some(_) => Vec::new(),
+			None => pieces
+				.iter()
+				.filter_map(|piece| match piece {
+					Piece::Other(run) => Some(cut_calls(&moving_calls[0], run)),
+					Piece::Kept(_) => None,
+				})
+				.collect(),
+		};
+		let mut runs_iter = runs.iter();
+		let mut parts: Vec<Part> = pieces
+			.iter()
+			.map(|piece| match (piece, world.is_some()) {
+				(Piece::Kept(calls), _) => Part::Kept(calls),
+				(Piece::Other(run), true) => Part::Streamed(&details[run.clone()]),
+				(Piece::Other(_), false) => Part::Instanced(runs_iter.next().expect("a run per piece")),
+			})
+			.collect();
+		match world {
+			Some(_) => parts.extend([Part::Streamed(map), Part::Streamed(labels)]),
+			None => parts.extend([Part::Instanced(&moving_calls[1]), Part::Instanced(&moving_calls[2])]),
+		}
+		let labels_part = parts.len() - 1;
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 		let prepared: Prepared = self.sprites.prepare(gpu, &mut encoder, &uniforms, &parts, &ready);
 		{
@@ -936,11 +970,11 @@ impl WorldRenderer {
 			if let Some(water) = &water {
 				water.record(&mut pass);
 			}
-			self.sprites.record(&mut pass, &prepared, &parts, 0..4);
+			self.sprites.record(&mut pass, &prepared, &parts, 0..labels_part);
 			if let Some(fog) = &fog {
 				fog.record(&mut pass);
 			}
-			self.sprites.record(&mut pass, &prepared, &parts, 4..5);
+			self.sprites.record(&mut pass, &prepared, &parts, labels_part..parts.len());
 		}
 		self.sprites.finish(&encoder);
 		gpu.submit("gpu world pass", encoder.finish());
@@ -997,6 +1031,7 @@ impl WorldRenderer {
 				atlases: list,
 				labels_from: 0,
 				details_end: 0,
+				details_keys: Vec::new(),
 			};
 			self.record_usage(&map, zoom, None);
 		}
@@ -1053,6 +1088,7 @@ impl WorldRenderer {
 				atlases: list,
 				labels_from: 0,
 				details_end: 0,
+				details_keys: Vec::new(),
 			};
 			self.record_usage(&map, zoom, None);
 		}
@@ -1228,7 +1264,7 @@ impl WorldRenderer {
 		let mut frame = std::mem::take(&mut self.frame);
 		let resolve_span = crate::frame_timing::span("resolve+bind");
 		self.resolve(gpu, map, atlases, drawer, (zoom, dof_below), &mut frame.resolved);
-		let (ready, mut stats) = self.bind(map, &frame.resolved, &[], &mut frame.parts[..1]);
+		let (ready, mut stats) = self.bind(map, &frame.resolved, &[], &mut frame.parts[..1], &mut frame.detail_keys);
 		drop(resolve_span);
 		stats.quads = frame.parts[0].len();
 		let _span = crate::frame_timing::span("sprites draw");
@@ -1261,4 +1297,19 @@ fn label_font(font: &Option<(BitmapFont, String)>) -> Option<LabelFont<'_>> {
 fn argb_floats(argb: u32) -> [f32; 4] {
 	let [a, r, g, b] = argb.to_be_bytes();
 	[r, g, b, a].map(|c| f32::from(c) / 255.0)
+}
+
+/// `calls` (ranges of an order list, each with its bind group) cut to the entries `run`.
+fn cut_calls<'a>(
+	calls: &[(std::ops::Range<u32>, &'a wgpu::BindGroup)],
+	run: &std::ops::Range<usize>,
+) -> Vec<(std::ops::Range<u32>, &'a wgpu::BindGroup)> {
+	let (start, end) = (run.start as u32, run.end as u32);
+	calls
+		.iter()
+		.filter_map(|(range, group)| {
+			let cut = range.start.max(start)..range.end.min(end);
+			(!cut.is_empty()).then_some((cut, *group))
+		})
+		.collect()
 }

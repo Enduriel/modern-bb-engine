@@ -38,6 +38,7 @@ fn han_font() -> Registration {
 
 fn label(text: &str) -> SceneLabel {
 	SceneLabel {
+		key: 0,
 		name: "name".into(),
 		text: text.as_bytes().into(),
 		visible: true,
@@ -52,6 +53,8 @@ fn scene() -> WorldScene {
 		id,
 		pos: (-60.0, y),
 		shown: true,
+		in_details: false,
+		key: 0,
 		sprites: Vec::new(),
 		labels: vec![label(text)],
 	};
@@ -116,7 +119,7 @@ fn a_registered_font_draws_a_chinese_label_on_screen() {
 	assert_eq!(renderer.register_font(han_font()).as_deref(), Ok("BB Test Han Serif"));
 	let target = RenderTarget::new(&gpu, 640, 480);
 	let only = |text: &str| WorldScene {
-		entities: vec![SceneEntity { id: 1, pos: (-60.0, 0.0), shown: true, sprites: Vec::new(), labels: vec![label(text)] }],
+		entities: vec![SceneEntity { id: 1, pos: (-60.0, 0.0), shown: true, in_details: false, key: 0, sprites: Vec::new(), labels: vec![label(text)] }],
 		..WorldScene::default()
 	};
 	let registry = SpriteRegistry::new();

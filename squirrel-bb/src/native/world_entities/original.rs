@@ -122,6 +122,9 @@ impl WorldEntities {
 			let rec = &mut m.entities[idx];
 			rec.pos = pos;
 			rec.rendered_top = top;
+			// Back in the layer it was saved in, at the key it had (the record's Z).
+			rec.in_details = !top;
+			rec.key = i64::from(head.z);
 			rec.discovered = part.discovered;
 			rec.ignore_collision = part.ignore_collision;
 			rec.important = part.important;
@@ -168,7 +171,8 @@ impl WorldEntities {
 	}
 
 	/// Every living entity as the original saves it in the scene: those drawn on top
-	/// (`RenderedTop`, the `entity` layer) and the others (the `detail` layer), by id.
+	/// (the `entity` layer, spawned by `spawnEntity`) and the others (the `detail`
+	/// layer, `spawnLocation`'s), by id.
 	pub(crate) fn original_entities(&self, vm: &SQVM) -> Result<(Vec<SceneEntity>, Vec<SceneEntity>), String> {
 		let m = self.machine.borrow();
 		let sprite_class = m.sprite_class.clone().ok_or("save: sprite class missing")?;
@@ -189,7 +193,7 @@ impl WorldEntities {
 				head: Head {
 					id: rec.id as u32,
 					pos: (rec.pos.0 as f32, rec.pos.1 as f32),
-					z: rec.pos.1 as f32 as i32 - 20,
+					z: rec.key as i32,
 					i14: 0,
 					rotation: 0.0,
 					flags: 0x0070_247d,
@@ -214,7 +218,7 @@ impl WorldEntities {
 					},
 				}),
 			};
-			if rec.rendered_top { top.push(e) } else { rest.push(e) }
+			if rec.in_details { rest.push(e) } else { top.push(e) }
 		}
 		Ok((top, rest))
 	}

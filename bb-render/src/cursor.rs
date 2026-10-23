@@ -43,6 +43,7 @@ pub fn cursor_quads(registry: &SpriteRegistry, brush: &str, since: f32, at: [f32
 		atlases,
 		labels_from: 1,
 		details_end: 0,
+		details_keys: Vec::new(),
 	})
 }
 

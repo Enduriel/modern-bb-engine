@@ -22,9 +22,9 @@
 //!
 //! The order is the original's, as [`crate::world::world_quads`] builds it: terrain,
 //! then the details back to front by their key (with the spawn tile's axial-r parity),
-//! ties in spawn order. What the details layer draws besides the map (region names and
-//! footprints, key 0, after the map's own key-0 details) goes between the map's details
-//! with keys ≥ 0 and those below ([`KeptMap::split`]).
+//! ties in spawn order. What else the details layer draws (the locations and
+//! settlements, the region names, the footprints) goes in among the map's details by
+//! its key, after the map's own of equal key ([`KeptMap::interleave`]).
 //!
 //! The map is cut into segments of consecutive quads of that order, each with room for
 //! [`SEGMENT`] in the kept buffer (a build fills [`FILL`], leaving room for details
@@ -123,9 +123,6 @@ pub(crate) struct KeptMap {
 }
 
 struct Segment {
-	/// Drawn before the details layer's own sprites (terrain and details keyed ≥ 0), or
-	/// after them (see [`KeptMap::calls`]).
-	before: bool,
 	items: Vec<Item>,
 	/// The quads' extent, `[left, right, bottom, top]` (left > right with none).
 	bounds: [f32; 4],
@@ -135,9 +132,8 @@ struct Segment {
 }
 
 impl Segment {
-	fn new(before: bool, items: Vec<Item>) -> Segment {
+	fn new(items: Vec<Item>) -> Segment {
 		let mut segment = Segment {
-			before,
 			items,
 			bounds: EMPTY,
 			placed: None,
@@ -287,7 +283,7 @@ impl KeptMap {
 		);
 		let mut atlases = AtlasList::default();
 		let mut index = vec![usize::MAX; ids.paths.len()];
-		let mut items: Vec<Item> = order
+		let items: Vec<Item> = order
 			.iter()
 			.map(|&i| {
 				let entry = &entries[i as usize];
@@ -312,15 +308,10 @@ impl KeptMap {
 		self.segments.clear();
 		self.order.clear();
 		self.ids.clear();
-		// The details keyed below 0 are drawn after the details layer's own sprites.
-		let split = items.iter().position(|i| !before(&i.order)).unwrap_or(items.len());
-		let after = items.split_off(split);
-		for (part, is_before) in [(items, true), (after, false)] {
-			let mut part = part.into_iter().peekable();
-			while part.peek().is_some() {
-				let items: Vec<Item> = part.by_ref().take(FILL).collect();
-				self.push_segment(Segment::new(is_before, items));
-			}
+		let mut items = items.into_iter().peekable();
+		while items.peek().is_some() {
+			let items: Vec<Item> = items.by_ref().take(FILL).collect();
+			self.push_segment(Segment::new(items));
 		}
 		self.built = built;
 	}
@@ -401,36 +392,19 @@ impl KeptMap {
 
 	/// `item` goes in at its place in the order.
 	fn insert(&mut self, item: Item) {
-		let is_before = before(&item.order);
-		// The first segment of its part whose last quad comes after it, or the part's
-		// last (a part without any gets one, at the split).
-		let (mut found, mut last) = (None, None);
-		for (at, &s) in self.order.iter().enumerate() {
-			let segment = &self.segments[s];
-			if segment.before != is_before {
-				continue;
-			}
-			last = Some(at);
-			if segment.items.last().is_some_and(|i| i.order > item.order) {
-				found = Some(at);
-				break;
-			}
-		}
-		let at = match found.or(last) {
+		// The first segment whose last quad comes after it, or the last (a map without
+		// any gets one).
+		let found = self
+			.order
+			.iter()
+			.position(|&s| self.segments[s].items.last().is_some_and(|i| i.order > item.order));
+		let at = match found.or(self.order.len().checked_sub(1)) {
 			Some(at) => at,
 			None => {
 				let s = self.segments.len();
-				self.segments.push(Segment::new(is_before, Vec::new()));
-				let at = if is_before {
-					self.order
-						.iter()
-						.position(|&s| !self.segments[s].before)
-						.unwrap_or(self.order.len())
-				} else {
-					self.order.len()
-				};
-				self.order.insert(at, s);
-				at
+				self.segments.push(Segment::new(Vec::new()));
+				self.order.push(s);
+				0
 			}
 		};
 		let mut s = self.order[at];
@@ -439,13 +413,12 @@ impl KeptMap {
 			// Full: its second half goes to new room, after it.
 			let half = SEGMENT / 2;
 			let moved = self.segments[s].items.split_off(half);
-			let is_before = self.segments[s].before;
 			self.segments[s].unplace();
 			let new = self.segments.len();
 			for (i, moved) in moved.iter().enumerate() {
 				self.ids.insert(moved.id, (new, i));
 			}
-			self.segments.push(Segment::new(is_before, moved));
+			self.segments.push(Segment::new(moved));
 			self.order.insert(at + 1, new);
 			if place > half {
 				s = new;
@@ -797,34 +770,92 @@ impl KeptMap {
 		}
 	}
 
-	/// The draw calls of the segments `shown` drawn before the details layer's own
-	/// sprites (`before`: terrain and details keyed ≥ 0) or after them.
-	pub(crate) fn calls<'a>(
-		&'a self,
-		shown: &Shown,
-		before: bool,
-	) -> Vec<(Range<u32>, &'a wgpu::BindGroup)> {
-		shown
-			.segments
-			.iter()
-			.map(|&s| &self.segments[s])
-			.filter(|s| s.before == before)
-			.filter_map(|s| s.placed.as_ref())
-			.flat_map(|p| &p.calls)
-			.filter(|c| !c.items.is_empty())
-			.filter_map(|c| {
-				c.group
-					.as_ref()
-					.map(|(_, g)| (c.items.start as u32..c.items.end as u32, g))
-			})
-			.collect()
+	/// Where the details layer's other quads go among the segments `shown`, by key:
+	/// `keys` are their keys in their drawing order (the higher first). Each goes after
+	/// every kept quad of its key or above and before the rest, as the per-frame build
+	/// sorts them (the map's quads are pushed first, so they draw first at equal keys).
+	/// Runs of them in drawing order, each with the kept quad it goes before: its
+	/// segment's place in `shown` and its place in the segment (`shown`'s length and 0
+	/// for after them all).
+	fn runs(&self, shown: &Shown, keys: &[i64]) -> Vec<(usize, usize, Range<usize>)> {
+		let mut runs = Vec::new();
+		let mut next = 0;
+		for (nth, &s) in shown.segments.iter().enumerate() {
+			let items = &self.segments[s].items;
+			// Where in this segment a quad keyed `key` goes.
+			let cut = |key: i64| items.partition_point(|i| goes_before(&i.order, key));
+			while next < keys.len() && cut(keys[next]) < items.len() {
+				let (at, run) = (cut(keys[next]), next);
+				while next < keys.len() && cut(keys[next]) == at {
+					next += 1;
+				}
+				runs.push((nth, at, run..next));
+			}
+		}
+		if next < keys.len() {
+			runs.push((shown.segments.len(), 0, next..keys.len()));
+		}
+		runs
+	}
+
+	/// The segments `shown` and the details layer's other quads, keyed `keys` (see
+	/// [`KeptMap::runs`]), in drawing order: kept calls, and runs of the others between.
+	pub(crate) fn interleave<'a>(&'a self, shown: &Shown, keys: &[i64]) -> Vec<Piece<'a>> {
+		let mut pieces = Vec::new();
+		let mut calls = Vec::new();
+		let mut runs = self.runs(shown, keys).into_iter().peekable();
+		for (nth, &s) in shown.segments.iter().enumerate() {
+			let segment = &self.segments[s];
+			let base = s * SEGMENT;
+			let mut from = 0;
+			while let Some((_, at, run)) = runs.next_if(|(n, _, _)| *n == nth) {
+				if let Some(placed) = &segment.placed {
+					kept_calls(placed, base + from..base + at, &mut calls);
+				}
+				if !calls.is_empty() {
+					pieces.push(Piece::Kept(std::mem::take(&mut calls)));
+				}
+				pieces.push(Piece::Other(run));
+				from = at;
+			}
+			if let Some(placed) = &segment.placed {
+				kept_calls(placed, base + from..base + segment.items.len(), &mut calls);
+			}
+		}
+		if !calls.is_empty() {
+			pieces.push(Piece::Kept(calls));
+		}
+		pieces.extend(runs.map(|(_, _, run)| Piece::Other(run)));
+		pieces
 	}
 }
 
-/// Whether a quad of `order` is drawn before the details layer's own sprites: the
-/// terrain and the details keyed ≥ 0.
-fn before(order: &Order) -> bool {
-	order.layer != Layer::Details || order.key.0 >= 0
+/// A piece of the details layer's drawing (see [`KeptMap::interleave`]).
+#[derive(Debug)]
+pub(crate) enum Piece<'a> {
+	/// Calls over kept quads: each a range of the kept buffer and its bind group.
+	Kept(Vec<(Range<u32>, &'a wgpu::BindGroup)>),
+	/// A run of the layer's other quads.
+	Other(Range<usize>),
+}
+
+/// `placed`'s calls cut to the kept quads `range`, onto `calls`.
+fn kept_calls<'a>(placed: &'a Placed, range: Range<usize>, calls: &mut Vec<(Range<u32>, &'a wgpu::BindGroup)>) {
+	for call in &placed.calls {
+		let (start, end) = (call.items.start.max(range.start), call.items.end.min(range.end));
+		if start >= end {
+			continue;
+		}
+		if let Some((_, group)) = &call.group {
+			calls.push((start as u32..end as u32, group));
+		}
+	}
+}
+
+/// Whether a kept quad of `order` draws before a quad of the details layer keyed `key`
+/// that isn't the map's: terrain does, and details of that key or above.
+fn goes_before(order: &Order, key: i64) -> bool {
+	order.layer == Layer::Terrain || order.key.0 >= key
 }
 
 #[cfg(test)]
@@ -858,24 +889,20 @@ mod tests {
 	fn names(map: &KeptMap) -> Vec<String> {
 		items(map)
 			.iter()
-			.map(|(q, _, _)| q.as_ref().map_or("-".to_string(), |q| name_of(q).to_string()))
+			.map(|(q, _)| q.as_ref().map_or("-".to_string(), |q| name_of(q).to_string()))
 			.collect()
 	}
 
-	/// Each kept quad in drawing order, its detail's id, and whether it's drawn before
-	/// the details layer's own sprites.
-	fn items(map: &KeptMap) -> Vec<(Option<Quad>, i64, bool)> {
+	/// Each kept quad in drawing order and its detail's id.
+	fn items(map: &KeptMap) -> Vec<(Option<Quad>, i64)> {
 		map.order
 			.iter()
-			.flat_map(|&s| {
-				let segment = &map.segments[s];
-				segment.items.iter().map(|i| (i.quad.get(), i.id, segment.before))
-			})
+			.flat_map(|&s| map.segments[s].items.iter().map(|i| (i.quad.get(), i.id)))
 			.collect()
 	}
 
-	/// The order is the per-frame build's: terrain, then the details by key, the
-	/// negative keys after the split; a hidden detail keeps its place, empty.
+	/// The order is the per-frame build's: terrain, then the details by key; a hidden
+	/// detail keeps its place, empty.
 	#[test]
 	fn the_map_keeps_the_original_order_and_hidden_details_keep_their_place() {
 		let mut hidden = detail(3, "mark", 5);
@@ -887,14 +914,6 @@ mod tests {
 		let mut map = KeptMap::default();
 		map.build(&tiles, &registry(), None);
 		assert_eq!(names(&map), ["rock", "rock", "mark", "-", "rock", "rock"]);
-		assert_eq!(
-			map.order
-				.iter()
-				.map(|&s| (map.segments[s].items.len(), map.segments[s].before))
-				.collect::<Vec<_>>(),
-			[(5, true), (1, false)],
-			"split before the detail keyed below 0"
-		);
 
 		// Shown again, it's drawn where it was.
 		let mut shown = detail(3, "rock", 5);
@@ -909,8 +928,8 @@ mod tests {
 
 	/// Details spawned and removed and terrain set, one by one, give the map a build of
 	/// the tiles as they end up gives, quad for quad: keys ≥ 0 and below, ties between
-	/// tiles and on one tile, hidden ones, terrain changed or gone, a part with no
-	/// segment yet, and segments filling and splitting.
+	/// tiles and on one tile, hidden ones, terrain changed or gone, and segments filling
+	/// and splitting.
 	#[test]
 	fn edits_keep_the_order_a_build_gives() {
 		let registry = registry();
@@ -931,7 +950,7 @@ mod tests {
 			d.pos = (tile as f32 * 3.0, next(50) as f32);
 			d
 		};
-		// Only details keyed ≥ 0 at first: the part after the split has no segment.
+		// Only details keyed ≥ 0 at first.
 		let mut tiles: Vec<SceneTile> = (0..40)
 			.map(|t| {
 				let mut tile = tile(t as f64, Vec::new());
@@ -945,7 +964,6 @@ mod tests {
 			.collect();
 		let mut map = KeptMap::default();
 		map.build(&tiles, &registry, None);
-		assert!(map.segments.iter().all(|s| s.before));
 		let segments = map.segments.len();
 		for round in 0..12 {
 			let mut edits = Vec::new();
@@ -978,7 +996,27 @@ mod tests {
 			}
 			assert!(map.segments.iter().all(|s| s.items.len() <= SEGMENT));
 		}
-		assert!(map.segments.len() > segments, "segments split, and a part began");
-		assert!(map.segments.iter().any(|s| !s.before));
+		assert!(map.segments.len() > segments, "segments split");
+	}
+
+	/// The details layer's other quads go among the map's by key, after the map's of
+	/// their key; runs that meet no map quad between them are one.
+	#[test]
+	fn other_quads_go_among_the_map_by_key() {
+		let tiles = vec![
+			tile(0.0, vec![detail(1, "rock", 30), detail(2, "mark", 10)]),
+			tile(100.0, vec![detail(3, "rock", 20), detail(4, "rock", -5)]),
+		];
+		let mut map = KeptMap::default();
+		map.build(&tiles, &registry(), None);
+		// Kept: two terrains, then the details keyed 30, 20, 10, -5.
+		let shown = Shown { segments: map.order.clone(), ..Shown::default() };
+		assert_eq!(
+			map.runs(&shown, &[40, 30, 25, 21, 10, -10]),
+			[(0, 2, 0..1), (0, 3, 1..4), (0, 5, 4..5), (1, 0, 5..6)]
+		);
+		assert_eq!(map.runs(&shown, &[]), []);
+		// The terrain draws before them whatever their key.
+		assert_eq!(map.runs(&shown, &[i64::MAX]), [(0, 2, 0..1)]);
 	}
 }

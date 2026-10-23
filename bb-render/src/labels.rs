@@ -179,6 +179,7 @@ mod tests {
 
 	fn label(text: &str) -> SceneLabel {
 		SceneLabel {
+			key: 0,
 			name: "name".into(),
 			text: text.as_bytes().into(),
 			visible: true,
