@@ -2,11 +2,11 @@
 # mods_start_input, window's modded campaign): the installed mods, one per line,
 # "<size in bytes> <file name>". After updating the installed mods, update this list
 # (and expect to retake the modded goldens, see bb-ui/tests/mods_ui.rs).
-63466 mod_EIMO-239-10-0-6-1718785066.zip
+62137 mod_EIMO 239 10.0.7 2026-10-21T16-35Z XnCG833ZS.zip
 12270 mod_breditor_reforged_patch-765-1-0-2-1745962787.zip
-8327 mod_clever_recruiter-549-2-1-6-1721399739.zip
+9961 mod_clever_recruiter 549 2.1.7 2026-10-21T16-35Z N25OmEEc5.zip
 1441 mod_coastal_location_fix.zip
-4772 mod_configurable_pause-731-1-0-6-1720773926.zip
+4566 mod_configurable_pause 731 1.0.7 2026-10-21T16-27Z tSEX1vvrY.zip
 23633 mod_dev_console 380 2.6.2 2026-08-08T11-21Z 8g4hpVHpe.zip
 53707 mod_dynamic_perks-758-0-5-1-1765412898.zip
 47359 mod_dynamic_spawns-759-0-6-0-1775059173.zip
@@ -32,5 +32,5 @@
 10110064 mod_stronghold-324-2-18-1-1777832897.zip
 30135 mod_swifter-542-1-1-3-1666093341.zip
 7732 mod_unified_perk_descriptions-767-0-1-2-1726115621.zip
-13614 mod_world_parameters-732-1-0-1-1719223618.zip
+8853 mod_world_parameters 732 1.1.0 2026-10-21T16-35Z Z3ILe00nx.zip
 3127 namedItemStats-850-1-2-1751250218.zip
