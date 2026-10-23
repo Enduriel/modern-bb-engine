@@ -38,7 +38,7 @@ use squirrel_bb::scene::tactical::{
 use crate::sprite::Quad;
 use crate::world::{
 	AtlasList, CLOUD_REACH, CLOUD_SHADOW_ALPHA, CLOUD_SHADOW_DROP, CLOUD_SHADOW_SCALE, Look, WorldQuads, WorldView,
-	frame_quad,
+	brush_quad, frame_quad,
 };
 
 /// A hex's height (they are 160 wide).
@@ -202,15 +202,11 @@ impl Builder<'_> {
 		let Some(frame) = sprite.frames.get(frame as usize).or(sprite.frames.first()) else {
 			return;
 		};
-		let anchor = [
-			anchor[0] + f32::from(sprite.offset_x) * look.scale,
-			anchor[1] + f32::from(sprite.offset_y) * look.scale,
-		];
 		self.quads.push(Quad {
 			texture: self.atlases.index_of(&sheet.sheet.texture),
 			saturation,
 			level,
-			..frame_quad(frame, anchor, look)
+			..brush_quad(sprite, frame, anchor, look)
 		});
 	}
 }
@@ -527,7 +523,8 @@ fn draw_overlay(b: &mut Builder, entity: &SceneTacticalEntity, overlay: &SceneOv
 
 /// One of the battle's effects (see `battle_effects`). Icons, attacks and sprite effects
 /// sit where they are without their brush's offset, as the original flags them; icons
-/// ignore the battle's light.
+/// ignore the battle's light. Mirrored, such an effect still moves by twice its offset's
+/// mirrored x, as there (`0x52c628` mirrors the offset whether it was added or not).
 fn draw_effect(b: &mut Builder, effect: &SceneEffect, level: u32) {
 	let [a, r, g, b_] = effect.color.to_be_bytes();
 	let look = Look {
@@ -846,6 +843,69 @@ mod tests {
 		assert!(!raised.is_empty(), "the unit is drawn");
 		assert_ne!(raised, corners(&scene_with((0.0, 0.0), 0.0)), "the offset moves it");
 		assert_eq!(raised, corners(&scene_with((0.0, 0.0), 10.0)), "as far as the unit 10 units higher");
+	}
+
+	/// Spearwall lowers a spetum by turning its `arms_icon` -70° (two-handed; -33° one-handed),
+	/// and the original turns a sprite about its brush's pivot, not its anchor, mirrored
+	/// with the sprite (`0x52c490`): the hands holding the pole stay where they are, the
+	/// head swings forward. Each corner lands where the original's rule puts it: the unit,
+	/// plus the sprite's offset, plus the brush's offset and pivot (their x mirrored on a
+	/// mirrored sprite), plus the corner turned about the pivot (the other way, mirrored).
+	#[test]
+	fn a_lowered_polearm_turns_about_its_brush_pivot_mirrored_with_it() {
+		use crate::test_sprites::POLE;
+		let ([left, right, top, bottom], (off_x, off_y), [pivot_x, pivot_y]) = POLE;
+		let unit_pos = (120.0f64, 0.0f64);
+		let corners_of = |rotation: f32, flipped: bool, offset: (f32, f32)| {
+			let mut unit = entity(1, 1, "pole", false, false);
+			unit.sprites[0].rotation = rotation;
+			unit.sprites[0].flipped = flipped;
+			unit.sprites[0].offset = offset;
+			let scene = TacticalScene {
+				width: 2,
+				height: 1,
+				tiles: vec![tile(0, true), tile(1, true)],
+				entities: vec![unit],
+				..TacticalScene::default()
+			};
+			let quads: Vec<Quad> = quads_of(&scene).into_iter().filter(|q| name_of(q) == "pole").collect();
+			assert_eq!(quads.len(), 1, "the pole is drawn once");
+			quads[0].corners
+		};
+		// The original's rule, worked out on its own in f64.
+		let expected = |rotation: f64, flipped: bool, offset: (f64, f64)| {
+			let (sin, cos) = rotation.to_radians().sin_cos();
+			let mirror = if flipped { -1.0 } else { 1.0 };
+			let (px, py) = (f64::from(pivot_x), f64::from(pivot_y));
+			[(left, top), (right, top), (right, bottom), (left, bottom)].map(|(x, y)| {
+				let (dx, dy) = (f64::from(x) - px, f64::from(y) - py);
+				let local = (f64::from(off_x) + px + dx * cos - dy * sin, f64::from(off_y) + py + dx * sin + dy * cos);
+				[unit_pos.0 + offset.0 + mirror * local.0, unit_pos.1 + offset.1 + local.1]
+			})
+		};
+		let assert_lands = |rotation: f32, flipped: bool, offset: (f32, f32)| {
+			let got = corners_of(rotation, flipped, offset);
+			let want = expected(f64::from(rotation), flipped, (f64::from(offset.0), f64::from(offset.1)));
+			for w in want {
+				assert!(
+					got.iter().any(|g| (f64::from(g[0]) - w[0]).abs() < 1e-3 && (f64::from(g[1]) - w[1]).abs() < 1e-3),
+					"rotation {rotation}, flipped {flipped}, offset {offset:?}: a corner at {w:?}, got {got:?}"
+				);
+			}
+		};
+		for flipped in [false, true] {
+			for rotation in [0.0, -33.0, -70.0] {
+				assert_lands(rotation, flipped, (0.0, 0.0));
+				assert_lands(rotation, flipped, (0.0, 10.0));
+			}
+		}
+		// Turned about the anchor instead, the lowered spetum sat 47 units left of and 33
+		// above where the original draws it, across the unit's neighbours.
+		let upright = corners_of(0.0, false, (0.0, 0.0));
+		let lowered = corners_of(-70.0, false, (0.0, 0.0));
+		let middle = |c: [[f32; 2]; 4]| [c.iter().map(|p| p[0]).sum::<f32>() / 4.0, c.iter().map(|p| p[1]).sum::<f32>() / 4.0];
+		let (u, l) = (middle(upright), middle(lowered));
+		assert!(l[0] > u[0] + 30.0, "the head swings forward, right of the unit: {u:?} -> {l:?}");
 	}
 
 	#[test]

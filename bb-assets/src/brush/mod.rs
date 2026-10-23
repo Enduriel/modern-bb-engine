@@ -106,9 +106,12 @@ pub struct BrushSprite {
 	/// Flag bits. The original's default before reading is `0x402`; most sprites
 	/// store `0x403`.
 	pub flags: u32,
-	/// Unknown. `(0, 0)` on most sprites, mostly `(-15, -15)` on corpse parts and
-	/// blood pools.
-	pub unknown_offset: [f32; 2],
+	/// The point a rotated sprite turns about, in pixels from its anchor (y up, not
+	/// scaled with the sprite; mirrored with it). `setBrush` copies it to the sprite
+	/// (`0x52c044`) and the sprite's draw turns the quad about it (`0x52c72e`). `(0, 0)`
+	/// on most sprites; `(20, -45)` on the spears, `(0, -50)` on the spetum, `(-15, -15)`
+	/// on heads, helmets and corpse parts.
+	pub pivot: [f32; 2],
 	/// An RGBA colour. The original also stores a grey level derived from it.
 	pub color: [u8; 4],
 	/// Unknown. 2.0 in every shipped sprite.

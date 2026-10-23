@@ -57,7 +57,7 @@ fn registry() -> SpriteRegistry {
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,
 		flags: 0x403,
-		unknown_offset: [0.0, 0.0],
+		pivot: [0.0, 0.0],
 		color: [255; 4],
 		unknown_scale: 2.0,
 		frames: vec![BrushFrame {
@@ -571,7 +571,7 @@ fn an_animations_frames_load_together() {
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,
 		flags: 0x403,
-		unknown_offset: [0.0, 0.0],
+		pivot: [0.0, 0.0],
 		color: [255; 4],
 		unknown_scale: 2.0,
 		frames: vec![frame(0.0, 0.5), frame(0.5, 1.0)],

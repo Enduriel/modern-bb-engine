@@ -18,7 +18,7 @@ pub(crate) fn sprite(name: &str) -> BrushSprite {
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,
 		flags: 0x403,
-		unknown_offset: [0.0, 0.0],
+		pivot: [0.0, 0.0],
 		color: [255, 255, 255, 255],
 		unknown_scale: 2.0,
 		frames: vec![BrushFrame {
@@ -84,7 +84,7 @@ impl SheetBuilder {
 			}
 			out.extend_from_slice(&s.rotation_speed.to_le_bytes());
 			out.extend_from_slice(&s.flags.to_le_bytes());
-			for value in s.unknown_offset {
+			for value in s.pivot {
 				out.extend_from_slice(&value.to_le_bytes());
 			}
 			out.extend_from_slice(&s.color);

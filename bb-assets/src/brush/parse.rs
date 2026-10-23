@@ -59,7 +59,7 @@ fn read_sprite(r: &mut Reader) -> Result<BrushSprite, String> {
 	let unknown_pause = [r.u16("pause")?, r.u16("pause")?];
 	let rotation_speed = r.f32("rotation speed")?;
 	let flags = r.u32("sprite flags")?;
-	let unknown_offset = [r.f32("offset pair")?, r.f32("offset pair")?];
+	let pivot = [r.f32("pivot")?, r.f32("pivot")?];
 	let color = r.array("colour")?;
 	let unknown_scale = r.f32("scale")?;
 	let frame_count = r.u16("frame count")?;
@@ -90,7 +90,7 @@ fn read_sprite(r: &mut Reader) -> Result<BrushSprite, String> {
 		unknown_pause,
 		rotation_speed,
 		flags,
-		unknown_offset,
+		pivot,
 		color,
 		unknown_scale,
 		frames,
@@ -114,7 +114,7 @@ mod tests {
 		original.unknown_pause = [800, 9000];
 		original.rotation_speed = 12.5;
 		original.flags = 0x1403;
-		original.unknown_offset = [-15.0, -30.0];
+		original.pivot = [-15.0, -30.0];
 		original.color = [41, 28, 20, 255];
 		original.frames.push(BrushFrame {
 			name: "second.png".into(),

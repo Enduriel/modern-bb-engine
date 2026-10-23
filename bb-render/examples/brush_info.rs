@@ -37,11 +37,12 @@ fn main() {
 				continue;
 			};
 			println!(
-				"{name}: {}x{} offset ({}, {}) depth_bias {} flags {:#x} rotation_speed {} frames {} texture {}",
+				"{name}: {}x{} offset ({}, {}) pivot {:?} depth_bias {} flags {:#x} rotation_speed {} frames {} texture {}",
 				s.width,
 				s.height,
 				s.offset_x,
 				s.offset_y,
+				s.pivot,
 				s.depth_bias,
 				s.flags,
 				s.rotation_speed,

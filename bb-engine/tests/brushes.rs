@@ -60,7 +60,7 @@ fn a_known_sprite_reads_back_its_fields() {
 	assert_eq!(sheet.sheet.texture, "gfx/entity_0.png");
 	assert_eq!((sprite.width, sprite.height), (131, 125));
 	assert_eq!((sprite.offset_x, sprite.offset_y), (6, 10));
-	assert_eq!(sprite.unknown_offset, [-15.0, -15.0]);
+	assert_eq!(sprite.pivot, [-15.0, -15.0]);
 }
 
 #[test]

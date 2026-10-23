@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use bb_assets::{BrushFrame, SpriteRegistry};
+use bb_assets::{BrushFrame, BrushSprite, SpriteRegistry};
 use squirrel_bb::scene::{SceneDetail, SceneTile, WorldScene};
 
 use crate::fast_hash::FastMap;
@@ -341,11 +341,23 @@ pub(crate) fn sprite_quad<'a>(
 	// The frame its animation shows (see `squirrel_bb::native::sprite_anim`).
 	let frame = sprite.frames.get(frame as usize).or(sprite.frames.first())?;
 	// Offsets scale with the sprite (so an unscaled sprite keeps its screen offset too).
+	let anchor = [anchor[0] + offset[0] * look.scale, anchor[1] + offset[1] * look.scale];
+	Some((&sheet.sheet.texture, sprite.depth_bias, brush_quad(sprite, frame, anchor, look)))
+}
+
+/// `sprite`'s `frame` drawn at `at` as the original's sprite draws it (`0x52c490`): the
+/// brush's offset moves it from `at`, scaled with it (`0x52c4ea`), and a rotation turns
+/// it about the brush's pivot (`0x52c72e`), which isn't scaled. Mirrored, all of that is
+/// mirrored about `at`: the offset's x (`0x52c628`), the pivot's x (`0x52c750`) and the
+/// turn (`0x52c711`, the angle times -1), so a mirrored sprite is its unmirrored self's
+/// mirror image.
+pub fn brush_quad(sprite: &BrushSprite, frame: &BrushFrame, at: [f32; 2], look: Look) -> Quad {
+	let mirror = if look.flipped { -1.0 } else { 1.0 };
 	let anchor = [
-		anchor[0] + (offset[0] + f32::from(sprite.offset_x)) * look.scale,
-		anchor[1] + (offset[1] + f32::from(sprite.offset_y)) * look.scale,
+		at[0] + mirror * f32::from(sprite.offset_x) * look.scale,
+		at[1] + f32::from(sprite.offset_y) * look.scale,
 	];
-	Some((&sheet.sheet.texture, sprite.depth_bias, frame_quad(frame, anchor, look)))
+	quad_about(frame, anchor, sprite.pivot, look)
 }
 
 /// A tile's terrain: its sort key in the terrain layer (its row's y plus the brush's
@@ -425,7 +437,8 @@ pub struct Look {
 	pub flipped: bool,
 	/// 0 to 255.
 	pub alpha: f32,
-	/// Degrees, counter-clockwise about the anchor.
+	/// Degrees, counter-clockwise about the anchor (about the brush's pivot, see
+	/// [`brush_quad`]); a mirrored sprite turns the other way, as its mirror image.
 	pub rotation: f32,
 	/// The sprite's colour, RGB (white leaves the picture as it is).
 	pub tint: [u8; 3],
@@ -449,8 +462,14 @@ pub fn unlit(ignore_ambient: bool) -> u32 {
 	u32::from(ignore_ambient)
 }
 
-/// A frame drawn at `anchor` (world units, y up).
+/// A frame drawn at `anchor` (world units, y up), turning about the anchor.
 pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
+	quad_about(frame, anchor, [0.0; 2], look)
+}
+
+/// A frame drawn at `anchor`, turning about `pivot` (from the anchor, y up, unscaled,
+/// mirrored with the frame); see [`brush_quad`].
+fn quad_about(frame: &BrushFrame, anchor: [f32; 2], pivot: [f32; 2], look: Look) -> Quad {
 	let [mut left, mut right, top, bottom] = frame.rect;
 	let [mut u0, mut u1, v0, v1] = frame.uv;
 	if look.flipped {
@@ -463,9 +482,18 @@ pub fn frame_quad(frame: &BrushFrame, anchor: [f32; 2], look: Look) -> Quad {
 	// The rect is y up from the anchor, and its `top` is the edge at the atlas's first
 	// rows (`v0`): with the picture packed upside down, that is the picture's bottom.
 	let (y_top, y_bottom) = (bottom * scale, top * scale);
-	// Upright, the turn is the identity (`x·1 − y·0` is `x`): most sprites skip the trig.
-	let (sin, cos) = if look.rotation == 0.0 { (0.0, 1.0) } else { look.rotation.to_radians().sin_cos() };
-	let place = |x: f32, y: f32| [anchor[0] + x * cos - y * sin, anchor[1] + x * sin + y * cos];
+	// Upright, there is no turn (the original skips it, `0x52c6fb`): most sprites skip
+	// the trig. Mirrored, the pivot and the turn are mirrored too.
+	let (rotation, pivot) = match (look.rotation == 0.0, look.flipped) {
+		(true, _) => (0.0, [0.0; 2]),
+		(false, false) => (look.rotation, pivot),
+		(false, true) => (-look.rotation, [-pivot[0], pivot[1]]),
+	};
+	let (sin, cos) = if rotation == 0.0 { (0.0, 1.0) } else { rotation.to_radians().sin_cos() };
+	let place = |x: f32, y: f32| {
+		let (x, y) = (x - pivot[0], y - pivot[1]);
+		[anchor[0] + pivot[0] + x * cos - y * sin, anchor[1] + pivot[1] + x * sin + y * cos]
+	};
 	Quad {
 		texture: 0,
 		corners: [

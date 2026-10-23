@@ -277,7 +277,7 @@ mod tests {
 			unknown_pause: pause,
 			rotation_speed: 0.0,
 			flags,
-			unknown_offset: [0.0; 2],
+			pivot: [0.0; 2],
 			color: [255; 4],
 			unknown_scale: 2.0,
 			frames: (0..frames)

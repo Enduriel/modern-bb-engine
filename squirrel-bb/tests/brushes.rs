@@ -30,7 +30,7 @@ fn sprite(name: &str) -> BrushSprite {
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,
 		flags: 0x403,
-		unknown_offset: [0.0, 0.0],
+		pivot: [0.0, 0.0],
 		color: [0; 4],
 		unknown_scale: 2.0,
 		frames: vec![BrushFrame { name: String::new(), uv: [0.0; 4], rect: [0.0; 4] }],

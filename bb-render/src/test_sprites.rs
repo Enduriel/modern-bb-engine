@@ -7,8 +7,12 @@ use bb_assets::{BrushFrame, BrushSheet, BrushSprite, SheetHeader, SpriteRegistry
 
 use crate::sprite::Quad;
 
-/// The test sprites; `anim` has three frames.
-pub const NAMES: [&str; 8] = ["tile", "unit", "rock", "mark", "step", "icon", "anim", "drop"];
+/// The test sprites; `anim` has three frames, and `pole` is the spetum's weapon icon's
+/// shape: its 68×128 picture off its anchor, its offset and its pivot.
+pub const NAMES: [&str; 9] = ["tile", "unit", "rock", "mark", "step", "icon", "anim", "drop", "pole"];
+
+/// `icon_spetum_01`'s frame rect, offset and pivot, as the installed brush has them.
+pub const POLE: ([f32; 4], (i16, i16), [f32; 2]) = ([-55.0, 13.0, -64.0, 64.0], (0, 35), [0.0, -50.0]);
 
 /// The animated sprite's frame count.
 const ANIM_FRAMES: usize = 3;
@@ -17,20 +21,22 @@ const ANIM_FRAMES: usize = 3;
 pub fn registry() -> SpriteRegistry {
 	let sprite = |i: usize| {
 		let frames = if NAMES[i] == "anim" { ANIM_FRAMES } else { 1 };
+		let pole = NAMES[i] == "pole";
+		let (rect, offset, pivot) = if pole { POLE } else { ([-1.0, 1.0, -1.0, 1.0], (0, 0), [0.0; 2]) };
 		BrushSprite {
 			hash: name_hash(NAMES[i].as_bytes()),
 			name: NAMES[i].into(),
 			material: 0,
 			width: 2,
 			height: 2,
-			offset_x: 0,
-			offset_y: 0,
+			offset_x: offset.0,
+			offset_y: offset.1,
 			depth_bias: 0,
 			frame_time_ms: 100,
 			unknown_pause: [0, 0],
 			rotation_speed: 0.0,
 			flags: 0,
-			unknown_offset: [0.0, 0.0],
+			pivot,
 			color: [255; 4],
 			unknown_scale: 1.0,
 			frames: (0..frames)
@@ -39,7 +45,7 @@ pub fn registry() -> SpriteRegistry {
 					BrushFrame {
 						name: k.to_string(),
 						uv: [u, u + 0.005, 0.0, 1.0],
-						rect: [-1.0, 1.0, -1.0, 1.0],
+						rect,
 					}
 				})
 				.collect(),

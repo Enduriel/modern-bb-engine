@@ -47,7 +47,7 @@ fn sprite(name: &str, rect: [f32; 4], uv: [f32; 4], frames: usize, depth_bias: i
 		unknown_pause: [0, 0],
 		rotation_speed: 0.0,
 		flags: 0x403,
-		unknown_offset: [0.0, 0.0],
+		pivot: [0.0, 0.0],
 		color: [255; 4],
 		unknown_scale: 2.0,
 		frames: (0..frames)

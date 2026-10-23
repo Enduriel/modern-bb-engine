@@ -69,7 +69,7 @@ mod tests {
 			unknown_pause: [0, 0],
 			rotation_speed: 0.0,
 			flags: 0,
-			unknown_offset: [0.0, 0.0],
+			pivot: [0.0, 0.0],
 			color: [255; 4],
 			unknown_scale: 1.0,
 			frames: vec![BrushFrame {

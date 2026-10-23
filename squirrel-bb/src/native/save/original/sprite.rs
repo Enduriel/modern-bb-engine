@@ -103,7 +103,7 @@ pub(crate) const ALWAYS: u32 = 0x1002;
 pub(crate) const BRUSH_BITS: u32 = 0x14;
 
 /// What setting a brush gives a sprite, as the original saves it (`0x52bf50`): the
-/// brush's stored hash and its `unknown_offset` pair (the saved `v4c`). No brush:
+/// brush's stored hash and its `pivot` pair (the saved `v4c`). No brush:
 /// zeros.
 pub(crate) struct BrushLook {
 	pub hash: u64,
@@ -115,7 +115,7 @@ impl BrushLook {
 		match registry.get(name) {
 			Some((_, b)) => BrushLook {
 				hash: b.hash,
-				v4c: (b.unknown_offset[0], b.unknown_offset[1]),
+				v4c: (b.pivot[0], b.pivot[1]),
 			},
 			None => BrushLook { hash: 0, v4c: (0.0, 0.0) },
 		}
