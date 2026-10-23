@@ -131,7 +131,7 @@ and the display's mode is never switched (2026-10-22: a player's first start, ex
 at 60 Hz, failed to configure the window's surface; `bb_app::platform`). A fullscreen
 mode of another size than the monitor's is drawn scaled into it, its aspect kept.
 
-**Which GPUs that means** [driver docs; nothing run on real Windows yet]:
+**Which GPUs that means** [driver docs; on real Windows only one player's PC so far]:
 
 | vendor | oldest generation | source |
 |---|---|---|
@@ -145,6 +145,10 @@ machines without a GPU passed through (they have only WARP).
 [measured] 2026-10-21, not on Windows: the cross-built `bb.exe` under Proton
 Experimental (DXVK for Direct3D 11, vkd3d-proton for Direct3D 12) on the RX 9070 XT
 draws the main menu with its UI.
+
+[measured] 2026-10-23, real Windows: a player's RTX 5070 (Direct3D 12, 2560x1440 at
+360 Hz, borderless) runs the menu, a new campaign and its character screen, with the
+UI page's paints taking 0.25–0.37 ms each to reach the frame, as under Proton.
 
 ## CPU and memory
 
