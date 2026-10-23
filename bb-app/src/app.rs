@@ -19,6 +19,7 @@ use bb_app::display::{self, Placement};
 use bb_app::front::Key;
 use bb_app::game::{Boot, Game, Start, Store};
 use bb_app::game_cursor::CursorShow;
+use bb_app::mouse_refresh::MouseRefresh;
 use bb_app::system_cursor::{self, Cursor, Shower};
 use bb_app::steam::SteamStats;
 use bb_app::surface_trouble::{Outcome, SurfaceTrouble};
@@ -144,6 +145,14 @@ struct Running {
 	/// landing every other frame): the window tests' check that the game steps at the
 	/// display's rate whichever frames are presented.
 	present_every: Option<(u64, u64)>,
+	/// With `BB_TEST_MOUSE_MOVES=A-B`, frames A to B (not included) each start with the
+	/// mouse moved, a pixel or so back and forth near the window's top left corner: the
+	/// window tests' stand-in for a player's mouse (a headless gamescope has none).
+	test_mouse_moves: Option<(u64, u64)>,
+	/// Whether the mouse moved since the last frame presented (see `bb_app::mouse_refresh`).
+	mouse_refresh: MouseRefresh,
+	/// The system said the window isn't shown (`WindowEvent::Occluded`).
+	occluded: bool,
 	/// With `BB_INPUT_LOG=1`, the wheel's events and the cursor shown are logged on
 	/// stderr, with what macOS says of them.
 	input_log: bool,
@@ -155,6 +164,9 @@ struct Running {
 	stats_frames: (u32, Duration),
 	/// Since the last log, the frames left undrawn because they showed what the last did.
 	stats_unchanged: u32,
+	/// Since the last log, the frames that showed what the last did but were presented
+	/// again, the mouse having moved (see `bb_app::mouse_refresh`).
+	stats_re_presented: u32,
 	/// The frames the UI page had rested through at the last log.
 	stats_rested: u64,
 	/// The page's copy stats at the last log.
@@ -435,9 +447,15 @@ impl App {
 				Some((k, n)) => Some((k.parse().ok()?, n.parse().ok()?)),
 				None => Some((2, v.parse().ok()?)),
 			}).filter(|&(_, n)| n > 0),
+			test_mouse_moves: std::env::var("BB_TEST_MOUSE_MOVES")
+				.ok()
+				.and_then(|v| v.split_once('-').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))),
+			mouse_refresh: MouseRefresh::default(),
+			occluded: false,
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
 			stats_frames: (0, Duration::ZERO),
 			stats_unchanged: 0,
+			stats_re_presented: 0,
 			stats_rested: 0,
 			stats_copies: bb_render::UiCopyStats::default(),
 			stats_waiting: (0, 0),
@@ -680,6 +698,10 @@ impl Running {
 			let _span = bb_render::frame_timing::span("steam");
 			steam.run_callbacks();
 		}
+		if self.test_mouse_moves.is_some_and(|(from, to)| (from..to).contains(&self.frames)) {
+			let x = 8.0 + (self.frames % 3) as f64;
+			self.mouse_at(x, 8.0)?;
+		}
 		self.game.step(ms)?;
 		// Beside `stats`' log, what the renderer holds (every 5 s, with `BB_STATS`).
 		if self.next_stats.is_some_and(|at| now >= at) {
@@ -693,11 +715,13 @@ impl Running {
 				let ms = work.as_secs_f64() * 1000.0 / f64::from(frames);
 				let (waited, sprites) = std::mem::take(&mut self.stats_waiting);
 				let unchanged = std::mem::take(&mut self.stats_unchanged);
+				let re_presented = std::mem::take(&mut self.stats_re_presented);
 				let rested_now = self.game.front().page_rested();
 				let rested = rested_now - std::mem::replace(&mut self.stats_rested, rested_now);
 				eprintln!(
 					"frames: {frames}, {ms:.2} ms of work each (stepping, drawing, presenting); \
 					{unchanged} showed what the last did (not drawn); \
+					{re_presented} showed it but were presented again, the mouse moving; \
 					{waited} drew without {sprites} sprites whose frame or atlas was still loading; \
 					the UI page rested through {rested}"
 				);
@@ -741,21 +765,35 @@ impl Running {
 			self.game.forget_shown();
 		}
 		let drawn = self.game.draw_if_changed(&self.gpu, &self.target);
+		// Unless the mouse moved over the window: then the last frame is presented again,
+		// so a variable-refresh display refreshes, and the system's cursor moves, as the
+		// mouse does (see `bb_app::mouse_refresh`).
+		let re_present = drawn.is_none() && self.mouse_refresh.take(self.shown_cursor.as_ref(), self.occluded);
 		let after_presented = !self.unchanged;
-		self.unchanged = drawn.is_none();
-		let Some(drawn) = drawn else {
-			self.paced(now, false);
-			if let Some(times) = &mut self.frame_times {
-				let t = self.game.real_seconds();
-				times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t, self.game.front().copy_stats());
+		self.unchanged = drawn.is_none() && !re_present;
+		let drawn = match drawn {
+			Some(drawn) => drawn,
+			None if re_present => {
+				bb_render::frame_timing::count("re-presented", 1);
+				if self.next_stats.is_some() {
+					self.stats_re_presented += 1;
+				}
+				bb_render::FrameStats::default()
 			}
-			if self.next_stats.is_some() {
-				self.stats_frames.0 += 1;
-				self.stats_frames.1 += now.elapsed();
-				self.stats_unchanged += 1;
+			None => {
+				self.paced(now, false);
+				if let Some(times) = &mut self.frame_times {
+					let t = self.game.real_seconds();
+					times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t, self.game.front().copy_stats());
+				}
+				if self.next_stats.is_some() {
+					self.stats_frames.0 += 1;
+					self.stats_frames.1 += now.elapsed();
+					self.stats_unchanged += 1;
+				}
+				self.frames += 1;
+				return Ok(self.frames);
 			}
-			self.frames += 1;
-			return Ok(self.frames);
 		};
 		if drawn.waiting > 0 {
 			self.stats_waiting.0 += 1;
@@ -805,6 +843,7 @@ impl Running {
 				log_surface(SurfaceTrouble::failed(&mut self.surface_trouble, "present", &error_text(&e), Instant::now()));
 			} else {
 				self.game.presented();
+				self.mouse_refresh.presented();
 			}
 		}
 		drop(present_span);
@@ -832,16 +871,24 @@ impl Running {
 		Ok(self.frames)
 	}
 
+	/// The mouse moved to `x`, `y` in the window's pixels.
+	fn mouse_at(&mut self, x: f64, y: f64) -> Result<(), String> {
+		self.keep_cursor("a move");
+		self.mouse_refresh.moved();
+		let (x, y) = self.to_screen(x, y);
+		if self.input_log && self.input_logged.elapsed() >= Duration::from_secs(1) {
+			self.input_logged = Instant::now();
+			eprintln!("input: mouse at {x},{y}: {}", system_cursor::describe(None));
+		}
+		self.game.mouse_moved(x, y)
+	}
+
 	fn event(&mut self, event: &WindowEvent) -> Result<(), String> {
 		match event {
-			WindowEvent::CursorMoved { position, .. } => {
-				self.keep_cursor("a move");
-				let (x, y) = self.to_screen(position.x, position.y);
-				if self.input_log && self.input_logged.elapsed() >= Duration::from_secs(1) {
-					self.input_logged = Instant::now();
-					eprintln!("input: mouse at {x},{y}: {}", system_cursor::describe(None));
-				}
-				self.game.mouse_moved(x, y)
+			WindowEvent::CursorMoved { position, .. } => self.mouse_at(position.x, position.y),
+			WindowEvent::Occluded(occluded) => {
+				self.occluded = *occluded;
+				Ok(())
 			}
 			WindowEvent::MouseInput { state, button, .. } => {
 				let id = match button {
@@ -1011,6 +1058,7 @@ impl ApplicationHandler for App {
 			// What the system shows of the window may be gone: draw it again. It may be on
 			// another monitor, with another refresh.
 			WindowEvent::Occluded(false) => {
+				running.occluded = false;
 				running.game.forget_shown();
 				running.follow_monitor_refresh();
 				Ok(false)

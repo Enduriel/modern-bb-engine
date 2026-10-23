@@ -25,8 +25,8 @@ otherwise.
 | Variable | What it does |
 | --- | --- |
 | `BB_STARTUP_TIMES=1` | Print the start's phases to stderr (`startup: <phase> <ms>`, milliseconds since the process started; `squirrel_bb::startup`). |
-| `BB_STATS=1` | Log the game's total CPU and memory, its CEF processes included, every 5 s, with the frames left undrawn and those the page rested through, and the page's paints (`page:`: how many, the time each took in the paint callback, its textures opened, its reads back). |
-| `BB_FRAME_TIMES=PATH` | Write each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls) to `PATH`, with the page's paints since the last frame (`page_paints#`, `page_copy`: their time in the paint callback on the browser's thread, `page_imports#`, `page_reads#`, `page_read`); see `parity/perf/frame_breakdown.py` and `page_capture.py`. A player on Windows can record it with `player_capture.py`'s `.bat`. |
+| `BB_STATS=1` | Log the game's total CPU and memory, its CEF processes included, every 5 s, with the frames left undrawn, those presented again undrawn as the mouse moved, and those the page rested through, and the page's paints (`page:`: how many, the time each took in the paint callback, its textures opened, its reads back). |
+| `BB_FRAME_TIMES=PATH` | Write each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls) to `PATH`, with the page's paints since the last frame (`page_paints#`, `page_copy`: their time in the paint callback on the browser's thread, `page_imports#`, `page_reads#`, `page_read`) and `re-presented#=1` on a frame that presented the last again as the mouse moved; see `parity/perf/frame_breakdown.py` and `page_capture.py`. A player on Windows can record it with `player_capture.py`'s `.bat`. |
 | `BB_FRAME_TIMES_GPU=1` | With `BB_FRAME_TIMES`, each frame waits for the GPU, so its GPU time counts too. |
 | `BB_GPU_TIMES=1` | With `BB_FRAME_TIMES`, each GPU submission's time from timestamp queries. |
 | `BB_SCRIPT_PROFILE=REPORT.md` | Profile the scripts by function, file and mod, a report every `BB_SCRIPT_PROFILE_SECS` (10) seconds, or every `BB_SCRIPT_PROFILE_FRAMES` frames. |
@@ -67,6 +67,7 @@ gives.
 | `BB_TEST_UNPRESENTED=N` | Draw frame `N` but don't present it (the window tests' stalled-compositor case). |
 | `BB_TEST_SURFACE_FAILS=N` | The window's next `N` surface configures ask for an empty surface, which wgpu refuses (the window tests' case of a surface the system won't take, `bb_app::surface_trouble`). |
 | `BB_TEST_PRESENT_EVERY=K/N` (or `N`, as `2/N`) | Draw and present the first `K` of every `N` frames whatever they show (the window tests' frame-pacing cases). |
+| `BB_TEST_MOUSE_MOVES=A-B` | Frames `A` to `B` (not included) each start with the mouse moved, a pixel or so near the window's top left corner (the window tests' stand-in for a player's mouse). |
 | `BB_GAME_QUEUE_TURN=PATH` | A turn in the shared game-display queue that the runner (`scripts/test_all.py`) already holds, so `window.rs` waits once. |
 | `BB_UI_DISPLAY`, `BB_UI_DISPLAY_STATUS` | Set by the tests' display wrapper: where a wrapped process runs (a headless gamescope by default) and where it writes its exit status. |
 | `BB_ICON_TEST=1` | Lets the (ignored) tests that read the game's icon back from a window run (`bb_app::icon`), with `--include-ignored`; only inside a display of its own: a headless gamescope's X server for the X11 one, a headless KWin for the Wayland one (`BB_ICON_WAYLAND=none`: a compositor without the protocol, as gamescope's; `BB_ICON_HOLD=SECONDS` keeps the window up). |

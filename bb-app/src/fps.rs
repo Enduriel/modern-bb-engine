@@ -6,7 +6,8 @@
 //! did is left undrawn and unpresented (the last stays up, paced as the drawn ones are):
 //! the step counts, the frame doesn't. So the display shows what the player sees, as an
 //! overlay that counts presents (Steam's) does, and a still screen reads 0 or a little
-//! more (the display's own changes are presented). The scripts' `Time.getFPS` stays the
+//! more (the display's own changes are presented), or the display's refresh rate while
+//! the mouse moves over it (the last frame presented again, `crate::mouse_refresh`). The scripts' `Time.getFPS` stays the
 //! step rate.
 //!
 //! The display changes only when what it shows does, so it doesn't make frames to draw

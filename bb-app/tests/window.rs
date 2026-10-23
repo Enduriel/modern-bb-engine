@@ -657,6 +657,72 @@ fn the_game_steps_at_the_displays_rate_whichever_frames_are_presented() {
 	}
 }
 
+/// The mouse moving over a still screen presents a frame every refresh of the display,
+/// the last frame again where nothing changed, and a still mouse presents none: on a
+/// variable-refresh display the monitor refreshes only as frames are presented, and the
+/// system's cursor moves only as it does. At the main menu with the
+/// page (nothing there changes while idle) on a 180 Hz display, the mouse moved before
+/// every frame for two seconds (`BB_TEST_MOUSE_MOVES`, a headless gamescope having no
+/// mouse) near the top left corner, where nothing on the menu answers it.
+#[test]
+#[cfg_attr(not(feature = "ui"), ignore = "needs the ui feature: without the page, the game starts a campaign, whose world map draws every frame")]
+fn the_moving_mouse_presents_every_refresh_and_a_still_one_none() {
+	assert!(cfg!(feature = "ui"), "needs the ui feature");
+	let refresh = 180u32;
+	let dir = run_dir("mouse_refresh");
+	let (settings, times) = (dir.join("settings.cfg"), dir.join("frame_times.txt"));
+	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (menu != null) menu.main_menu_module_onQuitPressed();"#;
+	// Still for five seconds (the page loading, the menu showing, then nothing), the
+	// mouse moving for two, still for three.
+	let (moves, end) = ((refresh * 5, refresh * 7), refresh * 10);
+	let end = end.to_string();
+	let args = ["--settings", settings.to_str().unwrap(), "--at", &end, quit];
+	let moving = format!("{}-{}", moves.0, moves.1);
+	let env = [("BB_FRAME_TIMES", times.to_str().unwrap()), ("BB_TEST_MOUSE_MOVES", moving.as_str())];
+	let Some(run) = run_bb_at(&dir, (1280, 720), Some(refresh), &args, &env) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	// Each frame: its number, its interval since the last, whether it was presented, and
+	// whether that was the last frame again.
+	let frames: Vec<(u32, f64, bool, bool)> = std::fs::read_to_string(&times)
+		.expect("the frame times")
+		.lines()
+		.filter_map(|line| {
+			let field = |name: &str| line.split(' ').find_map(|f| f.strip_prefix(name)).and_then(|v| v.parse::<f64>().ok());
+			let frame = line.split(' ').next()?.parse().ok()?;
+			Some((frame, field("interval=")?, field("present=").is_some(), field("re-presented#=").is_some()))
+		})
+		.collect();
+	let within = |from: u32, to: u32| frames.iter().filter(move |f| (from..to).contains(&f.0));
+	// The second before the moves, the moves (the first few frames left out: a move
+	// reaches the frame it starts), and the seconds after them (a frame or so after the
+	// last move left out).
+	let still_before: Vec<_> = within(moves.0 - refresh, moves.0).collect();
+	let moving: Vec<_> = within(moves.0 + 2, moves.1).collect();
+	let still_after: Vec<_> = within(moves.1 + 4, refresh * 10 - 10).collect();
+	let presented = |frames: &[&(u32, f64, bool, bool)]| frames.iter().filter(|f| f.2).count();
+	let again = moving.iter().filter(|f| f.3).count();
+	let rate = 1000.0 * presented(&moving) as f64 / moving.iter().map(|f| f.1).sum::<f64>();
+	eprintln!(
+		"{refresh} Hz: still before {} of {} presented; moving {} of {} ({again} the last again), {rate:.1} presents a second; \
+		still after {} of {}",
+		presented(&still_before),
+		still_before.len(),
+		presented(&moving),
+		moving.len(),
+		presented(&still_after),
+		still_after.len()
+	);
+	assert!(moving.len() as u32 > refresh * 19 / 10, "{} frames while the mouse moved", moving.len());
+	assert_eq!(presented(&moving), moving.len(), "every frame presented while the mouse moves");
+	assert!(again * 2 > moving.len(), "mostly the last frame again ({again} of {}): the menu changed as the mouse moved", moving.len());
+	let expected = f64::from(refresh);
+	assert!((rate - expected).abs() < expected * 0.03, "{rate:.1} presents a second on a {refresh} Hz display");
+	// A still menu presents nothing, but for the odd change of its own.
+	assert!(presented(&still_before) * 50 < still_before.len(), "{} of {} presented before the moves", presented(&still_before), still_before.len());
+	assert!(presented(&still_after) * 50 < still_after.len(), "{} of {} presented after the moves", presented(&still_after), still_after.len());
+	assert!(still_after.iter().all(|f| !f.3), "the last frame presented again with the mouse still");
+}
+
 /// Where the GPU can't run the game with its UI, `bb` exits at once and says what is
 /// missing: on stderr, in log.html, and in a message box (here a stand-in `zenity`
 /// that writes down what it was asked to show). wgpu on GL stands for a GPU without a

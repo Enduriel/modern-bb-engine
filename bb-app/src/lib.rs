@@ -17,6 +17,7 @@ pub mod install;
 pub mod keys;
 pub mod log_records;
 pub mod logs;
+pub mod mouse_refresh;
 pub mod pacing;
 pub mod platform;
 pub mod point_modes;

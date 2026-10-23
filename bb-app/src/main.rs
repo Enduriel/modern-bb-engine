@@ -62,10 +62,12 @@
 //!   which the original never shows), as `ui.show_fps = true` in the settings does;
 //!   Ctrl+Shift+F shows or hides it while playing. It's off by default. It counts the
 //!   frames presented, as Steam's overlay does (a still screen, presented once, reads 0
-//!   or near it), with the game's steps a second beside them when they differ: `20 (144)`
+//!   or near it; the display's refresh rate while the mouse moves over it), with the game's steps a second beside them when they differ: `20 (144)`
 //!   (see `bb_app::fps`). The scripts' `Time.getFPS` is the steps'.
 //! - The game's mouse cursor shows as the system's cursor (the compositor moves it, so
-//!   moving the mouse over a still picture draws nothing); `ui.software_cursor = true`
+//!   moving the mouse over a still picture draws nothing, though it presents the last
+//!   frame again every refresh, for variable-refresh displays: `bb_app::mouse_refresh`);
+//!   `ui.software_cursor = true`
 //!   in the settings draws it into the frames instead, as the original does (see
 //!   `bb_app::game_cursor`).
 //! - On a Steam install (see `bb_steam::install` for the rule), achievements and stats
