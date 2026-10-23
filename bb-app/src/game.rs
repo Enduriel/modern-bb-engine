@@ -39,6 +39,9 @@ pub struct Game {
 	/// How many of the fonts mods registered the renderer has.
 	fonts: usize,
 	cursor: (i64, i64),
+	/// The real time of the frames whose step didn't run (the page was too busy to
+	/// park), for the next step that does.
+	unstepped_ms: f64,
 	/// The pointer moved since its last move was delivered (see
 	/// [`mouse_moved`](Self::mouse_moved)).
 	moved: bool,
@@ -200,6 +203,7 @@ impl Game {
 			battle_map: false,
 			left_map: None,
 			cursor: (0, 0),
+			unstepped_ms: 0.0,
 			moved: false,
 			system_cursor: false,
 			cursor_pictures: CursorPictures::new(files),
@@ -304,7 +308,12 @@ impl Game {
 			self.front.set_fps(fps);
 		}
 		self.queue_move();
-		self.front.step(ms.clamp(0.0, MAX_FRAME_MS))
+		// The real time of steps that waited on the page goes to the next that runs.
+		let ms = ms + std::mem::take(&mut self.unstepped_ms);
+		if !self.front.step(ms.clamp(0.0, MAX_FRAME_MS))? {
+			self.unstepped_ms = ms;
+		}
+		Ok(())
 	}
 
 	/// The pointer's last move since the last frame, to the page now and to the states
@@ -451,11 +460,17 @@ impl Game {
 		Ok(())
 	}
 
-	/// `input` to the states now, between frames: the page parked first.
+	/// `input` to the states now, between frames: the page parked first. A page too
+	/// busy to park holds it until the next frame that runs, after the moves and
+	/// buttons queued before it (see `Engine::queue_mouse`).
 	fn mouse(&mut self, input: MouseInput) -> Result<(), String> {
 		let park = bb_render::frame_timing::span("input park");
-		self.front.park();
+		let parked = self.front.park();
 		drop(park);
+		if !parked {
+			self.engine().queue_mouse(input);
+			return Ok(());
+		}
 		let _scripts = bb_render::frame_timing::span("input scripts");
 		self.engine().root_state().mouse_input(self.engine().vm(), input).map(|_| ())
 	}

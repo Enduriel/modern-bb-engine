@@ -24,6 +24,13 @@ impl ProceduralRequest {
 	}
 }
 
+/// How long a game frame waits for the page to park before it goes on without its
+/// scripts (see [`UiSession::step_unparked`]): far longer than a park takes in play
+/// (~1 ms; ~25 ms when the page gives memory back after a discard), short enough that a
+/// page busy for seconds leaves the window drawing. Waited once a park: the next frames
+/// only look.
+pub const FRAME_PARK_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// How the menu's "Start" (and the probe runner's campaign mode in the original)
 /// starts a campaign, with the seed left as `{seed}`.
 const START_CAMPAIGN: &str = r#"::RootState.get("MainMenuState").campaign_menu_module_onStartPressed({
@@ -62,11 +69,25 @@ impl UiSession {
 	/// the game's frames. A page with nothing to do rests instead: it stays parked into
 	/// the next frames, with none of its frames begun, until it has work
 	/// ([`UiHost::let_page_run`](super::UiHost::let_page_run)).
-	pub fn step_unparked(&self, ms: f64) -> Result<(), String> {
+	///
+	/// A page that doesn't park at once (busy on its main thread: the memory release
+	/// at a discard, a machine swapping) holds the frame's scripts, not the loop (see
+	/// [`park_for_frame`](Self::park_for_frame)): the step returns without them, its
+	/// calls into the game served, and the next step looks again, on the same park.
+	/// Whether the game's frame ran.
+	pub fn step_unparked(&self, ms: f64) -> Result<bool, String> {
 		use squirrel_bb::frame_timing::span;
 		let park = span("page park");
-		self.park();
+		let parked = self.park_for_frame();
 		drop(park);
+		if !parked {
+			let _events = span("page unpark+events");
+			for event in self.host().poll() {
+				self.handle(event);
+			}
+			self.report_releases();
+			return Ok(false);
+		}
 		let frame = span("engine frame");
 		self.game_frame(ms)?;
 		drop(frame);
@@ -79,7 +100,46 @@ impl UiSession {
 		for event in self.host().poll() {
 			self.handle(event);
 		}
-		Ok(())
+		self.report_releases();
+		Ok(true)
+	}
+
+	/// Park the page for a game loop's scripts, if it parks soon: within
+	/// [`FRAME_PARK_WAIT`] of being asked, or, while it gives memory back (which runs on
+	/// its main thread), if it has parked already. Whether it did; if not, it is still
+	/// asked, and the next call looks again ([`UiHost::try_park`](super::UiHost::try_park)).
+	pub fn park_for_frame(&self) -> bool {
+		let wait = if self.host().releasing() { std::time::Duration::ZERO } else { FRAME_PARK_WAIT };
+		self.try_park(wait)
+	}
+
+	/// Park the page if it parks within `wait` of being asked (see
+	/// [`UiHost::try_park`](super::UiHost::try_park)): whether it did. Its calls into
+	/// the game meanwhile are served.
+	pub fn try_park(&self, wait: std::time::Duration) -> bool {
+		let (vm, bridge) = (self.engine().vm(), self.engine().ui());
+		let parked = self
+			.host()
+			.try_park(wait, &mut |message| self.protocol().handle_message(vm, bridge, message));
+		let parked = match parked {
+			Ok(parked) => parked,
+			Err(error) => {
+				self.record("bridge", format!("the page didn't park: {error}"));
+				// A page that's gone can't hold the game up.
+				true
+			}
+		};
+		self.report_notes();
+		parked
+	}
+
+	/// The page's memory releases that finished: their time in the frame's
+	/// (`page release`), and a line in log.html.
+	fn report_releases(&self) {
+		for released in self.host().take_releases() {
+			squirrel_bb::frame_timing::add("page release", released.total);
+			squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Debug, "UI", released.describe());
+		}
 	}
 
 	/// From the main menu, start a new campaign on map seed `seed` as the menu's Start

@@ -72,8 +72,8 @@ impl Front {
 		&self.engine
 	}
 
-	/// Advance the game by `ms` of real time.
-	pub fn step(&mut self, ms: f64) -> Result<(), String> {
+	/// Advance the game by `ms` of real time. It always runs: no page to wait on.
+	pub fn step(&mut self, ms: f64) -> Result<bool, String> {
 		let engine = &self.engine;
 		let step = || -> Result<(), String> {
 			engine.frame(ms)?;
@@ -81,13 +81,16 @@ impl Front {
 			Ok(())
 		};
 		match &mut self.profiling {
-			Some(profiling) => profiling.step(engine.vm(), step),
-			None => step(),
+			Some(profiling) => profiling.step(engine.vm(), step)?,
+			None => step()?,
 		}
+		Ok(true)
 	}
 
-	/// Before the scripts run outside a step: no page to hold.
-	pub fn park(&mut self) {}
+	/// Before the scripts run outside a step: no page to hold, so they may.
+	pub fn park(&mut self) -> bool {
+		true
+	}
 
 	/// Run JS in the page: there is none.
 	pub fn run_page_script(&mut self, _code: &str) -> Result<(), String> {

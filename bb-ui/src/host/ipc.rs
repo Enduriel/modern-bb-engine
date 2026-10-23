@@ -8,11 +8,12 @@
 //! - [`PARK`] `(id)`: park (`__bbPark`, a step at a time: `renderer::park`), replying
 //!   once the game lets the page go on, or at once if the page has no bridge yet;
 //! - [`TRIM`] `()`: give the C allocator's free memory back to the system
-//!   ([`memory`](super::memory)); no reply.
+//!   ([`memory`](super::memory)), answered with [`TRIMMED`].
 //!
 //! Renderer → browser:
 //! - [`REPLY`] `(id, ok, text)`: the answer to a `CALL`, `EVAL` or `PARK`: its JSON
-//!   result if `ok` is 1, else why it couldn't run.
+//!   result if `ok` is 1, else why it couldn't run;
+//! - [`TRIMMED`] `()`: a `TRIM` is done.
 
 use cef::*;
 
@@ -21,6 +22,7 @@ pub const EVAL: &str = "bb.eval";
 pub const PARK: &str = "bb.park";
 pub const TRIM: &str = "bb.trim";
 pub const REPLY: &str = "bb.reply";
+pub const TRIMMED: &str = "bb.trimmed";
 
 /// An argument of a process message.
 pub enum Arg<'a> {

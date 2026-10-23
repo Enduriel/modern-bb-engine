@@ -138,34 +138,38 @@ impl Front {
 	}
 
 	/// Advance the game by `ms` of real time, answering the page. The page then runs
-	/// on while the frame is drawn, until the scripts next run.
-	pub fn step(&mut self, ms: f64) -> Result<(), String> {
+	/// on while the frame is drawn, until the scripts next run. Whether the game's frame
+	/// ran: not while the page is too busy to park (see `UiSession::step_unparked`).
+	pub fn step(&mut self, ms: f64) -> Result<bool, String> {
 		// The FPS display's new value, with the page parked, as the scripts' calls are.
-		if let Some(fps) = self.fps.take() {
+		if self.fps.is_some() {
 			let park = bb_render::frame_timing::span("page park");
-			self.session.park();
+			let parked = self.session.park_for_frame();
 			drop(park);
-			self.session.set_fps(&fps);
+			if parked && let Some(fps) = self.fps.take() {
+				self.session.set_fps(&fps);
+			}
 		}
 		let session = &self.session;
-		match &mut self.profiling {
+		let stepped = match &mut self.profiling {
 			Some(profiling) => profiling.step(session.engine().vm(), || session.step_unparked(ms))?,
 			None => session.step_unparked(ms)?,
-		}
+		};
 		// A page frame for each game frame: after its draw (`draw`), or now for a frame
 		// that wasn't drawn (a loop that only steps), so the page never stands still.
 		if !std::mem::replace(&mut self.drawn, false) {
 			let _begin = bb_render::frame_timing::span("page begin frame");
 			self.session.host().begin_frame();
 		}
-		Ok(())
+		Ok(stepped)
 	}
 
 	/// Before the scripts run outside a step (the player's input): the page waits
 	/// until the next step lets it go on, as the original's UI runs between the
-	/// game's scripts.
-	pub fn park(&mut self) {
-		self.session.park();
+	/// game's scripts. Whether it parked: a page too busy to park soon (see
+	/// `UiSession::park_for_frame`) doesn't hold the window up, and the scripts must wait.
+	pub fn park(&mut self) -> bool {
+		self.session.park_for_frame()
 	}
 
 	/// Run the JS `code` in the page, parked as for the scripts' calls into it.

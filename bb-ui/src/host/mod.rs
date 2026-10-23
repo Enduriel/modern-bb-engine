@@ -25,7 +25,7 @@
 //! input) could run while the game runs a script, and call into the game in the middle
 //! of one of the script's calls into the page. The original can't do that: its UI runs
 //! on the game's thread, between the game's scripts. So the page is **parked** while
-//! the game runs scripts ([`UiHost::park`]): it waits in a bridge request
+//! the game runs scripts ([`UiHost::park`], [`park`]): it waits in a bridge request
 //! (`park`) that the game answers when it lets it go on, and the game's calls
 //! reach it as that request's answers, as while it waits in a call. A page with nothing
 //! to do stays parked across the game's frames ([`page_rest`]).
@@ -57,9 +57,11 @@ mod mac;
 #[cfg(target_os = "macos")]
 mod mac_keys;
 mod memory;
+mod memory_flight;
 mod opening;
 mod page_frames;
 mod page_log;
+mod park;
 mod page_rest;
 mod paint_sink;
 mod paint_stats;
@@ -93,6 +95,7 @@ pub use damage::PaintRect;
 pub use display::{Display, with_display};
 pub use frame::FrameBuffer;
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
+pub use memory_flight::Released;
 use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton, coherent_key_code, modifiers_of_mask};
 pub use bridge_server::RequestKind;
@@ -109,7 +112,7 @@ pub use paint_sink::{PageSink, PaintBuffer, SharedPaint};
 pub use paint_stats::PaintStats;
 pub use pump_schedule::Waker;
 pub use session::{NO_PAINTS, UiSession};
-pub use session_play::ProceduralRequest;
+pub use session_play::{FRAME_PARK_WAIT, ProceduralRequest};
 
 use crate::bridge::{Reply, Transport};
 use crate::clipboard::{Clipboard, MemoryClipboard};
@@ -304,6 +307,11 @@ pub struct UiHost {
 	/// Whether the page is parked (its park request is `pending`, or out carrying a
 	/// call into the page).
 	parked: Cell<bool>,
+	/// The park asked of the page and not answered yet: its id, and when it was asked
+	/// (see [`UiHost::try_park`]).
+	park_sent: Cell<Option<(i32, Instant)>>,
+	/// Whether the park on its way was logged as late.
+	late_park_noted: Cell<bool>,
 	/// What went wrong between the game and the page, for the owner to report.
 	notes: RefCell<Vec<String>>,
 	next_request: Cell<i32>,
@@ -319,6 +327,11 @@ pub struct UiHost {
 	frame_clock: page_frames::FrameClock,
 	/// Whether the page gets a turn this frame, or rests ([`page_rest`]).
 	rest: page_rest::PageRest,
+	/// What a memory release does (`BB_PAGE_RELEASE`, see [`memory`]).
+	release_parts: memory::Parts,
+	/// Times the releases: DevTools' answers to their calls go to the flight
+	/// ([`memory_flight`]). Registered at the first release; gone before CEF is.
+	release_observer: RefCell<Option<Registration>>,
 	cache_dir: PathBuf,
 	/// Where CEF was initialized, and is shut down when the host goes.
 	cef: Option<cef_thread::CefThread>,
@@ -358,6 +371,7 @@ impl UiHost {
 			loads_finished: AtomicU64::new(0),
 			paint_counters: Default::default(),
 			clipboard: config.clipboard.clone(),
+			releases: Default::default(),
 		});
 		bridge_server::start(bridge, shared.clone());
 		let opening = opening::Opening {
@@ -415,6 +429,8 @@ impl UiHost {
 			deferred: RefCell::new(VecDeque::new()),
 			pending: RefCell::new(None),
 			parked: Cell::new(false),
+			park_sent: Cell::new(None),
+			late_park_noted: Cell::new(false),
 			notes: RefCell::new(Vec::new()),
 			next_request: Cell::new(1),
 			pointer: Cell::new(None),
@@ -428,6 +444,8 @@ impl UiHost {
 				config.frames.external(),
 				config.devtools_port.is_some(),
 			)),
+			release_parts: memory::Parts::from_env(),
+			release_observer: RefCell::new(None),
 			cache_dir: config.cache_dir,
 			cef: Some(cef),
 		})
@@ -495,15 +513,21 @@ impl UiHost {
 		mac::pump();
 		let mut events: Vec<Event> = self.deferred.borrow_mut().drain(..).collect();
 		events.extend(self.events.try_iter());
-		events
+		events.into_iter().filter_map(|e| self.take_park_answer(e)).collect()
 	}
 
 	/// The next event, waiting up to `timeout` for one.
 	pub fn next_event(&self, timeout: Duration) -> Option<Event> {
-		if let Some(event) = self.deferred.borrow_mut().pop_front() {
-			return Some(event);
+		let deadline = Instant::now() + timeout;
+		loop {
+			let event = match self.deferred.borrow_mut().pop_front() {
+				Some(event) => event,
+				None => recv(&self.events, deadline.checked_duration_since(Instant::now())?)?,
+			};
+			if let Some(event) = self.take_park_answer(event) {
+				return Some(event);
+			}
 		}
-		recv(&self.events, timeout)
 	}
 
 	/// Wait up to `timeout` for an event matching `wanted` and return it; every other
@@ -512,7 +536,7 @@ impl UiHost {
 		let deadline = Instant::now() + timeout;
 		loop {
 			let left = deadline.checked_duration_since(Instant::now())?;
-			let event = recv(&self.events, left)?;
+			let Some(event) = self.take_park_answer(recv(&self.events, left)?) else { continue };
 			if wanted(&event) {
 				return Some(event);
 			}
@@ -559,55 +583,10 @@ impl UiHost {
 		}
 	}
 
-	/// Park the page (see the module notes): it waits in a request the game answers
-	/// when it [`unpark`](Self::unpark)s it, and the game's calls into it meanwhile
-	/// travel as that request's answers. Its own tasks (animation frames, timers,
-	/// input) don't run until then. Waits for the page to finish what it's doing,
-	/// serving its calls into the game meanwhile. Nothing to do if the page is parked
-	/// already, or blocked in a call the game is serving.
-	pub fn park(&self, serve: &mut Serve) -> Result<(), String> {
-		if self.parked.get() || self.pending.borrow().is_some() {
-			return Ok(());
-		}
-		let id = self.next_id();
-		self.send(ipc::PARK, &[Arg::Int(id)])?;
-		let mut deadline = Instant::now() + CALL_TIMEOUT;
-		loop {
-			let late = || format!("the page did not park within {CALL_TIMEOUT:?}");
-			let left = deadline
-				.checked_duration_since(Instant::now())
-				.ok_or_else(late)?;
-			match recv(&self.events, left).ok_or_else(late)? {
-				Event::Request {
-					kind: RequestKind::Park,
-					responder,
-					body,
-				} => {
-					self.rest.reported_text(&body, Instant::now());
-					self.pending.replace(Some(responder));
-					self.parked.set(true);
-					return Ok(());
-				}
-				// No bridge in the page yet: none of its scripts run.
-				Event::Reply { id: reply, .. } if reply == id => return Ok(()),
-				Event::Request {
-					kind: RequestKind::Call | RequestKind::Task,
-					body,
-					responder,
-				} => {
-					self.serve(responder, &body, serve);
-					deadline = Instant::now() + CALL_TIMEOUT;
-				}
-				Event::RendererGone(why) => {
-					let error = format!("the page crashed: {why}");
-					self.deferred
-						.borrow_mut()
-						.push_back(Event::RendererGone(why));
-					return Err(error);
-				}
-				other => self.deferred.borrow_mut().push_back(other),
-			}
-		}
+	/// A warning about the page, to log.html and stderr.
+	fn warn(&self, text: &str) {
+		eprintln!("bb-ui: {text}");
+		squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Warning, "UI", text);
 	}
 
 	/// Let the parked page go on (see [`park`](Self::park)).
@@ -666,14 +645,33 @@ impl UiHost {
 	}
 
 	/// The game discarded a scene (a battle's end, the campaign left, a save loaded):
-	/// the page gives back what it kept for it ([`memory`]).
+	/// the page gives back what it kept for it ([`memory`]). Nothing to do with
+	/// `BB_PAGE_RELEASE=0`, or while the last release is still on its way.
 	pub fn release_memory(&self) {
+		if !self.release_parts.any() || self.shared.releases.in_flight() {
+			return;
+		}
+		let Some(host) = self.browser_host() else { return };
 		// The renderer's part runs on its main thread.
 		self.rest.wake();
-		if let Some(host) = self.browser_host() {
-			let frame = host.browser().and_then(|b| b.main_frame());
-			memory::release(&host, frame.as_ref());
+		if self.release_observer.borrow().is_none() {
+			let mut observer = memory_flight::FlightObserver::new(self.shared.clone());
+			*self.release_observer.borrow_mut() = host.add_dev_tools_message_observer(Some(&mut observer));
 		}
+		let frame = host.browser().and_then(|b| b.main_frame());
+		let observed = self.release_observer.borrow().is_some();
+		memory::release(&host, frame.as_ref(), self.release_parts, &self.shared.releases, observed);
+	}
+
+	/// The memory releases that finished since the last call: how long each took, from
+	/// sending it to its last part's answer.
+	pub fn take_releases(&self) -> Vec<Released> {
+		self.shared.releases.take_done()
+	}
+
+	/// Whether a memory release is still on its way through the page.
+	pub fn releasing(&self) -> bool {
+		self.shared.releases.in_flight()
 	}
 
 	/// How many images the page has loaded from the game's files so far (each fetch
@@ -721,11 +719,14 @@ impl UiHost {
 		}
 
 		let mut deadline = Instant::now() + CALL_TIMEOUT;
+		// Since the call was sent, or the page's last call into the game was served.
+		let mut waited = Instant::now();
 		loop {
-			let left = deadline
-				.checked_duration_since(Instant::now())
-				.ok_or_else(|| format!("the page did not answer within {CALL_TIMEOUT:?}"))?;
-			let event = recv(&self.events, left).ok_or_else(|| format!("the page did not answer within {CALL_TIMEOUT:?}"))?;
+			let Some(event) = deadline.checked_duration_since(Instant::now()).and_then(|left| recv(&self.events, left)) else {
+				let late = format!("the page did not answer within {:.3} s", waited.elapsed().as_secs_f64());
+				self.warn(&late);
+				return Err(late);
+			};
 			match event {
 				Event::Reply { id: reply, result } if !nested && reply == id => return result,
 				Event::Request {
@@ -753,6 +754,20 @@ impl UiHost {
 					}
 					self.serve(responder, &body, serve);
 					deadline = Instant::now() + CALL_TIMEOUT;
+					waited = Instant::now();
+				}
+				// The park asked earlier ([`try_park`](Self::try_park)), answered while
+				// this call waits behind it in the page's queue: the page goes on, to the
+				// call.
+				Event::Request {
+					kind: RequestKind::Park,
+					responder,
+					..
+				} if !nested => {
+					if let Some((_, sent)) = self.park_sent.get() {
+						self.parked_after(sent);
+					}
+					responder.respond(r#"{"done":true}"#.into());
 				}
 				Event::RendererGone(why) => {
 					let error = format!("the page crashed: {why}");
@@ -1074,6 +1089,7 @@ impl Transport for UiHost {
 impl Drop for UiHost {
 	fn drop(&mut self) {
 		pump_schedule::SCHEDULE.set_waker(None);
+		drop(self.release_observer.take());
 		// Release a page still waiting on the game.
 		drop(self.pending.take());
 		let browser = || self.shared.browser.lock().unwrap_or_else(|e| e.into_inner()).clone();

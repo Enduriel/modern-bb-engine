@@ -263,6 +263,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	images_dont_drag_away_clicks(&session)?;
 	keys_come_to_the_page_from_the_frames(&session)?;
 	page_tasks_run_between_scripts(&session)?;
+	a_busy_page_holds_the_scripts_not_the_frames(&session)?;
 	inserted_scripts_run_in_coherents_order(&session)?;
 	fps_module_shows_when_asked(&session)?;
 	scroll_bars_follow_their_content(&session)?;
@@ -910,6 +911,45 @@ fn page_tasks_run_between_scripts(session: &UiSession) -> Result<(), String> {
 		SqTable::root(session.engine().vm()).get::<bool>("__inside") == Some(false),
 		"the page's timer reached the scripts inside a script's call into the page",
 	)
+}
+
+/// A page busy on its main thread for longer than a call may take (the memory release
+/// after a discard on a swapping machine took 5-10 s) holds the game's scripts, not its
+/// frames: each step asks the page to park and waits at most `FRAME_PARK_WAIT` for it,
+/// once (the next steps only look, on the same park), and runs the frame's scripts once
+/// it has parked. Nothing is logged as a problem.
+fn a_busy_page_holds_the_scripts_not_the_frames(session: &UiSession) -> Result<(), String> {
+	let busy = Duration::from_millis(1500);
+	session.eval(&format!(
+		"setTimeout(function () {{ var until = Date.now() + {}; while (Date.now() < until) {{}} }}, 0); 0",
+		busy.as_millis()
+	))?;
+	session.unpark();
+	// Time for the timer to start.
+	std::thread::sleep(Duration::from_millis(100));
+	let start = Instant::now();
+	let (mut held, mut longest) = (0, Duration::ZERO);
+	loop {
+		ensure(start.elapsed() < Duration::from_secs(10), "the page never parked")?;
+		let step = Instant::now();
+		let ran = session.step_unparked(1000.0 / 60.0)?;
+		longest = longest.max(step.elapsed());
+		if ran {
+			break;
+		}
+		held += 1;
+		std::thread::sleep(Duration::from_millis(16));
+	}
+	let waited = start.elapsed();
+	session.park();
+	ensure(held > 5, format!("only {held} steps waited on a page busy for {busy:?}"))?;
+	ensure(
+		longest < bb_ui::host::FRAME_PARK_WAIT + Duration::from_millis(150),
+		format!("a step took {longest:?} on a busy page"),
+	)?;
+	ensure(waited > busy / 2, format!("the scripts ran {waited:?} into the page's {busy:?} of work"))?;
+	let problems: Vec<String> = session.log().into_iter().filter(|l| l.level == "bridge").map(|l| l.text).collect();
+	ensure(problems.is_empty(), format!("the bridge logged: {problems:?}"))
 }
 
 /// Scripts inserted at runtime, as mods' JS loaders insert them: five in one go, the

@@ -830,11 +830,49 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	if !clicked(&game)? {
 		return Err(format!("the map's click didn't reach the states ({release:?})"));
 	}
+	a_busy_page_holds_a_click_not_the_window(&mut game)?;
 	keys_reach_the_states_while_typing(&mut game, gpu, &target)?;
 	game.mouse_moved(0, 0)?;
 	unchanged_frames_are_left_undrawn(&mut game, gpu, &target)?;
 	shows_the_frame_rate_when_asked(&mut game, gpu, &target)?;
 	quits_from_the_in_game_menu(&mut game, gpu, &target)
+}
+
+/// A click on the map while the page is busy on its main thread for longer than a park
+/// may take (the memory release after a discard on a swapping machine): the window
+/// doesn't wait for the page (the click and the steps return at once); the click
+/// reaches the states with the first frame that runs once the page has parked.
+fn a_busy_page_holds_a_click_not_the_window(game: &mut Game) -> Result<(), String> {
+	game.front().engine().run_script(MARK, "mark")?;
+	let session = game.front().session();
+	session.eval("setTimeout(function () { var until = Date.now() + 1500; while (Date.now() < until) {} }, 0); 0")?;
+	session.unpark();
+	// Time for the timer to start.
+	std::thread::sleep(Duration::from_millis(100));
+	let start = Instant::now();
+	game.mouse_button(1, true)?;
+	// The map's click may stop with an error once it reaches the state (see `check`).
+	let _ = game.mouse_button(1, false);
+	if start.elapsed() > Duration::from_millis(500) || clicked(game)? {
+		return Err(format!("the click waited {:?} on the busy page, or reached the states while it was", start.elapsed()));
+	}
+	let mut steps = 0;
+	while !clicked(game)? {
+		if start.elapsed() > Duration::from_secs(10) {
+			return Err("the click never reached the states".into());
+		}
+		let step = Instant::now();
+		let _ = game.step(1000.0 / 60.0);
+		if step.elapsed() > Duration::from_millis(500) {
+			return Err(format!("a step waited {:?} on the busy page", step.elapsed()));
+		}
+		steps += 1;
+		std::thread::sleep(Duration::from_millis(16));
+	}
+	if steps < 5 {
+		return Err(format!("the click reached the states {steps} steps after it, the page busy for 1.5 s"));
+	}
+	Ok(())
 }
 
 fn main() -> ExitCode {

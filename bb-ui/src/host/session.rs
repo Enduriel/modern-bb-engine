@@ -286,7 +286,7 @@ impl UiSession {
 		self.host().unpark();
 	}
 
-	fn report_notes(&self) {
+	pub(super) fn report_notes(&self) {
 		for note in self.host().take_notes() {
 			self.record("bridge", note);
 		}

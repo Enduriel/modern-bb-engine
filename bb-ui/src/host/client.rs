@@ -90,6 +90,8 @@ pub(super) struct Shared {
 	pub paint_counters: PaintCounters,
 	/// What the page copies to and pastes from (see [`crate::clipboard`]).
 	pub clipboard: Arc<dyn Clipboard>,
+	/// The memory release on its way through the page, if any (see [`super::memory`]).
+	pub releases: super::memory_flight::Flights,
 }
 
 impl Shared {
@@ -475,6 +477,7 @@ wrap_client! {
 					let result = if ipc::int_arg(message, 1) != 0 { Ok(text) } else { Err(text) };
 					self.shared.send(Event::Reply { id: ipc::int_arg(message, 0), result });
 				}
+				ipc::TRIMMED => self.shared.releases.trim_done(),
 				_ => return 0,
 			}
 			1

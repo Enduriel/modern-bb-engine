@@ -126,6 +126,7 @@ wrap_render_process_handler! {
 			let name = ipc::name(message);
 			if name == ipc::TRIM {
 				super::memory::trim();
+				ipc::send(frame, ProcessId::BROWSER, ipc::TRIMMED, &[]);
 				return 1;
 			}
 			let id = ipc::int_arg(message, 0);
