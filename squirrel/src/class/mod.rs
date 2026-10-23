@@ -34,7 +34,7 @@ mod payload;
 mod property;
 
 pub use arg::Native;
-pub use builder::{ClassBuilder, SqClass};
+pub use builder::{ClassBuilder, NewInstance, SqClass};
 
 #[cfg(test)]
 mod tests;

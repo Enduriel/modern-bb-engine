@@ -51,9 +51,7 @@ pub(crate) fn install(vm: &mut SQVM) -> VecClass {
 
 	// createVec(x, y) -> vec2f. Always float; integer args are coerced.
 	let factory = vec2f.clone();
-	vm.register("createVec", move |vm: &SQVM, x: Number, y: Number| {
-		factory.instantiate(vm, Vec2f { x: x.0, y: y.0 })
-	});
+	vm.register("createVec", move |x: Number, y: Number| factory.new_instance(Vec2f { x: x.0, y: y.0 }));
 
 	// getVecDistance(a, b) -> Euclidean distance.
 	vm.register("getVecDistance", |a: Native<Vec2f>, b: Native<Vec2f>| {
@@ -67,7 +65,7 @@ pub(crate) fn install(vm: &mut SQVM) -> VecClass {
 	let dir_factory = vec2f.clone();
 	vm.register(
 		"getVecDir",
-		move |vm: &SQVM, a: Native<Vec2f>, b: Native<Vec2f>| {
+		move |a: Native<Vec2f>, b: Native<Vec2f>| {
 			let dx = b.0.x - a.0.x;
 			let dy = b.0.y - a.0.y;
 			let len = (dx * dx + dy * dy).sqrt();
@@ -79,7 +77,7 @@ pub(crate) fn install(vm: &mut SQVM) -> VecClass {
 					y: dy / len,
 				}
 			};
-			dir_factory.instantiate(vm, dir)
+			dir_factory.new_instance(dir)
 		},
 	);
 	vec2f

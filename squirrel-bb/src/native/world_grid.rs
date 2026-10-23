@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use squirrel::{
-	ClassBuilder, Number, Native, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, StackArgs, This,
+	ClassBuilder, Number, Native, NewInstance, Retained, SQVM, SqArray, SqBytes, SqClass, SqStrongRef, SqTable, StackArgs, This,
 	Variadic,
 };
 
@@ -448,9 +448,7 @@ impl WorldGrid {
 		let get_tile_square = {
 			let g = self.grid.clone();
 			vm.make_closure(
-				move |vm: &SQVM, col: i64, row: i64| -> Option<SqStrongRef> {
-					tile_at(&g, vm, col, row)
-				},
+				move |col: i64, row: i64| -> Option<NewInstance<TileHandle>> { tile_new(&g, col, row) },
 			)
 		};
 		// World.getAllTilesOfRegion(region): every tile of that region, column by column
@@ -484,17 +482,17 @@ impl WorldGrid {
 		// and entity getTile delegates with (q, r) [2-arg].
 		let get_tile_1 = {
 			let g = self.grid.clone();
-			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Option<SqStrongRef> {
+			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Option<NewInstance<TileHandle>> {
 				// coords is an {X, Y} table or a vec2i; read axial q/r via member access.
 				let q = coords.0.get_member::<i64>(vm, "X")?;
 				let r = coords.0.get_member::<i64>(vm, "Y")?;
-				tile_at(&g, vm, q, r + q / 2) // axial -> square
+				tile_new(&g, q, r + q / 2) // axial -> square
 			})
 		};
 		let get_tile_2 = {
 			let g = self.grid.clone();
-			vm.make_closure(move |vm: &SQVM, q: i64, r: i64| -> Option<SqStrongRef> {
-				tile_at(&g, vm, q, r + q / 2) // axial -> square
+			vm.make_closure(move |q: i64, r: i64| -> Option<NewInstance<TileHandle>> {
+				tile_new(&g, q, r + q / 2) // axial -> square
 			})
 		};
 		let get_tile_dispatch = make_dispatcher(vm, "getTile");
@@ -1111,15 +1109,17 @@ fn between(a: &TileHandle, b: &TileHandle) -> (f32, f32) {
 }
 
 fn tile_at(grid: &Rc<RefCell<GridState>>, vm: &SQVM, col: i64, row: i64) -> Option<SqStrongRef> {
-	let id = grid.borrow().idx(col, row)?;
-	let class = grid.borrow().class.clone()?;
-	Some(class.instantiate(
-		vm,
-		TileHandle {
-			grid: grid.clone(),
-			id,
-		},
-	))
+	tile_new(grid, col, row).map(|tile| tile.into_ref(vm))
+}
+
+/// [`tile_at`] made as it is returned from a native (no strong reference on the way).
+fn tile_new(grid: &Rc<RefCell<GridState>>, col: i64, row: i64) -> Option<NewInstance<TileHandle>> {
+	let g = grid.borrow();
+	let id = g.idx(col, row)?;
+	Some(g.class.as_ref()?.new_instance(TileHandle {
+		grid: grid.clone(),
+		id,
+	}))
 }
 
 /// Add a detail carrying `data` to the tile and mint its `WorldDetail` object, or
@@ -1393,16 +1393,13 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.method(
 			"getNextTile",
-			|t: &mut TileHandle, vm: &SQVM, dir: i64| -> Option<SqStrongRef> {
+			|t: &mut TileHandle, dir: i64| -> Option<NewInstance<TileHandle>> {
 				let id = t.neighbour_id(dir)?;
 				let class = t.grid.borrow().class.clone()?;
-				Some(class.instantiate(
-					vm,
-					TileHandle {
-						grid: t.grid.clone(),
-						id,
-					},
-				))
+				Some(class.new_instance(TileHandle {
+					grid: t.grid.clone(),
+					id,
+				}))
 			},
 		)
 		.method("hasNextTile", |t: &mut TileHandle, dir: i64| -> bool {
@@ -1438,14 +1435,14 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 		)
 		.method(
 			"getTileBetweenThisAnd",
-			|t: &mut TileHandle, vm: &SQVM, other: Native<TileHandle>| -> Option<SqStrongRef> {
+			|t: &mut TileHandle, other: Native<TileHandle>| -> Option<NewInstance<TileHandle>> {
 				let (x, y) = between(t, &other.0);
 				let (w, h) = {
 					let g = t.grid.borrow();
 					(g.width, g.height)
 				};
 				let (q, r) = world_layout::world_to_tile(x as f64, y as f64, w, h);
-				tile_at(&t.grid, vm, q, r + q / 2)
+				tile_new(&t.grid, q, r + q / 2)
 			},
 		)
 		.method(

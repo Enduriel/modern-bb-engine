@@ -230,7 +230,7 @@ impl<T: 'static> ClassBuilder<T> {
 		SqTable::root(vm).set(&self.name, for_root);
 
 		SqClass {
-			class: for_handle,
+			class: std::rc::Rc::new(for_handle),
 			_marker: PhantomData,
 		}
 	}
@@ -238,18 +238,56 @@ impl<T: 'static> ClassBuilder<T> {
 
 /// A handle to a registered native class, used to create instances.
 pub struct SqClass<T> {
-	class: SqStrongRef,
+	// Shared, so a clone takes no reference of the VM's (each is a hash operation in
+	// its reference table).
+	class: std::rc::Rc<SqStrongRef>,
 	_marker: PhantomData<fn() -> T>,
 }
 
-/// Cloning shares the same underlying class (a fresh addref), so the same class
-/// can back several factory closures. Independent of whether `T: Clone`.
+/// Cloning shares the same underlying class, so the same class can back several
+/// factory closures. Independent of whether `T: Clone`.
 impl<T> Clone for SqClass<T> {
 	fn clone(&self) -> Self {
 		SqClass {
 			class: self.class.clone(),
 			_marker: PhantomData,
 		}
+	}
+}
+
+/// An instance of a native class still to be made: made as it is returned from a native
+/// function (left on the stack as the return value), with no strong reference taken
+/// and released on the way, as [`SqClass::instantiate`]'s would be. Or made now, as a
+/// strong reference, by [`NewInstance::into_ref`].
+pub struct NewInstance<T: 'static> {
+	class: SqClass<T>,
+	value: T,
+}
+
+impl<T: 'static> NewInstance<T> {
+	/// The instance, made now.
+	pub fn into_ref(self, vm: &SQVM) -> SqStrongRef {
+		self.class.instantiate(vm, self.value)
+	}
+}
+
+impl<T: 'static> crate::function::IntoSqReturn for NewInstance<T> {
+	fn push_return(self, vm: &SQVM) -> Result<i64, String> {
+		let ptr = vm.as_ptr();
+		self.class.class.push(vm); // [class]
+		unsafe {
+			if squirrel_sys::sq_createinstance(ptr, -1) != SQ_OK {
+				squirrel_sys::sq_pop(ptr, 1); // []
+				squirrel_sys::sq_pushnull(ptr);
+				return Ok(1);
+			}
+			// [class, instance]
+			let payload = NativePayload::into_raw(self.value);
+			squirrel_sys::sq_setinstanceup(ptr, -1, payload);
+			squirrel_sys::sq_setreleasehook(ptr, -1, Some(instance_release_hook::<T>));
+			squirrel_sys::sq_remove(ptr, -2); // [instance]
+		}
+		Ok(1)
 	}
 }
 
@@ -272,6 +310,16 @@ impl<T: 'static> SqClass<T> {
 	/// but the failure path is handled defensively (no leak, balanced stack): a
 	/// null reference is returned and `value` is dropped normally.
 	pub fn instantiate(&self, vm: &SQVM, value: T) -> SqStrongRef {
+		self.instantiate_inner(vm, value)
+	}
+
+	/// An instance carrying `value`, made as it is returned from a native function (see
+	/// [`NewInstance`]): for a factory native, cheaper than [`instantiate`](Self::instantiate).
+	pub fn new_instance(&self, value: T) -> NewInstance<T> {
+		NewInstance { class: self.clone(), value }
+	}
+
+	fn instantiate_inner(&self, vm: &SQVM, value: T) -> SqStrongRef {
 		let ptr = vm.as_ptr();
 		self.class.push(vm); // [class]
 		unsafe {

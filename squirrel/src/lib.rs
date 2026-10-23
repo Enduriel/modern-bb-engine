@@ -10,7 +10,7 @@ mod script_hash;
 mod types;
 mod vm;
 
-pub use class::{ClassBuilder, Native, SqClass};
+pub use class::{ClassBuilder, Native, NewInstance, SqClass};
 pub(crate) use consts::{SQ_ERROR, SQ_OK};
 pub(crate) use function::CallArgs;
 pub use function::{
