@@ -438,12 +438,13 @@ fn burst(start: Instant, from: f64, to: f64) -> impl Fn(usize, Instant) -> Durat
 /// burst, and a still screen afterwards stepped ~116 times a second. A load burst may
 /// lengthen the measure while it lasts; after it, with the mouse moving (each frame
 /// presented), the measure is the display's again, and the still screen steps once a
-/// refresh. With frame callbacks or without, the timers' lateness as the load.
+/// refresh. With frame callbacks or without, the timers' lateness as the load, and the
+/// refresh reported (X11, Windows) or not (gamescope's Wayland).
 #[test]
 fn a_load_burst_doesnt_slow_the_game_for_good() {
-	for callbacks in [true, false] {
+	for (callbacks, reported) in [(true, None), (false, None), (true, Some(HZ_180)), (false, Some(HZ_180))] {
 		let start = Instant::now();
-		let mut pacer = Pacer::new(None, true);
+		let mut pacer = Pacer::new(reported, true);
 		let mut display = Display::with_callbacks(HZ_180, start + HZ_180 / 3, callbacks, &mut pacer);
 		// The mouse moving: every frame presented, a second calm, a second loaded, half a
 		// second calm again; then the mouse still for a second, nothing presented.
@@ -457,12 +458,12 @@ fn a_load_burst_doesnt_slow_the_game_for_good() {
 		let still = window.run(&mut pacer, start + Duration::from_millis(3_500), |_| false, &load);
 		let ms = |d: &Duration| format!("{:.2}", d.as_secs_f64() * 1000.0);
 		let measured: Vec<String> = measures.iter().map(ms).collect();
-		eprintln!("callbacks {callbacks}: the measure every 0.1 s: {}", measured.join(" "));
+		eprintln!("callbacks {callbacks}, reported {reported:?}: the measure every 0.1 s: {}", measured.join(" "));
 		let after = pacer.refresh();
-		assert!(after.abs_diff(HZ_180) < Duration::from_micros(20), "callbacks {callbacks}: {} ms after the burst", ms(&after));
+		assert!(after.abs_diff(HZ_180) < Duration::from_micros(20), "callbacks {callbacks}, reported {reported:?}: {} ms after the burst", ms(&after));
 		// The still second: a step a refresh.
 		let rate = (still.len() - 1) as f64 / still[still.len() - 1].duration_since(still[0]).as_secs_f64();
-		assert!((rate - 180.0).abs() < 1.0, "callbacks {callbacks}: {rate:.1} steps a second after the burst");
+		assert!((rate - 180.0).abs() < 1.0, "callbacks {callbacks}, reported {reported:?}: {rate:.1} steps a second after the burst");
 	}
 }
 
@@ -525,4 +526,110 @@ fn late_redraws_keep_a_trusted_clock() {
 	}
 	let rate = 600.0 / at.duration_since(start).as_secs_f64();
 	assert!((59.0..61.0).contains(&rate), "{rate:.2} steps a second");
+}
+
+/// Frames as the window makes them on X11 under gamescope, where Xwayland gives a present
+/// little back-pressure: nothing holds a frame back but the clock (its timer 50 µs
+/// late) and its own work; frame `i` (of these) takes `work(i)` and is presented if
+/// `presented(i)` says so (or while measuring). Returns each frame's start.
+fn xwayland(
+	pacer: &mut Pacer,
+	from: Instant,
+	n: usize,
+	work: impl Fn(usize) -> Duration,
+	presented: impl Fn(usize) -> bool,
+) -> Vec<Instant> {
+	let timer_late = Duration::from_micros(50);
+	let mut ready = from;
+	let mut starts = Vec::with_capacity(n);
+	for i in 0..n {
+		let (at, waited) = match pacer.due(None) {
+			Some(due) if due > ready => (due + timer_late, true),
+			_ => (ready, false),
+		};
+		ready = at + work(i);
+		pacer.frame(at, presented(i) || pacer.measuring(), waited, None);
+		starts.push(at);
+	}
+	starts
+}
+
+/// The frames' work (ms) after the stale-measure guard took the measure again on X11
+/// under gamescope at 180 Hz, during a load burst, the mouse moving (each frame
+/// presented), frames 1182-1205 of a recorded run. The measure was taken from the
+/// first of them, and with the two late frames at its end it came out 7.42 ms.
+const X11_BURST_MS: [f64; 23] = [
+	0.7, 3.85, 5.45, 13.2, 8.0, 1.25, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 7.75, 7.4, 1.55,
+];
+
+/// On X11 under gamescope the measure, taken again during a load burst, came out 7.42 ms
+/// on a 180 Hz display that the system reported (5.56 ms); nothing presented after it
+/// was held back by the display to measure it again, and the still screen afterwards
+/// stepped 134 times a second. A measure clearly longer than the reported refresh,
+/// from intervals that don't agree, isn't the display's: the still screen steps at the
+/// reported refresh.
+#[test]
+fn a_measure_taken_in_a_burst_doesnt_slow_a_reported_refresh() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(Some(HZ_180), true);
+	let calm = |_| Duration::from_micros(500);
+	// The mouse moving, calm, for a second.
+	let starts = xwayland(&mut pacer, start, 180, calm, |_| true);
+	// A burst: the stale-measure guard takes the measure again as it begins.
+	pacer.remeasure();
+	let t = *starts.last().unwrap() + Duration::from_millis(1);
+	let burst = |i: usize| Duration::from_secs_f64(X11_BURST_MS.get(i).copied().unwrap_or(0.5) / 1000.0);
+	// The mouse moving for another 55 frames, as the burst ends.
+	let starts = xwayland(&mut pacer, t, X11_BURST_MS.len() + 55, burst, |_| true);
+	let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+	eprintln!("measured from {:?}: {:.2} ms", pacer.intervals, ms(pacer.refresh()));
+	// Then the mouse still: nothing presented, for a second.
+	let still = xwayland(&mut pacer, *starts.last().unwrap() + Duration::from_millis(1), 180, |_| Duration::from_micros(200), |_| false);
+	let rate = rate(&still);
+	assert!((rate - 180.0).abs() < 1.0, "{rate:.1} steps a second, the measure {:.2} ms", ms(pacer.refresh()));
+}
+
+/// Each frame starts up to 0.3 ms late (its thread's wake-up on a calm system).
+fn jitter(i: usize, _: Instant) -> Duration {
+	Duration::from_secs_f64(noise(i) * 0.0003)
+}
+
+/// A display slower than the system reports, its intervals steady: a variable-refresh
+/// display (G-Sync, FreeSync) whose system reports its fastest refresh, a compositor
+/// that runs slower than the monitor's mode, or a game that can't keep up. The display's
+/// own pace is followed, presented frames or not, though bb can't tell whether the
+/// display's refresh varies.
+#[test]
+fn a_steady_display_slower_than_reported_is_followed() {
+	for callbacks in [false, true] {
+		let start = Instant::now();
+		let mut pacer = Pacer::new(Some(HZ_180), true);
+		let mut display = Display::with_callbacks(HZ_60, start + HZ_60 / 3, callbacks, &mut pacer);
+		let mut window = Window::new(&mut display);
+		let _ = window.run(&mut pacer, start + Duration::from_secs(2), |_| true, jitter);
+		let measured = pacer.refresh();
+		assert!(measured.abs_diff(HZ_60) < Duration::from_micros(300), "callbacks {callbacks}: measured {measured:?}");
+		let still = window.run(&mut pacer, start + Duration::from_secs(3), |_| false, jitter);
+		let rate = rate(&still);
+		assert!((rate - 60.0).abs() < 0.5, "callbacks {callbacks}: {rate:.1} steps a second");
+	}
+}
+
+/// A variable-refresh display refreshes as a frame is presented, so a game whose frames
+/// take 10 ms each presents 98 a second and the display refreshes as often, below the
+/// fastest refresh the system reports (180 Hz): the measure is the game's steady pace,
+/// not forced to the reported refresh.
+#[test]
+fn a_variable_refresh_display_follows_a_steady_game() {
+	let start = Instant::now();
+	let mut pacer = Pacer::new(Some(HZ_180), true);
+	// Each present shows at once (the display's refresh follows the presents).
+	let mut display = Display::new(Duration::from_nanos(1), start);
+	let mut window = Window::new(&mut display);
+	window.step = |i| Duration::from_micros(9_900 + (noise(i) * 200.0) as u64);
+	let starts = window.run(&mut pacer, start + Duration::from_secs(2), |_| true, |_, _| Duration::ZERO);
+	let presented = rate(&starts);
+	let measured = pacer.refresh().as_secs_f64();
+	assert!((1.0 / measured - presented).abs() < 2.0, "measured {:.2} ms, {presented:.1} presented a second", measured * 1000.0);
+	assert!(measured > 0.0099, "measured {:.2} ms", measured * 1000.0);
 }

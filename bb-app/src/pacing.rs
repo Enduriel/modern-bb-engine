@@ -55,6 +55,21 @@
 //! on a 180 Hz display. Where the system reports the monitor's refresh, the pace is
 //! never faster than that.
 //!
+//! **Nor clearly slower than the reported refresh, unless the measure is steady.** A
+//! measure taken in a load burst comes from intervals the burst set, far apart from each
+//! other: on X11 under gamescope at 180 Hz (Xwayland holds presented frames back little,
+//! so no later interval the display set corrects it) the stale-measure guard took it
+//! again as a burst began, from intervals of 5.45, 13.2, 8.0, 1.25 and 7.4 ms, and it
+//! came out 7.42 ms: the still screen afterwards stepped 134 times a second. Such a
+//! measure, longer than the reported refresh by more than [`LEAD`]'s share, gives way to
+//! the reported refresh. A display really slower than reported keeps a steady pace, and
+//! it is followed: a variable-refresh display (G-Sync, FreeSync), which refreshes as
+//! frames are presented and whose system reports its fastest refresh, under a game whose
+//! frames take longer than that; or a compositor slower than the monitor's mode. Whether
+//! the display's refresh varies isn't known to bb on any system (no system tells a
+//! window through winit, and the display's own pace under it looks like a fixed one), so
+//! the measure's steadiness tells the two apart, not the system.
+//!
 //! **A stale measure is noticed and taken again.** Paced by a clock slower than the
 //! display (the refresh measured too long), a run of presented frames is never held
 //! back by the display, so no interval the display set is measured again: the measure
@@ -119,6 +134,10 @@ const LATE: u32 = 8;
 /// right, the clock gains a refresh on the display every [`LEAD`] frames, and with two
 /// frames in flight the display holds them back within about twice that.
 const STALE: u32 = 4 * LEAD;
+/// How closely the intervals a measure is taken from agree with it (a fraction of it),
+/// for a measure clearly longer than the reported refresh to count (see
+/// [`Pacer::refresh`]).
+const STEADY: u32 = 16;
 
 /// The last frame on the frame clock.
 #[derive(Clone, Copy)]
@@ -320,11 +339,14 @@ impl Pacer {
 	}
 
 	/// The display's refresh interval: measured, where presenting waits for it, and no
-	/// shorter than the monitor's reported one; else as reported; else 60 Hz.
+	/// shorter than the monitor's reported one, nor clearly longer unless the intervals
+	/// measured are steady; else as reported; else 60 Hz.
 	pub fn refresh(&self) -> Duration {
 		let trusted = self.trusted && self.reported.is_some();
 		let measured = (self.display_paced && !trusted && self.intervals.len() >= ENOUGH).then(|| self.median()).flatten();
 		let refresh = match (measured, self.reported) {
+			// Clearly longer than reported, from intervals that don't agree: not the display.
+			(Some(measured), Some(reported)) if measured > reported + reported / LEAD && !self.steady(measured) => reported,
 			(Some(measured), Some(reported)) => measured.max(reported),
 			(Some(measured), None) => measured,
 			(None, Some(reported)) => reported,
@@ -348,6 +370,13 @@ impl Pacer {
 	/// no longer cap paces them slower.
 	fn display_holds(&self, cap: Option<Duration>) -> bool {
 		self.display_paced && cap.is_none_or(|cap| cap <= self.refresh())
+	}
+
+	/// Whether at least three in four of the recent intervals are within a [`STEADY`]th of
+	/// `measured`: a display's refresh (or a game's own steady pace), not a load burst's.
+	fn steady(&self, measured: Duration) -> bool {
+		let near = self.intervals.iter().filter(|i| i.abs_diff(measured) <= measured / STEADY).count();
+		4 * near >= 3 * self.intervals.len()
 	}
 
 	/// The median of the recent intervals (the shorter middle one of an even count).
