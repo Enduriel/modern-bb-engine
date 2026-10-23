@@ -32,6 +32,7 @@ No mod can rely on the original's behaviour in these cases.
 | A script containing `base++` | Crashes while compiling | A compile error | Only broken mods |
 | A script array holding a function or instance sent to the UI | Crashes | Arrives in JavaScript as `null` | Only mods that crash the original |
 | A broken UTF-16 character sent from the UI | Fails ("string too long") | Arrives as the replacement character | Only mods that fail in the original |
+| A UI call into the scripts that calls back into the UI | Extra empty replies, often to older calls, can resolve the call with nothing before its real reply. With some mods (MSU) a battle's first turn logs "Failed to query entity data" and the turn bar stays locked | Each call gets exactly one reply, its own | No: mods that hit it get a working turn bar |
 | A `logInfo` line longer than the log's buffer | The line is lost and a "Buffer overflow" error logged | Any length is written | No |
 
 ### New capabilities
