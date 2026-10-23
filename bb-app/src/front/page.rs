@@ -10,6 +10,10 @@ use crate::game::{Boot, Start};
 /// frames (otherwise one per game frame, see [`Front::draw`]).
 const PAGE_WAITING_RATE: i32 = 60;
 
+/// How long a frame spends composing the page's portraits, at most (after the first):
+/// the rest wait for the next frames (see [`Front::serve_procedural`]).
+const PORTRAITS_BUDGET: std::time::Duration = std::time::Duration::from_millis(2);
+
 pub struct Front {
 	session: UiSession,
 	layer: UiLayer,
@@ -253,18 +257,27 @@ impl Front {
 	}
 
 	/// Answer the procedural images (portraits) the page asked for with `compose`, given
-	/// the engine and the path after `procedural/`: those still loading are asked again
-	/// at the next call.
+	/// the engine and the path after `procedural/`, in the order asked, for at most
+	/// [`PORTRAITS_BUDGET`] a frame (at least one): the rest, and those still loading,
+	/// are answered at the next call. A battle's turn bar asks for a dozen at once,
+	/// 1-2 ms each; the page loads them as images, so it only sees them come over a few
+	/// frames, and the scripts don't see them at all.
 	pub fn serve_procedural(&mut self, mut compose: impl FnMut(&GameEngine, &str) -> crate::procedural::Procedural) {
 		let mut requests = std::mem::take(&mut self.loading_procedural);
 		requests.extend(self.session.take_procedural());
-		for request in requests {
+		let start = std::time::Instant::now();
+		let mut requests = requests.into_iter();
+		for request in requests.by_ref() {
 			match compose(self.session.engine(), &request.path) {
 				crate::procedural::Procedural::Image(png) => request.answer(Some(png)),
 				crate::procedural::Procedural::Fail => request.fail(),
 				crate::procedural::Procedural::Loading => self.loading_procedural.push(request),
 			}
+			if start.elapsed() >= PORTRAITS_BUDGET {
+				break;
+			}
 		}
+		self.loading_procedural.extend(requests);
 	}
 
 	/// What copying the page's paints (and reading them back) has cost so far.
