@@ -67,13 +67,26 @@ fn same_secret(a: &[u8], b: &[u8]) -> bool {
 	a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
+/// One write: the length and the bytes apart would be two segments on the wire (the
+/// sockets send without delay), and a reader woken by the first would wait again for
+/// the second, which every call into or out of the page paid twice.
 pub fn write_frame(stream: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
-	let len = u32::try_from(bytes.len())
+	write_frame_of(stream, &[bytes])
+}
+
+/// [`write_frame`] of `parts` one after the other.
+fn write_frame_of(stream: &mut impl Write, parts: &[&[u8]]) -> io::Result<()> {
+	let size: usize = parts.iter().map(|p| p.len()).sum();
+	let len = u32::try_from(size)
 		.ok()
 		.filter(|l| *l <= MAX_FRAME)
 		.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "frame too long"))?;
-	stream.write_all(&len.to_le_bytes())?;
-	stream.write_all(bytes)?;
+	let mut frame = Vec::with_capacity(4 + size);
+	frame.extend_from_slice(&len.to_le_bytes());
+	for part in parts {
+		frame.extend_from_slice(part);
+	}
+	stream.write_all(&frame)?;
 	stream.flush()
 }
 
@@ -136,11 +149,7 @@ impl Client {
 
 	/// Send request `kind` with `payload`; block until the answer.
 	pub fn request(&mut self, kind: &str, payload: &str) -> io::Result<Vec<u8>> {
-		let mut frame = Vec::with_capacity(kind.len() + 1 + payload.len());
-		frame.extend_from_slice(kind.as_bytes());
-		frame.push(b'\n');
-		frame.extend_from_slice(payload.as_bytes());
-		write_frame(&mut self.stream, &frame)?;
+		write_frame_of(&mut self.stream, &[kind.as_bytes(), b"\n", payload.as_bytes()])?;
 		read_frame(&mut self.stream)
 	}
 }
@@ -161,6 +170,28 @@ mod tests {
 		assert_eq!(endpoint.token.len(), 64);
 		assert_eq!(Endpoint::from_switch(&endpoint.to_switch()), Some(endpoint));
 		assert_ne!(new_token(), new_token());
+	}
+
+	/// A writer that counts its writes.
+	struct Writes(Vec<Vec<u8>>);
+
+	impl Write for Writes {
+		fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+			self.0.push(bytes.to_vec());
+			Ok(bytes.len())
+		}
+
+		fn flush(&mut self) -> io::Result<()> {
+			Ok(())
+		}
+	}
+
+	#[test]
+	fn a_frame_is_one_write() {
+		let mut out = Writes(Vec::new());
+		write_frame_of(&mut out, &[b"call", b"\n", b"[1,2]"]).unwrap();
+		assert_eq!(out.0, [b"\x0a\0\0\0call\n[1,2]".to_vec()]);
+		assert_eq!(read_frame(&mut &out.0[0][..]).unwrap(), b"call\n[1,2]");
 	}
 
 	#[test]
