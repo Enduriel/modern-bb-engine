@@ -69,7 +69,8 @@ fn differences(want: &BTreeMap<String, u64>, found: &BTreeMap<String, u64>) -> R
 			Some(_) => {}
 		}
 	}
-	lines.extend(found.keys().filter(|n| !want.contains_key(*n)).map(|n| format!("  not pinned: {n}")));
+	// As a list line, `<size> <name>`, ready to pin.
+	lines.extend(found.iter().filter(|(n, _)| !want.contains_key(*n)).map(|(n, s)| format!("  not pinned: {s} {n}")));
 	if lines.is_empty() {
 		return Ok(());
 	}
@@ -98,6 +99,6 @@ mod tests {
 		let error = differences(&want, &map(&[("a.zip", 1), ("b.zip", 5), ("legends.zip", 9)])).unwrap_err();
 		assert!(error.contains("missing: c.zip"), "{error}");
 		assert!(error.contains("changed: b.zip (5 bytes, pinned 2)"), "{error}");
-		assert!(error.contains("not pinned: legends.zip"), "{error}");
+		assert!(error.contains("not pinned: 9 legends.zip"), "{error}");
 	}
 }
