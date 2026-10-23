@@ -94,3 +94,11 @@ cargo test --release -p bb-app --features ui --test frame_regression
 - `regression.txt` holds how much of each scene may differ, and rectangles left out.
 - A failing scene's heatmap and frame land in the test's build directory
   (`target/tmp/frame_regression/`).
+
+## Other scene scripts
+
+`escort.nut` (escorting a caravan: the company before, riding along hidden on the
+caravan, and after the contract is cancelled) is walked the same way: the original with
+the probe runner (`parity/frames/escort.nut --js parity/frames/scenes.js ...`), ours with
+`frame_scenes OUT --scenes parity/frames/escort.nut`. Both log the company's and the
+caravan's state each scene (`PROBE scene ...`, `PROBE ride ...`).
