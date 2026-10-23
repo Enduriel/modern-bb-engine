@@ -226,17 +226,33 @@ impl FrameTimes {
 	}
 
 	/// One line: the frame's number, the time since the last frame's start, its own work,
-	/// the camera's zoom, the quads drawn, then each span, all in milliseconds.
+	/// the camera's zoom, the quads drawn, the display's refresh as the frame clock takes
+	/// it (see `bb_app::pacing`), then each span, all in milliseconds.
 	/// `t` is the engine's real time at the frame, the clock scripts read
 	/// (`Time.getRealTimeF`), so a script's log lines can mark phases in the file. Then
 	/// the counters, as `name#=N`. Last, what the page's paints cost since the last
 	/// line, on the browser's thread (`copies`, the page's stats so far): `page_paints#`,
 	/// `page_copy` (the paint callbacks' time: importing, copying and waiting for the
 	/// GPU), `page_imports#`, and the reads back (`page_reads#`, `page_read`).
-	fn write(&mut self, frame: u64, interval: f64, work: Duration, zoom: f32, quads: usize, t: f64, copies: bb_render::UiCopyStats) {
+	#[allow(clippy::too_many_arguments)]
+	fn write(
+		&mut self,
+		frame: u64,
+		interval: f64,
+		work: Duration,
+		zoom: f32,
+		quads: usize,
+		refresh: Duration,
+		t: f64,
+		copies: bb_render::UiCopyStats,
+	) {
 		use std::io::Write;
 		let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-		let mut line = format!("{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads} t={t:.4}", ms(work));
+		let mut line = format!(
+			"{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads} refresh={:.3} t={t:.4}",
+			ms(work),
+			ms(refresh)
+		);
 		for (name, time) in bb_render::frame_timing::take() {
 			line.push_str(&format!(" {}={:.3}", name.replace(' ', "_"), ms(time)));
 		}
@@ -784,7 +800,7 @@ impl Running {
 				self.paced(now, false);
 				if let Some(times) = &mut self.frame_times {
 					let t = self.game.real_seconds();
-					times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, t, self.game.front().copy_stats());
+					times.write(self.frames, ms, now.elapsed(), self.game.world_zoom(), 0, self.pacer.refresh(), t, self.game.front().copy_stats());
 				}
 				if self.next_stats.is_some() {
 					self.stats_frames.0 += 1;
@@ -861,7 +877,7 @@ impl Running {
 			self.gpu.take_pass_times(|name, time| bb_render::frame_timing::add(name, time));
 			let zoom = self.game.world_zoom();
 			let t = self.game.real_seconds();
-			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads, t, self.game.front().copy_stats());
+			times.write(self.frames, ms, now.elapsed(), zoom, drawn.quads, self.pacer.refresh(), t, self.game.front().copy_stats());
 		}
 		if self.next_stats.is_some() {
 			self.stats_frames.0 += 1;

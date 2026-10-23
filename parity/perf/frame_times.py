@@ -3,7 +3,7 @@
 
     python3 parity/perf/frame_times.py FRAMES.txt [PHASES.json] [--budget MS] [--min-share PCT]
 
-FRAMES.txt has a line a frame: `N interval=.. work=.. zoom=.. quads=.. t=.. span=ms ...
+FRAMES.txt has a line a frame: `N interval=.. work=.. zoom=.. quads=.. refresh=.. t=.. span=ms ...
 counter#=n ...` (see bb-app's `FrameTimes`). PHASES.json, if given, is a list of
 `[name, first frame, last frame]`; otherwise the whole file is one phase. For each phase:
 the frames, how many were drawn (presented) and how many left undrawn, the frame interval
@@ -28,7 +28,7 @@ def parse(path):
             k, _, v = p.partition("=")
             if k.endswith("#"):
                 f["counts"][k[:-1]] = int(v)
-            elif k in ("interval", "work", "zoom", "quads", "t"):
+            elif k in ("interval", "work", "zoom", "quads", "refresh", "t"):
                 f[k] = float(v)
             else:
                 f["spans"][k] = f["spans"].get(k, 0.0) + float(v)
