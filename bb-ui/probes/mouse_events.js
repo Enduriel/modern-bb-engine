@@ -4,7 +4,9 @@
 // (2026-10-20): the page gets a mousemove every frame at (640, 360) or (640, 380), the
 // headless display's pointer; mouseovers come as the menu appears under it; the box
 // comes after them (late JS) and shows; MSU's settings screen opening under the cursor
-// brings a mouseover, which hides it. ES5 only.
+// brings a mouseover, which hides it. Rerun 2026-10-23: the page gets no mouse event at
+// all now (no pointer from the headless display), so the box stays shown on both screens.
+// ES5 only.
 var bbMouseLog = [];
 var bbMouseT0 = Date.now();
 
