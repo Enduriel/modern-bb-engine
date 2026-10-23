@@ -78,8 +78,14 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 /// combat log, tooltips, the turn bar) while its JavaScript heap stays small, so by
 /// default those collections came rarely and the renderer grew by ~50 MB a battle until
 /// the battle's end released it; with the flag it stays flat (-45 MB at the busiest),
-/// for no measurable frame or CPU cost. Recheck on a V8 upgrade: the flag's meaning
-/// may change.
+/// for no measurable frame or CPU cost. Rechecked for battle hitches (2026-10-23,
+/// `bb-app`'s `battle_hover`, 32 mods, enemies' turns, 2 runs each): without flags the
+/// waits for the page's own tasks are shorter (p99.9 3.4-3.8 ms against 5.7-6.3), but
+/// the frames over 11 ms are as many or more (21-25 a minute against 15-17) and the
+/// renderer grows by 20 MB in a minute (its V8 heap 45 -> 60 MB, against 36 -> 41);
+/// `--memory-saver-mode` alone (the default young generation) is the same as this one.
+/// Collecting in full as the page starts to rest costs 20-26 ms a time, a hitch of its
+/// own. Recheck on a V8 upgrade: the flag's meaning may change.
 const V8_FLAGS: &str = "--optimize-for-size";
 
 /// The switches for this operating system only: on Linux, no mipmaps for Skia's Ganesh
