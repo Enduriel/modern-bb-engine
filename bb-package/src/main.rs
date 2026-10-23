@@ -23,6 +23,7 @@
 mod icns;
 mod layout;
 mod mac_app;
+mod readme;
 mod steam_library;
 
 use std::path::{Path, PathBuf};

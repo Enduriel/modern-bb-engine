@@ -121,6 +121,7 @@ and `inputs.txt` as the artifact `bb-<target>`:
    | `libsteam_api.so` / `steam_api64.dll` / `libsteam_api.dylib` | the pinned crate |
    | `licenses/CEF-LICENSE.txt`, `licenses/CEF-CREDITS.html` | CEF's licence and Chromium's notices |
    | `licenses/STEAMWORKS.txt` | where Steam's library comes from, its hash, Valve's terms |
+   | `README.md`, `docs/requirements.md`, `docs/differences.md`, `docs/modding.md` | the repository's, built into `bb-package`; the README links to the three (`bb-package/src/readme.rs` checks that every link resolves in the package) |
 
 4. Packs it as `<out>/bb-<target>.tar.gz` (Windows: `.zip`, with a `tar` that writes
    zips, as Windows' and macOS's do) and prints both sizes.
@@ -222,6 +223,7 @@ German and recording every shared object its processes mapped:
 
 ```text
 bb-aarch64-apple-darwin/
+  README.md, docs/
   bb.app/Contents/
     Info.plist
     MacOS/bb, libsteam_api.dylib

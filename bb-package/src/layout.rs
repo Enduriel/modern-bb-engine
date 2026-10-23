@@ -3,8 +3,9 @@
 //! Linux (verified): `bb` and `libcef.so` stripped, CEF's resources (`icudtl.dat`,
 //! `resources.pak`, `chrome_100_percent.pak`, `chrome_200_percent.pak`,
 //! `v8_context_snapshot.bin`), the English locale only (the page is the game's own, and
-//! CEF falls back to `en-US` for any other system locale), Steam's library, and the
-//! notices. Left out: `chrome-sandbox` (the host runs CEF without its sandbox) and CEF's
+//! CEF falls back to `en-US` for any other system locale), Steam's library, the
+//! notices, and the README with the documents it links to ([`crate::readme`]). Left
+//! out: `chrome-sandbox` (the host runs CEF without its sandbox) and CEF's
 //! SwiftShader/Vulkan files (Chromium's GPU work runs on the system's EGL, and the game
 //! refuses software GPUs; see `docs/packaging.md` for the check that nothing loads them).
 //!
@@ -165,6 +166,7 @@ fn steam_notice(steam: &Steam) -> String {
 pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam: &Steam) -> Result<(), String> {
 	if platform == Platform::MacOs {
 		crate::mac_app::lay_out(dir, bb, cef_dir, steam)?;
+		crate::readme::write(dir)?;
 		return notices(dir, cef_dir, steam);
 	}
 	let _ = fs::remove_dir_all(dir);
@@ -185,6 +187,7 @@ pub fn lay_out(dir: &Path, platform: Platform, bb: &Path, cef_dir: &Path, steam:
 		copy(&steam.path, &dir.join(steam.pin.file_name))?;
 		crate::steam_library::check_file(&dir.join(steam.pin.file_name), steam.pin.sha256)?;
 	}
+	crate::readme::write(dir)?;
 	notices(dir, cef_dir, steam)
 }
 
