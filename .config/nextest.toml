@@ -1,0 +1,46 @@
+# cargo-nextest's configuration. `scripts/test_all.py` is the suite's entry
+# point: it builds, runs nextest in its lanes, and reports skips and flaky tests. A plain
+# `cargo nextest run --workspace --cargo-profile test-release` keeps the same limits.
+#
+# Install the pinned version: cargo install cargo-nextest --version 0.9.148 --locked
+nextest-version = "0.9.148"
+
+[test-groups]
+# The browser host's test binaries (bb-ui's and bb-app's integration tests, but window.rs):
+# paced in real time, 3 at a time, as test_all.py's ui lane ran them.
+browser = { max-threads = 3 }
+# window.rs: bb windows in a headless gamescope, one at a time (its tests also hold a
+# turn in the game queue, and a lock in-process when cargo test runs them).
+window = { max-threads = 1 }
+
+[profile.default]
+fail-fast = false
+# A failing test runs once more. One that then passes is flaky: nextest marks it FLAKY,
+# the JUnit report keeps the failed try (`flakyFailure`), and test_all.py lists it.
+retries = 1
+flaky-result = "pass"
+# A hung test fails on its own: past 60 s it is reported slow, after 5 periods (5 min)
+# it is stopped (SIGTERM, then SIGKILL after the grace period), with what it started.
+slow-timeout = { period = "60s", terminate-after = 5, grace-period = "10s" }
+status-level = "pass"
+final-status-level = "flaky"
+failure-output = "immediate-final"
+success-output = "never"
+
+[profile.default.junit]
+# test_all.py reads the skips (`skipping: …`) from every test's output, passing ones too.
+store-success-output = true
+store-failure-output = true
+
+[[profile.default.overrides]]
+filter = "package(bb-app) & kind(test) & binary(=window)"
+test-group = "window"
+slow-timeout = { period = "120s", terminate-after = 5, grace-period = "10s" }
+leak-timeout = "2s"
+
+[[profile.default.overrides]]
+filter = "(package(bb-ui) | package(bb-app)) & kind(test)"
+test-group = "browser"
+# The longest whole binaries take ~3 min (play_session_ui, frame_regression).
+slow-timeout = { period = "120s", terminate-after = 5, grace-period = "10s" }
+leak-timeout = "2s"
