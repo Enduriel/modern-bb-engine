@@ -184,7 +184,10 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 		vm.make_closure(move |vm: &SQVM, v: bool| {
 			let mut machine = m.borrow_mut();
 			let Some(&idx) = machine.by_identity.get(&vm.this_identity()) else { return };
-			machine.entities[idx].visible = v;
+			// Drawn or not (see `scene_entities`).
+			if std::mem::replace(&mut machine.entities[idx].visible, v) != v {
+				crate::native::world_scene_changes::note();
+			}
 			if v {
 				let owner = machine.owner(idx);
 				machine.moving.note(owner);

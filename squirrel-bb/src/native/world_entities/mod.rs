@@ -1344,13 +1344,15 @@ impl WorldEntities {
 				pos: rec.pos,
 				in_details: rec.in_details,
 				key: rec.key + rec.z_offset,
-				// In sight, or still fading out of it (see `render`): a shown sprite's fade
-				// (a hidden one's never finishes, as it isn't drawn).
-				shown: rec.render.shown()
-					|| rec
-						.sprites
-						.iter()
-						.any(|(_, h)| class.with_payload(vm, h, |s| s.visible && !s.color.is_fading_done()).unwrap_or(false)),
+				// Not made invisible (`setVisible(false)`: nothing of it is drawn, in sight
+				// or not, as the company while it escorts a caravan), and in sight, or
+				// still fading out of it (see `render`): a shown sprite's fade (a hidden
+				// one's never finishes, as it isn't drawn).
+				shown: rec.visible
+					&& (rec.render.shown()
+						|| rec.sprites.iter().any(|(_, h)| {
+							class.with_payload(vm, h, |s| s.visible && !s.color.is_fading_done()).unwrap_or(false)
+						})),
 				sprites: rec
 					.sprites
 					.iter()
@@ -1379,8 +1381,9 @@ impl WorldEntities {
 							name: name.clone(),
 							key: rec.key + l.key_offset,
 							text: l.text.clone(),
-							// Labels don't fade: they show while the entity is in sight.
-							visible: l.visible && rec.render.shown(),
+							// Labels don't fade: they show while the entity is in sight (and
+							// not made invisible).
+							visible: l.visible && rec.visible && rec.render.shown(),
 							color: l.color,
 							offset: l.offset,
 						})
