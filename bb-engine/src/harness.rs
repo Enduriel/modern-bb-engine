@@ -77,6 +77,23 @@ pub fn skip_case(name: &str, why: impl fmt::Display) -> std::process::ExitCode {
 	}
 }
 
+/// For the `main` of a `harness = false` binary, first thing (before it starts a display
+/// or a browser): answers a runner's `--list` as libtest does, so cargo-nextest can run
+/// the binary (`scripts/test_all.py`). The binary is one test, named `name`, never
+/// ignored: `--list` prints `<name>: test`, `--list --ignored` nothing. Returns `None`
+/// without `--list`; then the binary runs as it would (it takes no filter: nextest
+/// passes `<name> --exact`, which names the one test there is).
+pub fn list_case(name: &str) -> Option<std::process::ExitCode> {
+	let args: Vec<String> = std::env::args().skip(1).collect();
+	if !args.iter().any(|a| a == "--list") {
+		return None;
+	}
+	if !args.iter().any(|a| a == "--ignored") {
+		println!("{name}: test");
+	}
+	Some(std::process::ExitCode::SUCCESS)
+}
+
 /// A directory the environment can override: the variable's value if it's set, else a
 /// default (made on first use); read on first use. Usable where the `&str` constants it replaced were
 /// (`Path::new`, `PathBuf::from`, formatting).

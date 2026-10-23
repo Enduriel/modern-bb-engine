@@ -1493,6 +1493,10 @@ fn main() -> ExitCode {
 	if let Some(code) = bb_ui::host::run_subprocess() {
 		return ExitCode::from(code.clamp(0, 255) as u8);
 	}
+	// A runner's `--list` (cargo-nextest's), answered before a display starts.
+	if let Some(code) = bb_engine::harness::list_case("boots_to_the_main_menu_and_opens_new_campaign") {
+		return code;
+	}
 	// Chromium paints the page through a display connection: a headless gamescope's.
 	bb_ui::host::with_display(run_main)
 }
