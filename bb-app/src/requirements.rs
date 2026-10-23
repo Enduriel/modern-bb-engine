@@ -51,7 +51,7 @@ pub fn minimum() -> &'static str {
 pub fn explain(error: &str, logs: Option<&std::path::Path>) -> Option<String> {
 	let missing = missing(error)?;
 	let mut text = format!("Battle Brothers can't start on this computer: {missing}.\n\n{}\n\n", minimum());
-	text.push_str("The minimum requirements are in requirements.md (docs/ in the source).");
+	text.push_str("The minimum requirements are in docs/requirements.md beside bb.");
 	if let Some(logs) = logs {
 		text.push_str(&format!("\nDetails: log.html and cef.log in {}", logs.display()));
 	}
