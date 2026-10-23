@@ -68,9 +68,22 @@ version = "0.4"
 [dependencies.thiserror]
 version = "2"
 
+# Patched (see README.md): no bundled CA list. rustls on ring, the server checked
+# against the system's own trusted roots, loaded by rustls-native-certs.
 [dependencies.ureq]
-version = "3"
+version = "3.4.2"
+default-features = false
 features = [
+    "gzip",
     "json",
     "socks-proxy",
+    "rustls-no-provider",
 ]
+
+[dependencies.rustls]
+version = "0.23.45"
+default-features = false
+features = ["ring", "std", "tls12"]
+
+[dependencies.rustls-native-certs]
+version = "0.8.5"

@@ -13,7 +13,7 @@ use std::{
     fmt::{self, Display},
     io::{self, BufReader, IsTerminal, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     thread,
     time::Duration,
 };
@@ -59,6 +59,8 @@ pub enum Error {
     InvalidRegexPattern(#[from] regex::Error),
     #[error("Failed to install CEF via Nix: {0}")]
     NixFailed(std::process::ExitStatus),
+    #[error("No trusted root certificates from the system to check the CEF download's server against ({0}); set SSL_CERT_FILE or SSL_CERT_DIR to a CA bundle, or CEF_PATH to an already downloaded CEF")]
+    NoSystemRoots(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -136,6 +138,41 @@ pub fn default_download_url() -> String {
     env::var("CEF_DOWNLOAD_URL").unwrap_or(DEFAULT_CDN_URL.to_owned())
 }
 
+/// Patched: the HTTP agent every request goes through. TLS is rustls on `ring`, the
+/// server checked against the system's own trusted roots (Windows' certificate store,
+/// macOS' keychain, the Linux distribution's bundle; `SSL_CERT_FILE`/`SSL_CERT_DIR` if
+/// set), loaded by `rustls-native-certs`. There are no bundled roots to fall back to:
+/// none loaded is an error. Otherwise configured as upstream's default agent. Built
+/// once, shared by every request.
+fn agent() -> Result<ureq::Agent> {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    if let Some(agent) = AGENT.get() {
+        return Ok(agent.clone());
+    }
+    let loaded = rustls_native_certs::load_native_certs();
+    if loaded.certs.is_empty() {
+        let why: Vec<String> = loaded.errors.iter().map(|e| e.to_string()).collect();
+        let why = if why.is_empty() {
+            "none found".to_string()
+        } else {
+            why.join("; ")
+        };
+        return Err(Error::NoSystemRoots(why));
+    }
+    let roots: Vec<ureq::tls::Certificate<'static>> = loaded
+        .certs
+        .iter()
+        .map(|c| ureq::tls::Certificate::from_der(c.as_ref()).to_owned())
+        .collect();
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::Rustls)
+        .root_certs(ureq::tls::RootCerts::Specific(Arc::new(roots)))
+        .unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder().tls_config(tls).build().into();
+    Ok(AGENT.get_or_init(|| agent).clone())
+}
+
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum Channel {
@@ -170,7 +207,8 @@ impl CefIndex {
     }
 
     pub fn download_from(url: &str) -> Result<Self> {
-        Ok(ureq::get(&format!("{url}/index.json"))
+        Ok(agent()?
+            .get(&format!("{url}/index.json"))
             .call()?
             .into_body()
             .read_json()?)
@@ -281,7 +319,7 @@ impl CefVersion {
 
         let mut file = File::create(&download_file)?;
 
-        let resp = ureq::get(&cef_url).call()?;
+        let resp = agent()?.get(&cef_url).call()?;
         let expected = resp
             .headers()
             .get("Content-Length")
