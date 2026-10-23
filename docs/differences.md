@@ -91,7 +91,7 @@ measurement; later work has mostly made `bb` faster still.
 | Loading a save (`World.load`) | 0.58 s | 0.30 s | Headless, same save |
 | Saving | 80 ms | 13 ms | Headless, same campaign |
 | A battle's start | 2.78 s (loading screen up at 1.89 s) | 2.35 s (up at 1.34 s) | From the combat dialog to the battle running, with renderer and UI |
-| Opening the character screen | ~240 ms | ~100 ms | Probe in the original; a player's capture of bb on Windows |
+| Opening the character screen | ~240 ms | ~92 ms (vanilla), ~51 ms (32 mods) | The screen's `show()`, most of it vanilla's JavaScript |
 | The Load Campaign list | ~0.14 s for 130 saves | ~75 ms for 120 saves | Warm; the click's frame, most of it vanilla's JavaScript |
 | Script benchmarks (calls, tables, strings, the class system) | - | 1.3–3.7 × faster | The same scripts in both engines (2026-10-14) |
 | `Math.rand(1, 100)` | ~960 ns a call | ~175 ns | The same benchmark |
