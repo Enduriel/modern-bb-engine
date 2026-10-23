@@ -16,6 +16,7 @@
 //! masks of `clear(mask)` / `clearAllBut(mask)` select.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 
 use squirrel::{ClassBuilder, SQVM, SqClass};
@@ -175,7 +176,29 @@ impl Changes {
 
 /// The details that may turn (those given a torque), animate or fade, so a frame
 /// needn't visit every detail on the map.
-pub(crate) type Spinning = Rc<RefCell<Vec<Weak<RefCell<DetailData>>>>>;
+pub(crate) type Spinning = Rc<RefCell<SpinList>>;
+
+/// [`Spinning`]'s details, in the order they were noted, and which they are, so noting
+/// one takes no walk over the list (worldgen notes thousands). By address: a detail's
+/// allocation stays while its weak reference is on the list, so no other detail can
+/// have it then.
+#[derive(Default)]
+pub(crate) struct SpinList {
+	details: Vec<Weak<RefCell<DetailData>>>,
+	noted: HashSet<*const RefCell<DetailData>>,
+}
+
+impl SpinList {
+	pub(crate) fn clear(&mut self) {
+		self.details.clear();
+		self.noted.clear();
+	}
+
+	#[cfg(test)]
+	fn is_empty(&self) -> bool {
+		self.details.is_empty()
+	}
+}
 
 /// Keep `detail` turning if it has a torque, stepping while its animation may (one not
 /// started yet included: its first step drops a still brush), and drawn while it fades,
@@ -185,9 +208,8 @@ pub(crate) fn note_spin(spinning: &Spinning, detail: &Detail) {
 		return;
 	}
 	let mut spinning = spinning.borrow_mut();
-	let weak = Rc::downgrade(detail);
-	if !spinning.iter().any(|d| d.ptr_eq(&weak)) {
-		spinning.push(weak);
+	if spinning.noted.insert(Rc::as_ptr(detail)) {
+		spinning.details.push(Rc::downgrade(detail));
 	}
 }
 
@@ -203,27 +225,38 @@ fn moves(d: &DetailData) -> bool {
 /// faded is drawn at `real` from now on), and forget those gone, still or hidden
 /// (showing one notes it again).
 pub(crate) fn turn_all(spinning: &Spinning, sprites: &Sprites, changes: &Changes, now: f32, now_ms: u32, real: f32) {
-	spinning.borrow_mut().retain(|detail| {
-		let Some(detail) = detail.upgrade() else { return false };
-		let mut d = detail.borrow_mut();
-		let d = &mut *d;
-		let before = (d.rotation, d.scale, d.frame, d.visible);
-		let fading = !d.color.is_fading_done();
-		if d.turns() {
-			d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
-			if let Some(scale) = d.anim.step_on(sprites, &d.brush, now_ms) {
-				d.scale = f64::from(scale);
-			}
+	let mut spinning = spinning.borrow_mut();
+	let SpinList { details, noted } = &mut *spinning;
+	details.retain(|weak| {
+		let keep = turn(weak, sprites, changes, now, now_ms, real);
+		if !keep {
+			noted.remove(&weak.as_ptr());
 		}
-		d.frame = d.anim.frame();
-		if d.visible && d.color.draw(real).hide {
-			d.visible = false;
-		}
-		if fading || before != (d.rotation, d.scale, d.frame, d.visible) {
-			changes.note(&detail, d);
-		}
-		moves(d)
+		keep
 	});
+}
+
+/// [`turn_all`]'s work on one detail: whether it stays on the list.
+fn turn(detail: &Weak<RefCell<DetailData>>, sprites: &Sprites, changes: &Changes, now: f32, now_ms: u32, real: f32) -> bool {
+	let Some(detail) = detail.upgrade() else { return false };
+	let mut d = detail.borrow_mut();
+	let d = &mut *d;
+	let before = (d.rotation, d.scale, d.frame, d.visible);
+	let fading = !d.color.is_fading_done();
+	if d.turns() {
+		d.rotation = f64::from(d.spin.turn(d.rotation as f32, now));
+		if let Some(scale) = d.anim.step_on(sprites, &d.brush, now_ms) {
+			d.scale = f64::from(scale);
+		}
+	}
+	d.frame = d.anim.frame();
+	if d.visible && d.color.draw(real).hide {
+		d.visible = false;
+	}
+	if fading || before != (d.rotation, d.scale, d.frame, d.visible) {
+		changes.note(&detail, d);
+	}
+	moves(d)
 }
 
 impl SpriteState for DetailData {
