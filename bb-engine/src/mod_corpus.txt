@@ -30,7 +30,7 @@
 4429 mod_stack_based_skills-766-0-5-3-1764528330.zip
 10422 mod_streamlined_ui-730-1-0-4-1743596173.zip
 10110064 mod_stronghold-324-2-18-1-1777832897.zip
-30135 mod_swifter-542-1-1-3-1666093341.zip
+16486 mod_swifter 542 1.3.1 2026-10-21T18-43Z L5qPjAAk1.zip
 7732 mod_unified_perk_descriptions-767-0-1-2-1726115621.zip
 8853 mod_world_parameters 732 1.1.0 2026-10-21T16-35Z Z3ILe00nx.zip
 3127 namedItemStats-850-1-2-1751250218.zip
