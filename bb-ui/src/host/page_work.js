@@ -12,7 +12,11 @@
 // attributes and styles, or a scroll position set; e.g. by the game's calls into it,
 // which a frame must show), "frames" (it waits for an animation frame: Velocity's and jQuery's ticks),
 // "editing" (a text field has the focus: its caret blinks), "fonts" (fonts are
-// loading), "animations" (a CSS animation or transition runs). `timer` is how long
+// loading), "pictures" (a picture it asked for hasn't loaded or failed yet: its load
+// event, which e.g. starts the loading screen's fade-in, is the page's next task, but
+// one Chromium takes from its memory cache or decodes slowly, as on a machine short
+// of memory, finishes no `coui://` load the game would see), "animations" (a CSS
+// animation or transition runs). `timer` is how long
 // until its next timer is due. The page's timers and animation frames are wrapped to
 // keep that count; what they do is unchanged. `keys` counts the keydown and keyup events
 // it has seen (also `window.__bbKeysSeen`): the game hands a frame's keys over and
@@ -207,6 +211,51 @@
 		};
 	});
 
+	// Pictures asked for (an image's `src` set, as an attribute or a property, in the
+	// document or not) whose load or error event hasn't run yet. One left complete
+	// without its event at two looks is let go (a picture the browser needn't load
+	// again may fire none): a page that never rested would cost frames, not hang.
+	var pictures = new Map();
+	function settled(e) {
+		pictures.delete(e.target);
+	}
+	function asked(image) {
+		pictures.set(image, false);
+		image.addEventListener('load', settled);
+		image.addEventListener('error', settled);
+	}
+	var src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+	if (src && src.set) {
+		Object.defineProperty(HTMLImageElement.prototype, 'src', {
+			configurable: true,
+			enumerable: src.enumerable,
+			get: src.get,
+			set: function (value) {
+				src.set.call(this, value);
+				asked(this);
+			}
+		});
+	}
+	var setAttribute = Element.prototype.setAttribute;
+	Element.prototype.setAttribute = function (name, value) {
+		setAttribute.call(this, name, value);
+		if (this instanceof HTMLImageElement && String(name).toLowerCase() === 'src') {
+			asked(this);
+		}
+	};
+	function loadingPictures() {
+		pictures.forEach(function (seenComplete, image) {
+			if (image.complete) {
+				if (seenComplete) {
+					pictures.delete(image);
+				} else {
+					pictures.set(image, true);
+				}
+			}
+		});
+		return pictures.size > 0;
+	}
+
 	// Whether a focused field shows a caret.
 	function editing() {
 		var element = document.activeElement;
@@ -249,6 +298,9 @@
 		}
 		if (document.fonts && document.fonts.status === 'loading') {
 			return 'fonts';
+		}
+		if (loadingPictures()) {
+			return 'pictures';
 		}
 		return animating() ? 'animations' : null;
 	}
