@@ -56,7 +56,7 @@ gives.
 | `BB_LAZY_MEMBERS=0` | Copy an instance's member tables (`m`) in full, not lazily. |
 | `BB_UI_CPU_RASTER=1` | Rasterize the page on the CPU (`--disable-gpu-rasterization`). |
 | `BB_UI_V8_FLAGS=FLAGS` | V8's flags for the page, instead of `--optimize-for-size`. |
-| `BB_UI_SWITCHES="name=value name2"` | More Chromium switches for the page (features join the engine's lists; V8 flags as `js-flags=--flag`). |
+| `BB_UI_SWITCHES="name=value name2"` | More Chromium switches for the page (features join the engine's lists; V8 flags as `js-flags=--flag`). A switch the engine already gives takes the value given here: `force-gpu-mem-discardable-limit-mb=256` keeps the page's pictures on the GPU up to Chromium's own limit instead of the engine's 32 MB. |
 | `BB_UI_OZONE=x11` or `wayland` | Which display protocol the page's browser uses on Linux (default: Wayland where `WAYLAND_DISPLAY` is set, else X11). |
 
 ## Tests and tools

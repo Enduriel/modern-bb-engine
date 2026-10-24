@@ -59,7 +59,9 @@ The parts, in `summary.txt` and `snapshot.json`:
   (what it allocated, in how much reserved memory, by name), and on Linux the game's DRM
   client as the driver counts it. On amdgpu the page's GL context (Chromium's GPU work,
   in the game's process) shares that client, so its VRAM is ours plus Chromium's (about
-  150 MiB at 1080p) plus the driver's own: compare it with wgpu's figures, not alone;
+  150–190 MiB at 1080p: two driver screens, the 3 paint buffers, the page's pictures and
+  tiles, and buffers radeonsi keeps after they're freed) plus RADV's own (about 36 MiB):
+  compare it with wgpu's figures, not alone;
 - **engine**: what the engine's services hold, counted and estimated (the world's
   entities and map, a battle's units and map, the sprite registry, the class system, the
   UI bridge, the sound bank, saves kept in memory);
