@@ -52,6 +52,11 @@ pub trait FileStream: std::io::Read + std::io::Seek + Send + Sync {
 /// A finished decode: the path asked for and its image or why it failed.
 pub type Decoded = (String, Result<Image, String>);
 
+/// Work the owner wants done on a worker with a path's decoded image, before the image
+/// is handed over (the renderer's: the world textures' levels, `bb_render::world_textures`).
+/// What it makes, it keeps itself; the image goes on as decoded.
+pub type Prepare = Arc<dyn Fn(&str, &Image) + Send + Sync>;
+
 /// Read and decode `path` from `source`.
 pub fn load_image(source: &dyn FileSource, path: &str) -> Result<Image, String> {
 	let bytes = source
@@ -78,14 +83,21 @@ pub struct ImageLoader {
 impl ImageLoader {
 	/// A loader reading from `source` with `threads` workers (at least one).
 	pub fn new(source: Arc<dyn FileSource>, threads: usize) -> Self {
+		Self::preparing(source, threads, None)
+	}
+
+	/// [`ImageLoader::new`], each worker running `prepare` (if any) with what it
+	/// decoded before handing it over.
+	pub fn preparing(source: Arc<dyn FileSource>, threads: usize, prepare: Option<Prepare>) -> Self {
 		let queue = Arc::new(Queue::default());
 		let (sender, results) = channel();
 		let workers = (0..threads.max(1))
 			.map(|i| {
 				let (source, queue, sender) = (source.clone(), queue.clone(), sender.clone());
+				let prepare = prepare.clone();
 				std::thread::Builder::new()
 					.name(format!("image-loader-{i}"))
-					.spawn(move || work(&*source, &queue, &sender))
+					.spawn(move || work(&*source, &queue, &sender, prepare.as_deref()))
 					.expect("spawn image loader thread")
 			})
 			.collect();
@@ -136,8 +148,8 @@ impl Drop for ImageLoader {
 	}
 }
 
-/// A worker: take paths until shutdown, decode each, send the result.
-fn work(source: &dyn FileSource, queue: &Queue, results: &Sender<Decoded>) {
+/// A worker: take paths until shutdown, decode each, prepare it, send the result.
+fn work(source: &dyn FileSource, queue: &Queue, results: &Sender<Decoded>, prepare: Option<&(dyn Fn(&str, &Image) + Send + Sync)>) {
 	loop {
 		let path = {
 			let mut jobs = queue.jobs.lock().unwrap();
@@ -152,6 +164,9 @@ fn work(source: &dyn FileSource, queue: &Queue, results: &Sender<Decoded>) {
 			}
 		};
 		let image = load_image(source, &path);
+		if let (Some(prepare), Ok(image)) = (prepare, &image) {
+			prepare(&path, image);
+		}
 		if results.send((path, image)).is_err() {
 			return;
 		}
@@ -412,6 +427,21 @@ mod tests {
 			files,
 			reads: AtomicUsize::new(0),
 		})
+	}
+
+	#[test]
+	fn workers_prepare_each_image_before_handing_it_over() {
+		let seen = Arc::new(Mutex::new(Vec::new()));
+		let record = seen.clone();
+		let prepare: Prepare = Arc::new(move |path: &str, image: &Image| record.lock().unwrap().push((path.to_string(), image.width)));
+		let mut cache: TextureCache<(u32, u32)> = TextureCache::new(ImageLoader::preparing(files(), 2, Some(prepare)));
+		cache.prefetch("gfx/a.png");
+		cache.prefetch("gfx/broken.png");
+		pump_until(&mut cache, "gfx/a.png");
+		// Handed over after its preparation: it's there by the time the image is.
+		assert_eq!(seen.lock().unwrap().as_slice(), [("gfx/a.png".to_string(), 2)]);
+		pump_until(&mut cache, "gfx/broken.png");
+		assert_eq!(seen.lock().unwrap().len(), 1, "nothing to prepare for a failed decode");
 	}
 
 	/// Pump until `path` leaves `Loading`, uploading as (width, height).

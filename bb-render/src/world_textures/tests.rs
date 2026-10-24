@@ -8,8 +8,8 @@ const COLOUR: Content = Content { grey: false, opaque: true };
 
 #[test]
 fn choices_parse() {
-	assert_eq!(Choice::parse("rgba8"), Ok(Choice::DEFAULT));
-	assert_eq!(Choice::parse("R8"), Ok(Choice { storage: Storage::R8, ..Choice::DEFAULT }));
+	assert_eq!(Choice::parse("rgba8"), Ok(Choice::RGBA8));
+	assert_eq!(Choice::parse("R8"), Ok(Choice { storage: Storage::R8, ..Choice::RGBA8 }));
 	assert_eq!(
 		Choice::parse("bc1-half-flat"),
 		Ok(Choice { storage: Storage::Bc1, half: true, mips: false })
@@ -169,8 +169,8 @@ fn one_channel_is_exactly_the_default_for_a_grey_texture() {
 	let Some(gpu) = gpu() else { return };
 	let mips = MipMaker::new(&gpu);
 	let image = image(64, true);
-	let default = upload(&gpu, &mips, formats("rgba8", "rgba8", false), Pass::Fog, "fog", &image);
-	let grey = upload(&gpu, &mips, formats("rgba8", "r8", false), Pass::Fog, "fog", &image);
+	let default = upload(&gpu, &mips, formats("rgba8", "rgba8", false), &LevelsAhead::default(), Pass::Fog, "fog", &image);
+	let grey = upload(&gpu, &mips, formats("rgba8", "r8", false), &LevelsAhead::default(), Pass::Fog, "fog", &image);
 	assert_eq!(grey.texture.format(), wgpu::TextureFormat::R8Unorm);
 	assert_eq!(grey.texture.mip_level_count(), default.texture.mip_level_count());
 	assert_eq!(grey.bytes() * 4, default.bytes());
@@ -189,7 +189,7 @@ fn block_compressed_levels_decode_on_the_gpu_as_the_reference_does() {
 	let mips = MipMaker::new(&gpu);
 	for (pass, choice, grey) in [(Pass::Water, "bc1", false), (Pass::Fog, "bc4", true)] {
 		let image = image(64, grey);
-		let texture = upload(&gpu, &mips, formats(choice, choice, true), pass, "test", &image);
+		let texture = upload(&gpu, &mips, formats(choice, choice, true), &LevelsAhead::default(), pass, "test", &image);
 		assert_eq!(texture.texture.format(), Choice::parse(choice).unwrap().storage.format());
 		assert_eq!(texture.texture.mip_level_count(), 7);
 		// 8 bytes a 4×4 block: 64², 32², 16², 8², 4², and 2², 1² a block each.
@@ -219,12 +219,12 @@ fn block_compressed_levels_decode_on_the_gpu_as_the_reference_does() {
 fn without_bc_on_the_gpu_the_fog_is_one_channel_and_the_water_rgba8() {
 	let Some(gpu) = gpu() else { return };
 	let mips = MipMaker::new(&gpu);
-	let water = upload(&gpu, &mips, formats("bc1", "bc4", false), Pass::Water, "water", &image(64, false));
-	let fog = upload(&gpu, &mips, formats("bc1", "bc4", false), Pass::Fog, "fog", &image(64, true));
+	let water = upload(&gpu, &mips, formats("bc1", "bc4", false), &LevelsAhead::default(), Pass::Water, "water", &image(64, false));
+	let fog = upload(&gpu, &mips, formats("bc1", "bc4", false), &LevelsAhead::default(), Pass::Fog, "fog", &image(64, true));
 	assert_eq!(water.texture.format(), wgpu::TextureFormat::Rgba8Unorm);
 	assert_eq!(fog.texture.format(), wgpu::TextureFormat::R8Unorm);
 	// A colour fog asked for in one channel stays RGBA8.
-	let colour_fog = upload(&gpu, &mips, formats("rgba8", "r8", true), Pass::Fog, "fog", &image(64, false));
+	let colour_fog = upload(&gpu, &mips, formats("rgba8", "r8", true), &LevelsAhead::default(), Pass::Fog, "fog", &image(64, false));
 	assert_eq!(colour_fog.texture.format(), wgpu::TextureFormat::Rgba8Unorm);
 }
 
@@ -232,9 +232,57 @@ fn without_bc_on_the_gpu_the_fog_is_one_channel_and_the_water_rgba8() {
 fn half_and_flat_keep_the_images_size_for_coordinates() {
 	let Some(gpu) = gpu() else { return };
 	let mips = MipMaker::new(&gpu);
-	let half = upload(&gpu, &mips, formats("rgba8-half", "r8-half-flat", false), Pass::Water, "water", &image(64, false));
+	let half = upload(&gpu, &mips, formats("rgba8-half", "r8-half-flat", false), &LevelsAhead::default(), Pass::Water, "water", &image(64, false));
 	assert_eq!((half.width, half.height), (64, 64));
 	assert_eq!((half.texture.width(), half.texture.mip_level_count()), (32, 6));
-	let flat = upload(&gpu, &mips, formats("rgba8-half", "r8-half-flat", false), Pass::Fog, "fog", &image(64, true));
+	let flat = upload(&gpu, &mips, formats("rgba8-half", "r8-half-flat", false), &LevelsAhead::default(), Pass::Fog, "fog", &image(64, true));
 	assert_eq!((flat.width, flat.texture.width(), flat.texture.mip_level_count()), (64, 32, 1));
+}
+
+#[test]
+fn by_default_the_water_is_bc1_and_the_fog_bc4() {
+	assert_eq!(Pass::Water.default_choice(), Choice::parse("bc1").unwrap());
+	assert_eq!(Pass::Fog.default_choice(), Choice::parse("bc4").unwrap());
+	assert_eq!(Pass::of(WATER_TEXTURE), Some(Pass::Water));
+	assert_eq!(Pass::of(FOG_TEXTURE), Some(Pass::Fog));
+	assert_eq!(Pass::of("gfx/water_2.png"), None);
+}
+
+#[test]
+fn a_worker_makes_the_levels_and_the_upload_takes_them() {
+	let Some(gpu) = gpu() else { return };
+	let mips = MipMaker::new(&gpu);
+	let formats = formats("bc1", "bc4", true);
+	let prepared = LevelsAhead::default();
+	let hook = prepared.hook(formats);
+	let image = image(64, true);
+	// Off the GPU thread, as the image loader's workers run it; other paths untouched.
+	std::thread::scope(|scope| {
+		scope.spawn(|| {
+			hook(FOG_TEXTURE, &image);
+			hook("gfx/other.png", &image);
+		});
+	});
+	assert!(prepared.0.lock().unwrap().keys().eq([FOG_TEXTURE]));
+	let world = WorldTextures { formats, prepared: prepared.clone() };
+	let fog = world.upload(&gpu, &mips, FOG_TEXTURE, &image);
+	assert!(prepared.0.lock().unwrap().is_empty(), "taken by the upload");
+	let format = if gpu.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) { wgpu::TextureFormat::Bc4RUnorm } else { wgpu::TextureFormat::R8Unorm };
+	assert_eq!((fog.texture.format(), fog.texture.mip_level_count()), (format, 7));
+	// Without a worker's levels, the upload makes them: the same texture.
+	let again = world.upload(&gpu, &mips, FOG_TEXTURE, &image);
+	assert_eq!(max_diff(&decoded(&gpu, &again.texture, 0), &decoded(&gpu, &fog.texture, 0)), 0);
+	// Anything else goes up as is.
+	let other = world.upload(&gpu, &mips, "gfx/other.png", &image);
+	assert_eq!((other.texture.format(), other.texture.mip_level_count()), (wgpu::TextureFormat::Rgba8Unorm, 1));
+}
+
+#[test]
+fn a_fallback_to_rgba8_makes_its_mips_on_the_gpu() {
+	let Some(gpu) = gpu() else { return };
+	let mips = MipMaker::new(&gpu);
+	// BC1 water on a GPU without BC: RGBA8 as before, nothing made on the CPU.
+	assert!(make(formats("bc1", "bc4", false), Pass::Water, "water", &image(64, false)).is_none());
+	let water = upload(&gpu, &mips, formats("bc1", "bc4", false), &LevelsAhead::default(), Pass::Water, "water", &image(64, false));
+	assert_eq!((water.texture.format(), water.texture.mip_level_count()), (wgpu::TextureFormat::Rgba8Unorm, 7));
 }

@@ -1,7 +1,8 @@
-//! A world texture's levels made on the CPU and uploaded in a format other than the
-//! default's: one channel, block compressed, or without mips. Each level is the one
+//! A world texture's levels made on the CPU in a format other than the default's (one
+//! channel, block compressed, or without mips), then uploaded. Each level is the one
 //! above halved as [`bb_assets::mips::halve`] does (the GPU's default path makes the
-//! same), then converted; at most two levels are alive at once.
+//! same), then converted. They're made on an image loader's worker, as the texture is
+//! decoded (see [`super::LevelsAhead`]); the upload only copies them.
 
 use bb_assets::Image;
 
@@ -12,33 +13,18 @@ use crate::texture::mip_count;
 use super::Storage;
 
 /// One level's texels, in a format's layout.
-struct Level {
+pub(super) struct Level {
 	width: u32,
 	height: u32,
 	bytes: Vec<u8>,
 }
 
-/// `image` as a texture in `storage`, with its mip chain if `mips`. A one-channel
-/// storage keeps its red (the caller checked it's grey).
-pub(super) fn upload(gpu: &Gpu, label: &str, image: &Image, storage: Storage, mips: bool) -> wgpu::Texture {
-	let levels = if mips { mip_count(image.width, image.height) } else { 1 };
-	let format = storage.format();
-	let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-		label: Some(label),
-		size: wgpu::Extent3d {
-			width: image.width,
-			height: image.height,
-			depth_or_array_layers: 1,
-		},
-		mip_level_count: levels,
-		sample_count: 1,
-		dimension: wgpu::TextureDimension::D2,
-		format,
-		usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-		view_formats: &[],
-	});
-	let write = |level: u32, data: Level| write_level(gpu, &texture, level, &data);
+/// `image`'s levels in `storage`: its whole mip chain if `mips`, else level 0 only. A
+/// one-channel storage keeps its red (the caller checked it's grey).
+pub(super) fn make(image: &Image, storage: Storage, mips: bool) -> Vec<Level> {
+	let count = if mips { mip_count(image.width, image.height) } else { 1 };
 	let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+	let mut levels = Vec::with_capacity(count as usize);
 	match storage {
 		Storage::Rgba8 | Storage::Bc1 => {
 			let convert = |image: &Image| Level {
@@ -49,11 +35,11 @@ pub(super) fn upload(gpu: &Gpu, label: &str, image: &Image, storage: Storage, mi
 					_ => image.rgba.clone(),
 				},
 			};
-			write(0, convert(image));
+			levels.push(convert(image));
 			let mut last: Option<Image> = None;
-			for level in 1..levels {
+			for _ in 1..count {
 				let next = bb_assets::mips::halve(last.as_ref().unwrap_or(image));
-				write(level, convert(&next));
+				levels.push(convert(&next));
 				last = Some(next);
 			}
 		}
@@ -63,7 +49,7 @@ pub(super) fn upload(gpu: &Gpu, label: &str, image: &Image, storage: Storage, mi
 				height: image.height,
 				bytes: image.rgba.chunks_exact(4).map(|t| t[0]).collect(),
 			};
-			for level in 0..levels {
+			for level in 0..count {
 				if level > 0 {
 					grey = halve_grey(&grey);
 				}
@@ -71,9 +57,32 @@ pub(super) fn upload(gpu: &Gpu, label: &str, image: &Image, storage: Storage, mi
 					Storage::Bc4 => block::encode_bc4(&Plane { width: grey.width, height: grey.height, bytes: &grey.bytes, stride: 1 }, threads),
 					_ => grey.bytes.clone(),
 				};
-				write(level, Level { width: grey.width, height: grey.height, bytes });
+				levels.push(Level { width: grey.width, height: grey.height, bytes });
 			}
 		}
+	}
+	levels
+}
+
+/// `levels` (from [`make`]) as a texture in `storage`, labelled `label`.
+pub(super) fn upload(gpu: &Gpu, label: &str, levels: &[Level], storage: Storage) -> wgpu::Texture {
+	let top = &levels[0];
+	let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+		label: Some(label),
+		size: wgpu::Extent3d {
+			width: top.width,
+			height: top.height,
+			depth_or_array_layers: 1,
+		},
+		mip_level_count: levels.len() as u32,
+		sample_count: 1,
+		dimension: wgpu::TextureDimension::D2,
+		format: storage.format(),
+		usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+		view_formats: &[],
+	});
+	for (level, data) in levels.iter().enumerate() {
+		write_level(gpu, &texture, level as u32, data);
 	}
 	texture
 }

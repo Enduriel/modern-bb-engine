@@ -2,11 +2,14 @@
 //! kept on the GPU. Both are 2048² in the game's data and tile over the view at every
 //! zoom, so they keep a full mip chain: as RGBA8, 21.3 MiB each.
 //!
-//! Their content allows less: the fog is
-//! grey (red, green and blue alike; its pass reads no alpha), the water opaque RGB of
-//! low contrast. `BB_WATER_TEXTURE` and `BB_FOG_TEXTURE` choose, for trying them in
-//! play ([`Choice::parse`]):
-//! - `rgba8` (the default): as the data has it, mips made on the GPU;
+//! Their content allows less: the fog is grey (red, green and blue alike; its pass reads
+//! no alpha), the water opaque RGB of low contrast. So by default they're block
+//! compressed: the water in BC1, the fog in BC4, 2.7 MiB each with mips (on screen at
+//! most 4 levels of 255 off, PSNR 54–67 dB). Their levels are made and encoded on the
+//! image loader's workers as they're decoded ([`LevelsAhead`]), so a load only copies them.
+//! `BB_WATER_TEXTURE` and `BB_FOG_TEXTURE` choose another, for comparisons
+//! ([`Choice::parse`]):
+//! - `rgba8`: as the data has it, mips made on the GPU (21.3 MiB);
 //! - `r8`: one channel (the fog; exact for a grey texture), a quarter of the bytes;
 //! - `bc1` (colour) or `bc4` (one channel): block compressed, an eighth of RGBA8's
 //!   bytes, encoded on the CPU with its mips (`crate::block`);
@@ -20,7 +23,10 @@
 
 mod levels;
 
-use bb_assets::Image;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use bb_assets::{Image, Prepare};
 
 use crate::gpu::Gpu;
 use crate::mips::MipMaker;
@@ -35,7 +41,31 @@ pub enum Pass {
 	Fog,
 }
 
+/// The water's texture.
+pub(crate) const WATER_TEXTURE: &str = "gfx/water.png";
+
+/// The fog of war's texture.
+pub(crate) const FOG_TEXTURE: &str = "gfx/fow.png";
+
 impl Pass {
+	/// The pass `path` is the texture of, if either.
+	pub(crate) fn of(path: &str) -> Option<Pass> {
+		match path {
+			WATER_TEXTURE => Some(Pass::Water),
+			FOG_TEXTURE => Some(Pass::Fog),
+			_ => None,
+		}
+	}
+
+	/// How its texture is kept unless the environment says otherwise.
+	pub fn default_choice(self) -> Choice {
+		let storage = match self {
+			Pass::Water => Storage::Bc1,
+			Pass::Fog => Storage::Bc4,
+		};
+		Choice { storage, ..Choice::RGBA8 }
+	}
+
 	fn reads_alpha(self) -> bool {
 		self == Pass::Water
 	}
@@ -89,8 +119,8 @@ pub struct Choice {
 }
 
 impl Choice {
-	/// As the data has it, with mips: the default.
-	pub const DEFAULT: Choice = Choice {
+	/// As the data has it, with mips (made on the GPU).
+	pub const RGBA8: Choice = Choice {
 		storage: Storage::Rgba8,
 		half: false,
 		mips: true,
@@ -106,7 +136,7 @@ impl Choice {
 			"bc4" => Storage::Bc4,
 			other => return Err(format!("{other:?} isn't a world texture format (rgba8, r8, bc1, bc4)")),
 		};
-		let mut choice = Choice { storage, ..Choice::DEFAULT };
+		let mut choice = Choice { storage, ..Choice::RGBA8 };
 		for part in parts {
 			match part.to_ascii_lowercase().as_str() {
 				"half" => choice.half = true,
@@ -117,15 +147,15 @@ impl Choice {
 		Ok(choice)
 	}
 
-	/// The choice in the environment variable `name`; the default without it (or, said
+	/// The choice in the environment variable `name`; `default` without it (or, said
 	/// on stderr, with one it can't read).
-	fn from_env(name: &str) -> Choice {
-		let Some(value) = std::env::var_os(name) else { return Choice::DEFAULT };
+	fn from_env(name: &str, default: Choice) -> Choice {
+		let Some(value) = std::env::var_os(name) else { return default };
 		match Choice::parse(&value.to_string_lossy()) {
 			Ok(choice) => choice,
 			Err(e) => {
-				eprintln!("{name}: {e}; using rgba8");
-				Choice::DEFAULT
+				eprintln!("{name}: {e}; using {}", default.storage.name());
+				default
 			}
 		}
 	}
@@ -143,8 +173,8 @@ impl WorldFormats {
 	/// The environment's choices (`BB_WATER_TEXTURE`, `BB_FOG_TEXTURE`) on `gpu`.
 	pub fn from_env(gpu: &Gpu) -> WorldFormats {
 		WorldFormats {
-			water: Choice::from_env("BB_WATER_TEXTURE"),
-			fog: Choice::from_env("BB_FOG_TEXTURE"),
+			water: Choice::from_env("BB_WATER_TEXTURE", Pass::Water.default_choice()),
+			fog: Choice::from_env("BB_FOG_TEXTURE", Pass::Fog.default_choice()),
 			bc: gpu.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
 		}
 	}
@@ -197,22 +227,91 @@ pub fn resolve(pass: Pass, wanted: Storage, content: Content, size: (u32, u32), 
 	}
 }
 
-/// Upload `image` (`path`'s) for `pass` as `formats` choose (see the module's docs).
-/// The default is the original path: RGBA8 uploaded as is, its mips made on the GPU.
-/// The texture keeps the image's size as its own (`width`, `height`), the size its
-/// pass takes coordinates over, whatever size it's stored at.
-pub(crate) fn upload(gpu: &Gpu, mips: &MipMaker, formats: WorldFormats, pass: Pass, path: &str, image: &Image) -> GpuTexture {
+/// A texture's levels made ahead, and how they're kept.
+pub(crate) struct Made {
+	label: String,
+	storage: Storage,
+	levels: Vec<levels::Level>,
+}
+
+/// `image` (`path`'s) for `pass` as `formats` choose (see the module's docs), its levels
+/// made on the CPU; `None` for RGBA8 at its size with mips (what it falls back to as
+/// well), which [`upload`] makes on the GPU.
+fn make(formats: WorldFormats, pass: Pass, path: &str, image: &Image) -> Option<Made> {
 	let choice = formats.choice(pass);
-	if choice == Choice::DEFAULT {
-		return mips.with_mips(gpu, &GpuTexture::upload_flat(gpu, path, image));
+	if choice == Choice::RGBA8 {
+		return None;
 	}
-	let stored = if choice.half { bb_assets::mips::halve(image) } else { image.clone() };
+	let half = choice.half.then(|| bb_assets::mips::halve(image));
+	let stored = half.as_ref().unwrap_or(image);
 	let storage = resolve(pass, choice.storage, Content::of(image), (stored.width, stored.height), formats.bc);
 	if storage != choice.storage {
 		eprintln!("{path}: {} isn't possible here, kept as {}", choice.storage.name(), storage.name());
 	}
+	if storage == Storage::Rgba8 && !choice.half && choice.mips {
+		return None;
+	}
 	let label = format!("{path} {}{}{}", storage.name(), if choice.half { " half" } else { "" }, if choice.mips { "" } else { " flat" });
-	let texture = levels::upload(gpu, &label, &stored, storage, choice.mips);
+	Some(Made {
+		label,
+		storage,
+		levels: levels::make(stored, storage, choice.mips),
+	})
+}
+
+/// The world textures' levels made on the image loader's workers as each is decoded,
+/// by path, until its upload takes them: the encoding (~0.1–0.4 s of CPU for the pair)
+/// runs beside the rest of a load, not on the frame that uploads.
+#[derive(Clone, Default)]
+pub(crate) struct LevelsAhead(Arc<Mutex<HashMap<String, Option<Made>>>>);
+
+impl LevelsAhead {
+	/// The loader's [`Prepare`] hook: the levels of a world texture as `formats` choose.
+	pub(crate) fn hook(&self, formats: WorldFormats) -> Prepare {
+		let made = self.0.clone();
+		Arc::new(move |path: &str, image: &Image| {
+			if let Some(pass) = Pass::of(path) {
+				let levels = make(formats, pass, path, image);
+				made.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_string(), levels);
+			}
+		})
+	}
+
+	fn take(&self, path: &str) -> Option<Option<Made>> {
+		self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(path)
+	}
+}
+
+/// The world textures' formats and the levels made for them ahead: what the renderer's
+/// uploads need.
+#[derive(Clone)]
+pub(crate) struct WorldTextures {
+	pub formats: WorldFormats,
+	pub prepared: LevelsAhead,
+}
+
+impl WorldTextures {
+	/// Upload `path`'s `image` (see [`upload`]): a world texture as chosen, anything else
+	/// as is (level 0 only).
+	pub(crate) fn upload(&self, gpu: &Gpu, mips: &MipMaker, path: &str, image: &Image) -> GpuTexture {
+		match Pass::of(path) {
+			Some(pass) => upload(gpu, mips, self.formats, &self.prepared, pass, path, image),
+			None => GpuTexture::upload_flat(gpu, path, image),
+		}
+	}
+}
+
+/// Upload `image` (`path`'s) for `pass` as `formats` choose (see the module's docs),
+/// with the levels a worker made for it if it did (`prepared`), else made here. RGBA8
+/// at its size is uploaded as is, its mips made on the GPU. The texture keeps the
+/// image's size as its own (`width`, `height`), the size its pass takes coordinates
+/// over, whatever size it's stored at.
+pub(crate) fn upload(gpu: &Gpu, mips: &MipMaker, formats: WorldFormats, prepared: &LevelsAhead, pass: Pass, path: &str, image: &Image) -> GpuTexture {
+	let made = prepared.take(path).unwrap_or_else(|| make(formats, pass, path, image));
+	let Some(made) = made else {
+		return mips.with_mips(gpu, &GpuTexture::upload_flat(gpu, path, image));
+	};
+	let texture = levels::upload(gpu, &made.label, &made.levels, made.storage);
 	let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 	GpuTexture {
 		texture,

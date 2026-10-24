@@ -44,7 +44,7 @@ pub use hash::name_hash;
 pub use image::{Image, decode_png};
 pub use load_order::{BRUSH_DIR, brush_load_order};
 #[cfg(feature = "images")]
-pub use loader::{Decoded, FileSource, FileStream, ImageLoader, Slot, TextureCache, load_image};
+pub use loader::{Decoded, FileSource, FileStream, ImageLoader, Prepare, Slot, TextureCache, load_image};
 #[cfg(feature = "images")]
 pub use frame_loader::{FrameLoader, FrameRequest, LoadedFrame, LoadedFrames};
 #[cfg(feature = "images")]
