@@ -57,6 +57,8 @@ mod mac;
 #[cfg(target_os = "macos")]
 mod mac_keys;
 mod memory;
+mod memory_dump;
+mod memory_dump_trace;
 mod memory_flight;
 mod opening;
 mod page_frames;
@@ -95,6 +97,8 @@ pub use damage::PaintRect;
 pub use display::{Display, with_display};
 pub use frame::FrameBuffer;
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
+pub use memory_dump::ChromiumDump;
+pub use memory_dump_trace::ChromiumProcess;
 pub use memory_flight::Released;
 use ipc::Arg;
 pub use live_input::{Modifiers, MouseButton, coherent_key_code, modifiers_of_mask};
@@ -332,6 +336,9 @@ pub struct UiHost {
 	/// Times the releases: DevTools' answers to their calls go to the flight
 	/// ([`memory_flight`]). Registered at the first release; gone before CEF is.
 	release_observer: RefCell<Option<Registration>>,
+	/// Passes DevTools' answers on to the memory dump on its way ([`memory_dump`]).
+	/// Registered at the first dump; gone before CEF is.
+	dump_observer: RefCell<Option<Registration>>,
 	cache_dir: PathBuf,
 	/// Where CEF was initialized, and is shut down when the host goes.
 	cef: Option<cef_thread::CefThread>,
@@ -372,6 +379,7 @@ impl UiHost {
 			paint_counters: Default::default(),
 			clipboard: config.clipboard.clone(),
 			releases: Default::default(),
+			memory_dumps: Default::default(),
 		});
 		bridge_server::start(bridge, shared.clone());
 		let opening = opening::Opening {
@@ -446,6 +454,7 @@ impl UiHost {
 			)),
 			release_parts: memory::Parts::from_env(),
 			release_observer: RefCell::new(None),
+			dump_observer: RefCell::new(None),
 			cache_dir: config.cache_dir,
 			cef: Some(cef),
 		})
@@ -661,6 +670,40 @@ impl UiHost {
 		let frame = host.browser().and_then(|b| b.main_frame());
 		let observed = self.release_observer.borrow().is_some();
 		memory::release(&host, frame.as_ref(), self.release_parts, &self.shared.releases, observed);
+	}
+
+	/// Start Chromium's own memory dump of the page's processes, and after it, with
+	/// `heap_snapshot`, V8's heap snapshot of the page into that file (see
+	/// [`memory_dump`]). It comes over the next frames: [`memory_dump_poll`](Self::memory_dump_poll).
+	pub fn start_memory_dump(&self, heap_snapshot: Option<PathBuf>) -> Result<(), String> {
+		let host = self.browser_host().ok_or("the page has no browser")?;
+		if self.dump_observer.borrow().is_none() {
+			let mut observer = memory_dump::DumpObserver::new(self.shared.clone());
+			*self.dump_observer.borrow_mut() = host.add_dev_tools_message_observer(Some(&mut observer));
+		}
+		if self.dump_observer.borrow().is_none() {
+			return Err("CEF took no DevTools observer".into());
+		}
+		if !self.shared.memory_dumps.start(&host, heap_snapshot) {
+			return Err("a memory dump is already on its way".into());
+		}
+		// The renderer's part runs on its main thread.
+		self.rest.wake();
+		Ok(())
+	}
+
+	/// The memory dump, once done; until then the page is kept running (its part runs on
+	/// its main thread). `None` while it's on its way, or with none asked for.
+	pub fn memory_dump_poll(&self) -> Option<ChromiumDump> {
+		if self.shared.memory_dumps.in_flight() {
+			self.rest.wake();
+		}
+		self.shared.memory_dumps.take_done()
+	}
+
+	/// Give up on the memory dump on its way, saying `why`: what came of it so far.
+	pub fn abandon_memory_dump(&self, why: &str) -> Option<ChromiumDump> {
+		self.shared.memory_dumps.abandon(self.browser_host().as_ref(), why)
 	}
 
 	/// The memory releases that finished since the last call: how long each took, from
@@ -1090,6 +1133,7 @@ impl Drop for UiHost {
 	fn drop(&mut self) {
 		pump_schedule::SCHEDULE.set_waker(None);
 		drop(self.release_observer.take());
+		drop(self.dump_observer.take());
 		// Release a page still waiting on the game.
 		drop(self.pending.take());
 		let browser = || self.shared.browser.lock().unwrap_or_else(|e| e.into_inner()).clone();

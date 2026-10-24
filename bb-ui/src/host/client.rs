@@ -92,6 +92,8 @@ pub(super) struct Shared {
 	pub clipboard: Arc<dyn Clipboard>,
 	/// The memory release on its way through the page, if any (see [`super::memory`]).
 	pub releases: super::memory_flight::Flights,
+	/// The memory dump on its way, if any (see [`super::memory_dump`]).
+	pub memory_dumps: super::memory_dump::Dumps,
 }
 
 impl Shared {
