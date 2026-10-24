@@ -35,6 +35,7 @@ pub fn processes() -> Part {
 				.with("vram", p.vram)
 				.with("gtt", p.gtt)
 				.with("figures", Json::Object(p.figures.iter().map(|(n, b)| (n.clone(), Json::from(*b))).collect()))
+				.with("gpu_clients", Json::Array(p.gpu_clients.iter().map(client_json).collect()))
 		})
 		.collect();
 	part.json = obj().with("processes", Json::Array(rows));
@@ -70,8 +71,17 @@ pub fn processes() -> Part {
 	part
 }
 
+/// A GPU client's figures.
+fn client_json(c: &stats::GpuClient) -> Json {
+	obj()
+		.with("id", c.id.as_str())
+		.with("driver", c.driver.as_str())
+		.with("figures", Json::Object(c.figures.iter().map(|(n, b)| (n.clone(), Json::from(*b))).collect()))
+}
+
 /// wgpu's allocator, the renderer's textures, pages and glyph pages, the frame the game
-/// draws into and the UI page's texture.
+/// draws into and the UI page's texture, and the game's GPU clients as the driver counts
+/// them, for comparison.
 pub fn gpu(game: &Game, gpu: &Gpu, frame_bytes: u64) -> Part {
 	let mut part = Part::new("gpu");
 	let memory = game.renderer_memory();
@@ -93,6 +103,7 @@ pub fn gpu(game: &Game, gpu: &Gpu, frame_bytes: u64) -> Part {
 		.with("fog_mask", memory.fog_mask)
 		.with("own", memory.own)
 		.with("glyph_pages", obj().with("count", residency.glyph_pages.0).with("bytes", residency.glyph_pages.1))
+		.with("frames_loading", residency.frames_loading)
 		.with("loading", memory.loading)
 		.with("failed", memory.failed)
 		.with("warmed_waiting", obj().with("count", memory.held).with("bytes", memory.held_bytes));
@@ -122,10 +133,30 @@ pub fn gpu(game: &Game, gpu: &Gpu, frame_bytes: u64) -> Part {
 				.with("height", p.height)
 				.with("bytes", p.bytes)
 				.with("frames", p.frames)
+				.with("used_texels", p.used_texels)
+				.with("drawn_by", obj().with("world", p.drawn_by[0]).with("battle", p.drawn_by[1]).with("other", p.drawn_by[2]))
 				.with("last_drawn_frame", p.last_drawn)
 		})
 		.collect();
 	json = json.with("pages", Json::Array(pages));
+	if !residency.pages.is_empty() || residency.frames_loading > 0 {
+		part.line(format!("  pages of frames ({} frames loading):", residency.frames_loading));
+	}
+	for p in &residency.pages {
+		let full = p.used_texels as f64 * 100.0 / (u64::from(p.width) * u64::from(p.height)).max(1) as f64;
+		part.line(format!(
+			"    page {}: {}x{} {}, {} frames ({full:.0}% full; drawn by the world {}, battles {}, the rest {}), last drawn {} frames ago",
+			p.page,
+			p.width,
+			p.height,
+			mib(p.bytes),
+			p.frames,
+			p.drawn_by[0],
+			p.drawn_by[1],
+			p.drawn_by[2],
+			residency.frame.saturating_sub(p.last_drawn)
+		));
+	}
 	part.line(format!("  largest textures (of {}):", memory.textures.len()));
 	for t in memory.textures.iter().take(12) {
 		let ago = residency
@@ -167,6 +198,39 @@ pub fn gpu(game: &Game, gpu: &Gpu, frame_bytes: u64) -> Part {
 		}
 		None => part.line("wgpu's allocator: this backend gives no report".to_string()),
 	}
+	// The driver's count of the game's GPU memory, beside wgpu's blocks: on amdgpu the
+	// page's GL context (Chromium's GPU work, in this process) shares our DRM client, so
+	// its textures and buffers count there too (~150 MiB at 1080p), as do the driver's own.
+	let clients = stats::own_gpu_clients();
+	let figure = |c: &stats::GpuClient, key: &str| c.figures.iter().find(|(n, _)| n == key).map_or(0, |(_, b)| *b);
+	let vram = |c: &stats::GpuClient| figure(c, "drm-memory-vram").max(figure(c, "drm-total-local0"));
+	let gtt = |c: &stats::GpuClient| figure(c, "drm-memory-gtt").max(figure(c, "drm-total-system0"));
+	if !clients.is_empty() {
+		let (all_vram, all_gtt): (u64, u64) = (clients.iter().map(vram).sum(), clients.iter().map(gtt).sum());
+		let reserved = gpu.device.generate_allocator_report().map_or(0, |r| r.total_reserved_bytes);
+		part.line(format!(
+			"the game's DRM clients ({}): VRAM {}, GTT {}; beyond wgpu's blocks {} (the driver's own, and on amdgpu Chromium's GPU work, which shares our client)",
+			clients.len(),
+			mib(all_vram),
+			mib(all_gtt),
+			mib((all_vram + all_gtt).saturating_sub(reserved))
+		));
+		for c in clients.iter().filter(|c| vram(c) + gtt(c) > 0) {
+			part.line(format!("    client {} ({}): VRAM {}, GTT {}", c.id, c.driver, mib(vram(c)), mib(gtt(c))));
+		}
+	}
+	json = json.with("drm_clients", Json::Array(clients.iter().map(client_json).collect()));
+	let copies = game.front().copy_stats();
+	if copies.paints > 0 {
+		part.line(format!(
+			"the UI page: our copy {}, {} paints copied so far, {} of the paints' buffers imported, {} failed",
+			mib(memory.ui_page),
+			copies.paints,
+			copies.imports,
+			copies.failures
+		));
+	}
+	json = json.with("ui_copies", obj().with("paints", copies.paints).with("imports", copies.imports).with("failures", copies.failures));
 	part.json = json;
 	part
 }

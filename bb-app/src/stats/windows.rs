@@ -64,6 +64,7 @@ fn process_memory(pid: u32, game: bool) -> Option<ProcessMemory> {
 		rss_kinds: Vec::new(),
 		vram: 0,
 		gtt: 0,
+		gpu_clients: Vec::new(),
 		figures: figures.into_iter().map(|(n, b)| (n.to_string(), b as u64)).collect(),
 	})
 }

@@ -67,9 +67,14 @@ def figures(snap):
     put("gpu", "renderer textures (count)", len(textures), "n")
     put("gpu", "renderer pages", sum(p["bytes"] for p in g.get("pages") or []))
     put("gpu", "renderer pages: frames", sum(p["frames"] for p in g.get("pages") or []), "n")
+    put("gpu", "renderer pages: frames' texels", sum(p.get("used_texels", 0) for p in g.get("pages") or []), "n")
+    put("gpu", "renderer pages: frames loading", g.get("frames_loading"), "n")
     put("gpu", "glyph pages", (g.get("glyph_pages") or {}).get("bytes"))
     for key in ("frame_target", "ui_page", "fog_mask", "own"):
         put("gpu", key, g.get(key))
+    for c in g.get("drm_clients") or []:
+        for key, v in (c.get("figures") or {}).items():
+            put("gpu", f"game's DRM client: {key}", v)
     w = g.get("wgpu_allocator") or {}
     put("gpu", "wgpu: allocated", w.get("allocated"))
     put("gpu", "wgpu: reserved in blocks", w.get("reserved"))

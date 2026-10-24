@@ -36,10 +36,25 @@ pub struct ProcessMemory {
 	/// GPU memory it allocated: in video memory, and in system memory the GPU maps (GTT).
 	pub vram: u64,
 	pub gtt: u64,
+	/// Its GPU clients (Linux: each DRM client its descriptors hold, once), each with the
+	/// memory figures its `fdinfo` gives (`drm-memory-vram`, `drm-shared-vram`,
+	/// `drm-total-gtt`, `amd-evicted-vram`, …). On amdgpu the page's GL context (Chromium's
+	/// GPU work, in the game's process) shares the game's client, so its memory counts there.
+	pub gpu_clients: Vec<GpuClient>,
 	/// The system's own figures for it, in bytes, by its names: on Linux `/proc`'s
 	/// `status` (`VmRSS`, `VmHWM`, `RssAnon`, `RssFile`, `RssShmem`, `VmSwap`, …), on
 	/// Windows the process memory counters (`WorkingSetSize`, `PrivateUsage`, …), on
 	/// macOS its resource usage (`phys_footprint`, `resident_size`).
+	pub figures: Vec<(String, u64)>,
+}
+
+/// One GPU client of a process's (see [`ProcessMemory::gpu_clients`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuClient {
+	pub id: String,
+	/// The driver (`drm-driver`: `amdgpu`, `i915`, …).
+	pub driver: String,
+	/// Its memory figures in bytes, by their `fdinfo` names.
 	pub figures: Vec<(String, u64)>,
 }
 
@@ -122,6 +137,18 @@ pub fn process_role(pid: u32) -> Option<String> {
 	{
 		let _ = pid;
 		None
+	}
+}
+
+/// This process's GPU clients (see [`ProcessMemory::gpu_clients`]); none off Linux.
+pub fn own_gpu_clients() -> Vec<GpuClient> {
+	#[cfg(target_os = "linux")]
+	{
+		linux::gpu_clients(std::process::id())
+	}
+	#[cfg(not(target_os = "linux"))]
+	{
+		Vec::new()
 	}
 }
 

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use super::{MappingKind, ProcessMemory, Usage};
+use super::{GpuClient, MappingKind, ProcessMemory, Usage};
 
 /// `/proc`'s times are in clock ticks of `USER_HZ`, 100 on every Linux.
 const TICKS_PER_SECOND: u64 = 100;
@@ -78,7 +78,10 @@ fn process_memory(pid: u32) -> Option<ProcessMemory> {
 		kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
 		kinds
 	};
-	let (vram, gtt) = gpu_memory(pid);
+	let gpu_clients = gpu_clients(pid);
+	let figure = |c: &GpuClient, key: &str| c.figures.iter().find(|(n, _)| n == key).map_or(0, |(_, b)| *b);
+	let vram = gpu_clients.iter().map(|c| figure(c, "drm-memory-vram").max(figure(c, "drm-total-local0"))).sum();
+	let gtt = gpu_clients.iter().map(|c| figure(c, "drm-memory-gtt").max(figure(c, "drm-total-system0"))).sum();
 	Some(ProcessMemory {
 		pid,
 		role: role(pid),
@@ -86,6 +89,7 @@ fn process_memory(pid: u32) -> Option<ProcessMemory> {
 		rss_kinds: largest_first(rss),
 		vram,
 		gtt,
+		gpu_clients,
 		figures: status_figures(pid),
 	})
 }
@@ -127,26 +131,33 @@ fn mapping_kind(name: &str) -> MappingKind {
 	}
 }
 
-/// The GPU memory the process allocated, in video memory and in GTT, from its DRM file
-/// descriptors' `fdinfo` (each client once: one can be open on several descriptors).
-/// amdgpu and most drivers name the regions `drm-memory-vram`/`-gtt`; Intel's
-/// `drm-total-local0`/`-system0`.
-fn gpu_memory(pid: u32) -> (u64, u64) {
-	let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fdinfo")) else { return (0, 0) };
-	let mut clients = HashSet::new();
-	let (mut vram, mut gtt) = (0, 0);
+/// The process's GPU clients from its DRM file descriptors' `fdinfo` (each client once:
+/// one can be open on several descriptors), with their memory figures. amdgpu and most
+/// drivers name the regions `drm-memory-vram`/`-gtt`; Intel's `drm-total-local0`/`-system0`.
+pub(super) fn gpu_clients(pid: u32) -> Vec<GpuClient> {
+	let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fdinfo")) else { return Vec::new() };
+	let mut seen = HashSet::new();
+	let mut clients = Vec::new();
 	for fd in fds.flatten() {
 		let Ok(info) = std::fs::read_to_string(fd.path()) else { continue };
 		let field = |key: &str| info.lines().find_map(|l| l.strip_prefix(key)?.trim().strip_prefix(':').map(str::trim));
 		let Some(client) = field("drm-client-id") else { continue };
-		if !clients.insert(client.to_string()) {
+		if !seen.insert(client.to_string()) {
 			continue;
 		}
-		let bytes = |key: &str| field(key).map_or(0, parse_size);
-		vram += bytes("drm-memory-vram").max(bytes("drm-total-local0"));
-		gtt += bytes("drm-memory-gtt").max(bytes("drm-total-system0"));
+		// The sizes only (`123 KiB`), not the engines' busy times (`… ns`).
+		let figures = info
+			.lines()
+			.filter_map(|l| {
+				let (key, value) = l.split_once(':')?;
+				let (value, unit) = (value.trim(), value.split_whitespace().nth(1));
+				let sized = matches!(unit, Some("KiB" | "MiB" | "GiB")) && (key.starts_with("drm-") || key.starts_with("amd-"));
+				sized.then(|| (key.to_string(), parse_size(value)))
+			})
+			.collect();
+		clients.push(GpuClient { id: client.to_string(), driver: field("drm-driver").unwrap_or("").to_string(), figures });
 	}
-	(vram, gtt)
+	clients
 }
 
 /// `123 KiB`, `4 MiB` or a bare number of bytes.
