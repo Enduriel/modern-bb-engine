@@ -211,16 +211,17 @@ fn an_original_save_loaded_and_saved_again_is_the_one_the_original_writes() {
 	engine.saves().set_modified(true);
 	// As the probe made it: seed, load, and save at once (the world state ignores a load
 	// within 4 s of the last), under the name its metadata records.
+	let original = std::fs::read(dir.join("bb_probe_new_campaign_reloaded_seeded.sav")).unwrap();
+	let name = squirrel_bb::original_save_name(&original).expect("the original's save reads");
 	for _ in 0..300 {
 		frame(&engine);
 	}
 	script(
 		&engine,
 		"load and save",
-		"::Math.seedRandom(12345); ::World.State.loadCampaign(\"bb_probe_new_campaign\"); ::World.State.saveCampaign(\"bb_probe_resave\");",
+		&format!("::Math.seedRandom(12345); ::World.State.loadCampaign(\"bb_probe_new_campaign\"); ::World.State.saveCampaign(\"{name}\");"),
 	);
-	let ours = std::fs::read(dir.join("bb_probe_resave.sav")).expect("our save");
-	let original = std::fs::read(dir.join("bb_probe_new_campaign_reloaded_seeded.sav")).unwrap();
+	let ours = std::fs::read(dir.join(format!("{name}.sav"))).expect("our save");
 	let differences = squirrel_bb::compare_original_saves(&ours, &original).expect("both read");
 	assert!(differences.is_empty(), "ours vs the original's:\n{}", differences.join("\n"));
 }

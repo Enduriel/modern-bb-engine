@@ -4,5 +4,6 @@
 # BB_FRAME_GOLDENS names. Look at
 # the new PNGs before relying on them.
 set -e
+: "${BB_FRAME_GOLDENS:?set BB_FRAME_GOLDENS to the goldens folder}"
 cd "$(dirname "$0")/../.."
 BB_FRAME_GOLDENS_UPDATE=1 cargo test --release -p bb-app --features ui --test frame_regression

@@ -80,6 +80,12 @@ fn layer_differences(a: &Layer, b: &Layer, out: &mut Vec<String>) {
 
 /// How two campaign saves of the original's layout differ, as above. Empty: they're the
 /// same save.
+/// The name a campaign save of the original's layout was saved under (its metadata's).
+pub fn original_save_name(bytes: &[u8]) -> Result<String, String> {
+	let (meta, _): (super::super::meta::Meta, SaveReader) = container::decode(bytes.to_vec(), "save")?;
+	Ok(meta.name)
+}
+
 pub fn compare_original_saves(a: &[u8], b: &[u8]) -> Result<Vec<String>, String> {
 	let (a, b) = (parts(a, "first save")?, parts(b, "second save")?);
 	let mut out = Vec::new();
