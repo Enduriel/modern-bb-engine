@@ -68,6 +68,23 @@ const SWITCHES: &[(&str, Option<&str>)] = &[
 	("disable-features", Some("SpareRendererForSitePerProcess")),
 ];
 
+/// What Chromium's GPU side keeps of the page's pictures (`--force-gpu-mem-discardable-limit-mb`):
+/// the pictures the page draws are decoded in its renderer and uploaded once into GPU
+/// textures (the transfer cache), which stay when the page stops drawing them, for a later
+/// draw, until they pass this limit. Chromium's own limit is sized for a browser's tabs:
+/// 256 MB on a machine with 4 GB or more. Our page's pictures, each town's and event's
+/// background among them, so kept it until then, a quarter of it (64 MB) after each scene
+/// discarded (`memory`'s moderate pressure). Measured (2026-10-24, RX 9070 XT,
+/// 2560x1358, vanilla), visiting 14 towns: 70 MB kept, the game's GPU memory 45 MiB more
+/// than with 32; at the main menu after quitting a campaign: 66 MB, 26–40 MiB more. The
+/// pictures shown are never dropped (only those no longer drawn count against the limit),
+/// so a picture over the limit (a 4K background) still shows; one drawn again after it
+/// went is uploaded again from the renderer's decoded copy. With 32 MB, visiting 7 towns
+/// four times over and opening the character screen 8 times showed no more late frames
+/// or longer frames than with Chromium's limit (180 Hz). Rechecked with
+/// `BB_UI_SWITCHES=force-gpu-mem-discardable-limit-mb=256`.
+const GPU_MEMORY_SWITCHES: &[(&str, Option<&str>)] = &[("force-gpu-mem-discardable-limit-mb", Some("32"))];
+
 /// V8's flags for the page (`--js-flags`), unless `BB_UI_V8_FLAGS` gives others (empty:
 /// none): its memory saver mode, which keeps the heap small at the cost of more frequent
 /// collections. In V8 15.4 (Chromium 154)
@@ -207,7 +224,7 @@ wrap_app! {
 			if let Some(ozone) = self.ozone {
 				command_line.append_switch_with_value(Some(&"ozone-platform".into()), Some(&ozone.into()));
 			}
-			for (name, value) in SWITCHES.iter().chain(OS_SWITCHES) {
+			for (name, value) in SWITCHES.iter().chain(GPU_MEMORY_SWITCHES).chain(OS_SWITCHES) {
 				match value {
 					Some(value) => command_line.append_switch_with_value(Some(&(*name).into()), Some(&(*value).into())),
 					None => command_line.append_switch(Some(&(*name).into())),

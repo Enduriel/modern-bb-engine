@@ -9,7 +9,8 @@
 //! is, text advances by whole pixels, and right clicks open no menu, as in Coherent;
 //! scripts inserted at runtime run in Coherent's order. The page's links reach the URL
 //! opener the game installs; copy and paste go through the game's clipboard.
-//! Where the game discards a scene, the page gives its memory back. Vanilla's FPS
+//! Where the game discards a scene, the page gives its memory back, and the pictures it
+//! no longer draws stay on the GPU only up to a limit. Vanilla's FPS
 //! module shows only when the game asks for it. Scroll bars follow their content without
 //! polling it. Skips if there is no Steam install.
 //!
@@ -258,6 +259,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	faces_are_never_faked(&session)?;
 	text_lays_out_in_whole_pixels(&session)?;
 	discards_give_memory_back(&session)?;
+	pictures_no_longer_drawn_stay_under_the_gpu_limit(&session)?;
 	right_clicks_reach_the_page(&session)?;
 	modifiers_reach_the_pages_mouse_events(&session)?;
 	images_dont_drag_away_clicks(&session)?;
@@ -1334,6 +1336,51 @@ fn discards_give_memory_back(session: &UiSession) -> Result<(), String> {
 	let gone = session.eval("window.__bbWeak.deref() === undefined")?;
 	session.eval("delete window.__bbWeak; true")?;
 	ensure(gone == Json::Bool(true), "no collection after the release")
+}
+
+/// The pictures the page drew and no longer draws stay on the GPU up to the host's limit
+/// (`--force-gpu-mem-discardable-limit-mb=32`, bb-ui's `GPU_MEMORY_SWITCHES`), not up to
+/// Chromium's own (256 MB): after 32 pictures of 2 MiB each (1024x512, decoded), shown one
+/// after another, Chromium's GPU side keeps at most 32 MiB of them (and some slack for the
+/// cache's bookkeeping). Some must be kept, or the figure would say nothing.
+fn pictures_no_longer_drawn_stay_under_the_gpu_limit(session: &UiSession) -> Result<(), String> {
+	const MIB: u64 = 1 << 20;
+	for i in 0..32 {
+		// A picture of its own each time (a decode and an upload of its own), shown at its
+		// size (decoded at full scale) for a few page frames, then gone.
+		session.eval(&format!(
+			"(function () {{
+				var c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+				var g = c.getContext('2d'); var grad = g.createLinearGradient(0, 0, 1024, 512);
+				grad.addColorStop(0, 'rgb({r}, 40, 90)'); grad.addColorStop(1, 'rgb(20, {r}, 200)');
+				g.fillStyle = grad; g.fillRect(0, 0, 1024, 512);
+				document.querySelectorAll('.bb-gpu-limit').forEach(function (e) {{ e.remove(); }});
+				var img = new Image(); img.className = 'bb-gpu-limit';
+				img.style.cssText = 'position: fixed; left: 0; top: 0; width: 1024px; height: 512px; z-index: 100000';
+				img.src = c.toDataURL('image/png'); document.body.appendChild(img);
+				return true;
+			}})()",
+			r = i * 7 + 10
+		))?;
+		session.run_frames(0.25)?;
+	}
+	session.eval("document.querySelectorAll('.bb-gpu-limit').forEach(function (e) { e.remove(); }); true")?;
+	session.run_frames(0.5)?;
+	session.host().start_memory_dump(None)?;
+	let deadline = Instant::now() + Duration::from_secs(30);
+	let dump = loop {
+		if let Some(dump) = session.host().memory_dump_poll() {
+			break dump;
+		}
+		ensure(Instant::now() < deadline, "Chromium's memory dump never came")?;
+		session.run_frames(0.1)?;
+	};
+	ensure(dump.errors.is_empty(), format!("Chromium's memory dump: {}", dump.errors.join("; ")))?;
+	let kept: u64 = dump.processes.iter().filter_map(|p| p.figure("gpu/transfer_cache", "size")).sum();
+	ensure(
+		(8 * MIB..=36 * MIB).contains(&kept),
+		format!("Chromium's GPU side keeps {:.1} MiB of the page's pictures (8 to 36 expected)", kept as f64 / MIB as f64),
+	)
 }
 
 /// The right mouse button reaches the page, and Chromium shows no menu of its own
