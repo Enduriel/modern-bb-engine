@@ -15,6 +15,13 @@
 //! steady the frame rate; at 1x the same jitter is a tenth of a pixel. The window tests
 //! pin it (`the_world_steps_whole_refreshes_though_frames_start_late`).
 //!
+//! The original doesn't do this (probed with a new campaign travelling at 8x in a
+//! headless 60 Hz gamescope): its `Time.getDelta` is the time since the last frame's
+//! start in whole milliseconds (16 and 17 alternating), with the same late and early
+//! pairs (21/14, 20/13, 27/7 in four seconds), and the party's steps follow them. Whole
+//! refreshes are a deliberate divergence: what scripts see is
+//! real time within a couple of refreshes, as smooth as the display.
+//!
 //! So while presenting waits for the display and its refresh is known (see
 //! `pacing::Pacer::display_refresh`), a step is given the whole refreshes nearest to the
 //! real time owed (at least one: each presented frame is shown for at least one), and
