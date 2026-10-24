@@ -17,7 +17,8 @@
 // waiting. The final answer
 // is {"done": true, ...}. A `callSQ` result reaches its promise in a later task
 // (`_Result`), as in the original; the other calls are never answered (their promises
-// stay pending, also as in the original). A call made by one of the page's own tasks
+// stay pending, also as in the original), and coherent.js's table of calls waiting for
+// an answer (`engine._ActiveRequests`) lets them go. A call made by one of the page's own tasks
 // (an animation frame, a timer, input), rather than from inside one of the game's
 // calls, is a `task` request instead, so the game can tell the two apart.
 //
@@ -169,6 +170,12 @@
 			setTimeout(function () { engine._Result(id); }, 0);
 		} else if (reply.errors) {
 			setTimeout(function () { engine._OnError(id, reply.errors); }, 0);
+		} else if (engine._ActiveRequests) {
+			// A void call (`asyncCallSQ`, `registerScreen`, …): never answered, so its
+			// promise stays pending, but coherent.js's table of calls waiting for an
+			// answer lets it go, or it would keep every one: ~400 a battle, each a
+			// promise and its emitter. Nothing else holds it: SQ.call drops it.
+			delete engine._ActiveRequests[id];
 		}
 	}
 

@@ -14,9 +14,10 @@ use super::ipc::{self, Arg};
 /// timers and animation frames counted, for the game to tell when it may rest), the
 /// bridge (see the file for the protocol), the order inserted scripts run in, the emulation of Coherent's layout and
 /// style differences, scroll bars that follow their content instead of polling it, the
-/// emulation of how it draws tiled backgrounds, its image cache, then the unbinding of
-/// handlers the UI's plugins leave behind.
-const SCRIPTS: [(&str, &str); 8] = [
+/// emulation of how it draws tiled backgrounds, its image cache, the unbinding of
+/// handlers the UI's plugins leave behind, then the release of Velocity's measuring
+/// elements.
+const SCRIPTS: [(&str, &str); 9] = [
 	("bb://page_work.js", include_str!("page_work.js")),
 	("bb://bootstrap.js", include_str!("bootstrap.js")),
 	("bb://script_order.js", include_str!("script_order.js")),
@@ -25,6 +26,7 @@ const SCRIPTS: [(&str, &str); 8] = [
 	("bb://tiles.js", include_str!("tiles.js")),
 	("bb://image_cache.js", include_str!("image_cache.js")),
 	("bb://teardown.js", include_str!("teardown.js")),
+	("bb://velocity_dummies.js", include_str!("velocity_dummies.js")),
 ];
 
 /// `window.ModernEngine`: what mods' JS detects this engine by, as their Squirrel does by

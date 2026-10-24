@@ -260,6 +260,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	text_lays_out_in_whole_pixels(&session)?;
 	discards_give_memory_back(&session)?;
 	pictures_no_longer_drawn_stay_under_the_gpu_limit(&session)?;
+	velocity_lets_its_measuring_elements_go(&session)?;
 	right_clicks_reach_the_page(&session)?;
 	modifiers_reach_the_pages_mouse_events(&session)?;
 	images_dont_drag_away_clicks(&session)?;
@@ -337,7 +338,8 @@ fn throws_in_the_scripts_calls_go_to_coherents_handler(session: &UiSession) -> R
 /// that reaches `engine._Result` is kept (its id and how many arguments it had), and
 /// `__bbOuters(n)` makes `n` `callSQ`s to `bbOuter`, each of whose scripts calls the
 /// page's `bbNested`, which makes three `callSQ`s to `bbInner` and one `asyncCallSQ`
-/// to `bbVoid` from inside the outer call. Each promise's value is kept by its tag.
+/// to `bbVoid` from inside the outer call. Each promise's value is kept by its tag (the
+/// `asyncCallSQ`s' too, which must never settle).
 const NESTED_CALLS_PAGE: &str = r#"(function () {
 	var screen = Screens.MainMenuScreen;
 	window.__bbReplies = [];
@@ -359,7 +361,8 @@ const NESTED_CALLS_PAGE: &str = r#"(function () {
 		for (var i = 0; i < 3; i++) {
 			SQ.call(screen.mSQHandle, 'bbInner', round * 10 + i, settle('inner ' + round + '.' + i));
 		}
-		SQ.call(screen.mSQHandle, 'bbVoid', round);
+		// SQ.call's own call without a callback, its promise kept to see it never settles.
+		engine.call('asyncCallSQ', screen.mSQHandle, 'bbVoid', round).then(settle('void ' + round));
 		__bbVoidIds.push(engine._RequestId);
 	};
 	window.__bbOuters = function (n) {
@@ -376,7 +379,10 @@ const NESTED_CALLS_PAGE: &str = r#"(function () {
 /// (`onEntityEntersFirstSlot` starts the entity's turn, which updates the bar, which
 /// queries the entity's skills and status effects). Every promise resolves once, in a
 /// later task, with its own call's value; none resolves early with nothing, no request
-/// id is answered twice, and the `asyncCallSQ`s are never answered. The original
+/// id is answered twice, and the `asyncCallSQ`s are never answered, their promises
+/// never settle, and coherent.js's table of calls waiting for an answer
+/// (`engine._ActiveRequests`) doesn't keep them (kept, they would add up to ~400 a
+/// battle). The original
 /// sends stray empty `_Result` replies, often with older request ids, so there such a
 /// call can resolve `undefined` before its real reply, and with MSU a battle's first
 /// turn locked the turn bar ("Failed to query entity data"; an intentional divergence,
@@ -471,9 +477,15 @@ fn nested_call_sq_replies_reach_their_own_calls(session: &UiSession) -> Result<(
 	if replies.len() != expected {
 		problems.push(format!("{} replies, not {expected}", replies.len()));
 	}
+	for s in &settled {
+		let tag = s.as_array().and_then(|a| a.first()).and_then(Json::as_str).unwrap_or_default();
+		if tag.starts_with("void") {
+			problems.push(format!("the asyncCallSQ promise {tag} settled"));
+		}
+	}
 	let pending = state.get("pending").and_then(Json::as_f64);
-	if pending != Some(ROUNDS as f64) {
-		problems.push(format!("{pending:?} of the {ROUNDS} asyncCallSQ requests still pending"));
+	if pending != Some(0.0) {
+		problems.push(format!("{pending:?} of the {ROUNDS} asyncCallSQ requests kept in engine._ActiveRequests"));
 	}
 	ensure(problems.is_empty(), format!("nested callSQ replies:\n{}", problems.join("\n")))
 }
@@ -1380,6 +1392,55 @@ fn pictures_no_longer_drawn_stay_under_the_gpu_limit(session: &UiSession) -> Res
 	ensure(
 		(8 * MIB..=36 * MIB).contains(&kept),
 		format!("Chromium's GPU side keeps {:.1} MiB of the page's pictures (8 to 36 expected)", kept as f64 / MIB as f64),
+	)
+}
+
+/// Velocity's measuring elements go once measured (velocity_dummies.js): an animation
+/// from pixels to a percentage makes Velocity measure with an element of its own, which
+/// it adds beside the animated one and takes out again with `removeChild`, after
+/// registering it in jQuery's data store, which kept it for good (~130 a battle, each
+/// holding Blink heap pages; an intentional divergence, docs/differences.md). Seen
+/// through a mutation observer, held only weakly, it is gone after a collection; the
+/// animated element itself keeps its record while it is in the page.
+fn velocity_lets_its_measuring_elements_go(session: &UiSession) -> Result<(), String> {
+	let started = session.eval(
+		r#"(function () {
+			var host = $('<div id="bb-velocity" style="position:absolute;left:0;top:0;width:100px;height:50px"/>').appendTo('body');
+			var box = $('<div style="width:40px;height:10px"/>').appendTo(host);
+			window.__bbMeasured = [];
+			window.__bbMeasuring = new MutationObserver(function (records) {
+				records.forEach(function (r) {
+					r.addedNodes.forEach(function (n) {
+						if (n.nodeType === 1 && n.style.paddingLeft === '100em') __bbMeasured.push(new WeakRef(n));
+					});
+				});
+			});
+			__bbMeasuring.observe(host[0], { childList: true });
+			for (var i = 0; i < 5; i++) {
+				box.css('font-size', (10 + i) + 'px').velocity({ width: (20 + i) + '%' }, { duration: 1, queue: false });
+			}
+			window.__bbBox = box[0];
+			return true;
+		})()"#,
+	)?;
+	ensure(started == Json::Bool(true), "the animation didn't start")?;
+	session.run_frames(0.3)?;
+	let measured = session.eval("__bbMeasuring.disconnect(); __bbMeasured.length")?;
+	ensure(
+		measured.as_f64().unwrap_or(0.0) >= 1.0,
+		format!("Velocity measured with {} elements of its own, expected some", measured.to_text()),
+	)?;
+	let kept = session.eval("jQuery.hasData(__bbBox)")?;
+	ensure(kept == Json::Bool(true), "the animated element lost its record")?;
+	session.host().release_memory();
+	session.run_frames(0.5)?;
+	let left = session.eval(
+		"(function () { var n = __bbMeasured.filter(function (w) { return w.deref() !== undefined; }).length; \
+		jQuery('#bb-velocity').remove(); delete window.__bbMeasured; delete window.__bbMeasuring; delete window.__bbBox; return n; })()",
+	)?;
+	ensure(
+		left.as_f64() == Some(0.0),
+		format!("{} of Velocity's {} measuring elements still alive after a collection", left.to_text(), measured.to_text()),
 	)
 }
 
