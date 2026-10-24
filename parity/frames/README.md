@@ -27,6 +27,13 @@ it once the 3 s after the click have run, since the page seeing a click doesn't 
 button's handler ran. A click that didn't take is logged with the button events it made
 and what they hit, and made again once; a second miss fails the run with both.
 
+To shoot an animation as it runs, a step with `start = true` starts a clock after its
+scene (no settling, no shot), and each following step with `at` (ms) runs its scene and
+takes its shot that long after, without settling: ours plays exactly that much game
+time, the original's page waits that long on its clock (the scenes.js of a probe that
+uses them must handle the two fields; `scenes.js` here doesn't). Slow the animation
+down (e.g. `switchEntities`' speed 0.02) so the original's shot latency doesn't matter.
+
 A probe with fewer steps before the battle gets a different battle map in each engine:
 the map is drawn from `Math.rand` where `tactical_state.initMap` runs, and draws made
 in between (the loading screen's tips, as the page answers) move it. Wrap

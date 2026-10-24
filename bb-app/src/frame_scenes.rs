@@ -43,6 +43,12 @@ struct Step {
 	clicked: Option<String>,
 	/// Its `until` is polled without pacing frames to the clock (`unpaced = true`).
 	unpaced: bool,
+	/// Starts the clock of the timed steps that follow (`start = true`): no settling
+	/// after its scene, and no shot.
+	start: bool,
+	/// A timed step (`at`, ms): its scene and shot that long after the last `start`
+	/// step's scene, without settling.
+	at: Option<f64>,
 }
 
 /// The script's `::probeSteps`.
@@ -52,9 +58,10 @@ fn steps(game: &Game) -> Result<Vec<Step>, String> {
 		r#"::__steps <- "";
 		foreach (s in ::probeSteps)
 		{
-			foreach (k in ["scene", "shot", "until", "click", "clicked"])
+			foreach (k in ["scene", "shot", "until", "click", "clicked", "at"])
 				::__steps += (!(k in s) || s[k] == null ? "" : s[k]) + "\t";
-			::__steps += ("unpaced" in s && s.unpaced ? "1" : "") + "\n";
+			::__steps += ("unpaced" in s && s.unpaced ? "1" : "") + "\t";
+			::__steps += ("start" in s && s.start ? "1" : "") + "\n";
 		}"#,
 		"steps",
 	)?;
@@ -70,7 +77,9 @@ fn steps(game: &Game) -> Result<Vec<Step>, String> {
 				until: some(f[2]),
 				click: some(f[3]),
 				clicked: some(f[4]),
-				unpaced: f[5] == "1",
+				at: f[5].parse().ok(),
+				unpaced: f[6] == "1",
+				start: f[7] == "1",
 			}
 		})
 		.collect())
@@ -201,9 +210,28 @@ pub fn shoot_scenes(
 
 	let (width, height) = game.screen();
 	let target = RenderTarget::new(gpu, width, height);
+	// Game seconds since the last `start` step's scene.
+	let mut clock = 0.0;
 	for step in steps(&game)? {
+		if let Some(at) = step.at {
+			let frames = ((at / 1000.0 - clock) * 60.0).round().max(0.0);
+			let undrawn = play(&mut game, gpu, &target, frames / 60.0, 60.0, true)?;
+			clock += frames / 60.0;
+			if let Some(name) = &step.scene {
+				scene(&game, name)?;
+			}
+			if let Some(name) = &step.shot {
+				println!("{name}: at {clock:.3} s, {undrawn} of {frames} frames left undrawn before the shot");
+				shot(name, shot_checked(&mut game, gpu, &target, name)?)?;
+			}
+			continue;
+		}
 		if let Some(name) = &step.scene {
 			scene(&game, name)?;
+		}
+		if step.start {
+			clock = 0.0;
+			continue;
 		}
 		if let Some(until) = &step.until {
 			// Counted in the game's own time, not the clock's: frames come slower on a
