@@ -30,6 +30,13 @@ pub fn poll(game: &Game) -> Option<ChromiumDump> {
 	game.front().session().host().memory_dump_poll()
 }
 
+/// After a heap snapshot: the renderer gives back what taking it left in its allocator
+/// (it took ~190 MB more of the renderer's C heap, measured 2026-10-24, which glibc kept
+/// after it was freed), as at a scene's end (`UiHost::release_memory`).
+pub fn release_after_heap_snapshot(game: &Game) {
+	game.front().session().host().release_memory();
+}
+
 /// Give up on the dump: what came of it.
 pub fn abandon(game: &Game, why: &str) -> Option<ChromiumDump> {
 	game.front().session().host().abandon_memory_dump(why)

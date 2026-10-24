@@ -210,6 +210,9 @@ impl MemorySnapshots {
 		let dir = pending.dir.clone();
 		// Its time is the dump's, from asking to its last answer.
 		let took = dump.as_ref().map(|d| d.took);
+		if dump.as_ref().is_some_and(|d| d.heap_snapshot.is_some()) {
+			let _ = crate::failure::catch(|| chromium::release_after_heap_snapshot(game));
+		}
 		let mut part = timed("chromium", || chromium::part(dump, &dir));
 		part.took = took.unwrap_or(part.took);
 		pending.parts.push(part);

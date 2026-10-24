@@ -67,7 +67,7 @@ struct Flight {
 	/// The heap snapshot's file, while its chunks come, and its bytes so far.
 	heap: Option<(PathBuf, Option<std::fs::File>, u64)>,
 	errors: Vec<String>,
-	/// The calls to send once the lock is let go (an answer can come within the send).
+	/// The calls to send once the lock is let go ([`send_all`]).
 	outbox: Vec<Vec<u8>>,
 }
 
@@ -269,11 +269,34 @@ impl Dumps {
 	}
 }
 
-/// Send `messages` through `host`. Off CEF's UI thread each is posted there (and the
-/// call returns 0); on it, an answer can come before the call returns.
+wrap_task! {
+	struct SendLater {
+		host: BrowserHost,
+		messages: Vec<Vec<u8>>,
+	}
+
+	impl Task {
+		fn execute(&self) {
+			for message in &self.messages {
+				self.host.send_dev_tools_message(Some(message));
+			}
+		}
+	}
+}
+
+/// Send `messages` through `host`, from a task of their own on CEF's UI thread: sent from
+/// within an observer's callback, CEF would notify its observers again while it still
+/// notifies them, which Chromium's observer list refuses ("Check failed: …
+/// kDisallowReentrancy", logged by a release build at every dump).
 fn send_all(host: &BrowserHost, messages: Vec<Vec<u8>>) {
-	for message in messages {
-		host.send_dev_tools_message(Some(&message));
+	if messages.is_empty() {
+		return;
+	}
+	let mut task = SendLater::new(host.clone(), messages.clone());
+	if post_task(ThreadId::UI, Some(&mut task)) != 1 {
+		for message in messages {
+			host.send_dev_tools_message(Some(&message));
+		}
 	}
 }
 
