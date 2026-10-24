@@ -173,7 +173,8 @@ pub struct SceneTacticalEntity {
 	/// the tile it is drawn with.
 	pub tile: Option<usize>,
 	/// Off the map, yet drawn with the units in its old tile's place (a unit lifting
-	/// off for a switch): no tile hides it in the fog or desaturates it.
+	/// off for a switch), without its bars: no tile hides it in the fog or desaturates
+	/// it.
 	pub off_map: bool,
 	/// In the air between two tiles: drawn in the original's effects layer, after the
 	/// tiles, not with the units on the map.

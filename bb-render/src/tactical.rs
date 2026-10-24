@@ -369,7 +369,8 @@ struct OnTile<'a> {
 /// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
 /// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
 /// desaturated; but a unit off the map drawn in the tile's place has no tile for the
-/// fog to hide it by (`0x4c30eb` skips only with a tile), nor for the occlusion fade.
+/// fog to hide it by (`0x4c30eb` skips only with a tile), nor for the occlusion fade,
+/// and no bars.
 /// Then the path's footsteps on the tile, and the rain's splats.
 fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
@@ -401,10 +402,11 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: F
 	}
 	for entity in on.standing.iter().filter(|e| tile.visible || e.visible_in_fog || e.off_map) {
 		if entity.off_map {
+			// Its bars aren't drawn either (verified against the original).
 			draw_entity_sprites(b, entity, None, 1.0, level);
-		} else {
-			draw_entity_sprites(b, entity, Some(fade), hidden, level);
+			continue;
 		}
+		draw_entity_sprites(b, entity, Some(fade), hidden, level);
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
 		}
@@ -673,8 +675,13 @@ pub fn tactical_quads<'a>(scene: &'a TacticalScene, sprites: &'a SpriteRegistry,
 	// A unit in the air is in the original's effects layer, drawn after the tiles and
 	// first in that layer (its box always stays in the layer's root): over everything
 	// on the map, under the effects; its sprites only (no bars), not desaturated by a
-	// tile the player can't see, with no occlusion fade (`0x4c3560`).
-	for entity in scene.entities.iter().filter(|e| e.flying) {
+	// tile the player can't see, with no occlusion fade (`0x4c3560`). Two in the air
+	// draw the higher id first: the lower is on top (verified against the original: of
+	// Rotation's two units crossing in the air, the lower id's was on top whichever was
+	// the first argument and whichever started higher up).
+	let mut flying: Vec<&SceneTacticalEntity> = scene.entities.iter().filter(|e| e.flying).collect();
+	flying.sort_by_key(|e| std::cmp::Reverse(e.id));
+	for entity in flying {
 		draw_entity_sprites(&mut b, entity, None, 1.0, overlay_level);
 	}
 	// Particle effects, then the weather over everything.
@@ -1008,6 +1015,25 @@ mod tests {
 		// Tiles draw from the right within a row: tile 1, its unit, then tile 0's rock.
 		assert!(unit < rock, "in tile 1's place: {names:?}");
 		assert_eq!(quads[unit].saturation, 1.0, "not desaturated by its old tile's fog");
+	}
+
+	/// Units in the air draw the higher id first: the lower id flies on top (verified
+	/// against the original with Rotation's two units crossing).
+	#[test]
+	fn the_lower_id_flies_on_top() {
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![tile(0, true), tile(1, true)],
+			entities: vec![entity(1, 0, "unit", false, true), entity(2, 1, "rock", false, true)],
+			..TacticalScene::default()
+		};
+		let names: Vec<_> = quads_of(&scene).iter().map(name_of).collect();
+		assert_eq!(names, ["tile", "tile", "rock", "unit"], "the higher id under the lower");
+		let mut swapped = scene.clone();
+		swapped.entities.reverse();
+		let names: Vec<_> = quads_of(&swapped).iter().map(name_of).collect();
+		assert_eq!(names, ["tile", "tile", "rock", "unit"], "whatever their order in the scene");
 	}
 
 	#[test]

@@ -184,9 +184,9 @@ const PAIR_SAMPLE: &str = r#"(function() {
 /// Rotation's swap (`switchEntities(a, b, onDone, tag, 1.0)`) in view, as the original
 /// does it (`0x4ca160`, update `0x4ca990`; probed 2026-10-24). Both units leave their
 /// tiles at once (`getPos` reads (0, 0) until the next update) but stay drawn with the
-/// units, bars and all, rising 40 over 0.14 s above their own tiles; then each takes the
-/// other's tile and flies there in the flight layer (0.18 s per 126 units), and lands
-/// (50 over 0.23 s), calling `onDone(unit, tag)`. The speed divides every time. Ours
+/// units (without bars), rising 40 over 0.14 s above their own tiles; then each takes the
+/// other's tile and flies there in the flight layer (0.18 s per 126 units; the lower id
+/// on top, see bb-render), and lands (50 over 0.23 s), calling `onDone(unit, tag)`. The speed divides every time. Ours
 /// used to leave both undrawn while they rose: they blinked out for 0.14 s.
 #[test]
 fn a_switch_in_view_keeps_both_units_drawn_as_they_rise() {
@@ -229,7 +229,7 @@ fn a_switch_in_view_keeps_both_units_drawn_as_they_rise() {
 				assert!(drawn.off_map && !drawn.flying, "frame {frame}: rising off the map, drawn with the units");
 				assert_eq!(x, own[0], "straight up");
 				assert!(y > own[1] && y <= own[1] + 40.0 + 1e-3, "at most 40 up ({})", y - own[1]);
-				assert!(drawn.overlay.is_some(), "with its bars");
+				assert!(drawn.overlay.is_some(), "its bars kept (the renderer leaves them out off the map)");
 			} else if drawn.flying {
 				flew[i].get_or_insert(t);
 				assert!(landing[i].is_none(), "flying again after landing");

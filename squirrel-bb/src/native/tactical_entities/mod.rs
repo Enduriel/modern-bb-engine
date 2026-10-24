@@ -681,10 +681,10 @@ impl Units {
 	}
 
 	/// Take the unit off its tile as a switch in view does (`0x4ca3fe`): the original
-	/// clears its tile but leaves it among the units on the map, so it is still drawn,
-	/// bars and all, where its tile was in the drawing order, wherever its position
-	/// puts it, and (with no tile) never hidden or desaturated by the fog (`0x4c30eb`)
-	/// until it takes off into the flight layer or is placed again.
+	/// clears its tile but leaves it among the units on the map, so it is still drawn
+	/// (without its bars, probed 2026-10-24) where its tile was in the drawing order,
+	/// wherever its position puts it, and (with no tile) never hidden or desaturated by
+	/// the fog (`0x4c30eb`) until it takes off into the flight layer or is placed again.
 	pub fn lift_off(&self, identity: i64) -> Result<(), String> {
 		let idx = *self.0.borrow().by_identity.get(&identity).ok_or("lift: not a tactical unit")?;
 		let from = self.0.borrow().units[idx].tile;
