@@ -108,9 +108,7 @@ impl Instances {
 	) -> Option<wgpu::BindGroup> {
 		let records = self.records.as_ref()?;
 		for (at, range) in self.writes.drain(..) {
-			if let Some(size) = wgpu::BufferSize::new(range.len() as u64) {
-				belt.write_buffer(encoder, records, at, size).copy_from_slice(&self.bytes[range]);
-			}
+			crate::sprite::stage(belt, encoder, records, at, &self.bytes[range]);
 		}
 		self.bytes.clear();
 		if let Some(order) = self.order_bytes.take() {
@@ -124,9 +122,7 @@ impl Instances {
 				}));
 				self.group = None;
 			}
-			if let Some(size) = wgpu::BufferSize::new(order.len() as u64) {
-				belt.write_buffer(encoder, self.order.as_ref().expect("made above"), 0, size).copy_from_slice(&order);
-			}
+			crate::sprite::stage(belt, encoder, self.order.as_ref().expect("made above"), 0, &order);
 		}
 		let order = self.order.as_ref()?;
 		let group = self.group.get_or_insert_with(|| {

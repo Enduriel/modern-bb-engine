@@ -400,9 +400,7 @@ impl SpriteRenderer {
 		let kept = &mut streams.kept;
 		if let Some(buffer) = &kept.buffer {
 			for (at, range) in kept.writes.drain(..) {
-				if let Some(size) = wgpu::BufferSize::new(range.len() as u64) {
-					streams.vertices.belt.write_buffer(encoder, buffer, at, size).copy_from_slice(&kept.bytes[range]);
-				}
+				stage(&mut streams.vertices.belt, encoder, buffer, at, &kept.bytes[range]);
 			}
 		}
 		kept.bytes.clear();
@@ -774,8 +772,26 @@ const KEPT_STEP: u64 = 4096;
 /// thousand quads, the details changed in a running world's frame.
 const KEPT_WRITES_ROOM: usize = 1 << 20;
 
-/// The staging memory's unit: a zoomed-out world map's quads are about 7 MB.
-const STAGING_CHUNK: u64 = 8 << 20;
+/// The staging memory's unit, and the most one write takes of it ([`stage`]). The belt
+/// keeps every chunk it made, and a draw's writes hold theirs from its submission until
+/// the GPU has run it, so each draw in flight holds a chunk at least: with 8 MiB chunks
+/// that was 32 MiB of mapped GPU memory (VRAM, on a GPU with a resizable BAR), where a
+/// battle's frame streams about 2 MB and a world frame's details tens of kilobytes. In
+/// chunks of 1 MiB, the belt holds what the draws in flight write, each rounded up to a
+/// chunk.
+pub(crate) const STAGING_CHUNK: u64 = 1 << 20;
+
+/// Write `bytes` at `offset` of `buffer` through `belt`, in pieces of at most
+/// [`STAGING_CHUNK`], so that every chunk the belt makes is one size and is reused by
+/// any later write (a write larger than a chunk gets a chunk of its own size, kept as
+/// long as the belt, and a larger one later another).
+pub(crate) fn stage(belt: &mut wgpu::util::StagingBelt, encoder: &mut wgpu::CommandEncoder, buffer: &wgpu::Buffer, offset: u64, bytes: &[u8]) {
+	for (i, piece) in bytes.chunks(STAGING_CHUNK as usize).enumerate() {
+		if let Some(size) = wgpu::BufferSize::new(piece.len() as u64) {
+			belt.write_buffer(encoder, buffer, offset + i as u64 * STAGING_CHUNK, size).copy_from_slice(piece);
+		}
+	}
+}
 
 /// A vertex buffer rewritten by each draw, grown as needed, and filled through a staging
 /// belt whose mapped chunks are reused from draw to draw (`Queue::write_buffer` makes new
@@ -801,9 +817,7 @@ impl Stream {
 			}));
 		}
 		let buffer = self.buffer.as_ref().expect("made above");
-		if let Some(size) = wgpu::BufferSize::new(bytes.len() as u64) {
-			self.belt.write_buffer(encoder, buffer, 0, size).copy_from_slice(bytes);
-		}
+		stage(&mut self.belt, encoder, buffer, 0, bytes);
 		buffer
 	}
 }
