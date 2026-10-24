@@ -20,8 +20,8 @@ already built for the target), `--no-archive`. It needs `curl` and `tar` on the 
 
 ## Release bundles: `scripts/bundle.py`
 
-One entry point for every target, run from a checkout with squirrel-sys inside it
-(`<repo>/squirrel-sys`, ignored):
+One entry point for every target, run from a checkout with its submodules
+(`git clone --recurse-submodules`, or `git submodule update --init --recursive`):
 
 ```bash
 systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=10G \
@@ -95,10 +95,9 @@ and `inputs.txt` as the artifact `bb-<target>`:
 - Caches: cargo's registry and git downloads (keyed on `Cargo.lock`), and the pinned
   downloads (CEF's archive, Steam's crate, ninja; keyed on the files holding the pins).
   Not the target folder: each run builds from scratch.
-- **squirrel-sys** comes from one place, the workflow's `SQUIRREL_SYS_REPOSITORY` and
-  `SQUIRREL_SYS_REF` (a private fork reads the `SQUIRREL_SYS_TOKEN` secret). The
-  repository must hold that commit and its `squirrel` submodule's; until those are
-  published, that checkout fails.
+- **squirrel-sys** is a submodule (`squirrel-sys/`, Enduriel/squirrel-sys), with the VM
+  (Enduriel/squirrel) a submodule of it; the checkout takes both at the commits recorded.
+  While they are private, the `SUBMODULES_TOKEN` secret holds a read-only token for them.
 - No tests: the suite needs the game's Steam data, which the runners don't have.
 
 ## What it does
