@@ -100,3 +100,36 @@ fn a_refresh_measured_short_is_followed() {
 		assert!((step - R).abs() < 0.15, "frame {i}: {step:.3} ms");
 	}
 }
+
+/// A frame started more than half a refresh late (the test's 2 ms late start, and the
+/// system's load on top of it) and the next as early, the display's queue showing both a
+/// refresh after the last, step a refresh each. Taken as a missed refresh, the late one
+/// stepped two and the early one (owed next to nothing) still one: the steps a refresh
+/// ahead of the wall clock, given back over the next dozen steps (5.20, 5.22 ... 5.36 ms
+/// on a 180 Hz display, a run under load).
+#[test]
+fn a_start_more_than_half_a_refresh_late_steps_one() {
+	for late in [2.8, 3.0, 3.3, 3.8, 4.3] {
+		let mut clock = DisplayClock::default();
+		let real: Vec<f64> = (0..700).map(|i| if i % 7 == 6 { R + late } else if i % 7 == 0 && i > 0 { R - late } else { R }).collect();
+		for (i, step) in steps(&mut clock, &real, Some(R)).into_iter().enumerate() {
+			assert!((step - R).abs() < 0.17, "{late} ms late, frame {i}: {step:.3} ms, not a refresh ({R:.3})");
+		}
+	}
+}
+
+/// Frames that missed a refresh, a millisecond early and the next as late, don't pull the
+/// grid long: each on-grid frame moves it by how far it came from its whole refreshes,
+/// so a late start and the early one it's made up by cancel out. Moved by that per
+/// refresh instead, the missed frame's half counted less than the next one's whole, and
+/// the grid crept 5% long, starting over from the pacer's refresh again and again.
+#[test]
+fn missed_refreshes_started_early_keep_the_grid() {
+	let mut clock = DisplayClock::default();
+	let real: Vec<f64> = (0..3000).map(|i| if i % 7 == 6 { 2.0 * R - 1.0 } else if i % 7 == 0 && i > 0 { R + 1.0 } else { R }).collect();
+	for (i, step) in steps(&mut clock, &real, Some(R)).into_iter().enumerate() {
+		let whole = (step / R).round();
+		assert!((step - whole * R).abs() < 0.05, "frame {i}: {step:.3} ms, not whole refreshes ({R:.3})");
+	}
+	assert!((clock.grid.unwrap() - R).abs() < 0.01, "the grid {:.3} ms", clock.grid.unwrap());
+}
