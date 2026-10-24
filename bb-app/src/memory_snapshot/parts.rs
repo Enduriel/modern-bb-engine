@@ -47,6 +47,10 @@ pub fn processes() -> Part {
 	}
 	for p in &processes {
 		let mut line = format!("  {:>7} {:<24}", p.pid, p.role);
+		// Chromium starts its tracing service for the first memory dump, and keeps it.
+		if p.role.contains("TracingService") {
+			line.push_str(" (started by a snapshot's Chromium dump)");
+		}
 		if p.pss() > 0 {
 			line.push_str(&format!(" PSS {:>10}", mib(p.pss())));
 			if let Some(rss) = figure(p, "VmRSS") {

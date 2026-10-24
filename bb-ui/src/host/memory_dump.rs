@@ -7,7 +7,10 @@
 //! The calls go one after the other, each sent from the answer to the last, on CEF's UI
 //! thread: `Tracing.start` (the memory-infra category only, no periodic dumps),
 //! `Tracing.requestMemoryDump` (detailed, after a collection), `Tracing.end`; the trace
-//! comes back as `Tracing.dataCollected` events, then `Tracing.tracingComplete`. With a
+//! comes back as `Tracing.dataCollected` events, then `Tracing.tracingComplete`. Then the
+//! page's JavaScript heap (`Runtime.getHeapUsage`: V8's used and total, and Blink's
+//! objects V8 holds) and its DOM's counts (`Memory.getDOMCounters`: documents, nodes,
+//! listeners), which tell live data growing from memory kept after it's freed. With a
 //! heap snapshot asked for, then `HeapProfiler.takeHeapSnapshot`, whose chunks are
 //! written to its file as they come. Nothing of this exists until a dump is asked for.
 //!
@@ -39,6 +42,10 @@ enum Step {
 	Dumping,
 	/// `Tracing.end` sent: the trace is coming.
 	Collecting,
+	/// `Runtime.getHeapUsage` sent.
+	HeapUsage,
+	/// `Memory.getDOMCounters` sent.
+	DomCounters,
 	/// `HeapProfiler.takeHeapSnapshot` sent: its chunks are coming.
 	HeapSnapshot,
 	Done,
@@ -55,6 +62,8 @@ struct Flight {
 	collected: Vec<Vec<u8>>,
 	/// Whether the memory dump said it succeeded.
 	dumped: Option<bool>,
+	/// The page's figures (`js_heap.usedSize`, `dom.nodes`, …).
+	page: Vec<(String, u64)>,
 	/// The heap snapshot's file, while its chunks come, and its bytes so far.
 	heap: Option<(PathBuf, Option<std::fs::File>, u64)>,
 	errors: Vec<String>,
@@ -76,6 +85,10 @@ pub struct ChromiumDump {
 	pub processes: Vec<super::memory_dump_trace::ChromiumProcess>,
 	/// Whether Chromium said the memory dump succeeded (`None`: it never answered).
 	pub dumped: Option<bool>,
+	/// The page's own figures: its JavaScript heap (`js_heap.usedSize`, `js_heap.totalSize`,
+	/// `js_heap.embedderHeapUsedSize`, `js_heap.backingStorageSize`) and its DOM's counts
+	/// (`dom.documents`, `dom.nodes`, `dom.jsEventListeners`).
+	pub page: Vec<(String, u64)>,
 	/// The V8 heap snapshot's file and bytes, if one was asked for and written.
 	pub heap_snapshot: Option<(PathBuf, u64)>,
 	/// What went wrong (a call refused, a timeout).
@@ -107,6 +120,7 @@ impl Dumps {
 			next_id: FIRST_ID,
 			collected: Vec::new(),
 			dumped: None,
+			page: Vec::new(),
 			heap: heap.map(|path| (path, None, 0)),
 			errors: Vec::new(),
 			outbox: Vec::new(),
@@ -193,6 +207,15 @@ impl Dumps {
 				flight.waiting = 0;
 				flight.step = Step::Collecting;
 			}
+			(Step::HeapUsage, _) => {
+				flight.page.extend(numbers("js_heap.", &text));
+				flight.waiting = flight.send("Memory.getDOMCounters", Json::Object(Vec::new()));
+				flight.step = Step::DomCounters;
+			}
+			(Step::DomCounters, _) => {
+				flight.page.extend(numbers("dom.", &text));
+				flight.heap_snapshot_or_done();
+			}
 			(Step::HeapSnapshot, _) => {
 				if let Some((_, file, _)) = &mut flight.heap
 					&& let Some(mut f) = file.take()
@@ -222,22 +245,11 @@ impl Dumps {
 		let Some(flight) = state.as_mut() else { return Vec::new() };
 		match (method, flight.step) {
 			("Tracing.dataCollected", Step::Collecting | Step::Dumping) => flight.collected.push(params.to_vec()),
-			("Tracing.tracingComplete", Step::Collecting) => match &mut flight.heap {
-				Some((path, file, _)) if has_host => match std::fs::File::create(&*path) {
-					Ok(f) => {
-						*file = Some(f);
-						flight.send("HeapProfiler.enable", Json::Object(Vec::new()));
-						let params = Json::Object(vec![("reportProgress".into(), Json::Bool(false))]);
-						flight.waiting = flight.send("HeapProfiler.takeHeapSnapshot", params);
-						flight.step = Step::HeapSnapshot;
-					}
-					Err(e) => {
-						flight.errors.push(format!("the heap snapshot's file {}: {e}", path.display()));
-						flight.step = Step::Done;
-					}
-				},
-				_ => flight.step = Step::Done,
-			},
+			("Tracing.tracingComplete", Step::Collecting) if has_host => {
+				flight.waiting = flight.send("Runtime.getHeapUsage", Json::Object(Vec::new()));
+				flight.step = Step::HeapUsage;
+			}
+			("Tracing.tracingComplete", Step::Collecting) => flight.step = Step::Done,
 			("HeapProfiler.addHeapSnapshotChunk", Step::HeapSnapshot) => {
 				let chunk = Json::parse(&String::from_utf8_lossy(params)).ok();
 				let chunk = chunk.as_ref().and_then(|j| j.get("chunk")).and_then(Json::as_str);
@@ -265,7 +277,41 @@ fn send_all(host: &BrowserHost, messages: Vec<Vec<u8>>) {
 	}
 }
 
+/// The numbers in the JSON object `text`, each named `prefix` and its key.
+fn numbers(prefix: &str, text: &str) -> Vec<(String, u64)> {
+	let Ok(Json::Object(fields)) = Json::parse(text) else { return Vec::new() };
+	fields
+		.into_iter()
+		.filter_map(|(k, v)| match v {
+			Json::Int(n) => Some((format!("{prefix}{k}"), u64::try_from(n).ok()?)),
+			Json::Float(f) if f >= 0.0 => Some((format!("{prefix}{k}"), f as u64)),
+			_ => None,
+		})
+		.collect()
+}
+
 impl Flight {
+	/// After the page's figures: the heap snapshot if one was asked for, else done.
+	fn heap_snapshot_or_done(&mut self) {
+		let Some((path, file, _)) = &mut self.heap else {
+			self.step = Step::Done;
+			return;
+		};
+		match std::fs::File::create(&*path) {
+			Ok(f) => {
+				*file = Some(f);
+				self.send("HeapProfiler.enable", Json::Object(Vec::new()));
+				let params = Json::Object(vec![("reportProgress".into(), Json::Bool(false))]);
+				self.waiting = self.send("HeapProfiler.takeHeapSnapshot", params);
+				self.step = Step::HeapSnapshot;
+			}
+			Err(e) => {
+				self.errors.push(format!("the heap snapshot's file {}: {e}", path.display()));
+				self.step = Step::Done;
+			}
+		}
+	}
+
 	/// Queue `method` with `params` to send ([`send_all`]); its id.
 	fn send(&mut self, method: &str, params: Json) -> i32 {
 		let id = self.next_id;
@@ -286,6 +332,7 @@ impl Flight {
 			trace,
 			processes,
 			dumped: self.dumped,
+			page: self.page,
 			heap_snapshot: self.heap.filter(|(_, _, bytes)| *bytes > 0).map(|(path, _, bytes)| (path, bytes)),
 			errors,
 			took: self.sent.elapsed(),

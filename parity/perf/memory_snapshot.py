@@ -84,13 +84,27 @@ def figures(snap):
         put("census", k["kind"], k["bytes"])
         put("census", f"{k['kind']} (count)", k["count"], "n")
 
-    for p in (snap.get("chromium") or {}).get("processes", []):
+    chromium = snap.get("chromium") or {}
+    for key, v in (chromium.get("page") or {}).items():
+        put("chromium", f"page: {key}", v, "n" if key.startswith("dom.") else "B")
+    for p in chromium.get("processes", []):
         name = p.get("name") or f"pid {p.get('pid')}"
         for key, b in (p.get("totals") or {}).items():
-            put("chromium", f"{name}: {key}", b)
+            if isinstance(b, (int, float)) and not key.startswith("is_"):
+                put("chromium", f"{name}: {key}", b)
         for alloc, b in (p.get("allocators") or {}).items():
-            if alloc.count("/") <= 1:
+            last = alloc.rsplit("/", 1)[-1]
+            hashed = len(last) >= 15 and all(c in "0123456789abcdefABCDEF" for c in last)
+            if alloc.count("/") <= 1 and not hashed:
                 put("chromium", f"{name}: {alloc}", b)
+        attrs = p.get("attributes") or {}
+        # Live against kept: Oilpan's committed pages and live objects, malloc's mapping.
+        for path, key in (("blink_gc/main/heap", "committed_size"), ("blink_gc/main/heap", "allocated_objects_size"),
+                          ("malloc", "virtual_size"), ("partition_alloc/allocated_objects", None), ("malloc/allocated_objects", None)):
+            if key is None:
+                put("chromium", f"{name}: {path}", (p.get("allocators") or {}).get(path))
+            else:
+                put("chromium", f"{name}: {path} {key}", (attrs.get(path) or {}).get(key))
     return out
 
 

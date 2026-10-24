@@ -208,7 +208,10 @@ impl MemorySnapshots {
 			}
 		};
 		let dir = pending.dir.clone();
-		let part = timed("chromium", || chromium::part(dump, &dir));
+		// Its time is the dump's, from asking to its last answer.
+		let took = dump.as_ref().map(|d| d.took);
+		let mut part = timed("chromium", || chromium::part(dump, &dir));
+		part.took = took.unwrap_or(part.took);
 		pending.parts.push(part);
 		self.finish(pending, game);
 		None

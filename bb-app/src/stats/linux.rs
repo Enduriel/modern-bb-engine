@@ -162,7 +162,7 @@ fn parse_size(text: &str) -> u64 {
 }
 
 /// `game` for the game's own process; for CEF's, its `--type` (and a utility's service).
-fn role(pid: u32) -> String {
+pub(super) fn role(pid: u32) -> String {
 	let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return "?".to_string() };
 	let args: Vec<&[u8]> = cmdline.split(|&b| b == 0).collect();
 	let value = |key: &str| {

@@ -111,6 +111,20 @@ pub fn tree_memory() -> Option<Vec<ProcessMemory>> {
 	}
 }
 
+/// What the process `pid` of the game's is: `game`, or the CEF process's type (see
+/// [`ProcessMemory::role`]); `None` where it can't be read (off Linux).
+pub fn process_role(pid: u32) -> Option<String> {
+	#[cfg(target_os = "linux")]
+	{
+		Some(linux::role(pid))
+	}
+	#[cfg(not(target_os = "linux"))]
+	{
+		let _ = pid;
+		None
+	}
+}
+
 /// The game's processes at one moment.
 #[derive(Clone, Copy, Debug)]
 pub struct Usage {

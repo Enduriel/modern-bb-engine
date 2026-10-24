@@ -12,9 +12,24 @@ pub struct ChromiumProcess {
 	pub name: String,
 	/// The process totals (`resident_set_bytes`, `private_footprint_bytes`, …).
 	pub totals: Vec<(String, u64)>,
-	/// Every allocator dump's size, by its path (`malloc`, `v8/main/heap`, …), largest
-	/// first; the top-level ones are those without a `/`.
+	/// The allocator dumps down to three levels (`malloc`, `blink_gc/main/heap`, …; not
+	/// the per-type nodes named `__<hash>`), each with its size, largest first; the
+	/// top-level ones are those without a `/`.
 	pub allocators: Vec<(String, u64)>,
+	/// The same dumps' other figures, by path: `allocated_objects_size` (live) against
+	/// `committed_size` for Oilpan's heap, `virtual_size` for malloc's, …
+	pub attributes: Vec<(String, Vec<(String, u64)>)>,
+}
+
+impl ChromiumProcess {
+	/// The allocator dump `path`'s figure `name` (`size` among them).
+	pub fn figure(&self, path: &str, name: &str) -> Option<u64> {
+		if name == "size" {
+			return self.allocators.iter().find(|(p, _)| p == path).map(|(_, b)| *b);
+		}
+		let (_, attrs) = self.attributes.iter().find(|(p, _)| p == path)?;
+		attrs.iter().find(|(n, _)| n == name).map(|(_, v)| *v)
+	}
 }
 
 /// The trace text, the processes, and what couldn't be read, from the
@@ -55,20 +70,31 @@ fn processes(events: &[Json]) -> Vec<ChromiumProcess> {
 		if e.get("ph").and_then(Json::as_str) != Some("v") {
 			continue;
 		}
-		let mut process = ChromiumProcess { pid, ..Default::default() };
+		// A process's totals and its allocators come in dumps of their own.
+		let process = match out.iter().position(|p| p.pid == pid) {
+			Some(i) => &mut out[i],
+			None => {
+				out.push(ChromiumProcess { pid, ..Default::default() });
+				out.last_mut().expect("just pushed")
+			}
+		};
 		if let Some(Json::Object(totals)) = dumps.get("process_totals") {
 			process.totals = totals.iter().filter_map(|(k, v)| Some((k.clone(), number(v)?))).collect();
 		}
 		if let Some(Json::Object(allocators)) = dumps.get("allocators") {
-			process.allocators = allocators
-				.iter()
-				.filter_map(|(name, d)| Some((name.clone(), number(d.get("attrs")?.get("size")?.get("value")?)?)))
-				.collect();
+			let kept = allocators.iter().filter(|(name, _)| name.matches('/').count() <= 2 && !name.contains("/__"));
+			for (name, d) in kept {
+				let Some(Json::Object(attrs)) = d.get("attrs") else { continue };
+				let mut figures: Vec<(String, u64)> = attrs.iter().filter_map(|(n, a)| Some((n.clone(), number(a.get("value")?)?))).collect();
+				if let Some(i) = figures.iter().position(|(n, _)| n == "size") {
+					process.allocators.push((name.clone(), figures.remove(i).1));
+				}
+				figures.retain(|(n, _)| n != "effective_size");
+				if !figures.is_empty() {
+					process.attributes.push((name.clone(), figures));
+				}
+			}
 			process.allocators.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-		}
-		match out.iter_mut().find(|p| p.pid == pid) {
-			Some(p) => *p = process,
-			None => out.push(process),
 		}
 	}
 	for e in events {
@@ -102,9 +128,11 @@ mod tests {
 		let chunk = br#"{"value":[
 			{"ph":"M","pid":7,"name":"process_name","args":{"name":"Renderer"}},
 			{"ph":"v","pid":7,"name":"periodic_interval","args":{"dumps":{
-				"process_totals":{"private_footprint_bytes":"100000"},
+				"process_totals":{"private_footprint_bytes":"100000"}}}},
+			{"ph":"v","pid":7,"name":"periodic_interval","args":{"dumps":{
 				"allocators":{
-					"malloc":{"attrs":{"size":{"type":"scalar","units":"bytes","value":"200000"}}},
+					"malloc":{"attrs":{"size":{"type":"scalar","units":"bytes","value":"200000"},"virtual_size":{"value":"300000"}}},
+					"malloc/allocated_objects/__ab12":{"attrs":{"size":{"value":"5"}}},
 					"v8/main":{"attrs":{"size":{"type":"scalar","units":"bytes","value":"10"}}},
 					"cc":{"attrs":{}}
 				}}}}
@@ -117,5 +145,7 @@ mod tests {
 		assert_eq!((p.pid, p.name.as_str()), (7, "Renderer"));
 		assert_eq!(p.totals, [("private_footprint_bytes".to_string(), 0x100000)]);
 		assert_eq!(p.allocators, [("malloc".to_string(), 0x200000), ("v8/main".to_string(), 0x10)]);
+		assert_eq!(p.figure("malloc", "virtual_size"), Some(0x300000));
+		assert_eq!(p.figure("malloc", "size"), Some(0x200000));
 	}
 }
