@@ -25,7 +25,8 @@ struct Pass {
 	map_extent: vec2<f32>,
 	texture_size: vec2<f32>,
 	factor: f32,
-	_pad0: f32,
+	// 1 for a one-channel texture: its red is read as grey (`texel`).
+	grey: f32,
 	_pad1: f32,
 	_pad2: f32,
 	ambient: vec4<f32>,
@@ -34,6 +35,12 @@ struct Pass {
 @group(0) @binding(0) var<uniform> u: Pass;
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var tex_sampler: sampler;
+
+// The texture at `uv`: a one-channel one's red as grey (`crate::world_textures`).
+fn texel(uv: vec2<f32>) -> vec4<f32> {
+	let c = textureSample(tex, tex_sampler, uv);
+	return select(c, vec4<f32>(c.rrr, 1.0), u.grey > 0.5);
+}
 
 struct Out {
 	@builtin(position) position: vec4<f32>,
@@ -221,7 +228,7 @@ impl WorldPass {
 			params.texture_size.0,
 			params.texture_size.1,
 			params.factor,
-			0.0,
+			if crate::world_textures::is_grey(texture.texture.format()) { 1.0 } else { 0.0 },
 			0.0,
 			0.0,
 			params.ambient[0],

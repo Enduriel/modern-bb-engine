@@ -30,9 +30,9 @@ const FRAGMENT: &str = r#"
 fn fs_main(f: Out) -> @location(0) vec4<f32> {
 	let k = u.factor;
 	let uv = f.uv;
-	let c1 = textureSample(tex, tex_sampler, uv + k * vec2<f32>(1.0, -0.25));
-	let c2 = textureSample(tex, tex_sampler, (uv + k * vec2<f32>(0.5, 1.5)) * 0.33);
-	let c3 = textureSample(tex, tex_sampler, (uv + k * vec2<f32>(1.25, 0.9)) * 1.75);
+	let c1 = texel(uv + k * vec2<f32>(1.0, -0.25));
+	let c2 = texel((uv + k * vec2<f32>(0.5, 1.5)) * 0.33);
+	let c3 = texel((uv + k * vec2<f32>(1.25, 0.9)) * 1.75);
 	let rgb = (c1.rgb * 0.33 + c2.rgb * 0.33 + c3.rgb * 0.33) * u.ambient.rgb;
 	return vec4<f32>(rgb, textureSample(mask, mask_sampler, f.map_uv).r);
 }

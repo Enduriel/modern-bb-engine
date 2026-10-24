@@ -11,6 +11,11 @@ use std::time::Duration;
 
 use crate::gpu_timing::{self, PassTimer};
 
+/// The device features every device is opened with where the adapter has them: BC
+/// texture compression, which the world's water and fog textures can be kept in
+/// (`crate::world_textures`; without it they fall back).
+const OPTIONAL_FEATURES: wgpu::Features = wgpu::Features::TEXTURE_COMPRESSION_BC;
+
 /// The device and queue every renderer object is created on.
 pub struct Gpu {
 	pub device: wgpu::Device,
@@ -122,7 +127,7 @@ impl Gpu {
 		let info = adapter.get_info();
 		let name = format!("{} ({:?})", info.name, info.backend);
 		let missing = required - adapter.features();
-		let features = required | (wanted & adapter.features());
+		let features = required | ((wanted | OPTIONAL_FEATURES) & adapter.features());
 		if !missing.is_empty() {
 			return Err(format!("the GPU {name} lacks features the game needs: {missing:?}"));
 		}

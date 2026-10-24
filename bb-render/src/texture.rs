@@ -18,18 +18,29 @@ use crate::gpu::Gpu;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The bytes a 2D `texture` takes on the GPU, every mip level counted (what its
-/// texels need; the driver's padding and alignment aren't known here).
+/// texels need; the driver's padding and alignment aren't known here). A block
+/// compressed level takes whole blocks.
 pub fn texture_bytes(texture: &wgpu::Texture) -> u64 {
 	let size = texture.size();
-	let texel = u64::from(texture.format().block_copy_size(None).unwrap_or(4));
-	mip_bytes(size.width, size.height, texture.mip_level_count(), texel)
+	let format = texture.format();
+	let block = u64::from(format.block_copy_size(None).unwrap_or(4));
+	block_mip_bytes(size.width, size.height, texture.mip_level_count(), format.block_dimensions(), block)
 }
 
 /// The bytes of a `width` × `height` image of `texel`-byte texels with `levels` mip
 /// levels (each half the last, rounded down, at least 1).
+#[cfg(test)]
 fn mip_bytes(width: u32, height: u32, levels: u32, texel: u64) -> u64 {
+	block_mip_bytes(width, height, levels, (1, 1), texel)
+}
+
+/// [`mip_bytes`] for blocks of `(bw, bh)` texels and `block` bytes each.
+fn block_mip_bytes(width: u32, height: u32, levels: u32, (bw, bh): (u32, u32), block: u64) -> u64 {
 	(0..levels)
-		.map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * texel)
+		.map(|level| {
+			let (w, h) = ((width >> level).max(1), (height >> level).max(1));
+			u64::from(w.div_ceil(bw)) * u64::from(h.div_ceil(bh)) * block
+		})
 		.sum()
 }
 
@@ -130,6 +141,9 @@ mod tests {
 		assert_eq!(mip_bytes(2, 2, 2, 4), 20, "2×2 and 1×1");
 		assert_eq!(mip_bytes(4, 1, 3, 4), 28, "4×1, 2×1, 1×1");
 		assert_eq!(mip_bytes(2048, 2048, 12, 4), 22_369_620, "an atlas: 16 MiB and a third");
+		// BC: 8 bytes a 4×4 block; the levels under 4×4 take a whole block each.
+		assert_eq!(block_mip_bytes(2048, 2048, 12, (4, 4), 8), 2_796_216, "an eighth, and three tail blocks");
+		assert_eq!(block_mip_bytes(4, 4, 3, (4, 4), 8), 24);
 	}
 
 

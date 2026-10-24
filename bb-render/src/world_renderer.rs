@@ -31,6 +31,7 @@ use crate::tactical::tactical_quads;
 use crate::target::RenderTarget;
 use crate::texture::GpuTexture;
 use crate::water::WaterPass;
+use crate::world_textures::{self, Pass, WorldFormats};
 use crate::world::{QuadScratch, WorldFonts, WorldView, world_quads_around_map};
 
 /// Whether a frame waits for atlases that are still loading.
@@ -99,6 +100,8 @@ pub struct WorldRenderer {
 	/// Makes an atlas's mips when a draw first samples them.
 	/// Shared with the uploads' closures, which make the water's and the fog's.
 	mips: Arc<MipMaker>,
+	/// The water's and the fog's texture formats (`BB_WATER_TEXTURE`, `BB_FOG_TEXTURE`).
+	world_formats: WorldFormats,
 	/// The drawn frames in our own pages (`None`: whole atlases, `BB_TEXTURE_PAGES=off`).
 	pages: Option<FramePages>,
 	/// Text the bitmap fonts can't draw, shaped in the outline fonts.
@@ -257,6 +260,7 @@ impl WorldRenderer {
 			usage: None,
 			residency: Residency::new(gpu.texture_budget()),
 			mips: Arc::new(MipMaker::new(gpu)),
+			world_formats: WorldFormats::from_env(gpu),
 			pages: (!std::env::var_os("BB_TEXTURE_PAGES").is_some_and(|v| v == "off" || v == "0"))
 				.then(|| FramePages::new(files.clone(), bb_assets::SheetCache::from_env(), threads)),
 			text: std::cell::RefCell::new(TextShaper::new(FontDb::new(
@@ -438,7 +442,8 @@ impl WorldRenderer {
 	) -> bool {
 		let mips = self.mips.clone();
 		let mips = &*mips;
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
+		let world = self.world_formats;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, world, path, &image);
 		self.textures.pump(upload);
 		let wait = atlases == Atlases::WaitForAll;
 		let mut whole = vec![false; map.atlases.paths.len()];
@@ -614,8 +619,8 @@ impl WorldRenderer {
 		}
 		if loading {
 			let _span = crate::frame_timing::span("world textures");
-			let mips = &self.mips;
-			self.textures.pump(|path, image| upload(gpu, mips, path, &image));
+			let (mips, world) = (&self.mips, self.world_formats);
+			self.textures.pump(|path, image| upload(gpu, mips, world, path, &image));
 		}
 	}
 
@@ -789,7 +794,8 @@ impl WorldRenderer {
 	) -> FrameStats {
 		let mips = self.mips.clone();
 		let mips = &*mips;
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
+		let world = self.world_formats;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, world, path, &image);
 		self.textures.pump(upload);
 		let fonts = WorldFonts {
 			label: label_font(&self.label_font),
@@ -1036,7 +1042,8 @@ impl WorldRenderer {
 	fn moving_atlases(&mut self, gpu: &Gpu, atlases: Atlases, zoom: f32) -> usize {
 		let mips = self.mips.clone();
 		let mips = &*mips;
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
+		let world = self.world_formats;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, world, path, &image);
 		if self.usage.is_some() {
 			let mut list = crate::world::AtlasList::default();
 			let quads = self
@@ -1098,7 +1105,8 @@ impl WorldRenderer {
 	fn kept_atlases(&mut self, gpu: &Gpu, shown: &kept_map::Shown, atlases: Atlases, zoom: f32) -> (usize, usize) {
 		let mips = self.mips.clone();
 		let mips = &*mips;
-		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, path, &image);
+		let world = self.world_formats;
+		let upload = |path: &str, image: bb_assets::Image| upload(gpu, mips, world, path, &image);
 		if self.usage.is_some() {
 			let mut list = crate::world::AtlasList::default();
 			for path in self.kept.atlas_paths() {
@@ -1298,13 +1306,14 @@ impl WorldRenderer {
 
 /// A texture as it goes to the GPU: an atlas or a font with level 0 only (an atlas's
 /// mips are made when a draw first samples them, see [`crate::mips`]), the water's and
-/// the fog's with their mips (their passes tile them over the view), made on the GPU
-/// (a 2048² texture's chain takes ~20 ms on the CPU).
-fn upload(gpu: &Gpu, mips: &MipMaker, path: &str, image: &Image) -> GpuTexture {
-	if path == WATER_TEXTURE || path == FOG_TEXTURE {
-		mips.with_mips(gpu, &GpuTexture::upload_flat(gpu, path, image))
-	} else {
-		GpuTexture::upload_flat(gpu, path, image)
+/// the fog's with their mips (their passes tile them over the view), in the formats
+/// `world` chooses (by default RGBA8 with the mips made on the GPU: a 2048² texture's
+/// chain takes ~20 ms on the CPU; see [`crate::world_textures`]).
+fn upload(gpu: &Gpu, mips: &MipMaker, world: WorldFormats, path: &str, image: &Image) -> GpuTexture {
+	match path {
+		WATER_TEXTURE => world_textures::upload(gpu, mips, world, Pass::Water, path, image),
+		FOG_TEXTURE => world_textures::upload(gpu, mips, world, Pass::Fog, path, image),
+		_ => GpuTexture::upload_flat(gpu, path, image),
 	}
 }
 

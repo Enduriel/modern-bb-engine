@@ -16,6 +16,7 @@
 //! - [`cursor_image`]: the cursor sprites as system cursor pictures.
 //! - [`frame_diff`]: where a frame of ours differs from a screenshot of the original.
 
+pub mod block;
 mod cursor;
 pub mod cursor_image;
 mod fast_hash;
@@ -54,6 +55,7 @@ pub mod world;
 mod world_pass;
 mod world_items;
 mod world_renderer;
+pub mod world_textures;
 
 pub use cursor::{frame_at as cursor_frame_at, frame_index_at as cursor_frame_index_at};
 pub use gpu::Gpu;
