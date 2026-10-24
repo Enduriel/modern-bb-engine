@@ -19,14 +19,17 @@ pub struct TextureMemory {
 }
 
 /// One of the renderer's pages of frames (`crate::pages`), for a memory snapshot.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PageMemory {
 	pub page: usize,
 	pub width: u32,
 	pub height: u32,
 	pub bytes: u64,
-	/// The frames in it.
+	/// The frames in it, and their texels (how full it is, against `width × height`).
 	pub frames: usize,
+	pub used_texels: u64,
+	/// Its frames the world map, a battle and the rest (portraits, the cursor) ever drew.
+	pub drawn_by: [usize; 3],
 	/// The last frame (the renderer's count) drawn from it.
 	pub last_drawn: u64,
 }
@@ -48,6 +51,8 @@ pub struct ResidencyDetail {
 	pub budget: u64,
 	pub textures: Vec<TextureDrawn>,
 	pub pages: Vec<PageMemory>,
+	/// Frames of the pages asked for and still loading.
+	pub frames_loading: usize,
 	/// The shaped text's glyph pages (`TextShaper`): how many, and their GPU bytes (not
 	/// in [`RendererMemory`]).
 	pub glyph_pages: (usize, u64),

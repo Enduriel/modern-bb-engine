@@ -343,6 +343,7 @@ impl WorldRenderer {
 			budget: self.residency.budget(),
 			textures,
 			pages: self.pages.as_ref().map(|p| p.page_detail()).unwrap_or_default(),
+			frames_loading: self.pages.as_ref().map_or(0, |p| p.loading()),
 			glyph_pages: (self.glyph_pages.len(), self.glyph_pages.iter().map(GpuTexture::bytes).sum()),
 		}
 	}

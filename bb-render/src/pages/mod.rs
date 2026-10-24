@@ -655,8 +655,8 @@ impl FramePages {
 		(pages, self.resident.len(), self.bytes())
 	}
 
-	/// Each page, for a memory snapshot: its size, bytes, the frames in it and the last
-	/// frame drawn from it.
+	/// Each page, for a memory snapshot: its size, bytes, the frames in it (their texels,
+	/// and how many each drawer ever drew) and the last frame drawn from it.
 	pub(crate) fn page_detail(&self) -> Vec<crate::PageMemory> {
 		self.pages
 			.alloc
@@ -664,10 +664,24 @@ impl FramePages {
 			.map(|page| {
 				let (width, height) = self.pages.alloc.page_size(page).unwrap_or((0, 0));
 				let bytes = self.pages.textures.get(page).and_then(Option::as_ref).map_or(0, |t| texture_bytes(&t.texture));
-				let frames = self.resident.values().filter(|r| r.place.page == page).count();
-				crate::PageMemory { page, width, height, bytes, frames, last_drawn: self.pages.used.get(page).copied().unwrap_or(0) }
+				let mut detail = crate::PageMemory { page, width, height, bytes, last_drawn: self.pages.used.get(page).copied().unwrap_or(0), ..Default::default() };
+				for r in self.resident.values().filter(|r| r.place.page == page) {
+					detail.frames += 1;
+					detail.used_texels += u64::from(r.region.w) * u64::from(r.region.h);
+					for (i, drawer) in [Drawer::World, Drawer::Battle, Drawer::Other].into_iter().enumerate() {
+						if r.drawers & bit(drawer) != 0 {
+							detail.drawn_by[i] += 1;
+						}
+					}
+				}
+				detail
 			})
 			.collect()
+	}
+
+	/// The frames asked for and still loading.
+	pub(crate) fn loading(&self) -> usize {
+		self.pending.len()
 	}
 }
 
