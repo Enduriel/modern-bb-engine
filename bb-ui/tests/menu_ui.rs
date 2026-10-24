@@ -12,7 +12,9 @@
 //! Where the game discards a scene, the page gives its memory back, and the pictures it
 //! no longer draws stay on the GPU only up to a limit. Vanilla's FPS
 //! module shows only when the game asks for it. Scroll bars follow their content without
-//! polling it. Skips if there is no Steam install.
+//! polling it. The page's timers run once a frame after the frame's scripts, as
+//! Coherent's did, and the turn bar's first-slot race throws only where the original's
+//! does. Skips if there is no Steam install.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test menu_ui`
 //!
@@ -35,6 +37,8 @@ use squirrel::SqTable;
 
 #[path = "support/gpu_page.rs"]
 mod gpu_page;
+#[path = "support/vanilla_page_errors.rs"]
+mod vanilla_page_errors;
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
 	if condition {
@@ -273,6 +277,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 	copy_and_paste_use_the_games_clipboard(&session, &clipboard)?;
 	editing_keys_work_with_ctrl_and_cmd(&session, &clipboard)?;
 	nested_call_sq_replies_reach_their_own_calls(&session)?;
+	page_timers_run_once_a_frame_after_its_scripts(&session)?;
 
 	let problems: Vec<String> = session
 		.log()
@@ -285,6 +290,7 @@ fn boots_to_the_main_menu_and_opens_new_campaign(data_dir: &Path) -> Result<(), 
 		format!("page or bridge errors:\n{}", problems.join("\n")),
 	)?;
 	throws_in_the_scripts_calls_go_to_coherents_handler(&session)?;
+	the_turn_bars_first_slot_race_is_vanillas(&session)?;
 	links_reach_the_url_opener(&session)
 }
 
@@ -332,6 +338,154 @@ fn throws_in_the_scripts_calls_go_to_coherents_handler(session: &UiSession) -> R
 		mentions("BB_THROWN_ERROR") == errors + 1,
 		format!("a thrown Error was logged {} times", mentions("BB_THROWN_ERROR") - errors),
 	)
+}
+
+/// Drive `core` (a probe core's JS, `bb-ui/probes/*_core.js`, defining `global`) from
+/// the scripts once a game frame, as the probes do in the original: the main menu
+/// screen's `tbTick` calls `global.tick(frame)` from a scheduled event, frames paced in
+/// real time, until `global.isDone()`. Its `results()`, parsed.
+fn frame_probe(session: &UiSession, core: &str, global: &str) -> Result<Json, String> {
+	session.eval(&format!(
+		"{core}\nwindow.{global} = {global}; Screens.MainMenuScreen.tbTick = function (f) {{ {global}.tick(f); }}; 0"
+	))?;
+	session.engine().run_script(
+		r#"
+		local screen = ::RootState.get("MainMenuState").m.MainMenuScreen;
+		// One chain of ticks per probe: an earlier probe's last tick, still scheduled,
+		// ends its own chain.
+		::__bbProbeRun <- ("__bbProbeRun" in getroottable() ? ::__bbProbeRun : 0) + 1;
+		::__bbProbeFrame <- 0;
+		local run = ::__bbProbeRun;
+		::__bbProbeTick <- function( _d ) {
+			if (_d != ::__bbProbeRun) return;
+			::__bbProbeFrame++;
+			screen.m.JSHandle.asyncCall("tbTick", ::__bbProbeFrame);
+			::Time.scheduleEvent(::TimeUnit.Real, 1, ::__bbProbeTick, _d);
+		};
+		::Time.scheduleEvent(::TimeUnit.Real, 1, ::__bbProbeTick, run);
+		"#,
+		"frame probe",
+	)?;
+	let deadline = Instant::now() + Duration::from_secs(120);
+	while session.eval(&format!("{global}.isDone()"))? != Json::Bool(true) {
+		ensure(Instant::now() < deadline, format!("{global} didn't finish"))?;
+		session.run_frames(0.1)?;
+	}
+	session.engine().run_script("::__bbProbeRun++;", "stop")?;
+	let text = session.eval(&format!("{global}.results()"))?;
+	Json::parse(text.as_str().unwrap_or_default()).map_err(|e| format!("{global}'s results: {e}"))
+}
+
+/// The game frames after the one it was set in at which each of a set's timers ran
+/// (`timer_frames_core.js`: `[frames, ms]` pairs).
+fn frames_of(entries: &[Json]) -> Vec<i64> {
+	entries.iter().filter_map(|e| e.as_array().and_then(|a| a.first()).and_then(Json::as_f64)).map(|f| f as i64).collect()
+}
+
+/// The page's timers run once a game frame, after that frame's calls from the scripts,
+/// as Coherent's did (probed 2026-10-24, `bb-ui/probes/timer_frames.js`): one set in a
+/// frame's call, in a timer or in an animation frame runs after the next frame's calls
+/// at the earliest, whatever its delay; a chain of zero-delay timers goes one link a
+/// frame; an interval runs at most once a frame. (The original's frames in that probe:
+/// delays up to 15 ms ran one frame on, 20-30 ms two, 40-50 ms three, at 60 frames a
+/// second; how many frames on a delay lands depends on the frames' length, so only the
+/// rules are checked here.)
+fn page_timers_run_once_a_frame_after_its_scripts(session: &UiSession) -> Result<(), String> {
+	let results = frame_probe(session, include_str!("../probes/timer_frames_core.js"), "TimerFrames")?;
+	let sets = results.get("sets").and_then(Json::as_array).unwrap_or_default();
+	ensure(sets.len() == 3, format!("{} timer sets ran", sets.len()))?;
+	let mut problems = Vec::new();
+	for set in sets {
+		let label = set.get("label").map(Json::to_text).unwrap_or_default();
+		let field = |name: &str| set.get(name).and_then(Json::as_array).map(<[Json]>::to_vec).unwrap_or_default();
+		let timers: Vec<(String, i64)> = match set.get("timers") {
+			Some(Json::Object(entries)) => entries
+				.iter()
+				.map(|(delay, at)| (delay.clone(), frames_of(std::slice::from_ref(at)).first().copied().unwrap_or(-1)))
+				.collect(),
+			_ => Vec::new(),
+		};
+		ensure(timers.len() == 12, format!("{label}: {} of its 12 timers ran", timers.len()))?;
+		for (delay, frame) in timers {
+			if frame < 1 {
+				problems.push(format!("{label}: a {delay} ms timer ran {frame} frames on, before the next frame's scripts"));
+			}
+		}
+		let chain = frames_of(&field("chain"));
+		if chain != (1..=6).collect::<Vec<_>>() {
+			problems.push(format!("{label}: zero-delay timers chained ran at frames {chain:?}, not one link a frame from the next"));
+		}
+		let interval = frames_of(&field("interval"));
+		if interval.len() != 10 || interval.first() != Some(&1) || interval.windows(2).any(|w| w[1] <= w[0]) {
+			problems.push(format!("{label}: a 5 ms interval ran at frames {interval:?}, not at most once a frame from the next"));
+		}
+	}
+	ensure(problems.is_empty(), problems.join("\n"))
+}
+
+/// The turn bar's first-slot race (`turnbar_race_core.js`), vanilla's own: a unit
+/// selected for the first slot anew (a slot further down removed and one added, as when
+/// a unit dies, arms the slot's 10 ms timer again) whose slot is removed (its turn
+/// ended) before its image's resize ends throws in that resize's `complete`
+/// (turnsequencebar_module.js:1011, "reading 'css'"). In the original (probed
+/// 2026-10-24, `bb-ui/probes/turnbar_race.js`) a removal one frame after the timer was
+/// armed came before the timer ran (after that frame's scripts), so nothing threw;
+/// removals two and three frames after threw, and the page went on. Ours: the same for
+/// one frame on (before page timers waited for the next frame's scripts, the timer ran
+/// between the frames and this threw too: a_long_play_session's flake), at least one
+/// throw for two and three frames on (whether each does depends on when the page's
+/// animation frames come; the original's came every game frame, a test's on Chromium's
+/// 30 a second), each throw only where the unit was selected anew before its removal,
+/// and each one vanilla's own error (support/vanilla_page_errors.rs).
+fn the_turn_bars_first_slot_race_is_vanillas(session: &UiSession) -> Result<(), String> {
+	session.eval("window.__bbRaceStacks = []; window.addEventListener('error', function (e) { __bbRaceStacks.push(e.error && e.error.stack ? e.error.stack : String(e.message)); }); 0")?;
+	let errors_before = session.log().iter().filter(|l| l.level == "error").count();
+	let results = frame_probe(session, include_str!("../probes/turnbar_race_core.js"), "TurnbarRace")?;
+	let trials = results.get("trials").and_then(Json::as_array).unwrap_or_default();
+	ensure(trials.len() == 12, format!("{} of the 12 trials ran: {}", trials.len(), results.to_text()))?;
+	let number = |t: &Json, name: &str| t.get(name).and_then(Json::as_f64).unwrap_or(-1.0) as i64;
+	let mut problems = Vec::new();
+	let mut threw_later = 0;
+	for (i, trial) in trials.iter().enumerate() {
+		if let Some(failed) = trial.get("failed") {
+			problems.push(format!("trial {i}: {}", failed.to_text()));
+			continue;
+		}
+		let after = number(trial, "removedAfterFrames");
+		let reselected = trial.get("reselectedBeforeRemoval") == Some(&Json::Bool(true));
+		let threw = number(trial, "fully") < number(trial, "entered");
+		if after <= 1 && (reselected || threw) {
+			problems.push(format!("trial {i}: removed {after} frame on, the unit was selected anew first (reselected {reselected}, threw {threw}): the slot's timer ran before the next frame's scripts"));
+		}
+		if threw && !reselected {
+			problems.push(format!("trial {i}: threw without the unit selected anew: {}", trial.to_text()));
+		}
+		if threw && (2..=3).contains(&after) {
+			threw_later += 1;
+		}
+	}
+	if threw_later == 0 {
+		problems.push(format!("no removal two or three frames on threw, as in the original: {}", results.to_text()));
+	}
+	let log = session.log();
+	let messages: Vec<&str> = log.iter().filter(|l| l.level == "error").skip(errors_before).map(|l| l.text.as_str()).collect();
+	let stacks: Vec<String> = session
+		.eval("__bbRaceStacks")?
+		.as_array()
+		.unwrap_or_default()
+		.iter()
+		.map(|s| s.as_str().map(str::to_string).unwrap_or_else(|| s.to_text()))
+		.collect();
+	for (message, own) in messages.iter().zip(vanilla_page_errors::own(&messages, &stacks)) {
+		if own.is_none() {
+			problems.push(format!("a page error that isn't vanilla's own: {message}"));
+		}
+	}
+	let thrown = trials.iter().filter(|t| number(t, "fully") < number(t, "entered")).count();
+	if messages.len() != thrown {
+		problems.push(format!("{} page errors for {thrown} throws: {messages:?}", messages.len()));
+	}
+	ensure(problems.is_empty(), format!("the turn bar's first-slot race:\n{}", problems.join("\n")))
 }
 
 /// The page's side of [`nested_call_sq_replies_reach_their_own_calls`]: every reply

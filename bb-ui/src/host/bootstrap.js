@@ -349,6 +349,24 @@
 			reportError('parking', e);
 			return '';
 		}
-		return reply.nested === undefined ? '' : JSON.stringify(reply.nested);
+		if (reply.nested === undefined) {
+			turn = reply.turn || null;
+			return '';
+		}
+		return JSON.stringify(reply.nested);
+	});
+
+	// The turn the game gave the page as it let it go on (a frame's, after its scripts,
+	// or one while it waits on the page), if it gave one: the renderer calls this once a
+	// park ends, outside it, and the page's held timers run (page_work.js).
+	var turn = null;
+	var advance = window.__bbAdvance;
+	define('__bbTurn', function () {
+		var given = turn;
+		turn = null;
+		if (given !== null && typeof advance === 'function') {
+			advance(given);
+		}
+		return '';
 	});
 })();

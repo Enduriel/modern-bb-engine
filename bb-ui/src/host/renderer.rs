@@ -61,7 +61,8 @@ fn call_page(frame: &Frame, function: &str, argument: &str) -> Option<String> {
 }
 
 /// Park the page until the game lets it go on, running the game's calls into it
-/// meanwhile (`__bbPark` in bootstrap.js takes each step). Each call runs from here as
+/// meanwhile (`__bbPark` in bootstrap.js takes each step), then give it its turn
+/// (`__bbTurn`). Each call runs from here as
 /// a script call of its own, not nested inside the park's, as a call into a page that
 /// isn't parked does: the promise callbacks it queues run as it returns, so what they
 /// change or a timer they set is counted when the page next says what it has to do.
@@ -73,6 +74,8 @@ fn park(frame: &Frame) -> Option<String> {
 		let result = call_page(frame, "__bbCall", &next).unwrap_or_else(|| "null".into());
 		next = call_page(frame, "__bbPark", &result).unwrap_or_default();
 	}
+	// The page's turn, if the game gave one (its held timers: page_work.js).
+	call_page(frame, "__bbTurn", "");
 	Some("unparked".into())
 }
 

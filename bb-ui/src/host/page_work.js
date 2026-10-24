@@ -60,11 +60,50 @@
 		return (0, eval)(String(handler));
 	}
 
+	// Coherent runs the page's timers once a game frame, after that frame's calls from
+	// the scripts, and only those due by the frame's start: one set in a frame's call, or
+	// by a timer, runs after the next frame's calls at the earliest, a zero-delay chain
+	// one link a frame, an interval at most once a frame (probed 2026-10-24,
+	// bb-ui/probes/timer_frames.js). Ours come due on the clock, between the game's
+	// frames; one that does waits here (`held`) for the next frame's turn, which the
+	// game gives the page after that frame's scripts (`__bbAdvance`, from the park's
+	// end). Until the game first gives such a turn (the page loading), and between turns
+	// the game gives without frames (a session waiting on the page), they run as they come
+	// due.
+	var held = [];
+	var holding = false;
+
+	// A held timer's handler is reported as the browser reports a task's: an uncaught
+	// error (the console's "Uncaught …", `window.onerror`) without stopping the others.
+	var runner = new EventTarget();
+	var running = null;
+	runner.addEventListener('run', function () {
+		running();
+	});
+
+	function hold(handle, run) {
+		for (var i = 0; i < held.length; ++i) {
+			// An interval runs at most once a turn.
+			if (held[i].handle === handle) {
+				return;
+			}
+		}
+		held.push({ handle: handle, run: run });
+	}
+
+	function release(handle) {
+		held = held.filter(function (h) { return h.handle !== handle; });
+	}
+
 	window.setTimeout = function setTimeout(handler, delay) {
 		var args = slice.call(arguments, 2);
 		var handle = nativeSetTimeout.call(window, function () {
 			timers.delete(handle);
 			ran = true;
+			if (holding) {
+				hold(handle, function () { return invoke(handler, args); });
+				return;
+			}
 			return invoke(handler, args);
 		}, delay);
 		timers.set(handle, performance.now() + delayOf(delay));
@@ -78,6 +117,10 @@
 			// Before the handler, which may clear it.
 			timers.set(handle, performance.now() + every);
 			ran = true;
+			if (holding) {
+				hold(handle, function () { return invoke(handler, args); });
+				return;
+			}
 			return invoke(handler, args);
 		}, delay);
 		timers.set(handle, performance.now() + every);
@@ -86,13 +129,34 @@
 
 	window.clearTimeout = function clearTimeout(handle) {
 		timers.delete(handle);
+		release(handle);
 		return nativeClearTimeout.call(window, handle);
 	};
 
 	window.clearInterval = function clearInterval(handle) {
 		timers.delete(handle);
+		release(handle);
 		return nativeClearInterval.call(window, handle);
 	};
+
+	// The page's turn after a game frame's scripts (`frame` true), or one the game gives
+	// it without a frame: the held timers run, in the order they came due. From the
+	// first frame's turn on, timers coming due between turns are held for the next.
+	Object.defineProperty(window, '__bbAdvance', {
+		value: function (frame) {
+			var due = held;
+			held = [];
+			holding = frame === 'frame';
+			due.forEach(function (h) {
+				ran = true;
+				running = h.run;
+				runner.dispatchEvent(new Event('run'));
+			});
+			running = null;
+			return '';
+		},
+		enumerable: false
+	});
 
 	window.requestAnimationFrame = function requestAnimationFrame(callback) {
 		var handle = nativeRequestFrame.call(window, function (time) {
@@ -284,7 +348,7 @@
 	}
 
 	function busy() {
-		if (ran) {
+		if (ran || held.length > 0) {
 			return 'ran';
 		}
 		if (changes.takeRecords().length > 0) {

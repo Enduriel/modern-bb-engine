@@ -21,6 +21,8 @@ use bb_ui::host::{Echo, HostConfig, MouseButton, UiSession};
 
 #[path = "support/gpu_page.rs"]
 mod gpu_page;
+#[path = "support/vanilla_page_errors.rs"]
+mod vanilla_page_errors;
 
 /// How long a step may take (a new campaign generates its world first).
 const STEP: Duration = Duration::from_secs(120);
@@ -675,7 +677,9 @@ fn answer(p: &Play, facing: &str, last: &str, battles: &mut u32) -> Result<(), S
 			// (turnsequencebar_module.js): frames run as fast as they go would let a unit
 			// act and die (its slot removed) before its slide is done, whose end then
 			// fails on the removed slot. While the page animates, the frames are paced,
-			// as the original runs them.
+			// as the original runs them. Paced, a unit whose turn ends within three
+			// frames of a death further down the bar can still hit it, in the original
+			// too: vanilla's own error, left out of the problems below.
 			if p.session.animating()? { wait_frame(p)? } else { p.session.step(1000.0 / 60.0)? }
 		}
 		"results" => {
@@ -1128,19 +1132,30 @@ fn play(p: &Play) -> Result<(), String> {
 	// Fair game again: a battle with the nearest hostile party.
 	p.script("local pl = ::World.State.getPlayer(); pl.m.IsAttackable = true; pl.m.IsAttackableByAI = true;")?;
 	battle(p)?;
-	// Each with the page's lines before it: what it was doing.
+	// Each with the page's lines before it: what it was doing. Vanilla's own errors,
+	// which the original throws and logs too, aren't problems (support/vanilla_page_errors.rs).
 	let log = p.session.log();
-	let problems: Vec<String> = log
+	let stacks: Vec<String> = p
+		.session
+		.eval("window.__errorStacks || []")?
+		.as_array()
+		.unwrap_or_default()
 		.iter()
-		.enumerate()
-		.filter(|(_, line)| line.level == "error" || line.level == "bridge")
-		.map(|(i, line)| {
-			let before: Vec<String> = log[i.saturating_sub(6)..i].iter().map(|l| format!("    after [{}] {}", l.level, l.text)).collect();
-			format!("[{}] {}\n{}", line.level, line.text, before.join("\n"))
-		})
+		.map(|s| s.as_str().map(str::to_string).unwrap_or_else(|| s.to_text()))
 		.collect();
-	let stacks = p.session.eval("(window.__errorStacks || []).join('\\n---\\n')").map(|v| v.to_text()).unwrap_or_default();
-	ensure(problems.is_empty(), format!("page or bridge errors:\n{}\nstacks:\n{stacks}", problems.join("\n")))
+	let errors: Vec<usize> = (0..log.len()).filter(|&i| log[i].level == "error" || log[i].level == "bridge").collect();
+	let texts: Vec<&str> = errors.iter().map(|&i| log[i].text.as_str()).collect();
+	let mut problems = Vec::new();
+	for (&i, own) in errors.iter().zip(vanilla_page_errors::own(&texts, &stacks)) {
+		let line = &log[i];
+		if let Some(why) = own {
+			println!("vanilla's own page error, as the original logs it ({why}): {}", line.text);
+			continue;
+		}
+		let before: Vec<String> = log[i.saturating_sub(6)..i].iter().map(|l| format!("    after [{}] {}", l.level, l.text)).collect();
+		problems.push(format!("[{}] {}\n{}", line.level, line.text, before.join("\n")));
+	}
+	ensure(problems.is_empty(), format!("page or bridge errors:\n{}\nstacks:\n{}", problems.join("\n"), stacks.join("\n---\n")))
 }
 
 /// The stubs the scripts called this session, and the natives the original binds that

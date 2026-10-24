@@ -29,7 +29,9 @@ impl UiSession {
 		if !keys.is_empty() {
 			self.keys_to_page(&keys);
 		}
-		self.engine().finish_frame(ms, &keys)
+		let finished = self.engine().finish_frame(ms, &keys);
+		self.host().frame_ran();
+		finished
 	}
 
 	/// Hand the page a frame's key events and let it handle them before the states get
@@ -68,7 +70,7 @@ impl UiSession {
 		// a while longer each round.
 		let mut first = true;
 		loop {
-			self.unpark();
+			self.host().unpark_for_input();
 			for event in self.host().poll() {
 				self.handle(event);
 			}

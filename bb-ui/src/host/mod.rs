@@ -311,6 +311,9 @@ pub struct UiHost {
 	/// Whether the page is parked (its park request is `pending`, or out carrying a
 	/// call into the page).
 	parked: Cell<bool>,
+	/// Whether a game frame's scripts ran since the page was last let go on: its next
+	/// turn is that frame's (`page_work.js`'s `__bbAdvance`).
+	frame_ran: Cell<bool>,
 	/// The park asked of the page and not answered yet: its id, and when it was asked
 	/// (see [`UiHost::try_park`]).
 	park_sent: Cell<Option<(i32, Instant)>>,
@@ -437,6 +440,7 @@ impl UiHost {
 			deferred: RefCell::new(VecDeque::new()),
 			pending: RefCell::new(None),
 			parked: Cell::new(false),
+			frame_ran: Cell::new(false),
 			park_sent: Cell::new(None),
 			late_park_noted: Cell::new(false),
 			notes: RefCell::new(Vec::new()),
@@ -598,14 +602,36 @@ impl UiHost {
 		squirrel_bb::html_log::line(squirrel_bb::html_log::Class::Warning, "UI", text);
 	}
 
-	/// Let the parked page go on (see [`park`](Self::park)).
+	/// Let the parked page go on (see [`park`](Self::park)): its turn. After a game
+	/// frame's scripts ([`frame_ran`](Self::frame_ran)) it is that frame's turn, where
+	/// the page's timers that came due since its last frame's turn run, as Coherent ran
+	/// them once a frame after the frame's calls (`page_work.js`); otherwise the timers
+	/// run as they come due (a session waiting on the page without frames).
 	pub fn unpark(&self) {
+		let turn = if self.frame_ran.replace(false) { "frame" } else { "wait" };
+		self.unpark_with(&format!(r#"{{"done":true,"turn":"{turn}"}}"#));
+	}
+
+	/// Let the parked page go on without its turn: in the middle of a frame (the frame's
+	/// keys, before its scripts) or between frames (a click to a resting page), where
+	/// Coherent ran none of the page's timers.
+	pub fn unpark_for_input(&self) {
+		self.unpark_with(r#"{"done":true}"#);
+	}
+
+	fn unpark_with(&self, reply: &str) {
 		self.rest.ran();
 		if self.parked.replace(false) {
 			if let Some(responder) = self.pending.take() {
-				responder.respond(r#"{"done":true}"#.into());
+				responder.respond(reply.into());
 			}
 		}
+	}
+
+	/// A game frame's scripts ran: the page's next turn is that frame's
+	/// ([`unpark`](Self::unpark)).
+	pub fn frame_ran(&self) {
+		self.frame_ran.set(true);
 	}
 
 	/// Whether the page is parked.
@@ -649,7 +675,7 @@ impl UiHost {
 	fn wake_now(&self) {
 		self.rest.wake();
 		if self.rest.resting() {
-			self.unpark();
+			self.unpark_for_input();
 		}
 	}
 
