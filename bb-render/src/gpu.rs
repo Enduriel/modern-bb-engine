@@ -172,16 +172,17 @@ impl Gpu {
 	}
 
 	/// The textures kept before the least recently drawn go (see `crate::residency`):
-	/// 1 GiB on a GPU with memory of its own, 384 MiB on one that shares the system's
-	/// (integrated chips, the Steam Deck's) or a software one, where every byte comes
-	/// out of the game's RAM. A fresh world draws about 260 MiB of whole atlases, and a
-	/// battle adds 100–150 more, so a discrete GPU keeps both and a shared one keeps the
-	/// scene in view. The settings file can set it (`render.texture_budget_mib`).
+	/// 256 MiB, on any GPU. The textures a scene draws are our pages of frames and a few
+	/// whole ones (`crate::pages`): a fresh world's are 115-160 MiB (2-5 pages, the
+	/// water's and the fog's 43 MiB, the fonts), and a battle adds a page or two, 21-43
+	/// MiB, with or without a 32-mod corpus (`memory_inventory`); so both stay, and what
+	/// neither has drawn for a while goes before it adds up. It was 1 GiB
+	/// on a GPU with memory of its own (384 MiB on a shared one), sized for whole
+	/// atlases, which the pages replaced: a backstop that never ran. Pages a frame draws
+	/// never go, so a scene that needs more than the budget is drawn whole, only held
+	/// tighter. The settings file can set it (`render.texture_budget_mib`).
 	pub fn texture_budget(&self) -> u64 {
-		match self.device_type {
-			wgpu::DeviceType::DiscreteGpu => 1 << 30,
-			_ => 384 << 20,
-		}
+		TEXTURE_BUDGET
 	}
 
 	/// Submit `commands`, named for the passes' GPU times (`BB_GPU_TIMES`, see
@@ -230,6 +231,9 @@ impl Gpu {
 pub(crate) fn lock(gate: &Mutex<()>) -> MutexGuard<'_, ()> {
 	gate.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// See [`Gpu::texture_budget`].
+const TEXTURE_BUDGET: u64 = 256 << 20;
 
 /// The largest memory block wgpu's allocator shares between resources: anything larger
 /// (every atlas from 2048×1024 up) gets a memory allocation of its own, of its exact

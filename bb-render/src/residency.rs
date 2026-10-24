@@ -3,7 +3,8 @@
 //! (decoded, waiting on the CPU, see `bb_assets::TextureCache::warm`); a draw uploads
 //! it. Then it goes:
 //! - when the scene that needed it is discarded: at a battle's end
-//!   (`Tactical.clearScene`), what only battles drew; when the campaign is left
+//!   (`Tactical.clearScene`), what the world map didn't draw (the battle's, and the
+//!   portraits', see [`gone_with_battle`]); when the campaign is left
 //!   (`World.clearScene`), everything;
 //! - over the budget (see `Gpu::texture_budget`), the least recently drawn first, the
 //!   world map's last, never one this frame drew.
@@ -34,6 +35,18 @@ impl Drawer {
 			Drawer::Other => 4,
 		}
 	}
+}
+
+/// Whether a texture (or a page's frame) that `drawers` drew (`Drawer` bits) goes when a
+/// battle ends, `before` this frame's draws or not: what the battle drew and the world
+/// map didn't, and what only portraits and the cursor drew, unless drawn this frame (the
+/// cursor). A portrait is composed once into an image the page keeps, so its sprites
+/// aren't needed after; the turn bar's portraits of every unit (battles draw them as
+/// `Other` too) stayed until the campaign was left, a few hundred frames a dozen
+/// battles in. One drawn again comes back as any dropped texture does.
+pub(crate) fn gone_with_battle(drawers: u8, before: bool) -> bool {
+	let (world, battle) = (Drawer::World.bit(), Drawer::Battle.bit());
+	drawers & world == 0 && (drawers & battle != 0 || before)
 }
 
 /// A texture's draws: the last frame, and who ever drew it.
@@ -123,11 +136,12 @@ impl Residency {
 		drop
 	}
 
-	/// A battle ended: the `resident` textures only battles drew.
+	/// A battle ended: the `resident` textures the world map never drew (see
+	/// [`gone_with_battle`]).
 	pub fn battle_discarded(&mut self, resident: &[(String, u64)]) -> Vec<String> {
 		self.sync(resident);
-		let battle = Drawer::Battle.bit();
-		self.dropping(|entry| entry.drawers == battle)
+		let frame = self.frame;
+		self.dropping(|entry| gone_with_battle(entry.drawers, entry.frame < frame))
 	}
 
 	/// The campaign was left: every `resident` texture this frame didn't draw.
@@ -160,15 +174,35 @@ mod tests {
 	}
 
 	#[test]
-	fn a_battles_end_drops_what_only_battles_drew() {
+	fn a_battles_end_drops_what_the_world_map_didnt_draw() {
 		let mut r = Residency::new(u64::MAX);
 		r.drawn("gfx/world_tiles.png", Drawer::World);
 		r.next_frame();
 		r.drawn("gfx/object_0.png", Drawer::Battle);
 		r.drawn("gfx/entity_0.png", Drawer::Battle);
 		r.drawn("gfx/entity_0.png", Drawer::Other);
-		let all = resident(&[("gfx/world_tiles.png", 32), ("gfx/object_0.png", 16), ("gfx/entity_0.png", 64)]);
-		assert_eq!(r.battle_discarded(&all), ["gfx/object_0.png"], "the world's and the portraits' stay");
+		r.drawn("gfx/cursor.png", Drawer::Other);
+		r.next_frame();
+		r.drawn("gfx/portrait_0.png", Drawer::Other);
+		r.drawn("gfx/cursor.png", Drawer::Other);
+		let all = resident(&[
+			("gfx/world_tiles.png", 32),
+			("gfx/object_0.png", 16),
+			("gfx/entity_0.png", 64),
+			("gfx/cursor.png", 1),
+			("gfx/portrait_0.png", 8),
+		]);
+		assert_eq!(
+			sorted(r.battle_discarded(&all)),
+			["gfx/entity_0.png", "gfx/object_0.png"],
+			"the world's stay, and what was drawn for the UI this frame: the battle's go, its portraits too"
+		);
+		r.drawn("gfx/world_tiles.png", Drawer::World);
+		r.next_frame();
+		r.drawn("gfx/cursor.png", Drawer::Other);
+		let all = resident(&[("gfx/world_tiles.png", 32), ("gfx/cursor.png", 1), ("gfx/portrait_0.png", 8)]);
+		assert_eq!(r.battle_discarded(&all), ["gfx/portrait_0.png"], "a portrait drawn before this frame goes");
+		r.drawn("gfx/entity_0.png", Drawer::Other);
 		r.next_frame();
 		r.drawn("ui.png", Drawer::Other);
 		let all = resident(&[("gfx/world_tiles.png", 32), ("gfx/entity_0.png", 64), ("ui.png", 1)]);

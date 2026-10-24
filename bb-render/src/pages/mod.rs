@@ -17,12 +17,14 @@
 //! - A frame comes with its first mip levels, cut from its atlas's own (see
 //!   `bb_assets::frames::cut_levels`), so a page samples the atlas's texels at every
 //!   level the game reads; the levels past them are made on the GPU from the last.
-//! - Residency as the atlases' (see [`crate::residency`]), per frame: what only battles
-//!   drew goes at a battle's end, all of it when the campaign is left; over the budget,
-//!   whole pages go, the least recently used first (a frame freed alone frees no memory
-//!   until its page is empty). After a battle's end or the campaign's, the frames left
-//!   are packed again into fewer pages if they fit ([`FramePages::compact`]): the
-//!   battle's holes don't keep the world's pages.
+//! - Residency as the atlases' (see [`crate::residency`]), per frame: what the world
+//!   map didn't draw goes at a battle's end, all of it when the campaign is left; over
+//!   the budget, whole pages go, the least recently used first (a frame freed alone
+//!   frees no memory until its page is empty). After a battle's end or the campaign's,
+//!   the frames left are packed again into fewer pages if they fit
+//!   ([`FramePages::compact`]): the battle's holes don't keep the world's pages. Only
+//!   there, behind the loading screen: packing takes 7-26 ms (measured 2026-10-24,
+//!   39-175 frames), a hitch in the middle of a scene.
 //! - Atlases the pages don't take stay whole textures: the fonts, the water and the fog,
 //!   an atlas without brushes, a quad that isn't one of its atlas's frames, an atlas that
 //!   fails to load (its "texture missing" stand-in).
@@ -445,6 +447,7 @@ impl FramePages {
 		if trial.pages().count() >= self.pages.alloc.pages().count() {
 			return;
 		}
+		let _span = crate::frame_timing::span("page packing");
 		self.generation += 1;
 		let mut fresh = Pages::new(self.pages.size);
 		let moves: Vec<Place> = keys.iter().map(|key| fresh.place(gpu, self.resident[key].region)).collect();
@@ -567,10 +570,17 @@ impl FramePages {
 		}
 	}
 
-	/// A battle ended: the frames only battles drew go.
+	/// A battle ended: the frames the world map didn't draw go (see
+	/// [`crate::residency::Residency::battle_discarded`]), but for those only the
+	/// cursor or a portrait drew this frame.
 	pub(crate) fn battle_discarded(&mut self) {
-		let battle = bit(Drawer::Battle);
-		let gone: Vec<_> = self.resident.iter().filter(|(_, r)| r.drawers == battle).map(|(k, _)| k.clone()).collect();
+		let frame = self.frame;
+		let gone: Vec<_> = self
+			.resident
+			.iter()
+			.filter(|(_, r)| crate::residency::gone_with_battle(r.drawers, r.frame < frame))
+			.map(|(k, _)| k.clone())
+			.collect();
 		self.compact_due |= !gone.is_empty();
 		for key in gone {
 			self.evict(&key);
@@ -785,6 +795,84 @@ mod tests {
 					);
 				}
 			}
+		}
+	}
+
+	fn gpu() -> Option<Gpu> {
+		match Gpu::headless() {
+			Ok(gpu) => Some(gpu),
+			Err(e) => {
+				bb_engine::harness::skip(&e);
+				None
+			}
+		}
+	}
+
+	/// Draws `frames` for `drawer` this frame, loading those not on the GPU yet.
+	fn draw(pages: &mut FramePages, gpu: &Gpu, mips: &MipMaker, frames: &[TexelRect], drawer: Drawer) {
+		let waiting = frames.iter().filter(|f| matches!(pages.locate(ATLAS, &quad(f), drawer, true), Located::Waiting)).count();
+		if waiting > 0 {
+			pages.load_asks_now(gpu, mips);
+			for f in frames {
+				assert!(matches!(pages.locate(ATLAS, &quad(f), drawer, false), Located::Page { .. }), "{f:?} loaded");
+			}
+		}
+	}
+
+	fn resident(pages: &FramePages) -> Vec<TexelRect> {
+		let mut frames: Vec<TexelRect> = pages.resident.keys().map(|(_, f)| *f).collect();
+		frames.sort();
+		frames
+	}
+
+	/// A battle's end takes the turn bar's portraits with the battle's own frames, and
+	/// a portrait drawn on the world map before; what the cursor draws this frame stays.
+	#[test]
+	fn portraits_go_with_the_battle() {
+		let Some(gpu) = gpu() else { return };
+		let mips = MipMaker::new(&gpu);
+		let mut pages = FramePages::with_page_size(Arc::new(Files(png(&atlas()))), None, 1, 48);
+		pages.index(&registry());
+		let f = frames();
+		pages.begin_frame(1);
+		draw(&mut pages, &gpu, &mips, &f[0..2], Drawer::World);
+		draw(&mut pages, &gpu, &mips, &f[2..4], Drawer::Battle);
+		// The turn bar's portraits of the battle's units.
+		draw(&mut pages, &gpu, &mips, &f[3..5], Drawer::Other);
+		// A portrait the world map showed (the character screen).
+		draw(&mut pages, &gpu, &mips, &f[5..6], Drawer::Other);
+		pages.begin_frame(2);
+		draw(&mut pages, &gpu, &mips, &f[1..2], Drawer::World);
+		// The cursor, drawn every frame.
+		draw(&mut pages, &gpu, &mips, &f[6..7], Drawer::Other);
+		pages.battle_discarded();
+		assert_eq!(resident(&pages), [f[0], f[1], f[6]], "the world's, and the cursor's of this frame");
+	}
+
+	/// Battle after battle, each drawing its own units and their portraits, the pages
+	/// come back to what the world map draws.
+	#[test]
+	fn the_pages_stay_few_battle_after_battle() {
+		let Some(gpu) = gpu() else { return };
+		let mips = MipMaker::new(&gpu);
+		let mut pages = FramePages::with_page_size(Arc::new(Files(png(&atlas()))), None, 1, 48);
+		pages.index(&registry());
+		let f = frames();
+		let mut frame = 0;
+		for battle in 0..12 {
+			frame += 1;
+			pages.begin_frame(frame);
+			draw(&mut pages, &gpu, &mips, &f[0..2], Drawer::World);
+			// Each battle its own units: three of the six other frames, in turn.
+			let units: Vec<TexelRect> = (0..3).map(|i| f[2 + (battle + i) % 6]).collect();
+			frame += 1;
+			pages.begin_frame(frame);
+			draw(&mut pages, &gpu, &mips, &units, Drawer::Battle);
+			draw(&mut pages, &gpu, &mips, &units, Drawer::Other);
+			pages.battle_discarded();
+			pages.pump(&gpu, &mips);
+			assert_eq!(resident(&pages), [f[0], f[1]], "after battle {battle}: the world's frames");
+			assert_eq!(pages.memory().0, 1, "after battle {battle}: one page holds them");
 		}
 	}
 }
