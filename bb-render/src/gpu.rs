@@ -52,13 +52,28 @@ impl Gpu {
 
 	/// `descriptor` with the graphics API the game draws through on this platform,
 	/// unless `WGPU_BACKEND` chose one: Direct3D 12 on Windows, where the UI page's paints
-	/// open (`ui_page`'s `windows`); wgpu's choice elsewhere.
+	/// open (`ui_page`'s `windows`); Vulkan on Linux and the BSDs, the only API the paints
+	/// open there (`docs/requirements.md`); wgpu's choice elsewhere (Metal on macOS).
+	///
+	/// Linux names Vulkan because wgpu's default list holds OpenGL too, and an instance
+	/// with OpenGL opens an EGL display and context as it starts, which it keeps for as long
+	/// as it lives, whichever adapter is picked. On Mesa that is a driver screen of its own
+	/// in the game's process, for nothing: 10.5 MiB of VRAM on radeonsi (measured on an
+	/// RX 9070 XT: the screen's own buffer, `radeonsi_screen_create_impl`, counted by its
+	/// caller at `amdgpu_bo_alloc`), beside the screens of Chromium's GL, which share the
+	/// rest.
 	pub fn platform_backends(descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor {
-		#[cfg(windows)]
-		if std::env::var_os("WGPU_BACKEND").is_none() {
-			return wgpu::InstanceDescriptor { backends: wgpu::Backends::DX12, ..descriptor };
+		let backends = if cfg!(windows) {
+			wgpu::Backends::DX12
+		} else if cfg!(all(unix, not(target_vendor = "apple"))) {
+			wgpu::Backends::VULKAN
+		} else {
+			descriptor.backends
+		};
+		if std::env::var_os("WGPU_BACKEND").is_some() {
+			return descriptor;
 		}
-		descriptor
+		wgpu::InstanceDescriptor { backends, ..descriptor }
 	}
 
 	fn headless_adapter() -> Result<wgpu::Adapter, String> {
@@ -267,5 +282,32 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
 			Poll::Ready(output) => return output,
 			Poll::Pending => std::thread::park(),
 		}
+	}
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+	use super::Gpu;
+
+	/// Opening the GPU loads no OpenGL driver ([`Gpu::platform_backends`]): wgpu's
+	/// default list would open an EGL display beside Vulkan and keep it, a driver screen
+	/// of its own (10.5 MiB of VRAM on radeonsi).
+	#[test]
+	fn opening_the_gpu_opens_no_opengl() {
+		let gpu = match Gpu::headless() {
+			Ok(gpu) => gpu,
+			Err(e) => {
+				bb_engine::harness::skip(&e);
+				return;
+			}
+		};
+		let maps = std::fs::read_to_string("/proc/self/maps").expect("this process's mappings");
+		let egl: Vec<&str> = maps.lines().filter_map(|l| l.split_whitespace().nth(5)).filter(|p| p.contains("libEGL")).collect();
+		assert!(
+			egl.is_empty(),
+			"{} opened EGL beside it ({egl:?}; WGPU_BACKEND={:?})",
+			gpu.adapter,
+			std::env::var("WGPU_BACKEND")
+		);
 	}
 }
