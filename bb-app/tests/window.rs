@@ -910,6 +910,102 @@ fn the_game_steps_at_the_displays_rate_whichever_frames_are_presented() {
 	}
 }
 
+/// The party travelling on the world map at 8x steps as far each frame as the display
+/// shows it, though frames start late now and then (`bb_app::display_clock`): on a
+/// 180 Hz display, every 7th frame started 2 ms late (`BB_TEST_LATE_FRAMES`, a late
+/// timer or frame callback); the display's queue still showed each a refresh after the
+/// last. Stepped by their starts, those frames moved the party 1.36 times as far as the
+/// rest and the next ones 0.64 times: small jumps at 8x (~800 px a second), however
+/// steady the frame rate. Each step is now whole refreshes (two for a frame that missed
+/// one), its real time (`Time.getDelta`) and the party's step with it.
+#[test]
+fn the_world_steps_whole_refreshes_though_frames_start_late() {
+	let dir = run_dir("travel_late_frames");
+	let (settings, times) = (dir.join("settings.cfg"), dir.join("frame_times.txt"));
+	// Once the world is up: the player's path to the farthest settlement, at 8x, each
+	// frame's delta and position noted (a Real event a millisecond on fires in the next
+	// frame's pass), for three seconds; then back to the main menu, where `quit` Quits.
+	let travel = r#"
+if (!("__travel" in getroottable()) && ("State" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::World.State.isInLoadingScreen())
+{
+	local ws = ::World.State;
+	ws.m.IsAutosaving = false;
+	ws.getPlayer().m.IsAttackable = false;
+	local best = null, far = 0;
+	foreach (s in ::World.EntityManager.getSettlements())
+	{
+		local d = s.getTile().getDistanceTo(ws.getPlayer().getTile());
+		if (d > far) { far = d; best = s; }
+	}
+	local settings = ::World.getNavigator().createSettings();
+	settings.ActionPointCosts = ::Const.World.TerrainTypeNavCost;
+	ws.getPlayer().setPath(::World.getNavigator().findPath(ws.getPlayer().getTile(), best.getTile(), settings, 0));
+	::__travel <- { start = ::Time.getRealTimeF(), rows = [], exited = false };
+	::__travelTick <- function( _d )
+	{
+		local tr = ::__travel;
+		local ws = ::World.State;
+		ws.m.IsGamePaused = false;
+		ws.m.IsGameAutoPaused = false;
+		ws.m.LastWorldSpeedMult = 8.0;
+		local p = ws.getPlayer().getPos();
+		tr.rows.push(::format("%.4f %.3f %.3f %.1f", ::Time.getDelta() * 1000.0, p.X, p.Y, ::World.getSpeedMult()));
+		if (::Time.getRealTimeF() - tr.start < 4.0)
+		{
+			::Time.scheduleEvent(::TimeUnit.Real, 1, ::__travelTick, null);
+			return;
+		}
+		foreach (r in tr.rows) ::logWarning("travel: " + r);
+		ws.m.MenuStack.popAll(true);
+		ws.exitGame();
+		tr.exited = true;
+	};
+	::Time.scheduleEvent(::TimeUnit.Real, 1, ::__travelTick, null);
+}"#;
+	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__travel" in getroottable()) && ::__travel.exited && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
+	let travels: Vec<String> = (1..=60).map(|i| (i * 180).to_string()).collect();
+	let quits: Vec<String> = (1..=200).map(|i| (i * 60).to_string()).collect();
+	let mut args = vec!["--new-campaign", "--settings", settings.to_str().unwrap()];
+	for frame in &travels {
+		args.extend(["--at", frame.as_str(), travel]);
+	}
+	for frame in &quits {
+		args.extend(["--at", frame.as_str(), quit]);
+	}
+	let env = [("BB_FRAME_TIMES", times.to_str().unwrap()), ("BB_TEST_LATE_FRAMES", "7:2")];
+	let Some(run) = run_bb_at(&dir, (1280, 720), Some(180), &args, &env) else { return };
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	// Each frame's delta (ms) and the party's position, at 8x; the first half second
+	// left out (the speed and the path taking hold).
+	let rows: Vec<[f64; 4]> = run
+		.stderr
+		.lines()
+		.filter_map(|l| l.split_once("travel: ").map(|(_, r)| r))
+		.filter_map(|r| {
+			let v: Vec<f64> = r.split(' ').filter_map(|f| f.parse().ok()).collect();
+			v.try_into().ok()
+		})
+		.filter(|r: &[f64; 4]| r[3] == 8.0)
+		.skip(90)
+		.collect();
+	assert!(rows.len() > 300, "{} frames at 8x\n{}", rows.len(), run.stderr);
+	let refresh = 1000.0 / 180.0;
+	// The frames did start late: their intervals since the last are 2 ms long.
+	let late = std::fs::read_to_string(&times)
+		.expect("the frame times")
+		.lines()
+		.filter_map(|l| l.split(' ').find_map(|f| f.strip_prefix("interval=")).and_then(|v| v.parse::<f64>().ok()))
+		.filter(|&ms| ms > refresh + 1.5 && ms < 2.0 * refresh - 1.0)
+		.count();
+	assert!(late > 50, "{late} frames started late");
+	// Each step whole refreshes (within a 2% bleed of what's carried).
+	let off: Vec<f64> = rows.iter().map(|r| r[0]).filter(|&ms| (ms / refresh - (ms / refresh).round()).abs() * refresh > 0.15).collect();
+	assert!(off.len() * 100 <= rows.len(), "{} of {} steps not whole refreshes: {off:?}", off.len(), rows.len());
+	// The party travelled, each frame as far as its delta takes it.
+	let moved = rows.windows(2).filter(|w| (w[1][1], w[1][2]) != (w[0][1], w[0][2])).count();
+	assert!(moved * 10 >= rows.len() * 9, "the party moved in {moved} of {} frames", rows.len());
+}
+
 /// The mouse moving over a still screen presents a frame every refresh of the display,
 /// the last frame again where nothing changed, and a still mouse presents none: on a
 /// variable-refresh display the monitor refreshes only as frames are presented, and the

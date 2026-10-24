@@ -16,6 +16,7 @@ use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use bb_app::display::{self, Placement};
+use bb_app::display_clock::DisplayClock;
 use bb_app::front::Key;
 use bb_app::game::{Boot, Game, Start, Store};
 use bb_app::game_cursor::CursorShow;
@@ -128,6 +129,8 @@ struct Running {
 	applied: u64,
 	game: Game,
 	last_frame: Instant,
+	/// The real time each step is given (see `bb_app::display_clock`).
+	display_clock: DisplayClock,
 	frames: u64,
 	/// The last frame showed what the one before it did, so nothing was drawn or
 	/// presented (see `bb_app::shown`).
@@ -155,6 +158,10 @@ struct Running {
 	/// mouse moved, a pixel or so back and forth near the window's top left corner: the
 	/// window tests' stand-in for a player's mouse (a headless gamescope has none).
 	test_mouse_moves: Option<(u64, u64)>,
+	/// With `BB_TEST_LATE_FRAMES=N:MS`, every Nth frame starts MS milliseconds late (the
+	/// window tests' stand-in for a late timer or frame callback, see
+	/// `bb_app::display_clock`).
+	test_late_frames: Option<(u64, f64)>,
 	/// Whether the mouse moved since the last frame presented (see `bb_app::mouse_refresh`).
 	mouse_refresh: MouseRefresh,
 	/// The system said the window isn't shown (`WindowEvent::Occluded`).
@@ -226,6 +233,8 @@ struct FrameTimes {
 	wait_gpu: bool,
 	/// The page's copy stats at the last line.
 	copies: bb_render::UiCopyStats,
+	/// The real time the frame's step was given (see `bb_app::display_clock`).
+	stepped: f64,
 }
 
 impl FrameTimes {
@@ -237,10 +246,12 @@ impl FrameTimes {
 			out: std::io::BufWriter::new(file),
 			wait_gpu: std::env::var_os("BB_FRAME_TIMES_GPU").is_some_and(|v| v != "0"),
 			copies: bb_render::UiCopyStats::default(),
+			stepped: 0.0,
 		})
 	}
 
-	/// One line: the frame's number, the time since the last frame's start, its own work,
+	/// One line: the frame's number, the time since the last frame's start, the real
+	/// time its step was given (`stepped`, see `bb_app::display_clock`), its own work,
 	/// the camera's zoom, the quads drawn, the display's refresh as the frame clock takes
 	/// it (see `bb_app::pacing`), then each span, all in milliseconds.
 	/// `t` is the engine's real time at the frame, the clock scripts read
@@ -264,7 +275,8 @@ impl FrameTimes {
 		use std::io::Write;
 		let ms = |d: Duration| d.as_secs_f64() * 1000.0;
 		let mut line = format!(
-			"{frame} interval={interval:.3} work={:.3} zoom={zoom:.3} quads={quads} refresh={:.3} t={t:.4}",
+			"{frame} interval={interval:.3} stepped={:.3} work={:.3} zoom={zoom:.3} quads={quads} refresh={:.3} t={t:.4}",
+			self.stepped,
 			ms(work),
 			ms(refresh)
 		);
@@ -470,6 +482,7 @@ impl App {
 			applied: 0,
 			game,
 			last_frame: Instant::now(),
+			display_clock: DisplayClock::default(),
 			frames: 0,
 			unchanged: false,
 			pacer,
@@ -486,6 +499,10 @@ impl App {
 			test_mouse_moves: std::env::var("BB_TEST_MOUSE_MOVES")
 				.ok()
 				.and_then(|v| v.split_once('-').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))),
+			test_late_frames: std::env::var("BB_TEST_LATE_FRAMES")
+				.ok()
+				.and_then(|v| v.split_once(':').and_then(|(n, ms)| Some((n.parse().ok()?, ms.parse().ok()?))))
+				.filter(|&(n, _)| n > 0),
 			mouse_refresh: MouseRefresh::default(),
 			occluded: false,
 			next_stats: std::env::var_os("BB_STATS").is_some_and(|v| v != "0").then(Instant::now),
@@ -730,6 +747,9 @@ impl Running {
 	/// One frame: step the game by the real time since the last, draw, present.
 	/// Returns the frame count.
 	fn frame(&mut self, event_loop: &ActiveEventLoop) -> Result<u64, String> {
+		if let Some((_, ms)) = self.test_late_frames.filter(|&(n, _)| self.frames % n == n - 1) {
+			std::thread::sleep(Duration::from_secs_f64(ms / 1000.0));
+		}
 		let now = Instant::now();
 		let ms = now.duration_since(self.last_frame).as_secs_f64() * 1000.0;
 		self.last_frame = now;
@@ -746,7 +766,14 @@ impl Running {
 			let x = 8.0 + (self.frames % 3) as f64;
 			self.mouse_at(x, 8.0)?;
 		}
-		self.game.step(ms)?;
+		// Whole refreshes of the display while it paces the frames, so a frame that
+		// started late (and the next, early) moves things as far as the display shows.
+		let refresh = self.pacer.display_refresh(self.frame_cap()).map(|r| r.as_secs_f64() * 1000.0);
+		let stepped = self.display_clock.step(ms, refresh);
+		if let Some(times) = &mut self.frame_times {
+			times.stepped = stepped;
+		}
+		self.game.step(stepped)?;
 		// Beside `stats`' log, what the renderer holds (every 5 s, with `BB_STATS`).
 		if self.next_stats.is_some_and(|at| now >= at) {
 			let frame = self.target.bytes() as f64 / (1024.0 * 1024.0);

@@ -4,6 +4,7 @@
 
 pub mod clipboard;
 pub mod display;
+pub mod display_clock;
 pub mod failure;
 #[cfg(feature = "ui")]
 pub mod frame_scenes;

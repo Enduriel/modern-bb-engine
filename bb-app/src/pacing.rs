@@ -338,6 +338,13 @@ impl Pacer {
 		self.display_paced && self.intervals.len() < ENOUGH && !(self.trusted && self.reported.is_some())
 	}
 
+	/// The display's refresh while it shows each presented frame a refresh at a time (VSync
+	/// on, no slower frame cap) and the refresh is known (measured, or trusted as
+	/// reported): the grid the game's steps keep to (see `crate::display_clock`).
+	pub fn display_refresh(&self, cap: Option<Duration>) -> Option<Duration> {
+		(self.display_holds(cap) && !self.measuring()).then(|| self.refresh())
+	}
+
 	/// The display's refresh interval: measured, where presenting waits for it, and no
 	/// shorter than the monitor's reported one, nor clearly longer unless the intervals
 	/// measured are steady; else as reported; else 60 Hz.
