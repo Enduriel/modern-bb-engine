@@ -61,7 +61,12 @@ The parts, in `summary.txt` and `snapshot.json`:
   UI bridge, the sound bank, saves kept in memory);
 - **census**: the scripts' objects by kind (tables, closures, strings, …);
 - **chromium** (with the UI): Chromium's own figures per process and allocator, after a
-  garbage collection.
+  garbage collection, with what each heap holds live against what it keeps: Blink's
+  Oilpan heap's committed pages against its live objects, malloc's and PartitionAlloc's
+  objects in use against what they have from the system; and the page's own: V8's
+  JavaScript heap (used of total, and the Blink objects it holds) and the DOM's node,
+  document and listener counts. Growing live figures mean data kept alive; growing
+  committed or retained figures with flat live ones mean memory kept after it was freed.
 
 **Privacy:** `census.txt` holds the scripts' strings (names, texts of the campaign), and
 `v8.heapsnapshot` the UI page's text and data. Look at them before sharing them publicly.
@@ -87,6 +92,9 @@ what grew.
 - The census is always built in (`SQVM::write_census`); the `census` feature only adds
   the census's access tracking (which tables the scripts read and write over a stretch
   of play), which hooks every table access and stays a measuring build's.
+- The first snapshot with the UI starts Chromium's tracing service, a utility process of
+  its own (about 55 MB PSS), which Chromium keeps until the game ends: the next
+  snapshots list it, marked as the snapshot's.
 - Chromium's dump is given up on after 20 s (180 s with the heap snapshot); what came by
   then is kept, and the part is marked failed.
 - `BB_TEST_MEMORY_SNAPSHOT_KEY=N` presses the hotkey at frame N (the window tests'
