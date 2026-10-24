@@ -109,6 +109,7 @@ original to compare:
 | What | Before | Now | How measured |
 | --- | --- | --- | --- |
 | Textures on the GPU on a fresh world | 436 MiB (every atlas kept, as the original) | 119 MiB (183 MiB in a battle): only the sprites drawn | 1920 × 1080 |
+| The world map's water and fog of war textures | 42.7 MiB (2048² RGBA8 with mips, as the game's files) | 5.3 MiB (block compressed, BC1 and BC4; on screen at most 4 levels of 255 off) | Texel bytes; a GPU without BC compression keeps the fog in one channel (26.7 MiB) |
 | Script memory, 32 mods, a player's save | 466 MB | 174 MB | The Squirrel VM's heap |
 | Loading every script (vanilla and a large mod stack) | ~470 ms | ~65 ms | With the compiled-script cache |
 | Idle at the main menu, 32 mods, 180 Hz | 16.6% of a core | 1.3% | CPU, % of one core |

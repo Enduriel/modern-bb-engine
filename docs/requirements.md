@@ -168,7 +168,9 @@ All figures are [measured] (2026-10-21, Ryzen 7
   2 GB is the absolute floor.
 - **GPU memory:** ~240–280 MB (VRAM + GTT) at the menu with the UI on the GPU. The
   game keeps up to 256 MiB of textures on any GPU (a scene draws 115–180 MiB);
-  `render.texture_budget_mib` in the settings file changes this.
+  `render.texture_budget_mib` in the settings file changes this. The world map's
+  water and fog textures take 5.3 MiB block compressed (BC1/BC4, every desktop GPU);
+  a GPU without BC compression takes 26.7 MiB for them instead.
 - **Disk:** the game's own install (Steam or GOG) plus the engine's package.
 
 ## Start time
