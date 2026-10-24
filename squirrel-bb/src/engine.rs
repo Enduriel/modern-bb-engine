@@ -14,6 +14,8 @@
 //! every service *while the VM is still fully alive*, then lets the `vm` field (the
 //! last-declared field) drop last for a clean `sq_close`.
 
+mod memory;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 

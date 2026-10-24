@@ -191,6 +191,28 @@ pub(crate) fn install(vm: &mut SQVM, crt: Prng) -> Sprites {
 	sprites
 }
 
+impl crate::memory_report::ReportMemory for Sprites {
+	fn report_memory(&self, report: &mut crate::memory_report::MemoryReport) {
+		use crate::memory_report::{set_bytes, vec_bytes};
+		let registry = self.0.registry.borrow();
+		let sheets = registry.sheets();
+		let sprites: usize = sheets.iter().map(|s| s.sheet.sprites.len()).sum();
+		let bytes: usize = sheets
+			.iter()
+			.map(|s| s.path.capacity() + s.sheet.texture.capacity() + vec_bytes(&s.sheet.sprites))
+			.sum::<usize>()
+			+ sheets.iter().flat_map(|s| s.sheet.sprites.iter()).map(|b| b.name.capacity()).sum::<usize>();
+		report.add("sprite registry", "brush sheets", sheets.len(), size_of_val(sheets));
+		report.add("sprite registry", "sprites in them", sprites, bytes);
+		report.add("sprite registry", "sprites by name", registry.len(), registry.len() * (size_of::<(u64, u64)>() + 1));
+		let names = self.0.names.borrow();
+		let text: usize = names.iter().map(|n| n.len()).sum();
+		report.add("sprite registry", "brush names shared", names.len(), set_bytes(&names) + text);
+		let hints = self.0.hints.borrow().paths.len() + self.0.battle_hints.borrow().paths.len();
+		report.add("sprite registry", "hints not taken yet", hints, 0);
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use bb_assets::{BrushFrame, BrushSheet, BrushSprite, SheetHeader, name_hash};

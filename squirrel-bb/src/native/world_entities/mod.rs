@@ -45,6 +45,7 @@ use crate::native::sprite_color::{SpriteColor, real_time};
 mod draw_key;
 mod footprints;
 mod hover;
+mod memory;
 mod movement;
 mod original;
 pub(crate) use original::{argb, rgba};

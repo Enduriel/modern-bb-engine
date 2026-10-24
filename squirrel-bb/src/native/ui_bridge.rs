@@ -440,3 +440,14 @@ impl UiBridge {
 		st.frontend = None;
 	}
 }
+
+impl crate::memory_report::ReportMemory for UiBridge {
+	fn report_memory(&self, report: &mut crate::memory_report::MemoryReport) {
+		use crate::memory_report::{map_bytes, vec_bytes};
+		let st = self.state.borrow();
+		report.add("UI bridge", "connections", st.connections.len(), map_bytes(&st.connections));
+		report.add("UI bridge", "handles", st.handles.len(), map_bytes(&st.handles));
+		report.add("UI bridge", "calls logged", st.log.len(), vec_bytes(&st.log));
+		report.add("UI bridge", "connects pending", st.pending_connects.len(), vec_bytes(&st.pending_connects));
+	}
+}

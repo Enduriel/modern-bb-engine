@@ -111,6 +111,20 @@ pub struct ModuleSystem<S: ScriptSource> {
 	state: SharedState<S>,
 }
 
+impl<S: ScriptSource> crate::memory_report::ReportMemory for ModuleSystem<S> {
+	fn report_memory(&self, report: &mut crate::memory_report::MemoryReport) {
+		use crate::memory_report::{map_bytes, set_bytes};
+		let st = self.state.borrow();
+		let keys = |m: &std::collections::HashMap<String, SqStrongRef>| m.keys().map(String::capacity).sum::<usize>();
+		report.add("module system", "class prototypes", st.prototypes.len(), map_bytes(&st.prototypes) + keys(&st.prototypes));
+		report.add("module system", "script scopes", st.scopes.len(), map_bytes(&st.scopes) + keys(&st.scopes));
+		report.add("module system", "scripts included", st.included.len(), set_bytes(&st.included));
+		report.add("module system", "class parents", st.parents.len(), map_bytes(&st.parents));
+		report.add("module system", "class name hashes", st.by_hash.len(), map_bytes(&st.by_hash));
+		report.add("module system", "instance counts", st.instance_counts.len(), map_bytes(&st.instance_counts));
+	}
+}
+
 impl<S: ScriptSource + 'static> ModuleSystem<S> {
 	/// Create a module system backed by `source` for resolving script paths.
 	pub fn new(source: S) -> Self {

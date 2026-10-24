@@ -25,6 +25,7 @@ use squirrel::{ClassBuilder, IdentityMap, Number, Retained, SQVM, SqArray, SqCla
 use super::inject::{Natives, inject_natives};
 use super::overload::{make_dispatcher, overload_key, single_overload};
 
+mod memory;
 mod persist;
 mod colors;
 mod effects;

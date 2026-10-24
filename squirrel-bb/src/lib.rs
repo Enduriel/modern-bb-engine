@@ -29,6 +29,7 @@ pub mod html_log;
 mod input_events;
 mod io_table;
 mod key_queue;
+pub mod memory_report;
 mod missing_script;
 mod script_errors;
 pub use script_errors::ScriptErrors;

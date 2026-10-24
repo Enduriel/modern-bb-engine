@@ -14,6 +14,7 @@ pub(crate) mod detail;
 pub(crate) mod faction_set;
 pub(crate) mod heads;
 mod heat;
+mod memory;
 mod off_map;
 mod picking;
 mod camera_callbacks;

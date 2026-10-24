@@ -415,4 +415,16 @@ impl<B: Backend> AudioOut for KiraOut<B> {
 	fn status(&mut self) -> Option<String> {
 		(self.status)(&mut self.manager)
 	}
+
+	fn report_memory(&self, report: &mut squirrel_bb::memory_report::MemoryReport) {
+		let (sounds, decoded, streamed, read_ahead) = self.bank_use();
+		report.add("sound bank", "sounds known", sounds, 0);
+		report.add("sound bank", "decoded sounds kept", 0, decoded);
+		report.add("sound bank", "long sounds playing (their files)", 0, streamed);
+		report.add("sound bank", "read ahead, not played yet", 0, read_ahead);
+		let (voices, pending, ended) = self.voice_use();
+		report.add("sound output", "voices", voices, 0);
+		report.add("sound output", "voices never started", pending, 0);
+		report.add("sound output", "voices ended, not released", ended, 0);
+	}
 }

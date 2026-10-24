@@ -48,6 +48,12 @@ pub struct Playing {
 #[derive(Clone)]
 pub struct Audio(Rc<RefCell<SoundManager>>);
 
+impl crate::memory_report::ReportMemory for Audio {
+	fn report_memory(&self, report: &mut crate::memory_report::MemoryReport) {
+		self.0.borrow().out.report_memory(report);
+	}
+}
+
 impl Audio {
 	/// Playing into `out`, with its own random stream `rng`, on `time`'s real clock
 	/// and event list.

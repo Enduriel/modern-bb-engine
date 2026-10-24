@@ -59,4 +59,8 @@ pub trait AudioOut {
 	fn status(&mut self) -> Option<String> {
 		None
 	}
+
+	/// What it holds (decoded sounds, streams, voices), for a memory snapshot (see
+	/// [`crate::memory_report`]); nothing by default.
+	fn report_memory(&self, _report: &mut crate::memory_report::MemoryReport) {}
 }

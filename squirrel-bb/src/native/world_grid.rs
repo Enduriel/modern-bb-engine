@@ -26,6 +26,7 @@ use super::world_nav::{self, NavSettings, NavTile};
 use super::world_search;
 
 mod access;
+mod memory;
 mod original;
 pub(crate) use access::GridAccess;
 pub(crate) use original::brush_name;
