@@ -52,6 +52,7 @@ gives.
 | `BB_BOOT_RELEASE=0` | Keep what the page's boot left behind, instead of giving it back once the boot is over (about -45 MB at the main menu). |
 | `BB_TRIM=0` | Don't hand the allocator's free pages back to the system behind loading screens (glibc's `malloc_trim`, Linux). |
 | `BB_TEXTURE_PAGES=off` (or `0`) | Draw from the game's whole atlases instead of the engine's own pages of the frames drawn (`bb_render::pages`). |
+| `BB_WATER_TEXTURE=FORMAT`, `BB_FOG_TEXTURE=FORMAT` | Keep the world map's water (`gfx/water.png`) or fog of war (`gfx/fow.png`) texture in another format: `rgba8` (the default, 21.3 MiB each with mips), `r8` (one channel, 5.3 MiB: the fog only, exact for the game's grey fog), `bc1` (block compressed colour, 2.7 MiB) or `bc4` (block compressed, one channel, 2.7 MiB: the fog), then optionally `-half` (stored at half the size each side) and `-flat` (no mips), e.g. `bc1-half`. What the texture's content or the GPU rules out falls back (a coloured fog to `rgba8`; without BC compression to `r8` for a grey fog, `rgba8` for the water) and says so on stderr (`bb_render::world_textures`). |
 | `BB_LAZY_LEVELS=0` | Make the script classes' levels as plain clones, not lazy ones. |
 | `BB_LAZY_MEMBERS=0` | Copy an instance's member tables (`m`) in full, not lazily. |
 | `BB_UI_CPU_RASTER=1` | Rasterize the page on the CPU (`--disable-gpu-rasterization`). |
