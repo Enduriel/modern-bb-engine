@@ -36,6 +36,7 @@ pub(super) fn place(m: &Machine, idx: usize, tile: usize, is_actor: bool) -> Res
 	}
 	let rec = &mut machine.units[idx];
 	rec.tile = Some(tile);
+	rec.drawn_on = None;
 	rec.local = (0.0, 0.0);
 	// Its sprites turn again (see `moving_sprites`).
 	machine.moving.note(machine.owner(idx));
@@ -53,6 +54,7 @@ fn release(t: &mut tactical_grid::TacticalTileData, entity: &SqStrongRef) {
 /// (0, 0), like an unplaced entity in the original.
 pub(super) fn unplace(m: &Machine, idx: usize) {
 	let mut machine = m.borrow_mut();
+	machine.units[idx].drawn_on = None;
 	let Some(tile) = machine.units[idx].tile.take() else {
 		return;
 	};

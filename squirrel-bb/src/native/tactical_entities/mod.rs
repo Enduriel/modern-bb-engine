@@ -201,6 +201,9 @@ struct UnitRecord {
 	colors_stored: bool,
 	/// In the air between two tiles (the original's flight layer, flag `0x800000`).
 	flying: bool,
+	/// Off the map but still drawn among the units, in this tile's place: a unit
+	/// lifting off for a switch (see [`Units::lift_off`]).
+	drawn_on: Option<usize>,
 	/// Drawn on a tile the player can't see now (`setVisibleInFogOfWar`, `+0x18b`;
 	/// true until actors turn it off).
 	visible_in_fog: bool,
@@ -349,6 +352,7 @@ fn create_unit(
 			sprites: super::sprite_slots::Slots::default(),
 			colors_stored: false,
 			flying: false,
+			drawn_on: None,
 			visible_in_fog: true,
 			prevent_occlusion: false,
 		});
@@ -673,6 +677,19 @@ impl Units {
 	pub fn lift(&self, identity: i64) -> Result<(), String> {
 		let idx = *self.0.borrow().by_identity.get(&identity).ok_or("lift: not a tactical unit")?;
 		placement::unplace(&self.0, idx);
+		Ok(())
+	}
+
+	/// Take the unit off its tile as a switch in view does (`0x4ca3fe`): the original
+	/// clears its tile but leaves it among the units on the map, so it is still drawn,
+	/// bars and all, where its tile was in the drawing order, wherever its position
+	/// puts it, and (with no tile) never hidden or desaturated by the fog (`0x4c30eb`)
+	/// until it takes off into the flight layer or is placed again.
+	pub fn lift_off(&self, identity: i64) -> Result<(), String> {
+		let idx = *self.0.borrow().by_identity.get(&identity).ok_or("lift: not a tactical unit")?;
+		let from = self.0.borrow().units[idx].tile;
+		placement::unplace(&self.0, idx);
+		self.0.borrow_mut().units[idx].drawn_on = from;
 		Ok(())
 	}
 
@@ -1354,7 +1371,7 @@ impl TacticalEntities {
 		m.units
 			.iter()
 			.enumerate()
-			.filter(|(_, u)| !u.dead && u.tile.is_some())
+			.filter(|(_, u)| !u.dead && (u.tile.is_some() || u.drawn_on.is_some()))
 			.map(|(i, u)| crate::scene::tactical::SceneTacticalEntity {
 				id: u.id,
 				pos: match local(i) {
@@ -1364,7 +1381,8 @@ impl TacticalEntities {
 					}
 					None => m.world_pos(u),
 				},
-				tile: u.tile,
+				tile: u.tile.or(u.drawn_on),
+				off_map: u.tile.is_none(),
 				flying: u.flying,
 				visible_in_fog: u.visible_in_fog,
 				is_actor: u.is_actor,

@@ -169,8 +169,12 @@ pub struct SceneTacticalEntity {
 	pub id: i64,
 	/// Its position in world units, its tile's level included.
 	pub pos: (f64, f64),
-	/// The index of its tile in [`TacticalScene::tiles`].
+	/// The index of its tile in [`TacticalScene::tiles`]; for one [`off_map`](Self::off_map),
+	/// the tile it is drawn with.
 	pub tile: Option<usize>,
+	/// Off the map, yet drawn with the units in its old tile's place (a unit lifting
+	/// off for a switch): no tile hides it in the fog or desaturates it.
+	pub off_map: bool,
 	/// In the air between two tiles: drawn in the original's effects layer, after the
 	/// tiles, not with the units on the map.
 	pub flying: bool,

@@ -368,7 +368,9 @@ struct OnTile<'a> {
 /// original draws a unit's bars with it, `0x4c3547`, so a unit in front covers the
 /// bars of one behind), the overlay at `overlay_level`. On a tile the player can't see,
 /// what isn't visible in the fog (units) isn't drawn (`0x4c30eb`), and the rest is
-/// desaturated. Then the path's footsteps on the tile, and the rain's splats.
+/// desaturated; but a unit off the map drawn in the tile's place has no tile for the
+/// fog to hide it by (`0x4c30eb` skips only with a tile), nor for the occlusion fade.
+/// Then the path's footsteps on the tile, and the rain's splats.
 fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: Fade, overlay_level: u32) {
 	let (x, y) = (tile.pos.0 as f32, tile.pos.1 as f32 + tile.level as f32 * LEVEL_H);
 	let level = tile.level.max(0) as u32;
@@ -397,8 +399,12 @@ fn draw_dressing(b: &mut Builder, tile: &SceneTacticalTile, on: &OnTile, fade: F
 		};
 		b.placed(&pool.brush, [pool.pos.0, pool.pos.1], look, pool.saturation * hidden, level);
 	}
-	for entity in on.standing.iter().filter(|e| tile.visible || e.visible_in_fog) {
-		draw_entity_sprites(b, entity, Some(fade), hidden, level);
+	for entity in on.standing.iter().filter(|e| tile.visible || e.visible_in_fog || e.off_map) {
+		if entity.off_map {
+			draw_entity_sprites(b, entity, None, 1.0, level);
+		} else {
+			draw_entity_sprites(b, entity, Some(fade), hidden, level);
+		}
 		if let Some(overlay) = &entity.overlay {
 			draw_overlay(b, entity, overlay, overlay_level);
 		}
@@ -786,6 +792,7 @@ mod tests {
 			pos: (tile as f64 * 120.0, 0.0),
 			tile: Some(tile),
 			flying,
+			off_map: false,
 			visible_in_fog,
 			is_actor: !visible_in_fog,
 			overlay: None,
@@ -977,6 +984,30 @@ mod tests {
 		assert_eq!(Fade::of(&scene, &scene.tiles[0]), Fade::BehindOne(0));
 		let scene = column([false, false, false, true]);
 		assert_eq!(Fade::of(&scene, &scene.tiles[0]), Fade::BehindThree);
+	}
+
+	/// A unit lifting off for a switch is off the map but still drawn with the units, in
+	/// its old tile's place, before what stands on the tiles in front; with no tile, the
+	/// fog neither hides nor desaturates it.
+	#[test]
+	fn a_unit_off_the_map_draws_in_its_old_tiles_place_whatever_the_fog() {
+		let mut lifting = entity(1, 1, "unit", false, false);
+		lifting.off_map = true;
+		lifting.pos.1 += 20.0;
+		let scene = TacticalScene {
+			width: 2,
+			height: 1,
+			tiles: vec![tile(0, true), tile(1, false)],
+			entities: vec![entity(2, 0, "rock", true, false), lifting],
+			..TacticalScene::default()
+		};
+		let quads = quads_of(&scene);
+		let names: Vec<_> = quads.iter().map(name_of).collect();
+		let unit = names.iter().position(|&n| n == "unit").expect("the lifting unit is drawn");
+		let rock = names.iter().position(|&n| n == "rock").expect("the rock");
+		// Tiles draw from the right within a row: tile 1, its unit, then tile 0's rock.
+		assert!(unit < rock, "in tile 1's place: {names:?}");
+		assert_eq!(quads[unit].saturation, 1.0, "not desaturated by its old tile's fog");
 	}
 
 	#[test]

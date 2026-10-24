@@ -52,12 +52,13 @@ fn numbers(s: &str) -> Vec<f64> {
 	s.split(' ').map(|x| x.parse().unwrap()).collect()
 }
 
-#[test]
-fn a_unit_hops_to_its_destination_over_time() {
+/// A battle paced as the windowed game paces it, at a brother's turn; `None` (skipped)
+/// without the Steam install.
+fn timed_battle() -> Option<harness::GameEngine> {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
 		bb_engine::harness::skip(format!("{} not present", dir.display()));
-		return;
+		return None;
 	}
 	let engine = harness::open_install_with(dir, |c| {
 		c.battle_motion = squirrel_bb::BattleMotion::Timed;
@@ -82,6 +83,12 @@ fn a_unit_hops_to_its_destination_over_time() {
 		}
 	}
 	assert!(ready, "a brother's turn");
+	Some(engine)
+}
+
+#[test]
+fn a_unit_hops_to_its_destination_over_time() {
+	let Some(engine) = timed_battle() else { return };
 	let target = player::eval_string(&engine, TARGET).unwrap().unwrap();
 	let target = numbers(&target);
 	let (x, y) = (target[0] as i64, target[1] as i64);
@@ -150,4 +157,109 @@ fn a_unit_hops_to_its_destination_over_time() {
 	let arc = (0.25 * across).min(60.0) * 0.75;
 	let line = (a.1 + 40.0 + b.1 + 50.0) / 2.0;
 	assert!(peak > line + arc * 0.8, "arcs over the line: peak {peak:.1}, line {line:.1}, arc {arc:.1}");
+}
+
+/// Two brothers next to each other, the one's id, then the other's.
+const PAIR: &str = r#"(function() {
+	local players = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
+	foreach (x in players)
+		foreach (y in players)
+			if (x != y && x.getTile().getDistanceTo(y.getTile()) == 1 && x.getTile().Level == y.getTile().Level)
+			{
+				::__pair <- [x, y];
+				::__tiles <- [x.getTile(), y.getTile()];
+				return x.getID() + " " + y.getID();
+			}
+	return "";
+})()"#;
+
+/// Per unit of the pair: placed, travelling, x, y; then virtual seconds.
+const PAIR_SAMPLE: &str = r#"(function() {
+	local s = "";
+	foreach (e in ::__pair)
+		s += (e.isPlacedOnMap() ? 1 : 0) + " " + (::Tactical.getNavigator().isTravelling(e) ? 1 : 0) + " " + e.getPos().X + " " + e.getPos().Y + " ";
+	return s + ::Time.getVirtualTimeF();
+})()"#;
+
+/// Rotation's swap (`switchEntities(a, b, onDone, tag, 1.0)`) in view, as the original
+/// does it (`0x4ca160`, update `0x4ca990`; probed 2026-10-24). Both units leave their
+/// tiles at once (`getPos` reads (0, 0) until the next update) but stay drawn with the
+/// units, bars and all, rising 40 over 0.14 s above their own tiles; then each takes the
+/// other's tile and flies there in the flight layer (0.18 s per 126 units), and lands
+/// (50 over 0.23 s), calling `onDone(unit, tag)`. The speed divides every time. Ours
+/// used to leave both undrawn while they rose: they blinked out for 0.14 s.
+#[test]
+fn a_switch_in_view_keeps_both_units_drawn_as_they_rise() {
+	let Some(engine) = timed_battle() else { return };
+	let pair = player::eval_string(&engine, PAIR).unwrap().unwrap();
+	let ids: Vec<i64> = pair.split(' ').map(|x| x.parse().expect("two neighbouring brothers")).collect();
+	let start = |i: usize| numbers(&player::eval_string(&engine, &format!("::__tiles[{i}].Pos.X + \" \" + ::__tiles[{i}].Pos.Y")).unwrap().unwrap());
+	let from = [start(0), start(1)];
+	engine
+		.run_script(
+			"::Tactical.State.m.IsAIPaused = true; ::__done <- []; ::__t0 <- ::Time.getVirtualTimeF();
+			::__answer <- ::Tactical.getNavigator().switchEntities(::__pair[0], ::__pair[1], function ( _e, _tag ) {
+				::__done.push(_e.getID() + \" \" + _tag + \" \" + (::Time.getVirtualTimeF() - ::__t0));
+			}, \"rotation\", 1.0);",
+			"switch",
+		)
+		.unwrap();
+	assert_eq!(player::eval_i64(&engine, "::__answer ? 1 : 0").unwrap(), Some(1), "it switches");
+	let s = numbers(&player::eval_string(&engine, PAIR_SAMPLE).unwrap().unwrap());
+	assert_eq!(s[..8], [0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0], "both off the map, travelling, at (0, 0) until the next update");
+	let t0 = s[8];
+
+	// Per unit: when it took off into the flight layer, and when it began landing.
+	let mut flew: [Option<f64>; 2] = [None, None];
+	let mut landing: [Option<f64>; 2] = [None, None];
+	for frame in 0..120 {
+		harness::run_frame(&engine, 1000.0 / 60.0).unwrap();
+		let s = numbers(&player::eval_string(&engine, PAIR_SAMPLE).unwrap().unwrap());
+		let t = s[8] - t0;
+		let scene = engine.tactical_scene();
+		let mut travelling = false;
+		for i in 0..2 {
+			let (placed, moving, x, y) = (s[i * 4] == 1.0, s[i * 4 + 1] == 1.0, s[i * 4 + 2], s[i * 4 + 3]);
+			travelling |= moving;
+			let drawn = scene.entities.iter().find(|e| e.id == ids[i]).unwrap_or_else(|| panic!("frame {frame} ({t:.3} s): unit {i} isn't drawn"));
+			let (own, other) = (&from[i], &from[1 - i]);
+			if !placed {
+				// Rising over its own tile, among the units.
+				assert!(flew[i].is_none(), "off the map again after taking off");
+				assert!(drawn.off_map && !drawn.flying, "frame {frame}: rising off the map, drawn with the units");
+				assert_eq!(x, own[0], "straight up");
+				assert!(y > own[1] && y <= own[1] + 40.0 + 1e-3, "at most 40 up ({})", y - own[1]);
+				assert!(drawn.overlay.is_some(), "with its bars");
+			} else if drawn.flying {
+				flew[i].get_or_insert(t);
+				assert!(landing[i].is_none(), "flying again after landing");
+			} else if moving {
+				landing[i].get_or_insert(t);
+				assert_eq!(x, other[0], "dropping straight down onto the other's tile");
+				assert!(y >= other[1] - 1e-3 && y <= other[1] + 50.0 + 1e-3, "at most 50 up ({})", y - other[1]);
+			}
+		}
+		if !travelling {
+			break;
+		}
+	}
+	// Lift-off is 0.14 s, from the first update: it ends at the first frame at or after.
+	for i in 0..2 {
+		let flew = flew[i].unwrap_or_else(|| panic!("unit {i} never flew"));
+		assert!((0.14..0.14 + 0.034).contains(&flew), "unit {i} took off at {flew:.3} s");
+		let across = ((from[0][0] - from[1][0]).powi(2) + (from[1 - i][1] + 50.0 - from[i][1] - 40.0).powi(2)).sqrt();
+		let flight = (across / 126.0 * 0.18) as f64;
+		let landed = landing[i].unwrap_or_else(|| panic!("unit {i} never landed"));
+		assert!(landed >= flew + flight - 1e-3 && landed < flew + flight + 0.034, "unit {i}: {flight:.3} s of flight, landing at {landed:.3} s");
+	}
+	let done = player::eval_string(&engine, "::__done.reduce(@(a, b) a + \"; \" + b)").unwrap().unwrap();
+	assert_eq!(done.split("; ").count(), 2, "onDone(unit, tag) once per landing: {done}");
+	for (i, id) in ids.iter().enumerate() {
+		let line = done.split("; ").find(|l| l.starts_with(&format!("{id} rotation "))).unwrap_or_else(|| panic!("unit {i}'s onDone: {done}"));
+		let at: f64 = line.rsplit(' ').next().unwrap().parse().unwrap();
+		let landed = landing[i].unwrap();
+		assert!(at >= landed + 0.23 - 1e-3 && at < landed + 0.23 + 0.034, "unit {i} landed for 0.23 s: done at {at:.3} s");
+		let tile = player::eval_string(&engine, &format!("::__pair[{i}].getTile().Pos.X + \" \" + ::__pair[{i}].getTile().Pos.Y")).unwrap().unwrap();
+		assert_eq!(numbers(&tile), from[1 - i], "unit {i} on the other's tile");
+	}
 }

@@ -15,7 +15,8 @@
 //! `switchEntities(a, b, onDone, tag, speed)` swaps two units the same way: both start
 //! moving, and if the player sees neither tile they swap at once and `onDone(tag)` runs
 //! once; otherwise both leave their tiles and fly as two teleports, each landing calling
-//! `onDone(unit, tag)`. A callback written for the landings therefore fails out of sight,
+//! `onDone(unit, tag)`. Off their tiles, they are still drawn with the units while they
+//! rise (see `Units::lift_off`), until they take the other's tile in the air. A callback written for the landings therefore fails out of sight,
 //! silently, as in the original (probed; see `on_done`); mods depend on it.
 
 use std::cell::RefCell;
@@ -147,6 +148,9 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 	};
 	let callback = (!is_null(vm, &args[2].0)).then(|| args[2].0.clone());
 	let tag = args[3].0.clone();
+	// Both units' shakes end first (`0x4ca1e8`), as a teleport's does.
+	units.cancel_shake(vm, a);
+	units.cancel_shake(vm, b);
 	let speed = args[4].0.get_value::<Number>(vm).map_or(1.0, |n| n.0 as f32);
 	let landed_with = callback.clone().map(|f| (f, tag.clone()));
 
@@ -164,8 +168,8 @@ pub(super) fn switch_entities(nav: &Rc<RefCell<NavState>>, vm: &SQVM, args: &[Re
 		}
 		return Ok(true);
 	}
-	units.lift(a)?;
-	units.lift(b)?;
+	units.lift_off(a)?;
+	units.lift_off(b)?;
 	let now = hop::virtual_now(vm);
 	let speed = if speed > 0.0 { speed } else { 1.0 };
 	let mut st = nav.borrow_mut();
