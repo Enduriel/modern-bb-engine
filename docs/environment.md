@@ -35,6 +35,8 @@ otherwise.
 | `BB_UI_SLOW_CALLS=MS` | Log every call between the game and the page that takes at least `MS` milliseconds (`0`: all of them), to stderr. |
 | `BB_PAGE_REST_LOG=1` | Log each change in whether the page rests between frames, and every 1,000 frames what gave it its turns. |
 
+A memory snapshot needs no variable: Ctrl+Shift+F11, or `SIGUSR1` on Linux and macOS, writes one into the log folder (`docs/memory-snapshots.md`).
+
 Without any of these, a page that keeps the game waiting is a warning in log.html (tag `UI`, and on stderr), with its time to the millisecond: a park answered a second or more after it was asked (`the page parked 1.402 s after it was asked to`), one not answered within 5 s, and a call into the page not answered within 5 s.
 | `BB_ALLOW_TRACE=1` | Let any process of the user's trace `bb` (Linux's Yama), so a hung run's stacks can be read (`eu-stack`). The window tests set it. |
 
@@ -70,6 +72,7 @@ gives.
 | `BB_TEST_UNPRESENTED=N` | Draw frame `N` but don't present it (the window tests' stalled-compositor case). |
 | `BB_TEST_SURFACE_FAILS=N` | The window's next `N` surface configures ask for an empty surface, which wgpu refuses (the window tests' case of a surface the system won't take, `bb_app::surface_trouble`). |
 | `BB_TEST_PRESENT_EVERY=K/N` (or `N`, as `2/N`) | Draw and present the first `K` of every `N` frames whatever they show (the window tests' frame-pacing cases). |
+| `BB_TEST_MEMORY_SNAPSHOT_KEY=N` | Frame `N` starts with the memory snapshot's hotkey (Ctrl+Shift+F11) pressed and released, through the keyboard's path (the window tests' stand-in for a player's keys; see `docs/memory-snapshots.md`). |
 | `BB_TEST_MOUSE_MOVES=A-B` | Frames `A` to `B` (not included) each start with the mouse moved, a pixel or so near the window's top left corner (the window tests' stand-in for a player's mouse). |
 | `BB_GAME_QUEUE_TURN=PATH` | A turn in the shared game-display queue that the runner (`scripts/test_all.py`) already holds, so `window.rs` waits once. |
 | `BB_UI_DISPLAY`, `BB_UI_DISPLAY_STATUS` | Set by the tests' display wrapper: where a wrapped process runs (a headless gamescope by default) and where it writes its exit status. |
