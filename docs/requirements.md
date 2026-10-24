@@ -167,9 +167,8 @@ All figures are [measured] (2026-10-21, Ryzen 7
 - **[estimate] RAM to recommend:** 4 GB for the whole system (game + OS + desktop).
   2 GB is the absolute floor.
 - **GPU memory:** ~240–280 MB (VRAM + GTT) at the menu with the UI on the GPU. The
-  game keeps up to 1 GiB of textures on a GPU with its own memory, and 384 MiB on one
-  that shares the system's RAM (integrated GPUs, the Steam Deck). `render.texture_budget_mib`
-  in the settings file changes this.
+  game keeps up to 256 MiB of textures on any GPU (a scene draws 115–180 MiB);
+  `render.texture_budget_mib` in the settings file changes this.
 - **Disk:** the game's own install (Steam or GOG) plus the engine's package.
 
 ## Start time
