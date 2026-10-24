@@ -173,6 +173,26 @@ fn world_natives_from_the_disassembly() {
 		catch (e) { if (e != "No overload matching this argument list found") wrong.push("no args: " + e); }
 		"#,
 	);
+	// Contracts hold their Home (and much else) as a WeakTableRef: the original's natives
+	// resolve it to the entity (`_get` forwards), so a defend contract's
+	// `party.getDistanceTo(m.Home) <= 700.0` measures to the town, not 0.
+	check(
+		&engine,
+		"entity natives given a WeakTableRef",
+		r#"
+		local player = ::World.State.getPlayer();
+		local far = null;
+		foreach (s in ::World.EntityManager.getSettlements())
+			if (far == null || player.getDistanceTo(s) > player.getDistanceTo(far)) far = s;
+		local ref = ::WeakTableRef(far);
+		local d = player.getDistanceTo(far);
+		if (d < 1000) wrong.push("farthest settlement only " + d + " away");
+		if (player.getDistanceTo(ref) != d) wrong.push("getDistanceTo: " + player.getDistanceTo(ref) + " through the ref, " + d + " direct");
+		if (player.getDirectionTo(ref) != player.getDirectionTo(far)) wrong.push("getDirectionTo");
+		if (player.isVisibleToEntity(ref, 1.0) != player.isVisibleToEntity(far, 1.0)) wrong.push("isVisibleToEntity");
+		if (::WeakTableRef(player).getDistanceTo(far) != d) wrong.push("called on a ref");
+		"#,
+	);
 	check(
 		&engine,
 		"getEntityAtPos",

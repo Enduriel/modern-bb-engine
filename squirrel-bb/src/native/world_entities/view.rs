@@ -14,6 +14,7 @@ use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::{EntityMachine, ignore_missing, vec_xy};
 use crate::native::overload::single_overload;
+use crate::native::tactical_entities::unit_identity;
 use crate::native::world_query;
 
 /// `Const.Faction.Player`.
@@ -44,9 +45,11 @@ pub(super) fn hidden_to_player(rec: &super::EntityRecord, view: &PlayerView) -> 
 	rec.faction != PLAYER_FACTION && world_query::distance(rec.pos, view.pos) > rec.visibility * view.vision_radius
 }
 
-/// The position of the entity an argument refers to, if it is a registered entity.
-fn entity_pos(m: &Machine, other: &SqStrongRef) -> Option<(f64, f64)> {
-	m.borrow().record(other.identity()).map(|rec| rec.pos)
+/// The position of the entity an argument refers to, if it is a registered entity. A
+/// `WeakTableRef` counts as the entity it refers to, as in the original (a contract's
+/// `getDistanceTo(m.Home)` measures to the town).
+fn entity_pos(m: &Machine, vm: &SQVM, other: &SqStrongRef) -> Option<(f64, f64)> {
+	m.borrow().record(unit_identity(vm, other)).map(|rec| rec.pos)
 }
 
 /// The calling entity's position (origin if unregistered).
@@ -93,7 +96,7 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	let is_visible_to_entity = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, other: Retained, radius: Number| -> bool {
-			let Some(other_pos) = entity_pos(&m, &other.0) else {
+			let Some(other_pos) = entity_pos(&m, vm, &other.0) else {
 				return false;
 			};
 			let machine = m.borrow();
@@ -106,13 +109,13 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	let get_distance_to = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, other: Retained| -> f64 {
-			entity_pos(&m, &other.0).map_or(0.0, |p| f64::from(world_query::distance(p, this_pos(&m, vm))))
+			entity_pos(&m, vm, &other.0).map_or(0.0, |p| f64::from(world_query::distance(p, this_pos(&m, vm))))
 		})
 	};
 	let get_direction_to = {
 		let m = m.clone();
 		vm.make_closure(move |vm: &SQVM, other: Retained| -> i64 {
-			entity_pos(&m, &other.0).map_or(0, |p| world_query::direction6(this_pos(&m, vm), p))
+			entity_pos(&m, vm, &other.0).map_or(0, |p| world_query::direction6(this_pos(&m, vm), p))
 		})
 	};
 	let get_direction_to_pos = {
