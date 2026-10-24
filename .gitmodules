@@ -1,0 +1,4 @@
+[submodule "squirrel-sys"]
+	path = squirrel-sys
+	url = https://github.com/Enduriel/squirrel-sys.git
+	branch = squirrel-master

@@ -15,14 +15,10 @@ permissions:
   contents: read
 
 env:
-  # >>> squirrel-sys: the one place CI gets it from. <<<
-  # It is a separate repository, checked out inside this one (squirrel-sys/). The
-  # repository must hold this commit, and its `squirrel` submodule's commit too
-  # (squirrel-sys's .gitmodules says where that comes from). As of 2026-10-21 neither
-  # Enduriel/squirrel-sys nor albertodemichelis/squirrel has the local commits this
-  # build needs, so this checkout fails until they are published (docs/packaging.md).
-  SQUIRREL_SYS_REPOSITORY: Enduriel/squirrel-sys
-  SQUIRREL_SYS_REF: 87dd54ff8c537c9dabaade7cdcf3b428dd2b6fd1
+  # squirrel-sys (Enduriel/squirrel-sys) is a submodule at squirrel-sys/, and the VM
+  # (Enduriel/squirrel) a submodule of it; both are checked out with this repository at
+  # the commits it records. While they are private, the SUBMODULES_TOKEN secret holds a
+  # read-only token for them.
   CARGO_TERM_COLOR: never
 
 jobs:
@@ -55,17 +51,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
-
-      - name: Check out squirrel-sys
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ env.SQUIRREL_SYS_REPOSITORY }}
-          ref: ${{ env.SQUIRREL_SYS_REF }}
-          path: squirrel-sys
           submodules: recursive
-          # A private fork needs a read-only token in this secret.
-          token: ${{ secrets.SQUIRREL_SYS_TOKEN || github.token }}
+          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
           persist-credentials: false
 
       - name: Python (the script needs 3.11+)

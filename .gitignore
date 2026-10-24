@@ -3,12 +3,6 @@
 **/target
 **/*.rs.bk
 
-# squirrel-sys is its own git repository (remote: Enduriel/squirrel-sys), present here
-# as a build dependency (squirrel/Cargo.toml: ../squirrel-sys; Cargo.toml excludes it from
-# the workspace).
-# Managed separately, not vendored into this repo.
-/squirrel-sys
-
 # Python bytecode from parity/ and the scripts
 __pycache__/
 
