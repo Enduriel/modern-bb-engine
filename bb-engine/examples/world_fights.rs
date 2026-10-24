@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! world_fights [--data <install>/data] [--mods mod_modern_hooks,mod_msu] [--extra a.zip,b.zip]
-//!              [--settings settings.nut] [--world-script probe.nut]... [--seed s] [--days 30] [--speed 8]
+//!              [--settings settings.nut] [--world-script probe.nut]... [--seed s] [--days 30] [--speed 8] [--fps 60]
 //!              [--save-every-days 0] [--chain 1] [--saves DIR] [--profile-start REPORT.md] [--timeout SECS]
 //!              --out run.log
 //! ```
@@ -21,7 +21,8 @@
 //! - `--profile-start REPORT.md` profiles the campaign's start (worldgen and the faction
 //!   simulation) by script function and native.
 //! - The player's company is made unattackable, fed and paid, and the event manager is
-//!   stopped, so the world runs on its own. The world speed is `--speed`.
+//!   stopped, so the world runs on its own. The world speed is `--speed`; each frame is
+//!   `1/--fps` s of real time (60 by default).
 //! - While a probe run holds the game, `data/` may also hold the zips it was
 //!   given (`--with-mod`): a prefix in `--mods` matches those too. The log lists every
 //!   zip mounted.
@@ -54,7 +55,6 @@ use squirrel_bb::LogLevel;
 
 const MENU: &str = "::RootState.get(\"MainMenuState\").m.MainMenuScreen";
 const IN_WORLD: &str = "(\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible() && !::World.State.m.IsGameOver";
-const FRAME_MS: f64 = 1000.0 / 60.0;
 
 struct Options {
 	data: PathBuf,
@@ -67,6 +67,7 @@ struct Options {
 	seed: String,
 	days: i64,
 	speed: f64,
+	fps: f64,
 	save_every_days: i64,
 	chain: u32,
 	saves: PathBuf,
@@ -85,6 +86,7 @@ fn options() -> Result<Options, String> {
 		seed: "world-fights".into(),
 		days: 30,
 		speed: 8.0,
+		fps: 60.0,
 		save_every_days: 0,
 		chain: 1,
 		saves: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/world-fights-saves"),
@@ -107,6 +109,7 @@ fn options() -> Result<Options, String> {
 			"--seed" => o.seed = v()?,
 			"--days" => o.days = v()?.parse().map_err(|e| format!("--days: {e}"))?,
 			"--speed" => o.speed = v()?.parse().map_err(|e| format!("--speed: {e}"))?,
+			"--fps" => o.fps = v()?.parse().map_err(|e| format!("--fps: {e}"))?,
 			"--save-every-days" => {
 				o.save_every_days = v()?
 					.parse()
@@ -335,7 +338,7 @@ fn run(o: &Options, log: &Log, watch: &Watch) -> Result<(), String> {
 	// One frame, unless the run has timed out.
 	let step = || -> Result<(), String> {
 		watch.check()?;
-		harness::run_frame(&engine, FRAME_MS)
+		harness::run_frame(&engine, 1000.0 / o.fps)
 	};
 	watch.phase("booting the main menu");
 	harness::boot_menu(&engine)?;
@@ -442,7 +445,7 @@ fn run(o: &Options, log: &Log, watch: &Watch) -> Result<(), String> {
 		::World.State.m.Events.update <- function(...) {{}};
 		local s = ::World.State.getEventScreen(); if (s.isVisible() && !s.isAnimating()) s.onButtonPressed(0);
 		if (::World.State.isPaused()) {{ ::World.State.setAutoPause(false); ::World.State.setPause(false); }}
-		::World.setSpeedMult({});",
+		::World.State.m.LastWorldSpeedMult = {0:?}; ::World.setSpeedMult({0:?});",
 		o.speed
 	);
 	let day = || {
