@@ -795,14 +795,16 @@ fn signal_after_first_snapshot(logs: &Path) -> Result<(), String> {
 	Ok(())
 }
 
-/// The `bb` started with `--logs` naming `logs` (not one of its browser processes).
+/// The `bb` started with `--logs` naming `logs` (not one of its browser processes, nor
+/// the shell or gamescope that started it with the same arguments).
 fn game_process(logs: &Path) -> Option<u32> {
 	let logs = logs.to_string_lossy().into_owned();
+	let bb = bb_binary().to_string_lossy().into_owned();
 	std::fs::read_dir("/proc").ok()?.flatten().find_map(|entry| {
 		let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
 		let args = std::fs::read(entry.path().join("cmdline")).ok()?;
 		let args: Vec<String> = args.split(|&b| b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
-		let ours = args.first().is_some_and(|a| a.ends_with("/bb")) && args.iter().any(|a| *a == logs);
+		let ours = args.first().is_some_and(|a| *a == bb) && args.iter().any(|a| *a == logs);
 		(ours && !args.iter().any(|a| a.starts_with("--type="))).then_some(pid)
 	})
 }
