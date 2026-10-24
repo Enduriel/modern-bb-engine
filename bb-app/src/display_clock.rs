@@ -25,7 +25,9 @@
 //! So while presenting waits for the display and its refresh is known (see
 //! `pacing::Pacer::display_refresh`), a step is given the whole refreshes nearest to the
 //! real time owed (at least one: each presented frame is shown for at least one), and
-//! the rest is carried to the next. A frame the display really showed late (it missed
+//! the rest is carried to the next. The refresh is the pacer's, followed (within
+//! [`FOLLOW`]) towards what the frames on its grid keep, as a measure taken under load
+//! can be a little off. A frame the display really showed late (it missed
 //! a refresh: a frame that took longer than one) owes two and gets two. A sixteenth of
 //! what is carried goes into each step, so a refresh measured a little off doesn't
 //! build up into a jump of a whole refresh now and then. The scripts' real time stays
@@ -54,6 +56,14 @@ const OFF_GRID: f64 = 0.2;
 /// of them, and steps are real time.
 const RECENT: u32 = 32;
 
+/// How far (a share of it) the grid may follow the frames away from the refresh the
+/// pacer gives: further, and the grid starts over from that refresh.
+const FOLLOW: f64 = 0.05;
+
+/// The share of the difference between an on-grid frame's real time (per refresh) and
+/// the grid that the grid moves by.
+const TRACK: f64 = 1.0 / 64.0;
+
 /// The real time owed to the game's steps.
 #[derive(Debug, Default)]
 pub struct DisplayClock {
@@ -63,6 +73,10 @@ pub struct DisplayClock {
 	/// Which of the last [`RECENT`] frames came off the grid, a bit each (the newest
 	/// lowest).
 	off_grid: u32,
+	/// The grid (ms): the refresh the pacer gives, followed towards what on-grid frames
+	/// keep (a refresh measured 1.5% short under load put a step of two refreshes in
+	/// every 15 or so).
+	grid: Option<f64>,
 }
 
 impl DisplayClock {
@@ -74,16 +88,21 @@ impl DisplayClock {
 			self.off_grid = 0;
 			return owed.max(0.0);
 		};
-		let refreshes = real_ms / refresh;
-		let off = (refreshes - refreshes.round()).abs() > OFF_GRID;
+		let grid = match self.grid {
+			Some(grid) if (grid / refresh - 1.0).abs() <= FOLLOW => grid,
+			_ => refresh,
+		};
+		let refreshes = real_ms / grid;
+		let off = refreshes.round() < 1.0 || (refreshes - refreshes.round()).abs() > OFF_GRID;
 		self.off_grid = (self.off_grid << 1) | u32::from(off);
+		self.grid = Some(if off { grid } else { grid + (real_ms / refreshes.round() - grid) * TRACK });
 		if self.off_grid.count_ones() > RECENT / 2 {
 			return owed.max(0.0);
 		}
-		let whole = (owed / refresh).round().max(1.0) * refresh;
+		let whole = (owed / grid).round().max(1.0) * grid;
 		let step = whole + (owed - whole) * BLEED;
 		let carried = owed - step;
-		if carried.abs() > RESYNC * refresh {
+		if carried.abs() > RESYNC * grid {
 			return owed.max(0.0);
 		}
 		self.carried = carried;

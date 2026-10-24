@@ -88,3 +88,15 @@ fn without_a_paced_display_steps_are_real_time() {
 	assert_eq!(clock.step(3.0, None), 3.0);
 	assert!((clock.step(R, Some(R)) - R).abs() < 1e-9);
 }
+
+/// A refresh measured 1.5% short (as under load) puts no step of two refreshes among
+/// steady frames with late starts: the grid follows the frames.
+#[test]
+fn a_refresh_measured_short_is_followed() {
+	let mut clock = DisplayClock::default();
+	let measured = R * 0.985;
+	let got: Vec<f64> = (0..2000).map(|i| clock.step(if i % 7 == 6 { R + 2.0 } else if i % 7 == 0 && i > 0 { R - 2.0 } else { R }, Some(measured))).collect();
+	for (i, step) in got.iter().enumerate().skip(400) {
+		assert!((step - R).abs() < 0.15, "frame {i}: {step:.3} ms");
+	}
+}
