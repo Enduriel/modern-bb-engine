@@ -3,8 +3,8 @@
 //!
 //! ```text
 //! cargo run --release -p bb-app --features ui --example memory_inventory -- \
-//!     [--battles N] [--days N] [--until POINT] [--seed SEED] [--out REPORT.md]
-//!     [--devtools PORT --hold SECONDS]
+//!     [--battles N] [--every-battle] [--days N] [--until POINT] [--seed SEED] [--mods]
+//!     [--out REPORT.md] [--devtools PORT --hold SECONDS]
 //! cargo run --release -p bb-app --example memory_inventory -- --engine-only [--mods]
 //! ```
 //!
@@ -14,12 +14,19 @@
 //! company is made hardy and kept at three brothers); `--days` days of the world running (default 10; the parties leave the company be, and a battle
 //! that comes up anyway is fought out); quitting to the main menu; and a second
 //! campaign (`--until` ends it after the point whose name starts so, e.g. "after battle
-//! 1"). At each point it measures:
+//! 1"). A battle the AI can't end in 20 minutes of the game's time, the company flees.
+//! It measures after the first battle, the middle one and the last (after every one with
+//! `--every-battle`), and the other points. `--mods` plays it with the install's mods
+//! (their storages in memory; MSU's new-campaign settings saved as they are). At each
+//! point it measures:
 //! - every process of the game's (with `--features ui`, CEF's too): PSS by the kind of
 //!   memory holding it, and the GPU memory it allocated (`bb_app::stats::tree_memory`);
 //! - the C heap: what is in use, and what malloc holds free;
-//! - the renderer's textures and what the frames drew of them since the point before,
-//!   and wgpu's allocations and the blocks it reserves;
+//! - the renderer's textures and pages and what the frames drew of them since the point
+//!   before, and wgpu's allocations and the blocks it reserves, and what the game
+//!   process's GPU memory holds beyond them (the driver's own, and Chromium's GPU work,
+//!   which runs in this process: on amdgpu its GL context shares our device, so its
+//!   memory counts in our DRM client);
 //! - the engine's records: tactical units, world entities, saves kept in memory, the
 //!   sound bank (on a silent output: nothing is played on the device);
 //! - with the UI, the page's log.
@@ -254,6 +261,8 @@ struct Options {
 	hold: u64,
 	engine_only: bool,
 	mods: bool,
+	/// Sample after every battle, not only the first, the middle one and the last.
+	every_battle: bool,
 }
 
 fn options() -> Result<Options, String> {
@@ -268,6 +277,7 @@ fn options() -> Result<Options, String> {
 		hold: 0,
 		engine_only: false,
 		mods: false,
+		every_battle: false,
 	};
 	let mut args = std::env::args().skip(1);
 	while let Some(arg) = args.next() {
@@ -283,6 +293,7 @@ fn options() -> Result<Options, String> {
 			"--hold" => o.hold = value()?.parse().map_err(|_| "--hold SECONDS")?,
 			"--engine-only" => o.engine_only = true,
 			"--mods" => o.mods = true,
+			"--every-battle" => o.every_battle = true,
 			_ => return Err(format!("unknown argument {arg}")),
 		}
 	}
@@ -440,6 +451,25 @@ impl Session<'_> {
 		self.until_after(ms, max, PAGE_TIME, what, cond)
 	}
 
+	/// [`until_page`](Self::until_page) for a new campaign's world, MSU's new-campaign
+	/// settings saved as they are when its page shows (with `--mods`).
+	fn until_world(&mut self, what: &str) -> Result<(), String> {
+		const MSU_SETTINGS: &str = "(\"MSU\" in ::getroottable()) && ::MSU.SettingsScreen.isVisible()";
+		let start = Instant::now();
+		let mut n = 0;
+		while !self.holds(IN_WORLD)? {
+			if self.holds(MSU_SETTINGS)? {
+				self.engine().run_script("::MSU.SettingsScreen.onSaveButtonPressed({});", "MSU settings")?;
+			}
+			if n >= 6000 && start.elapsed() >= PAGE_TIME {
+				return Err(format!("{what}: not after {n} frames"));
+			}
+			self.frame(SETTLE_MS, n, DRAW_EVERY)?;
+			n += 1;
+		}
+		Ok(())
+	}
+
 	fn until_after(&mut self, ms: f64, max: u32, clock: Duration, what: &str, cond: &str) -> Result<(), String> {
 		let start = Instant::now();
 		let mut n = 0;
@@ -542,7 +572,15 @@ impl Session<'_> {
 		if let Err(e) = ended {
 			let stall = player::eval_string(self.engine(), STALL).ok().flatten().unwrap_or_default();
 			let units = player::eval_string(self.engine(), UNITS).ok().flatten().unwrap_or_default();
-			return Err(format!("{e} (in all, {BATTLE_FRAMES} frames); {stall}; {units}"));
+			let stalled = format!("{e} (in all, {BATTLE_FRAMES} frames); {stall}; {units}");
+			// The company flees, as a player would from a battle that won't end, and the
+			// session goes on.
+			eprintln!("{label}: stalled, the company flees: {stalled}");
+			self.engine().run_script("::Tactical.State.flee();", "flee")?;
+			self.until(BATTLE_MS, 6000, "the battle ending after fleeing", BACK_IN_WORLD)
+				.map_err(|e| format!("{e}; before fleeing: {stalled}"))?;
+			self.battles.push(format!("{label}: stalled, fled"));
+			return self.frames(SETTLE_MS, 120, 1);
 		}
 		let result = player::eval_i64(self.engine(), "::__lastCombatResult")?.unwrap_or(-1);
 		self.battles.push(format!("{label}: result {result}"));
@@ -556,7 +594,22 @@ fn mb(bytes: u64) -> String {
 
 /// The session's samples and battles, and why it stopped early if it did.
 fn run(gpu: &Gpu, o: &Options) -> Result<(Vec<Sample>, Vec<String>, Option<String>), String> {
-	let mut game = Game::boot(gpu, &o.data, &o.seed, false, None, VideoMode::DEFAULT, o.devtools)?;
+	let boot = bb_app::game::Boot {
+		data_dir: &o.data,
+		start: bb_app::game::Start::NewCampaign(o.seed.clone()),
+		mods: o.mods,
+		sound: false,
+		world_size: None,
+		mode: VideoMode::DEFAULT,
+		settings: None,
+		devtools: o.devtools,
+		// The saves (and the mods' storages) stay in memory: the install's own are never touched.
+		saves: None,
+		cef_log: None,
+		store: Default::default(),
+		display: None,
+	};
+	let mut game = Game::start(gpu, &boot)?;
 	game.track_texture_usage();
 	let io = |e: std::io::Error| e.to_string();
 	let files = GameFiles::open(harness::data_archives(&o.data).map_err(io)?).map_err(io)?;
@@ -606,13 +659,13 @@ seterrorhandler(function( _e ) {
 fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 	s.engine().run_script(ERROR_STACK, "error stacks")?;
 	harness::install_autoplay(s.engine())?;
-	s.until_page(SETTLE_MS, 6000, "the campaign's world", IN_WORLD)?;
+	s.until_world("the campaign's world")?;
 	s.frames(SETTLE_MS, 600, 1)?;
 	s.sample("world, fresh")?;
 	let mid = |n: u32| n == 1 || n == o.battles;
 	for n in 1..=o.battles {
 		s.battle(n, mid(n))?;
-		if n == 1 || n == o.battles / 2 || n == o.battles {
+		if o.every_battle || n == 1 || n == o.battles / 2 || n == o.battles {
 			s.sample(&format!("after battle {n}"))?;
 		}
 	}
@@ -669,7 +722,7 @@ fn play(s: &mut Session, o: &Options) -> Result<(), String> {
 		harness::prepare_new_campaign(s.engine(), &format!("{}-2", o.seed))?;
 		harness::start_new_campaign(s.engine())?;
 	}
-	s.until_page(SETTLE_MS, 6000, "the second campaign's world", IN_WORLD)?;
+	s.until_world("the second campaign's world")?;
 	s.frames(SETTLE_MS, 600, 1)?;
 	s.sample("second campaign, fresh")?;
 	Ok(())
@@ -809,6 +862,15 @@ fn report(o: &Options, samples: &[Sample], battles: &[String], stopped: Option<&
 		row("CEF other processes", &|s| mb(pss(s, "CEF other")));
 	}
 	row("wgpu allocations / reserved blocks", &|s| format!("{} / {}", mb(s.gpu_allocated), mb(s.gpu_reserved)));
+	// What the game process's GPU memory holds beyond wgpu's blocks: the driver's own,
+	// and the page's (Chromium's GPU work runs in this process; on amdgpu its GL context
+	// shares our device, so its memory counts in our DRM client).
+	row("&nbsp;&nbsp;game process GPU beyond wgpu's blocks", &|s| {
+		let game: u64 = s.processes.iter().filter(|p| p.role == "game").map(|p| p.vram + p.gtt).sum();
+		mb(game.saturating_sub(s.gpu_reserved))
+	});
+	row("renderer: pages of frames (frames)", &|s| format!("{} ({})", s.renderer.pages, s.renderer.frames));
+	row("&nbsp;&nbsp;their bytes (mips counted)", &|s| mb(s.renderer.page_bytes));
 	row("renderer: textures (count)", &|s| s.renderer.textures.len().to_string());
 	row("&nbsp;&nbsp;their bytes (mips counted)", &|s| mb(s.renderer.texture_bytes()));
 	row("&nbsp;&nbsp;error.png stand-ins", &|s| s.renderer.textures.iter().filter(|t| t.stand_in).count().to_string());
