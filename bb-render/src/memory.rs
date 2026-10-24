@@ -18,6 +18,41 @@ pub struct TextureMemory {
 	pub stand_in: bool,
 }
 
+/// One of the renderer's pages of frames (`crate::pages`), for a memory snapshot.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageMemory {
+	pub page: usize,
+	pub width: u32,
+	pub height: u32,
+	pub bytes: u64,
+	/// The frames in it.
+	pub frames: usize,
+	/// The last frame (the renderer's count) drawn from it.
+	pub last_drawn: u64,
+}
+
+/// A texture's residency, for a memory snapshot: the frame (the renderer's count) it was
+/// last drawn at, and who ever drew it (see `crate::residency`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextureDrawn {
+	pub path: String,
+	pub last_drawn: u64,
+	pub drawers: String,
+}
+
+/// What the renderer's residency knows of its textures and pages, for a memory
+/// snapshot: the frame now, the budget, each texture's last draw, and each page.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ResidencyDetail {
+	pub frame: u64,
+	pub budget: u64,
+	pub textures: Vec<TextureDrawn>,
+	pub pages: Vec<PageMemory>,
+	/// The shaped text's glyph pages (`TextShaper`): how many, and their GPU bytes (not
+	/// in [`RendererMemory`]).
+	pub glyph_pages: (usize, u64),
+}
+
 /// The renderer's GPU memory, as plain data.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RendererMemory {

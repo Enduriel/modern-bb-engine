@@ -91,6 +91,18 @@ impl Residency {
 		self.frame += 1;
 	}
 
+	/// When `path` was last drawn (the frame) and who ever drew it ("world", "battle",
+	/// "other", joined by `+`), for a memory snapshot; `None` if it isn't tracked.
+	pub fn last_drawn(&self, path: &str) -> Option<(u64, String)> {
+		let entry = self.textures.get(path)?;
+		let who: Vec<&str> = [(Drawer::World, "world"), (Drawer::Battle, "battle"), (Drawer::Other, "other")]
+			.into_iter()
+			.filter(|(d, _)| entry.drawers & d.bit() != 0)
+			.map(|(_, name)| name)
+			.collect();
+		Some((entry.frame, who.join("+")))
+	}
+
 	/// `path` was drawn this frame by `drawer`.
 	pub fn drawn(&mut self, path: &str, drawer: Drawer) {
 		let frame = self.frame;

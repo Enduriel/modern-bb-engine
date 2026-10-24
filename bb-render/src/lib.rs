@@ -57,7 +57,7 @@ mod world_renderer;
 
 pub use cursor::{frame_at as cursor_frame_at, frame_index_at as cursor_frame_index_at};
 pub use gpu::Gpu;
-pub use memory::{RendererMemory, TextureMemory};
+pub use memory::{PageMemory, RendererMemory, ResidencyDetail, TextureDrawn, TextureMemory};
 pub use usage::AtlasUse;
 pub use present::Presenter;
 pub use screenshot::{save_png, write_png};

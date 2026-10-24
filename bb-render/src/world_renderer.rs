@@ -327,6 +327,26 @@ impl WorldRenderer {
 		memory
 	}
 
+	/// What the residency knows of the textures [`memory`](Self::memory) lists and of the
+	/// pages: when each was last drawn, and the budget (for a memory snapshot; read only).
+	pub fn residency_detail(&self) -> crate::ResidencyDetail {
+		let textures = crate::RendererMemory::of_cache(&self.textures)
+			.textures
+			.into_iter()
+			.map(|t| {
+				let (last_drawn, drawers) = self.residency.last_drawn(&t.path).unwrap_or((0, String::new()));
+				crate::TextureDrawn { path: t.path, last_drawn, drawers }
+			})
+			.collect();
+		crate::ResidencyDetail {
+			frame: self.residency.frame(),
+			budget: self.residency.budget(),
+			textures,
+			pages: self.pages.as_ref().map(|p| p.page_detail()).unwrap_or_default(),
+			glyph_pages: (self.glyph_pages.len(), self.glyph_pages.iter().map(GpuTexture::bytes).sum()),
+		}
+	}
+
 	/// Track which parts of the atlases the draws sample from now on (for the texture
 	/// residency design; a cost per quad, so off by default).
 	pub fn track_usage(&mut self) {

@@ -654,6 +654,21 @@ impl FramePages {
 		let pages = self.pages.alloc.pages().count();
 		(pages, self.resident.len(), self.bytes())
 	}
+
+	/// Each page, for a memory snapshot: its size, bytes, the frames in it and the last
+	/// frame drawn from it.
+	pub(crate) fn page_detail(&self) -> Vec<crate::PageMemory> {
+		self.pages
+			.alloc
+			.pages()
+			.map(|page| {
+				let (width, height) = self.pages.alloc.page_size(page).unwrap_or((0, 0));
+				let bytes = self.pages.textures.get(page).and_then(Option::as_ref).map_or(0, |t| texture_bytes(&t.texture));
+				let frames = self.resident.values().filter(|r| r.place.page == page).count();
+				crate::PageMemory { page, width, height, bytes, frames, last_drawn: self.pages.used.get(page).copied().unwrap_or(0) }
+			})
+			.collect()
+	}
 }
 
 #[cfg(test)]
