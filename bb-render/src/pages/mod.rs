@@ -22,9 +22,10 @@
 //!   the budget, whole pages go, the least recently used first (a frame freed alone
 //!   frees no memory until its page is empty). After a battle's end or the campaign's,
 //!   the frames left are packed again into fewer pages if they fit
-//!   ([`FramePages::compact`]): the battle's holes don't keep the world's pages. Only
-//!   there, behind the loading screen: packing takes 7-26 ms (measured 2026-10-24,
-//!   39-175 frames), a hitch in the middle of a scene.
+//!   ([`FramePages::compact`]): the battle's holes don't keep the world's pages. And
+//!   once a scene when a frame needs a page more (a load's world comes in as it's first
+//!   drawn: 175 frames in 5 pages, 3 packed). Packing takes 2-5 ms (150-260 frames;
+//!   the levels past the copied ones made once a page).
 //! - Atlases the pages don't take stay whole textures: the fonts, the water and the fog,
 //!   an atlas without brushes, a quad that isn't one of its atlas's frames, an atlas that
 //!   fails to load (its "texture missing" stand-in).
@@ -86,8 +87,8 @@ impl Pages {
 		}
 	}
 
-	/// A place for `region`, its page made if new.
-	fn place(&mut self, gpu: &Gpu, region: Region) -> Place {
+	/// A place for `region`, its page made if new; whether the page is new.
+	fn place(&mut self, gpu: &Gpu, region: Region) -> (Place, bool) {
 		let (place, new) = self.alloc.alloc(region.w, region.h);
 		if self.textures.len() <= place.page {
 			self.textures.resize_with(place.page + 1, || None);
@@ -116,7 +117,7 @@ impl Pages {
 			let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 			self.textures[place.page] = Some(GpuTexture { texture, view, width, height });
 		}
-		place
+		(place, new)
 	}
 
 	/// Give `place` back; its page goes if it's now empty.
@@ -192,6 +193,8 @@ pub(crate) struct FramePages {
 	warmed: HashSet<String>,
 	/// Frames went at a discard: pack the rest again before the next draw.
 	compact_due: bool,
+	/// A page more was made, and packing asked for, since the last scene discard.
+	packed_in_scene: bool,
 	frame: u64,
 	/// Counts the times a frame left its place or an atlas went whole (see
 	/// [`FramePages::generation`]).
@@ -232,6 +235,7 @@ impl FramePages {
 			whole: HashSet::new(),
 			warmed: HashSet::new(),
 			compact_due: false,
+			packed_in_scene: false,
 			frame: 0,
 			generation: 0,
 		}
@@ -450,7 +454,7 @@ impl FramePages {
 		let _span = crate::frame_timing::span("page packing");
 		self.generation += 1;
 		let mut fresh = Pages::new(self.pages.size);
-		let moves: Vec<Place> = keys.iter().map(|key| fresh.place(gpu, self.resident[key].region)).collect();
+		let moves: Vec<Place> = keys.iter().map(|key| fresh.place(gpu, self.resident[key].region).0).collect();
 		let mut encoder = gpu
 			.device
 			.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("compact pages") });
@@ -482,9 +486,16 @@ impl FramePages {
 			}
 		}
 		gpu.submit("gpu page moves", encoder.finish());
+		// The levels past the copied ones, made once over each new page rather than over
+		// each frame's region (a submission and a pass per level each: 175 frames took
+		// 25 ms): the same texels, as a fresh page is zero where no region is, and a
+		// region's own remake reads only what's final by the time it ends.
+		for page in fresh.alloc.pages().collect::<Vec<_>>() {
+			let texture = &fresh.texture(page).texture;
+			mips.remake_region(gpu, texture, (0, 0, texture.width(), texture.height()), LEVELS as u32);
+		}
 		for (key, to) in keys.iter().zip(moves) {
 			let r = self.resident.get_mut(key).expect("a resident frame");
-			mips.remake_region(gpu, &fresh.texture(to.page).texture, (to.x, to.y, r.region.w, r.region.h), LEVELS as u32);
 			// Last drawn when its frame or its page was (quads kept from frame to frame
 			// mark only their pages, see `touch_page`).
 			fresh.used[to.page] = fresh.used[to.page].max(r.frame).max(self.pages.used[r.place.page]);
@@ -518,7 +529,17 @@ impl FramePages {
 	/// Put a loaded frame in a page: its levels where they go, and the levels past them
 	/// made again over its place.
 	fn put(&mut self, gpu: &Gpu, mips: &MipMaker, key: (String, TexelRect), frame: LoadedFrame) {
-		let place = self.pages.place(gpu, frame.region);
+		let (place, new_page) = self.pages.place(gpu, frame.region);
+		// A page more where the frames might fit in fewer: they're packed again before
+		// the next draw if that saves a page (see `compact`), so the holes (frames
+		// evicted, regions placed in the order they came, a load's whole world at once)
+		// don't add up between the scene discards that pack them. Once a scene: packed
+		// full again, the pages would take a page more and be packed at every few frames
+		// that come in (110 times, 2-5 ms each, over a modded 12-battle session).
+		if new_page && !self.packed_in_scene && self.pages.alloc.pages().count() > 1 {
+			self.compact_due = true;
+			self.packed_in_scene = true;
+		}
 		let texture = &self.pages.texture(place.page).texture;
 		for (level, image) in frame.levels.iter().enumerate().take(texture.mip_level_count() as usize) {
 			gpu.queue.write_texture(
@@ -582,6 +603,7 @@ impl FramePages {
 			.map(|(k, _)| k.clone())
 			.collect();
 		self.compact_due |= !gone.is_empty();
+		self.packed_in_scene = false;
 		for key in gone {
 			self.evict(&key);
 		}
@@ -592,6 +614,7 @@ impl FramePages {
 		let frame = self.frame;
 		let gone: Vec<_> = self.resident.iter().filter(|(_, r)| r.frame < frame).map(|(k, _)| k.clone()).collect();
 		self.compact_due |= !gone.is_empty();
+		self.packed_in_scene = false;
 		for key in gone {
 			self.evict(&key);
 		}
@@ -681,7 +704,11 @@ mod tests {
 	}
 
 	fn registry() -> SpriteRegistry {
-		let sprites = frames()
+		registry_of(&frames())
+	}
+
+	fn registry_of(frames: &[TexelRect]) -> SpriteRegistry {
+		let sprites = frames
 			.iter()
 			.enumerate()
 			.map(|(i, f)| {
@@ -778,6 +805,17 @@ mod tests {
 		pages.pump(&gpu, &mips);
 		assert_eq!((pages.memory().0, pages.memory().1), (1, 4), "packed into one page");
 
+		// The levels made over the whole page are those each frame's own remake makes.
+		let page = &pages.texture(0).texture;
+		let levels = |page: &wgpu::Texture| -> Vec<Vec<u8>> {
+			(0..page.mip_level_count()).map(|l| crate::target::read_level(&gpu, page, l).expect("read back").rgba).collect()
+		};
+		let whole = levels(page);
+		for r in pages.resident.values() {
+			mips.remake_region(&gpu, page, (r.place.x, r.place.y, r.region.w, r.region.h), LEVELS as u32);
+		}
+		assert!(whole == levels(page), "every level as the frames' own remakes make it");
+
 		let chain = mip_levels(&atlas(), LEVELS);
 		for level in 0..2u32 {
 			let page = crate::target::read_level(&gpu, &pages.texture(0).texture, level).expect("read back");
@@ -873,6 +911,45 @@ mod tests {
 			pages.pump(&gpu, &mips);
 			assert_eq!(resident(&pages), [f[0], f[1]], "after battle {battle}: the world's frames");
 			assert_eq!(pages.memory().0, 1, "after battle {battle}: one page holds them");
+		}
+	}
+
+	/// A frame that needs a page more, where the frames left after evictions would fit
+	/// in fewer pages with it: they're packed before the next draw.
+	#[test]
+	fn a_page_more_packs_the_frames_first() {
+		let Some(gpu) = gpu() else { return };
+		let mips = MipMaker::new(&gpu);
+		// Eight small frames (24×24 regions, four to a 48² page) and a wide one (a 40×24
+		// region, wider than a small one's hole).
+		let wide = TexelRect { x: 8, y: 24, w: 24, h: 8 };
+		let mut all = frames();
+		all.push(wide);
+		let mut pages = FramePages::with_page_size(Arc::new(Files(png(&atlas()))), None, 1, 48);
+		pages.index(&registry_of(&all));
+		let f = frames();
+		pages.begin_frame(1);
+		draw(&mut pages, &gpu, &mips, &f, Drawer::World);
+		pages.pump(&gpu, &mips);
+		assert_eq!(pages.memory().0, 2, "two full pages");
+		// Two go from each page (as `fit` would take them, without packing).
+		for page in 0..2 {
+			let on: Vec<_> = pages.resident.iter().filter(|(_, r)| r.place.page == page).map(|(k, _)| k.clone()).take(2).collect();
+			for key in on {
+				pages.evict(&key);
+			}
+		}
+		assert_eq!((pages.memory().0, pages.memory().1), (2, 4), "two half-empty pages");
+		// A scene discard since (the world's frames stay): this scene hasn't packed yet.
+		pages.battle_discarded();
+		pages.begin_frame(2);
+		draw(&mut pages, &gpu, &mips, &[wide], Drawer::World);
+		assert_eq!(pages.memory().0, 3, "the wide frame fits no hole: a page more");
+		pages.pump(&gpu, &mips);
+		assert_eq!((pages.memory().0, pages.memory().1), (2, 5), "packed into two");
+		pages.begin_frame(3);
+		for key in pages.resident.keys().cloned().collect::<Vec<_>>() {
+			assert!(matches!(pages.locate(ATLAS, &quad(&key.1), Drawer::World, false), Located::Page { .. }));
 		}
 	}
 }
