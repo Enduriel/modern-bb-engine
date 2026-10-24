@@ -54,8 +54,12 @@ The parts, in `summary.txt` and `snapshot.json`:
 - **allocator**: what the C allocator hands out, and what it holds free without giving it
   back (Linux: per arena; macOS: its zones' totals; not yet on Windows);
 - **gpu**: the renderer's textures (each with its size and when it was last drawn),
-  its pages of frames, its glyph pages, the frame and the UI page's texture, and wgpu's
-  allocator (what it allocated, in how much reserved memory, by name);
+  its pages of frames (how full each is, and which scenes drew its frames), the frames
+  still loading, its glyph pages, the frame and the UI page's texture, wgpu's allocator
+  (what it allocated, in how much reserved memory, by name), and on Linux the game's DRM
+  client as the driver counts it. On amdgpu the page's GL context (Chromium's GPU work,
+  in the game's process) shares that client, so its VRAM is ours plus Chromium's (about
+  150 MiB at 1080p) plus the driver's own: compare it with wgpu's figures, not alone;
 - **engine**: what the engine's services hold, counted and estimated (the world's
   entities and map, a battle's units and map, the sprite registry, the class system, the
   UI bridge, the sound bank, saves kept in memory);
