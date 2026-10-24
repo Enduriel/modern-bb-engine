@@ -1,7 +1,7 @@
 //! The window: winit's event loop driving the [`Game`] a frame per redraw, with the
 //! player's mouse and keys passed on, and each frame presented on the window's surface.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,6 +19,8 @@ use bb_app::display::{self, Placement};
 use bb_app::front::Key;
 use bb_app::game::{Boot, Game, Start, Store};
 use bb_app::game_cursor::CursorShow;
+use bb_app::memory_snapshot::MemorySnapshots;
+use bb_app::memory_snapshot::trigger::{self, Trigger};
 use bb_app::mouse_refresh::MouseRefresh;
 use bb_app::system_cursor::{self, Cursor, Shower};
 use bb_app::steam::SteamStats;
@@ -67,6 +69,10 @@ pub struct Options {
 	pub cef_log: Option<PathBuf>,
 	/// The FPS display shown from the start (`--fps`); otherwise as the settings say.
 	pub fps: bool,
+	/// bb's log folder (log.html's), where memory snapshots go (`bb_app::memory_snapshot`).
+	pub logs_dir: Option<PathBuf>,
+	/// Memory snapshots take V8's heap snapshot of the page too (`--memory-snapshot-v8`).
+	pub memory_snapshot_v8: bool,
 }
 
 /// Everything that exists once the window does.
@@ -203,6 +209,15 @@ struct Running {
 	/// `bb_render::frame_timing`); with `BB_FRAME_TIMES_GPU=1` too, each frame waits for
 	/// the GPU, as the span `gpu`.
 	frame_times: Option<FrameTimes>,
+	/// The memory snapshots asked for (see `bb_app::memory_snapshot`).
+	snapshots: MemorySnapshots,
+	/// Keys taken by bb itself (the snapshot's hotkey): their releases are taken too, so
+	/// the game sees neither.
+	taken_keys: HashSet<KeyCode>,
+	/// With `BB_TEST_MEMORY_SNAPSHOT_KEY=N`, frame N starts with the snapshot's hotkey
+	/// pressed and released, through the same path as the keyboard's: the window tests'
+	/// stand-in for a player's keys (a headless gamescope has no keyboard).
+	test_snapshot_key: Option<u64>,
 }
 
 /// The per-frame times file (`BB_FRAME_TIMES`).
@@ -383,6 +398,10 @@ impl App {
 			display: Some(event_loop.owned_display_handle()),
 		};
 		let mut game = Game::start(&gpu, &boot)?;
+		// The snapshot's signal, once the browser's processes are up (they ignore it).
+		if let Err(e) = trigger::listen_for_signal() {
+			html_log::engine(Class::Warning, "Memory", &format!("SIGUSR1 won't take memory snapshots: {e}"));
+		}
 		game.video().set_monitor_modes(Monitor::of_window(&window).resolutions());
 		game.draw_world_at_screen_size(screen_scale::IN_POINTS && !self.settings.retina_world());
 		if std::env::var_os("BB_TEXTURE_USAGE").is_some_and(|v| v != "0") {
@@ -488,6 +507,9 @@ impl App {
 			keys_down: HashMap::new(),
 			steam: self.options.steam.clone(),
 			frame_times: FrameTimes::from_env(),
+			snapshots: MemorySnapshots::new(self.options.logs_dir.clone(), self.options.memory_snapshot_v8),
+			taken_keys: HashSet::new(),
+			test_snapshot_key: std::env::var("BB_TEST_MEMORY_SNAPSHOT_KEY").ok().and_then(|v| v.parse().ok()),
 		};
 		running.configure();
 		running.resize(size);
@@ -715,6 +737,11 @@ impl Running {
 			let _span = bb_render::frame_timing::span("steam");
 			steam.run_callbacks();
 		}
+		if self.test_snapshot_key == Some(self.frames) {
+			let ctrl_shift = ModifiersState::CONTROL | ModifiersState::SHIFT;
+			self.snapshot_key(KeyCode::F11, ctrl_shift, true, false);
+			self.snapshot_key(KeyCode::F11, ctrl_shift, false, false);
+		}
 		if self.test_mouse_moves.is_some_and(|(from, to)| (from..to).contains(&self.frames)) {
 			let x = 8.0 + (self.frames % 3) as f64;
 			self.mouse_at(x, 8.0)?;
@@ -888,6 +915,20 @@ impl Running {
 		Ok(self.frames)
 	}
 
+	/// The snapshot's hotkey (`bb_app::memory_snapshot::trigger`): bb takes it, its
+	/// release too, and the game sees neither. Whether `code` (going `down` or up, with
+	/// `modifiers` held) was it.
+	fn snapshot_key(&mut self, code: KeyCode, modifiers: ModifiersState, down: bool, repeat: bool) -> bool {
+		if down && trigger::is_hotkey(code, modifiers) {
+			if !repeat {
+				self.snapshots.ask(Trigger::Hotkey);
+			}
+			self.taken_keys.insert(code);
+			return true;
+		}
+		!down && self.taken_keys.remove(&code)
+	}
+
 	/// The mouse moved to `x`, `y` in the window's pixels.
 	fn mouse_at(&mut self, x: f64, y: f64) -> Result<(), String> {
 		self.keep_cursor("a move");
@@ -963,6 +1004,9 @@ impl Running {
 			WindowEvent::KeyboardInput { event, .. } => {
 				let PhysicalKey::Code(code) = event.physical_key else { return Ok(()) };
 				let down = event.state == ElementState::Pressed;
+				if self.snapshot_key(code, self.modifiers, down, event.repeat) {
+					return Ok(());
+				}
 				let engine = if down {
 					let engine = keys::code_for(code, &event.logical_key);
 					self.keys_down.insert(code, engine);
@@ -1026,6 +1070,7 @@ impl App {
 					running.game.run_page_script(code)?;
 				}
 				running.follow_video(&mut self.settings);
+				running.snapshots.poll(&running.game, &running.gpu, running.target.bytes(), frames);
 				Ok(frames)
 			})
 			.and_then(|frames| match &self.options.shot {

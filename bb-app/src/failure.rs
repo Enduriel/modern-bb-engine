@@ -12,8 +12,11 @@
 //!   the log is. Not the game's files: they loaded. (A script error doesn't end the game
 //!   then: it is logged and the game goes on, as the original's, see
 //!   `squirrel_bb::ScriptErrors`.)
-//! - A panic: what it was and where the log is, as a crash, once.
+//! - A panic: what it was and where the log is, as a crash, once. Except one in work
+//!   that may fail without ending the game ([`catch`]: a memory snapshot's part): that
+//!   is an error of the work's, in words, with no message box or crash line.
 
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -67,9 +70,34 @@ pub fn message(error: &str, when: When, data_dir: Option<&Path>, logs: Option<&P
 pub fn show_panics(logs: Option<std::path::PathBuf>) {
 	let default = std::panic::take_hook();
 	std::panic::set_hook(Box::new(move |info| {
+		if CATCHING.get() {
+			CAUGHT.replace(Some(info.to_string()));
+			return;
+		}
 		default(info);
 		show_crash(&info.to_string(), logs.as_deref());
 	}));
+}
+
+thread_local! {
+	/// Whether this thread runs work that may fail without ending the game ([`catch`]).
+	static CATCHING: Cell<bool> = const { Cell::new(false) };
+	/// The panic that work met, as the hook saw it (with where it came from).
+	static CAUGHT: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Run `f`, whose failure needn't end the game: a panic in it is its error, in words,
+/// and goes no further (no message box, no crash line in the log, the game goes on).
+pub fn catch<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+	let outer = CATCHING.replace(true);
+	let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+	CATCHING.set(outer);
+	result.map_err(|payload| {
+		CAUGHT.take().unwrap_or_else(|| {
+			let text = payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned());
+			format!("panicked: {}", text.unwrap_or_default())
+		})
+	})
 }
 
 /// Tell the player bb crashed (`what` went wrong; `logs`: the log's folder), in the
@@ -90,6 +118,13 @@ pub fn show_crash(what: &str, logs: Option<&Path>) {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn a_caught_panic_is_an_error() {
+		assert_eq!(catch(|| 3), Ok(3));
+		let error = catch(|| -> u32 { panic!("the part broke") }).unwrap_err();
+		assert!(error.contains("the part broke"), "{error}");
+	}
 
 	#[test]
 	fn any_error_says_what_it_was_and_where_to_look() {

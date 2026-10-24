@@ -32,8 +32,10 @@ wgpu = "30.0.1"
 winit = "0.30.13"
 
 # macOS: the game's cursor pixel for pixel on scaled displays (`system_cursor`), and the
-# wheel event being handled (`wheel`).
+# wheel event being handled (`wheel`). libc for the memory snapshot's signal
+# (`memory_snapshot::trigger`).
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.186"
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSBitmapImageRep", "NSCursor", "NSEvent", "NSGraphics", "NSImage", "NSImageRep", "NSResponder", "NSView", "NSWindow"] }
 
@@ -46,16 +48,17 @@ smithay-clipboard = "=0.7.2"
 # Linux and FreeBSD: the game's icon on its window under Wayland (`icon::wayland`, the
 # `xdg_toplevel_icon_v1` staging protocol, which winit 0.30 doesn't set), on winit's own
 # connection, the icon's pixels shared through a memfd (the versions winit already
-# brings).
+# brings). libc also for the memory snapshot's signal and
+# glibc's `malloc_info` (`memory_snapshot`).
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 libc = "0.2.186"
 wayland-client = { version = "0.31.15", features = ["system"] }
 wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
 
 # Windows: the player's Documents folder from the shell's known folders, for the
-# original's savegames folder (`saves::documents`), and the process's console, job and
-# crash filter (`win_process`); the version bb-render uses,
-# with the features for the calls.
+# original's savegames folder (`saves::documents`), the process's console, job and
+# crash filter (`win_process`), and its processes' memory counters (`stats::windows`);
+# the version bb-render uses, with the features for the calls.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", default-features = false, features = [
 	"Win32_Foundation",
@@ -67,6 +70,7 @@ windows = { version = "0.62.2", default-features = false, features = [
 	"Win32_System_JobObjects",
 	"Win32_System_Kernel",
 	"Win32_System_LibraryLoader",
+	"Win32_System_ProcessStatus",
 	"Win32_System_Threading",
 	"Win32_UI_Shell",
 ] }

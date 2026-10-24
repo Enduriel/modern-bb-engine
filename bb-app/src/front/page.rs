@@ -284,6 +284,13 @@ impl Front {
 		self.loading_procedural.extend(requests);
 	}
 
+	/// What the page's side holds, for the memory snapshot (its texture is the GPU's).
+	pub fn report_memory(&self, report: &mut squirrel_bb::memory_report::MemoryReport) {
+		report.add("UI page", "log lines kept", self.session.log().len(), 0);
+		report.add("UI page", "images served so far", self.session.host().images_served() as usize, 0);
+		report.add("UI page", "portraits waiting on their atlases", self.loading_procedural.len(), 0);
+	}
+
 	/// What copying the page's paints (and reading them back) has cost so far.
 	pub fn copy_stats(&self) -> bb_render::UiCopyStats {
 		self.layer.page().copy_stats()

@@ -732,6 +732,123 @@ fn bb_writes_its_log_and_keeps_the_last() {
 	}
 }
 
+/// A memory snapshot (`bb_app::memory_snapshot`) is written into the log folder on the
+/// hotkey (pressed through the keyboard's path, `BB_TEST_MEMORY_SNAPSHOT_KEY`: a headless
+/// gamescope has no keyboard) and on SIGUSR1 sent from outside, with every part there and
+/// readable (Chromium's too, with the page), and log.html says where each went.
+#[test]
+fn a_memory_snapshot_is_written_on_the_hotkey_and_on_sigusr1() {
+	let dir = run_dir("memory_snapshot");
+	let (settings, shot, logs) = (dir.join("settings.cfg"), dir.join("shot.png"), dir.join("logs"));
+	let sender = std::thread::spawn({
+		let logs = logs.clone();
+		move || signal_after_first_snapshot(&logs)
+	});
+	let args = ["--new-campaign", "--settings", settings.to_str().unwrap(), "--shot", "3000", shot.to_str().unwrap()];
+	let Some(run) = run_bb_with(&dir, (1280, 720), &args, &[("BB_TEST_MEMORY_SNAPSHOT_KEY", "120")]) else { return };
+	let signalled = sender.join().expect("the signal's thread");
+	assert_eq!(run.status, "0", "{}", run.stderr);
+	signalled.unwrap_or_else(|e| panic!("{e}\n{}", run.stderr));
+	let html = std::fs::read_to_string(logs.join("log.html")).expect("log.html");
+	for asked in ["asked by the hotkey (Ctrl+Shift+F11)", "asked by SIGUSR1"] {
+		assert!(html.contains(asked), "{asked}: {html}");
+	}
+	let mut snapshots: Vec<PathBuf> = std::fs::read_dir(&logs)
+		.expect("the log folder")
+		.flatten()
+		.map(|e| e.path())
+		.filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("memory-"))
+		.collect();
+	snapshots.sort();
+	assert_eq!(snapshots.len(), 2, "{snapshots:?}");
+	for snapshot in &snapshots {
+		let written = format!("Memory snapshot written to {} in ", snapshot.display());
+		assert!(html.contains(&written), "{written}: {html}");
+		check_snapshot(snapshot);
+	}
+}
+
+/// Once log.html says the first snapshot (the hotkey's) is written, send SIGUSR1 to the
+/// game's process (found by its log folder; the browser's processes ignore the signal
+/// anyway), and wait for the second.
+fn signal_after_first_snapshot(logs: &Path) -> Result<(), String> {
+	let written = |n: usize| std::fs::read_to_string(logs.join("log.html")).is_ok_and(|h| h.matches("Memory snapshot written to").count() >= n);
+	let deadline = Instant::now() + Duration::from_secs(600);
+	while !written(1) {
+		if Instant::now() > deadline {
+			return Err("the hotkey's snapshot never came".into());
+		}
+		std::thread::sleep(Duration::from_millis(200));
+	}
+	let pid = game_process(logs).ok_or("no game process with that log folder")?;
+	let killed = Command::new("kill").args(["-USR1", &pid.to_string()]).status().map_err(|e| e.to_string())?;
+	if !killed.success() {
+		return Err(format!("kill -USR1 {pid}: {killed}"));
+	}
+	let deadline = Instant::now() + Duration::from_secs(120);
+	while !written(2) {
+		if Instant::now() > deadline {
+			return Err("the signal's snapshot never came".into());
+		}
+		std::thread::sleep(Duration::from_millis(200));
+	}
+	Ok(())
+}
+
+/// The `bb` started with `--logs` naming `logs` (not one of its browser processes).
+fn game_process(logs: &Path) -> Option<u32> {
+	let logs = logs.to_string_lossy().into_owned();
+	std::fs::read_dir("/proc").ok()?.flatten().find_map(|entry| {
+		let pid = entry.file_name().to_str()?.parse::<u32>().ok()?;
+		let args = std::fs::read(entry.path().join("cmdline")).ok()?;
+		let args: Vec<String> = args.split(|&b| b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+		let ours = args.first().is_some_and(|a| a.ends_with("/bb")) && args.iter().any(|a| *a == logs);
+		(ours && !args.iter().any(|a| a.starts_with("--type="))).then_some(pid)
+	})
+}
+
+/// Every part of the snapshot in `dir` succeeded, and its files are there and readable.
+fn check_snapshot(dir: &Path) {
+	use bb_app::memory_snapshot::json::Json;
+	let summary = std::fs::read_to_string(dir.join("summary.txt")).expect("summary.txt");
+	let json = std::fs::read_to_string(dir.join("snapshot.json")).expect("snapshot.json");
+	let json = Json::parse(&json).unwrap_or_else(|e| panic!("snapshot.json: {e}"));
+	let mut wanted = vec!["processes", "allocator", "gpu", "engine", "census"];
+	if cfg!(feature = "ui") {
+		wanted.push("chromium");
+	}
+	let parts = json.get("parts").and_then(Json::as_array).expect("the parts");
+	let names: Vec<&str> = parts.iter().filter_map(|p| p.get("name")?.as_str()).collect();
+	assert_eq!(names, wanted, "{summary}");
+	for part in parts {
+		assert_eq!(part.get("ok"), Some(&Json::Bool(true)), "{:?}\n{summary}", part);
+		for file in part.get("files").and_then(Json::as_array).unwrap_or_default() {
+			let file = dir.join(file.as_str().expect("a file name"));
+			assert!(std::fs::metadata(&file).is_ok_and(|m| m.len() > 0), "{} empty or missing", file.display());
+		}
+	}
+	let processes = json.get("processes").and_then(|p| p.get("processes")).and_then(Json::as_array).expect("processes");
+	let role = |p: &Json| p.get("role").and_then(Json::as_str).unwrap_or("").to_string();
+	let game = processes.iter().find(|p| role(p) == "game").expect("the game's process");
+	assert!(game.get("pss").and_then(Json::as_i64).is_some_and(|b| b > 50 << 20), "{summary}");
+	let census = json.get("census").and_then(|c| c.get("kinds")).and_then(Json::as_array).expect("the census's kinds");
+	let tables = census.iter().find(|k| k.get("kind").and_then(Json::as_str) == Some("tables")).expect("tables");
+	assert!(tables.get("count").and_then(Json::as_i64).is_some_and(|n| n > 10_000), "{summary}");
+	let items = json.get("engine").and_then(|e| e.get("items")).and_then(Json::as_array).expect("the engine's items");
+	let owner = |o: &str| items.iter().any(|i| i.get("owner").and_then(Json::as_str) == Some(o));
+	assert!(owner("world entities") && owner("world map") && owner("sprite registry"), "{summary}");
+	let textures = json.get("gpu").and_then(|g| g.get("textures")).and_then(Json::as_array).expect("textures");
+	assert!(!textures.is_empty(), "{summary}");
+	if cfg!(feature = "ui") {
+		assert!(processes.iter().any(|p| role(p).starts_with("renderer")), "{summary}");
+		let chromium = json.get("chromium").and_then(|c| c.get("processes")).and_then(Json::as_array).expect("Chromium's processes");
+		assert!(chromium.iter().any(|p| p.get("name").and_then(Json::as_str) == Some("Renderer")), "{summary}");
+		let trace = std::fs::read_to_string(dir.join("chromium-trace.json")).expect("chromium-trace.json");
+		let trace = Json::parse(&trace).unwrap_or_else(|e| panic!("chromium-trace.json: {e}"));
+		assert!(trace.get("traceEvents").and_then(Json::as_array).is_some_and(|e| !e.is_empty()));
+	}
+}
+
 /// The game steps once per refresh of the display, whichever frames are presented: on a
 /// 180 Hz and a 60 Hz display, at the main menu with the page (nothing there changes
 /// while idle), with frames presented changed or not:

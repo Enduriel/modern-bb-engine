@@ -290,6 +290,12 @@ impl Game {
 		memory
 	}
 
+	/// When the renderer last drew each texture and page, and its glyph pages (for the
+	/// memory snapshot).
+	pub fn renderer_residency(&self) -> bb_render::ResidencyDetail {
+		self.renderer.residency_detail()
+	}
+
 	/// The world camera's zoom (for the frame times' log).
 	pub fn world_zoom(&self) -> f32 {
 		self.front.engine().world_camera().zoom

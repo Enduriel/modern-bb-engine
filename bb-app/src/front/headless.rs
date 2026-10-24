@@ -151,6 +151,9 @@ impl Front {
 		0
 	}
 
+	/// No page: nothing to report (see the page's).
+	pub fn report_memory(&self, _report: &mut squirrel_bb::memory_report::MemoryReport) {}
+
 	/// No page, so no paints copied.
 	pub fn copy_stats(&self) -> bb_render::UiCopyStats {
 		bb_render::UiCopyStats::default()

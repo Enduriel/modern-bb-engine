@@ -5,7 +5,7 @@
 //!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
 //!     [--at-page FRAMES JS]...
-//!     [--logs DIR] [--no-steam] [--steam-api PATH] [--fps]
+//!     [--logs DIR] [--no-steam] [--steam-api PATH] [--fps] [--memory-snapshot-v8]
 //! bb --version
 //! ```
 //!
@@ -78,6 +78,11 @@
 //!   with achievements off (said once in the log).
 //! - With `BB_STATS=1` the game's total CPU and memory, its CEF processes included, is
 //!   logged every 5 seconds.
+//! - Ctrl+Shift+F11 (the game doesn't see it), or `SIGUSR1` sent to the game's process on
+//!   Linux and macOS, writes a memory snapshot for analysis into `memory-<time>/` in the
+//!   log folder, and log.html says where (`bb_app::memory_snapshot`, `docs/memory-snapshots.md`).
+//!   `--memory-snapshot-v8` adds V8's heap snapshot of the page (100 MB and more, with the
+//!   page's text), with the `ui` feature.
 //! - Profiling the frame (see `parity/perf/frame_breakdown.py`): `BB_FRAME_TIMES=PATH` writes
 //!   each frame's time by span (the step's parts, the draw's, the page's, the bridge's calls)
 //!   to that file; with `BB_GPU_TIMES=1` too, each GPU submission's time (timestamp
@@ -165,6 +170,8 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArgumen
 		steam: None,
 		cef_log: None,
 		fps: false,
+		logs_dir: None,
+		memory_snapshot_v8: false,
 	};
 	let mut logs = squirrel_bb::platform::logs_dir();
 	let mut args = std::env::args().skip(1);
@@ -197,6 +204,8 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArgumen
 				options.devtools = Some(value()?.parse().map_err(|e| format!("--devtools PORT: {e}"))?);
 			}
 			"--devtools" => return Err("--devtools needs bb built with --features ui".to_string()),
+			"--memory-snapshot-v8" if cfg!(feature = "ui") => options.memory_snapshot_v8 = true,
+			"--memory-snapshot-v8" => return Err("--memory-snapshot-v8 needs bb built with --features ui".to_string()),
 			"--settings" => options.settings = Some(PathBuf::from(value()?)),
 			"--saves" => options.saves = Some(PathBuf::from(value()?)),
 			"--logs" => logs = Some(PathBuf::from(value()?)),
@@ -250,6 +259,9 @@ fn picker_options(options: &app::Options) -> bb_app::install::picker::Options {
 fn picker_options(_options: &app::Options) {}
 
 fn main() -> ExitCode {
+	// Every process of bb's, the browser's too, before anything else (see
+	// `bb_app::memory_snapshot::trigger`): the game's listens once it runs.
+	bb_app::memory_snapshot::trigger::ignore_signal();
 	bb_app::platform::allow_tracing_if_asked();
 	// The browser host re-runs this binary for its child processes.
 	#[cfg(feature = "ui")]
@@ -275,6 +287,7 @@ fn main() -> ExitCode {
 			match bb_app::logs::Logs::start(&dir) {
 				Ok(started) => {
 					options.cef_log = Some(started.cef_log());
+					options.logs_dir = started.dir().map(Path::to_path_buf);
 					logs = Some(started);
 				}
 				Err(e) => eprintln!("no log file: {e}"),

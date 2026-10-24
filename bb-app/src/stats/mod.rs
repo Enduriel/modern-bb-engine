@@ -9,14 +9,19 @@
 //! it allocated (which PSS doesn't show): the memory inventory's view of the
 //! processes.
 //!
-//! Per operating system: Linux reads `/proc`. Windows (a job object the game puts
-//! itself in, which its children join: its accounting, and kill-on-close) and macOS come
-//! later; until then the log says it isn't available.
+//! Per operating system: Linux reads `/proc`. [`tree_memory`] also reads Windows'
+//! process counters (the processes of the job the game puts itself in, which its children
+//! join) and macOS's resource usage (the game and the processes it started), without the
+//! breakdown by kind; the usage log is Linux's only, and says so elsewhere.
 
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
+mod windows;
 
 /// One of the game's processes and what holds its memory.
 #[derive(Clone, Debug)]
@@ -26,9 +31,16 @@ pub struct ProcessMemory {
 	pub role: String,
 	/// Its PSS, by the kind of mapping holding it (see [`MappingKind`]), largest first.
 	pub kinds: Vec<(MappingKind, u64)>,
+	/// Its RSS by the same kinds, largest first (Linux; empty elsewhere).
+	pub rss_kinds: Vec<(MappingKind, u64)>,
 	/// GPU memory it allocated: in video memory, and in system memory the GPU maps (GTT).
 	pub vram: u64,
 	pub gtt: u64,
+	/// The system's own figures for it, in bytes, by its names: on Linux `/proc`'s
+	/// `status` (`VmRSS`, `VmHWM`, `RssAnon`, `RssFile`, `RssShmem`, `VmSwap`, …), on
+	/// Windows the process memory counters (`WorkingSetSize`, `PrivateUsage`, …), on
+	/// macOS its resource usage (`phys_footprint`, `resident_size`).
+	pub figures: Vec<(String, u64)>,
 }
 
 impl ProcessMemory {
@@ -85,7 +97,15 @@ pub fn tree_memory() -> Option<Vec<ProcessMemory>> {
 	{
 		Some(linux::tree_memory())
 	}
-	#[cfg(not(target_os = "linux"))]
+	#[cfg(target_os = "macos")]
+	{
+		Some(macos::tree_memory())
+	}
+	#[cfg(windows)]
+	{
+		windows::tree_memory()
+	}
+	#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 	{
 		None
 	}

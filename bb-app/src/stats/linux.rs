@@ -60,26 +60,47 @@ pub(super) fn tree_memory() -> Vec<ProcessMemory> {
 fn process_memory(pid: u32) -> Option<ProcessMemory> {
 	let smaps = std::fs::read_to_string(format!("/proc/{pid}/smaps")).ok()?;
 	let mut kinds: HashMap<MappingKind, u64> = HashMap::new();
+	let mut rss: HashMap<MappingKind, u64> = HashMap::new();
 	let mut kind = MappingKind::Anonymous;
+	let kb = |field: &str| field.split_whitespace().next().and_then(|n| n.parse::<u64>().ok()).unwrap_or(0) * 1024;
 	for line in smaps.lines() {
-		if let Some(kb) = line.strip_prefix("Pss:") {
-			let kb: u64 = kb.split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0);
-			*kinds.entry(kind).or_default() += kb * 1024;
+		if let Some(field) = line.strip_prefix("Pss:") {
+			*kinds.entry(kind).or_default() += kb(field);
+		} else if let Some(field) = line.strip_prefix("Rss:") {
+			*rss.entry(kind).or_default() += kb(field);
 		} else if is_mapping_header(line) {
 			// `start-end perms offset dev inode [name]`
 			kind = mapping_kind(line.split_whitespace().nth(5).unwrap_or(""));
 		}
 	}
-	let mut kinds: Vec<(MappingKind, u64)> = kinds.into_iter().filter(|&(_, b)| b > 0).collect();
-	kinds.sort_by(|a, b| b.1.cmp(&a.1));
+	let largest_first = |kinds: HashMap<MappingKind, u64>| {
+		let mut kinds: Vec<(MappingKind, u64)> = kinds.into_iter().filter(|&(_, b)| b > 0).collect();
+		kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
+		kinds
+	};
 	let (vram, gtt) = gpu_memory(pid);
 	Some(ProcessMemory {
 		pid,
 		role: role(pid),
-		kinds,
+		kinds: largest_first(kinds),
+		rss_kinds: largest_first(rss),
 		vram,
 		gtt,
+		figures: status_figures(pid),
 	})
+}
+
+/// `/proc/<pid>/status`' memory lines (`VmRSS:  1234 kB`), in bytes.
+fn status_figures(pid: u32) -> Vec<(String, u64)> {
+	let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else { return Vec::new() };
+	status
+		.lines()
+		.filter_map(|line| {
+			let (name, value) = line.split_once(':')?;
+			let kb = value.trim().strip_suffix(" kB")?.trim().parse::<u64>().ok()?;
+			(name.starts_with("Vm") || name.starts_with("Rss") || name.starts_with("Hugetlb")).then(|| (name.to_string(), kb * 1024))
+		})
+		.collect()
 }
 
 /// Whether an `smaps` line starts a mapping (`7f12…-7f13… r-xp …`) rather than giving
@@ -176,6 +197,11 @@ mod tests {
 		assert!(me.pss() > 0);
 		let kinds: Vec<_> = me.kinds.iter().map(|(k, _)| *k).collect();
 		assert!(kinds.contains(&super::MappingKind::Files), "its own binary: {kinds:?}");
+		let rss: u64 = me.rss_kinds.iter().map(|(_, b)| b).sum();
+		assert!(rss >= me.pss(), "RSS {rss} counts shared pages whole, PSS {} split", me.pss());
+		let figure = |name: &str| me.figures.iter().find(|(n, _)| n == name).map(|(_, b)| *b);
+		assert!(figure("VmRSS").is_some_and(|b| b > 0), "{:?}", me.figures);
+		assert!(figure("VmHWM") >= figure("VmRSS"), "{:?}", me.figures);
 	}
 
 	#[test]
