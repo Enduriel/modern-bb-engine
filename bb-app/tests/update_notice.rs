@@ -7,7 +7,8 @@
 //! does: "Continue" closes it; "Open link" hands the release's page to the URL opener and
 //! closes it; "Ignore this version" keeps the version in the (test's own) settings file,
 //! after which that version no longer shows but a later one does. An answer that comes
-//! while the main menu is hidden waits for it to show again.
+//! while the main menu is hidden waits for it to show again. It is built from vanilla's
+//! dialog, list and buttons, and of plain elements when vanilla's helpers are missing.
 //!
 //! Skips without a Steam install or a GPU.
 //!
@@ -130,13 +131,14 @@ fn answered(game: &mut Game, server: &Server, count: usize) -> Result<(), String
 fn notice(game: &Game) -> Result<Json, String> {
 	game.front().session().eval(
 		"(function () {
-			var host = document.querySelector('bb-engine-update-notice');
-			if (!host) { return null; }
-			var root = host.shadowRoot;
+			var root = document.querySelector('.bb-engine-update-notice');
+			if (!root) { return null; }
 			var text = function (s) { var e = root.querySelector(s); return e ? e.textContent : null; };
 			return { found: text('.found'), current: text('.current'), notes: text('.notes'),
 				markup: root.querySelectorAll('.notes b, .notes img, .notes script').length,
-				buttons: Array.prototype.map.call(root.querySelectorAll('button'), function (b) { return b.textContent; }) };
+				vanilla: root.querySelectorAll('.ui-control.dialog .ui-control.list .scroll-container .notes').length === 1
+					&& root.querySelectorAll('.ui-control.button-1[data-choice]').length === 3,
+				buttons: Array.prototype.map.call(root.querySelectorAll('[data-choice]'), function (b) { return b.textContent; }) };
 		})()",
 	)
 }
@@ -145,8 +147,8 @@ fn notice(game: &Game) -> Result<Json, String> {
 fn button_at(game: &Game, choice: &str) -> Result<(i64, i64), String> {
 	let at = game.front().session().eval(&format!(
 		"(function () {{
-			var host = document.querySelector('bb-engine-update-notice');
-			var b = host && host.shadowRoot.querySelector('button[data-choice=\"{choice}\"]');
+			var root = document.querySelector('.bb-engine-update-notice');
+			var b = root && root.querySelector('[data-choice=\"{choice}\"]');
 			if (!b) {{ return null; }}
 			var r = b.getBoundingClientRect();
 			return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
@@ -185,6 +187,7 @@ fn shows(game: &mut Game, found: &str) -> Result<(), String> {
 	ensure(notes.contains("What's new") && notes.contains("Faster loading"), format!("the notes: {notes:?}"))?;
 	ensure(notes.contains("<b>not bold</b><img src=x onerror=alert(1)>"), format!("the notes' HTML isn't shown as text: {notes:?}"))?;
 	ensure(shown.get("markup") == Some(&Json::Int(0)), format!("the notes made elements: {shown:?}"))?;
+	ensure(shown.get("vanilla") == Some(&Json::Bool(true)), format!("not built from vanilla's dialog, list and buttons: {shown:?}"))?;
 	let buttons = shown.get("buttons").map(Json::to_text).unwrap_or_default();
 	ensure(buttons == r#"["Open link","Continue","Ignore this version"]"#, format!("the buttons: {buttons}"))?;
 	// Modal: it covers the page (the mouse goes to it everywhere, the corner too).
@@ -315,6 +318,27 @@ fn check(gpu: &Gpu, dir: &Path) -> Result<(), String> {
 	ensure(holds(&game, "::RootState.get(\"MainMenuState\").isVisible()")?, "the main menu didn't show again")?;
 	shows(&mut game, "9.1.0")?;
 	click(&mut game, "continue")?;
+	// Without vanilla's helpers (a page whose JS hasn't loaded them), plain elements, no
+	// error.
+	let session = game.front().session();
+	session.eval("window.__helpers = [$.fn.createList, $.fn.createTextButton]; $.fn.createList = undefined; 0")?;
+	let view = bb_ui::host::UpdateNoticeView {
+		version: "9.2.0".into(),
+		current: "0.2.0".into(),
+		notes: "- one".into(),
+		link: format!("{RELEASES}v9.2.0"),
+	};
+	let shown = session.show_update_notice(&view);
+	let plain = session.eval(
+		"(function () { var r = document.querySelector('.bb-engine-update-notice'); \
+		 return r !== null && r.querySelectorAll('.plain-list .notes').length === 1 \
+		 && r.querySelectorAll('.plain-button[data-choice]').length === 3; })()",
+	);
+	session.hide_update_notice()?;
+	session.eval("$.fn.createList = window.__helpers[0]; $.fn.createTextButton = window.__helpers[1]; 0")?;
+	shown?;
+	ensure(plain? == Json::Bool(true), "without vanilla's helpers the notice isn't built of plain elements")?;
+	ensure(notice(&game)? == Json::Null, "the plain notice didn't go")?;
 	println!("  {} requests served", server.served.load(Ordering::SeqCst));
 	Ok(())
 }
