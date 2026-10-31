@@ -73,8 +73,9 @@ XWIN = {"XWIN_VERSION": "17", "XWIN_CRT_VERSION": "14.44.17.14", "XWIN_SDK_VERSI
 RUSTFLAGS = "-C target-feature=+crt-static -C link-arg=/ignore:4099"
 UI_FEATURES = "bb-ui/cef,bb-app/ui"
 UI_PACKAGES = {"bb-ui", "bb-app"}
-# The UCRT's maths functions, which carry FMA3 variants chosen at run time.
-CRT_MATHS = re.compile(r"^(?:(?:a?(?:sin|cos|tan)h?|atan2|pow|exp2?|log(?:10|2)?|cbrt|hypot)f?|__\w*fma3\w*)$")
+# The UCRT's maths functions, which carry FMA3 variants chosen at run time (VS 2026's
+# static C runtime names those variants `pow_fma`, `exp2f_fma`, …).
+CRT_MATHS = re.compile(r"^(?:(?:a?(?:sin|cos|tan)h?|atan2|pow|exp2?|log(?:10|2)?|cbrt|hypot)f?(?:_fma3?)?|__\w*fma3\w*)$")
 # The same, by where the PDB says a function's code comes from (the UCRT's maths sources;
 # ARM64's have more helpers than the names above, `_exp2`, `sin_piby4`, …).
 CRT_MATHS_SOURCE = re.compile(r"[\\/]ucrt[\\/]src[\\/]appcrt[\\/]tran[\\/]", re.I)
