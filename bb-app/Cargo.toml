@@ -2,6 +2,7 @@
 name = "bb-app"
 version = "0.1.0"
 edition = "2024"
+license = "AGPL-3.0-or-later"
 
 # The game in a window: the engine, the renderer and the player's input.
 [[bin]]

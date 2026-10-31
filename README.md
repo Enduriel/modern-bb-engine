@@ -162,3 +162,46 @@ if the problem goes away with them removed from the game's `data` folder, say th
 Mods made for the original run unchanged. `bb` also adds a few things mods can use
 (fonts for any language, Squirrel 3.2's string functions, portraits of map entities),
 which a mod checks for through `::ModernEngine`: see [docs/modding.md](docs/modding.md).
+
+## Building from source
+
+The engine is a Rust workspace on a pinned nightly toolchain (`rust-toolchain.toml`;
+`rustup` installs it on the first build). The Squirrel VM is a submodule, so clone
+with its submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/Enduriel/modern-bb-engine.git
+cd modern-bb-engine
+cargo run --release -p bb-app --features ui     # the game, in a window
+cargo test --workspace                          # the tests (many need the game installed)
+```
+
+The `ui` feature (the game's UI) downloads Chromium (CEF) on the first build; the
+workspace's tests don't need it. To build a release package like the published ones,
+see [docs/packaging.md](docs/packaging.md). `bb` needs no environment variables to play,
+but developers and the tests use some: [docs/environment.md](docs/environment.md).
+
+## Documentation
+
+- [docs/requirements.md](docs/requirements.md): what `bb` needs, and what each claim rests on.
+- [docs/differences.md](docs/differences.md): every deliberate difference from the original.
+- [docs/modding.md](docs/modding.md): what `bb` adds for mods, and `::ModernEngine`.
+- [docs/memory-snapshots.md](docs/memory-snapshots.md): recording where the memory goes, for a report.
+- [docs/environment.md](docs/environment.md): every environment variable `bb`, its tests and tools read.
+- [docs/packaging.md](docs/packaging.md): building release packages.
+
+## License
+
+`bb` is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version ([LICENSE](LICENSE)).
+
+Additional permission under GNU AGPL version 3 section 7: if you modify this program,
+or any covered work, by linking or combining it with the Steamworks API library
+(`steam_api`, from Valve's Steamworks SDK), or a modified version of that library,
+containing parts covered by the terms of the Steamworks SDK license, the licensors of
+this program grant you additional permission to convey the resulting work.
+
+The Squirrel VM ([squirrel-sys](https://github.com/Enduriel/squirrel-sys) and its
+[Squirrel](https://github.com/Enduriel/squirrel) fork) keeps its own MIT license.
+Battle Brothers itself is not part of this project: you need your own copy.

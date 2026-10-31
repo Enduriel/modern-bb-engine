@@ -1,5 +1,5 @@
 //! The player's documents in a package: the README at the package's top, beside `bb`
-//! (`bb.app` on macOS), and the documents it links to in `docs/`, so its links work in
+//! (`bb.app` on macOS), and the documents it links to (`docs/`, the license), so its links work in
 //! the unpacked folder as they do in the repository. Built into `bb-package`, so a
 //! package always carries the README of the code it was built from.
 
@@ -12,6 +12,10 @@ const DOCUMENTS: &[(&str, &str)] = &[
 	("docs/requirements.md", include_str!("../../docs/requirements.md")),
 	("docs/differences.md", include_str!("../../docs/differences.md")),
 	("docs/modding.md", include_str!("../../docs/modding.md")),
+	("docs/memory-snapshots.md", include_str!("../../docs/memory-snapshots.md")),
+	("docs/environment.md", include_str!("../../docs/environment.md")),
+	("docs/packaging.md", include_str!("../../docs/packaging.md")),
+	("LICENSE", include_str!("../../LICENSE")),
 ];
 
 /// Write the documents into the package folder `dir`.

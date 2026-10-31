@@ -2,6 +2,7 @@
 name = "bb-steam"
 version = "0.1.0"
 edition = "2024"
+license = "AGPL-3.0-or-later"
 
 # Steam achievements and stats for the windowed game: a small binding to the Steamworks
 # flat C API, loaded at run time from the library beside the executable (never linked,

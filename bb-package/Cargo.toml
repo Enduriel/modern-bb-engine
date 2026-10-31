@@ -2,6 +2,7 @@
 name = "bb-package"
 version = "0.1.0"
 edition = "2024"
+license = "AGPL-3.0-or-later"
 
 # Release packaging, one package per target: builds bb, fetches and checks the pinned
 # Steam library, and lays out bb with its CEF files and that library beside it. The
