@@ -96,6 +96,9 @@ struct Machine {
 	/// The engine's own listener, which sees every mouse event before the states (the
 	/// world's hovered tile).
 	mouse_listener: Option<MouseListener>,
+	/// The host's listener for a child state shown or hidden (see
+	/// [`RootState::set_visibility_listener`]).
+	visibility_listener: Option<VisibilityListener>,
 	/// Added states whose `onInit` hasn't run yet.
 	pending_init: Vec<SqStrongRef>,
 	methods: Vec<(&'static str, SqStrongRef)>,
@@ -108,6 +111,21 @@ struct Machine {
 /// A host scene update, run by `State.updateScene()`.
 type SceneUpdate = Rc<dyn Fn(&SQVM) -> Result<(), String>>;
 type MouseListener = Rc<dyn Fn(&SQVM, &MouseInput) -> Result<(), String>>;
+type VisibilityListener = Rc<dyn Fn(&str, bool)>;
+
+/// Tell the host's visibility listener, if there is one, that the child with identity
+/// `id` was shown or hidden (`shown`), with no borrow of the machine held while it runs.
+/// The root is no child: it is never reported.
+fn report_visibility(machine: &RefCell<Machine>, id: i64, shown: bool) {
+	let (listener, name) = {
+		let m = machine.borrow();
+		let Some(child) = m.children.iter().find(|c| c.id == id) else { return };
+		(m.visibility_listener.clone(), child.name.clone())
+	};
+	if let Some(listener) = listener {
+		listener(&name, shown);
+	}
+}
 
 impl Machine {
 	/// The registered name of the state with identity `id` (`"RootState"` for the
@@ -283,6 +301,7 @@ impl RootState {
 				scene_update: None,
 				scene_render: None,
 				mouse_listener: None,
+				visibility_listener: None,
 				pending_init: Vec::new(),
 				methods: Vec::new(),
 				input: None,
@@ -319,6 +338,7 @@ impl RootState {
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				let id = vm.this_identity();
 				m.borrow_mut().set_hidden(id, false);
+				report_visibility(&m, id, true);
 				let (target, errors) = (m.borrow().by_id(id), m.borrow().script_errors);
 				errors.settle(target.map_or(Ok(()), |t| t.call_method(vm, "onShow", ())))
 			})
@@ -328,6 +348,7 @@ impl RootState {
 			vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 				let id = vm.this_identity();
 				m.borrow_mut().set_hidden(id, true);
+				report_visibility(&m, id, false);
 				let (target, errors) = (m.borrow().by_id(id), m.borrow().script_errors);
 				errors.settle(target.map_or(Ok(()), |t| t.call_method(vm, "onHide", ())))
 			})
@@ -418,6 +439,7 @@ impl RootState {
 				}
 				let ids: Vec<i64> = m.borrow().children.iter().map(|c| c.id).collect();
 				for id in ids {
+					report_visibility(&m, id, false);
 					let target = m.borrow_mut().remove(id);
 					if let Some(t) = target {
 						let errors = m.borrow().script_errors;
@@ -510,6 +532,9 @@ impl RootState {
 			return false;
 		};
 		child.frame.hidden = false;
+		let id = child.id;
+		drop(machine);
+		report_visibility(&self.machine, id, true);
 		true
 	}
 
@@ -535,6 +560,14 @@ impl RootState {
 		self.machine.borrow_mut().mouse_listener = Some(Rc::new(listener));
 	}
 
+	/// Set the host's listener for a child state shown (`show()`, true) or hidden
+	/// (`hide()`, false, and as it finishes), given its add-name: how the host learns,
+	/// without asking each frame, that `MainMenuState` is up. It runs inside the scripts'
+	/// call, before the state's `onShow`/`onHide`, so it must not call into the scripts.
+	pub fn set_visibility_listener(&self, listener: impl Fn(&str, bool) + 'static) {
+		self.machine.borrow_mut().visibility_listener = Some(Rc::new(listener));
+	}
+
 	/// One frame's update pass, as the original's: each child in registration order (the
 	/// root runs no `onUpdate`, see [`Root`]). A child runs its `onUpdate` (if visible)
 	/// unless it is finishing; then, if it is finishing (even by its own update), its
@@ -554,6 +587,7 @@ impl RootState {
 			}
 			let finishing = self.machine.borrow().children.iter().any(|c| c.id == id && c.finishing);
 			if finishing {
+				report_visibility(&self.machine, id, false);
 				let state = self.machine.borrow_mut().remove(id);
 				if let Some(state) = state {
 					self.settle(state.call_method(vm, "onFinish", ()))?;
@@ -687,6 +721,7 @@ impl RootState {
 		machine.scene_update = None;
 		machine.scene_render = None;
 		machine.mouse_listener = None;
+		machine.visibility_listener = None;
 		machine.bg_callback = None;
 		machine.methods.clear();
 	}

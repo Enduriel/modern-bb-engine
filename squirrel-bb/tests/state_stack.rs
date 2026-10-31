@@ -341,3 +341,32 @@ fn the_root_shows_after_its_init_and_runs_no_frames() {
 	);
 	root_state.clear();
 }
+
+#[test]
+fn the_host_hears_children_shown_and_hidden() {
+	let mut vm = SQVM::new(1 << 16);
+	install_natives(&mut vm);
+	let modules = ModuleSystem::new(sources());
+	modules.install(&mut vm);
+	let root_state = RootState::new(modules.instantiator());
+	root_state.install(&mut vm);
+	vm.run_script("::log <- [];", "setup").expect("setup globals");
+	let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+	let sink = heard.clone();
+	root_state.set_visibility_listener(move |name, shown| sink.borrow_mut().push(format!("{name}:{shown}")));
+	root_state.boot(&vm, "scripts/root_state").expect("boot the root state");
+	// The root is no child; MenuA shows itself in its onInit, MenuB never does.
+	assert_eq!(heard.borrow().as_slice(), ["MenuA:true"]);
+	let menu_a = root_state.state("MenuA").unwrap();
+	menu_a.call_method(&vm, "hide", ()).expect("hide");
+	menu_a.call_method(&vm, "show", ()).expect("show");
+	assert!(root_state.mark_shown("MenuB"));
+	menu_a.call_method(&vm, "finish", ()).expect("finish");
+	assert_eq!(heard.borrow().len(), 4, "finish() only flags it");
+	root_state.update(&vm).expect("update pass");
+	assert_eq!(
+		heard.borrow().as_slice(),
+		["MenuA:true", "MenuA:false", "MenuA:true", "MenuB:true", "MenuA:false"]
+	);
+	root_state.clear();
+}
