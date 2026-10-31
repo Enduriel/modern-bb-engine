@@ -83,6 +83,7 @@ No mod can rely on the original's behaviour in these cases.
 | Loaded textures | Every texture loaded is kept for the session | Only what is drawn stays on the GPU; a sprite whose picture isn't ready can show a frame late | No |
 | Decoded sounds | Decoded again every time they play | Up to 32 MB of decoded sound is kept | No |
 | `log.html` | In `Documents/Battle Brothers`, overwritten at each start | In bb's own folder; earlier sessions are kept zipped | No |
+| Paths in `log.html` | Written in full, with the Windows user name (`C:\Users\<name>\Documents\...`) | The user's home folder is written as `%USERPROFILE%` (Windows) or `~` (macOS, Linux), and a Documents folder moved off it (another drive) as `%DOCUMENTS%`, so a log can be shared without the user's name. The name elsewhere in a line is left as it is, and so is `cef.log` (the browser's own log, which shows no such paths) | No |
 
 ## Performance
 
