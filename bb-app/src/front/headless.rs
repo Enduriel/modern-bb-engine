@@ -79,6 +79,8 @@ impl Front {
 
 	pub fn check_for_update(&mut self) {}
 
+	pub fn choose_in_update_notice(&mut self, _choice: &str) {}
+
 	/// Advance the game by `ms` of real time. It always runs: no page to wait on.
 	pub fn step(&mut self, ms: f64) -> Result<bool, String> {
 		let engine = &self.engine;

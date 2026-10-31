@@ -183,6 +183,14 @@ impl Front {
 		self.update.as_ref().is_some_and(|u| u.shown())
 	}
 
+	/// Choose `choice` (`open`, `continue`, `ignore`) in the update notice as its button
+	/// does, if it shows.
+	pub fn choose_in_update_notice(&mut self, choice: &str) {
+		if let Some(update) = &mut self.update {
+			update.choose(&self.session, choice);
+		}
+	}
+
 	/// Ask for the latest release again (as at the start, if the boot asked for the
 	/// check): its notice shows on the main menu if it makes one.
 	pub fn check_for_update(&mut self) {

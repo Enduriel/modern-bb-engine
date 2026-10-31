@@ -94,6 +94,18 @@ impl UpdateNotice {
 		self.phase = Phase::Asking(bb_ui::host::fetch(&self.check.endpoint, &headers, TIMEOUT, MAX_ANSWER));
 	}
 
+	/// Choose `choice` as the notice's button does (the player's Escape or Enter), with
+	/// the page parked as for the scripts' calls. Nothing if it doesn't show.
+	pub fn choose(&mut self, session: &UiSession, choice: &str) {
+		if !self.shown() {
+			return;
+		}
+		session.park();
+		if let Err(e) = session.choose_update_notice(choice) {
+			log(&format!("the update notice's {choice}: {e}"));
+		}
+	}
+
 	/// Whether the notice is on the page: it takes the player's input while it is.
 	pub fn shown(&self) -> bool {
 		matches!(self.phase, Phase::Showing(_)) && self.on_page.get()

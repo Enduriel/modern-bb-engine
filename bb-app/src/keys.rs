@@ -22,6 +22,10 @@
 
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey};
 
+/// The engine's codes for Escape and Enter (see [`code`]).
+pub const ESCAPE: i64 = 41;
+pub const ENTER: i64 = 39;
+
 /// The engine's code for `key`, if the scripts can see it.
 pub fn code(key: KeyCode) -> Option<i64> {
 	use KeyCode::*;

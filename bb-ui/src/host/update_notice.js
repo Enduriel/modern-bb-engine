@@ -8,7 +8,9 @@
 // Called as `(op, data)`:
 // - `('show', { version, current, notes, link })` shows it (replacing one showing);
 // - `('hide')` takes it down;
-// - `('shown')` returns whether it shows.
+// - `('shown')` returns whether it shows;
+// - `('choose', choice)` chooses as its button does (the player's Escape and Enter, which
+//   the game hands it), returning whether it showed.
 //
 // Its three buttons tell the game through its own handler, `engine.call('bb.updateNotice',
 // choice[, version])` (`bb-ui/src/bridge.rs`), then take the notice down:
@@ -27,6 +29,14 @@
 	var old = document.querySelector(TAG);
 	if (op === 'shown') {
 		return old !== null;
+	}
+	if (op === 'choose') {
+		var button = old && old.shadowRoot.querySelector('button[data-choice="' + String(data) + '"]');
+		if (!button) {
+			return false;
+		}
+		button.click();
+		return true;
 	}
 	if (old !== null) {
 		old.parentNode.removeChild(old);

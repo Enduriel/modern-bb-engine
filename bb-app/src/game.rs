@@ -56,6 +56,9 @@ pub struct Game {
 	modifier: i64,
 	/// What the last frame drawn showed (see [`Game::draw_if_changed`]).
 	shown: Shown,
+	/// Keys pressed while the update notice showed, until released (see
+	/// [`Game::notice_keys`]).
+	notice_held: HashSet<i64>,
 	/// While the FPS display shows, what measures the frame rate for it.
 	fps: Option<FpsMeter>,
 	/// Battles are drawn in steps (see `squirrel_bb::scene::steps`); `BB_SCENE_STEPS=0`
@@ -214,6 +217,7 @@ impl Game {
 			cursor_scale: 1.0,
 			modifier: 0,
 			shown: Shown::default(),
+			notice_held: HashSet::new(),
 			fps: None,
 			scene_steps: std::env::var_os("BB_SCENE_STEPS").is_none_or(|v| v != "0"),
 			world_scale: WorldScale::new(false),
@@ -463,8 +467,7 @@ impl Game {
 	/// AltGr, which Windows reports as Ctrl+Alt, types. Nor does a key with the Mac's
 	/// Command held (a shortcut there, as Cmd+C; `KEY_MODIFIER_COMMAND`).
 	pub fn key(&mut self, key: &Key) -> Result<(), String> {
-		// The update notice takes the player's input while it shows: none for the states.
-		if self.front.update_notice_shown() {
+		if self.notice_keys(key) {
 			return Ok(());
 		}
 		if let Some(code) = key.engine {
@@ -478,6 +481,40 @@ impl Game {
 			}
 		}
 		Ok(())
+	}
+
+	/// Whether the update notice takes `key`: every key while it shows (none reaches the
+	/// states or the page), Escape choosing Continue and Enter Open link as they go down;
+	/// and a key pressed while it showed until its release, though the notice has gone,
+	/// so Escape's release doesn't reach the main menu (where it goes back, or quits).
+	fn notice_keys(&mut self, key: &Key) -> bool {
+		let code = key.engine;
+		if self.front.update_notice_shown() {
+			if let Some(code) = code.filter(|_| key.down) {
+				self.notice_held.insert(code);
+				let choice = match code {
+					crate::keys::ESCAPE => Some("continue"),
+					crate::keys::ENTER => Some("open"),
+					_ => None,
+				};
+				if let Some(choice) = choice.filter(|_| !key.repeat) {
+					self.front.choose_in_update_notice(choice);
+				}
+			}
+			if let Some(code) = code.filter(|_| !key.down) {
+				self.notice_held.remove(&code);
+			}
+			return true;
+		}
+		match code {
+			Some(code) if self.notice_held.contains(&code) => {
+				if !key.down {
+					self.notice_held.remove(&code);
+				}
+				true
+			}
+			_ => false,
+		}
 	}
 
 	/// `input` to the states now, between frames: the page parked first. A page too

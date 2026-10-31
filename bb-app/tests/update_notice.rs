@@ -2,8 +2,9 @@
 //! the internet): bb boots to the main menu, its check asks the server through the
 //! browser's network stack, and the newer release's notice shows on the menu, with both
 //! versions and the release notes as text. It is modal: it covers the page, and keys
-//! don't reach the states. Each of its buttons, clicked as a player's mouse does:
-//! "Continue" closes it; "Open link" hands the release's page to the URL opener and
+//! don't reach the states (Escape is "Continue" and Enter "Open link", neither reaching
+//! the states, their releases included). Each of its buttons, clicked as a player's mouse
+//! does: "Continue" closes it; "Open link" hands the release's page to the URL opener and
 //! closes it; "Ignore this version" keeps the version in the (test's own) settings file,
 //! after which that version no longer shows but a later one does. An answer that comes
 //! while the main menu is hidden waits for it to show again.
@@ -34,8 +35,10 @@ use squirrel::SqTable;
 use squirrel_bb::VideoMode;
 
 const NAME: &str = "the_update_notice_shows_on_the_main_menu";
-/// The engine's key codes for Escape, and a key the main menu does nothing with (`A`).
-const ESCAPE: i64 = 41;
+/// The engine's key codes for Escape and Enter, and a key the main menu does nothing
+/// with (`A`).
+const ESCAPE: i64 = bb_app::keys::ESCAPE;
+const ENTER: i64 = bb_app::keys::ENTER;
 const OTHER_KEY: i64 = 11;
 const RELEASES: &str = "https://github.com/Enduriel/modern-bb-engine/releases/tag/";
 
@@ -238,30 +241,50 @@ fn check(gpu: &Gpu, dir: &Path) -> Result<(), String> {
 		Ok(())
 	});
 
-	// At the start: the notice on the menu; Continue closes it, keeping nothing.
+	// At the start: the notice on the menu. Keys don't reach the states while it shows
+	// (Escape on the main menu goes back, or quits): the main menu's onKeyInput counts
+	// what it gets. Any key but Escape and Enter does nothing.
 	shows(&mut game, "9.0.0")?;
-	// Keys don't reach the states while it shows (Escape on the main menu goes back, or
-	// quits): the main menu's onKeyInput counts what it gets.
 	game.keyboard_focus(true);
 	game.run_script(
 		"::__keys <- 0; local menu = ::RootState.get(\"MainMenuState\"); local on = menu.onKeyInput; \
 		 menu.onKeyInput <- function (_key) { ::__keys++; return on(_key); };",
 	)?;
-	press(&mut game, ESCAPE)?;
-	ensure(!game.quit() && game.front().update_notice_shown(), "Escape went past the notice")?;
+	press(&mut game, OTHER_KEY)?;
+	ensure(game.front().update_notice_shown(), "another key closed the notice")?;
 	ensure(holds(&game, "::__keys == 0")?, "a key reached the states under the notice")?;
-	click(&mut game, "continue")?;
-	// Once it's gone, they do again (a key the menu does nothing with).
+	// Escape is Continue: it closes the notice, keeping nothing, and neither its press
+	// nor its release (after the notice has gone) reaches the menu.
+	press(&mut game, ESCAPE)?;
+	ensure(!game.front().update_notice_shown() && notice(&game)? == Json::Null, "Escape left the notice up")?;
+	ensure(!game.quit() && holds(&game, "::__keys == 0")?, "Escape reached the states")?;
+	ensure(!settings_text(&settings).contains("update."), format!("Escape kept something: {}", settings_text(&settings)))?;
+	ensure(opened.borrow().is_empty(), "Escape opened a link")?;
+	// Once it's gone, keys reach the states again (a key the menu does nothing with).
 	press(&mut game, OTHER_KEY)?;
 	ensure(holds(&game, "::__keys > 0")?, "keys don't reach the states after the notice")?;
+
+	// Asked again (as at the next start): its Continue closes it, keeping nothing.
+	game.check_for_update();
+	shows(&mut game, "9.0.0")?;
+	click(&mut game, "continue")?;
 	ensure(!settings_text(&settings).contains("update."), format!("Continue kept something: {}", settings_text(&settings)))?;
 	ensure(opened.borrow().is_empty(), "Continue opened a link")?;
 
-	// Asked again (as at the next start): Open link opens the release's page.
+	// Enter is Open link, and reaches the states no more than Escape.
+	game.check_for_update();
+	shows(&mut game, "9.0.0")?;
+	game.run_script("::__keys = 0;")?;
+	press(&mut game, ENTER)?;
+	ensure(!game.front().update_notice_shown() && notice(&game)? == Json::Null, "Enter left the notice up")?;
+	ensure(holds(&game, "::__keys == 0")?, "Enter reached the states")?;
+	ensure(*opened.borrow() == [format!("{RELEASES}v9.0.0")], format!("Enter: the opener got {:?}", opened.borrow()))?;
+
+	// The Open link button does the same.
 	game.check_for_update();
 	shows(&mut game, "9.0.0")?;
 	click(&mut game, "open")?;
-	ensure(*opened.borrow() == [format!("{RELEASES}v9.0.0")], format!("the opener got {:?}", opened.borrow()))?;
+	ensure(*opened.borrow() == [format!("{RELEASES}v9.0.0"), format!("{RELEASES}v9.0.0")], format!("the opener got {:?}", opened.borrow()))?;
 
 	// Ignore this version: kept in the settings file, beside the player's lines.
 	game.check_for_update();

@@ -44,6 +44,13 @@ impl UiSession {
 		Ok(())
 	}
 
+	/// Choose `choice` (`open`, `continue` or `ignore`) as the notice's button does, if it
+	/// shows: its handler and the page's `openURL` run before this returns. Whether it
+	/// showed.
+	pub fn choose_update_notice(&self, choice: &str) -> Result<bool, String> {
+		Ok(self.eval(&format!("{NOTICE}('choose', {})", Json::Str(choice.into()).to_text()))? == Json::Bool(true))
+	}
+
 	/// Whether the update notice shows.
 	pub fn update_notice_shown(&self) -> Result<bool, String> {
 		Ok(self.eval(&format!("{NOTICE}('shown')"))? == Json::Bool(true))
