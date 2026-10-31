@@ -29,6 +29,8 @@ pub mod gpu_page;
 mod headless;
 #[cfg(feature = "ui")]
 mod page;
+#[cfg(feature = "ui")]
+mod update_notice;
 
 #[cfg(not(feature = "ui"))]
 pub use headless::Front;

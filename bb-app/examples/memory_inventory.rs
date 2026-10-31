@@ -607,6 +607,7 @@ fn run(gpu: &Gpu, o: &Options) -> Result<(Vec<Sample>, Vec<String>, Option<Strin
 		saves: None,
 		cef_log: None,
 		store: Default::default(),
+		update_check: None,
 		display: None,
 	};
 	let mut game = Game::start(gpu, &boot)?;

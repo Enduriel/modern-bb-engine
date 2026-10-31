@@ -138,6 +138,9 @@ fn start_in_gamescope(dir: &Path, (width, height): (u32, u32), refresh: Option<u
 		.env("BB_SAVES_DIR", dir.join("saves"))
 		// So a run that hangs can have its stacks read (`dump_stacks`).
 		.env("BB_ALLOW_TRACE", "1")
+		// The update check asks a local port where nothing listens (refused at once, and
+		// logged): no test run asks GitHub.
+		.env("BB_UPDATE_CHECK_URL", "http://127.0.0.1:9/")
 		// No message box that nobody is there to close, unless the run asks for one (its
 		// `env`, set for bb over this).
 		.env("BB_ERROR_DIALOG", "0")

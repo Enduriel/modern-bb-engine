@@ -34,6 +34,7 @@ pub mod stats;
 pub mod steam;
 pub mod surface_trouble;
 pub mod system_cursor;
+pub mod update_check;
 pub mod wheel;
 #[cfg(windows)]
 pub mod win_process;

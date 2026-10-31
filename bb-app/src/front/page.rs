@@ -26,6 +26,8 @@ pub struct Front {
 	profiling: Option<crate::script_profile::ScriptProfiling>,
 	/// Procedural images (portraits) whose atlases were still loading.
 	loading_procedural: Vec<bb_ui::host::ProceduralRequest>,
+	/// The update check and its notice on the main menu, if the boot asked for them.
+	update: Option<super::update_notice::UpdateNotice>,
 }
 
 impl Front {
@@ -78,12 +80,19 @@ impl Front {
 		if let Some(port) = devtools {
 			super::devtools::announce(port);
 		}
+		// Before the boot: the notice follows the main menu from its first showing.
+		let mut update = boot.update_check.clone().map(|check| super::update_notice::UpdateNotice::attach(&session, check));
 		// Portraits are composed on the game thread (`Game::draw`).
 		session.queue_procedural(true);
 		if boot.sound {
 			super::play_on_device(session.engine(), boot.data_dir, boot.mods);
 		}
 		session.boot_menu().map_err(crate::requirements::page_error)?;
+		// The page is up, and with it the browser's network stack: the request goes out
+		// as the menu shows.
+		if let Some(update) = &mut update {
+			update.check(&session);
+		}
 		// The boot is behind us as a scene discarded is (`discarded`): the page gives
 		// back what running every screen's and mod's setup left (-45 MB at the main menu),
 		// and the allocator its free pages. `BB_BOOT_RELEASE=0` keeps them, to compare.
@@ -109,6 +118,7 @@ impl Front {
 			fps: None,
 			profiling: crate::script_profile::ScriptProfiling::from_env(&archives),
 			loading_procedural: Vec::new(),
+			update,
 		})
 	}
 
@@ -150,6 +160,9 @@ impl Front {
 				self.session.set_fps(&fps);
 			}
 		}
+		if let Some(update) = &mut self.update {
+			update.step(&self.session);
+		}
 		let session = &self.session;
 		let stepped = match &mut self.profiling {
 			Some(profiling) => profiling.step(session.engine().vm(), || session.step_unparked(ms))?,
@@ -162,6 +175,20 @@ impl Front {
 			self.session.host().begin_frame();
 		}
 		Ok(stepped)
+	}
+
+	/// Whether the update notice shows: it takes the player's input while it does (the
+	/// mouse by covering the page, the keys by the game keeping them from the states).
+	pub fn update_notice_shown(&self) -> bool {
+		self.update.as_ref().is_some_and(|u| u.shown())
+	}
+
+	/// Ask for the latest release again (as at the start, if the boot asked for the
+	/// check): its notice shows on the main menu if it makes one.
+	pub fn check_for_update(&mut self) {
+		if let Some(update) = &mut self.update {
+			update.check(&self.session);
+		}
 	}
 
 	/// Before the scripts run outside a step (the player's input): the page waits

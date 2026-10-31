@@ -101,14 +101,37 @@ impl Settings {
 	/// Keep `dir` as the data folder the player chose, in the file at once.
 	pub fn keep_chosen_data_dir(&mut self, dir: &Path) -> Result<(), String> {
 		let text = dir.to_str().ok_or_else(|| format!("{} isn't valid UTF-8, which the settings file needs", dir.display()))?;
-		self.text.set(CHOSEN_DATA_DIR, text);
-		self.save()
+		self.update(|t| t.set(CHOSEN_DATA_DIR, text))
+	}
+
+	/// The release version the player chose to ignore in the update notice
+	/// (`update.ignored_version`; see `bb_app::update_check`), if any.
+	pub fn ignored_update(&self) -> Option<&str> {
+		self.text.get(crate::update_check::IGNORED_VERSION).filter(|v| !v.is_empty())
+	}
+
+	/// Keep `version` as the one the player ignored, in the file at once.
+	pub fn keep_ignored_update(&mut self, version: &str) -> Result<(), String> {
+		self.update(|t| t.set(crate::update_check::IGNORED_VERSION, version))
 	}
 
 	/// Keep what the scripts saved (`Settings.save`), in the file at once.
 	pub fn keep(&mut self, saved: &SavedSettings) -> Result<(), String> {
-		video::write(&mut self.text, &saved.video);
-		game::write(&mut self.text, &saved.game);
+		self.update(|t| {
+			video::write(t, &saved.video);
+			game::write(t, &saved.game);
+		})
+	}
+
+	/// Make `change` to the file as it is now, and save it. Read again first: other
+	/// parts of bb keep their own keys in it meanwhile (the update notice's ignored
+	/// version), and the player may have edited it, so what was read at the start would
+	/// lose their lines.
+	fn update(&mut self, change: impl FnOnce(&mut SettingsText)) -> Result<(), String> {
+		if let Some(text) = self.path.as_deref().and_then(|p| std::fs::read_to_string(p).ok()) {
+			self.text = SettingsText::parse(&text);
+		}
+		change(&mut self.text);
 		self.save()
 	}
 
@@ -166,6 +189,26 @@ mod tests {
 		Settings::load(Some(path.clone())).keep_chosen_data_dir(chosen).expect("save");
 		assert_eq!(Settings::load(Some(path.clone())).chosen_data_dir().as_deref(), Some(chosen));
 		assert!(Settings::load(Some(path)).retina_world(), "the rest kept");
+		let _ = std::fs::remove_dir_all(dir);
+	}
+
+	#[test]
+	fn keeps_the_ignored_update_beside_what_another_writer_keeps() {
+		let dir = std::env::temp_dir().join(format!("bb-settings-ignored-{}", std::process::id()));
+		let path = dir.join(FILE_NAME);
+		// The game's settings, read at the start; the update notice's, its own.
+		let mut game = Settings::load(Some(path.clone()));
+		let mut notice = Settings::load(Some(path.clone()));
+		assert_eq!(notice.ignored_update(), None);
+		notice.keep_ignored_update("0.3.0").expect("save");
+		let start = VideoMode::first_start(1920, 1080, 32);
+		game.keep(&SavedSettings { video: start, game: GameSettings::FRESH_INSTALL }).expect("save");
+		let read = Settings::load(Some(path.clone()));
+		assert_eq!(read.ignored_update(), Some("0.3.0"), "the game's save kept it");
+		assert_eq!(read.video_mode(VideoMode::DEFAULT), start);
+		notice.keep_ignored_update("0.4.0").expect("save");
+		assert_eq!(Settings::load(Some(path.clone())).ignored_update(), Some("0.4.0"));
+		assert_eq!(Settings::load(Some(path)).video_mode(VideoMode::DEFAULT), start, "and the notice the game's");
 		let _ = std::fs::remove_dir_all(dir);
 	}
 }

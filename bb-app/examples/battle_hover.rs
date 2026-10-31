@@ -198,6 +198,7 @@ fn run(o: &Options) -> Result<(), String> {
 		saves: None,
 		cef_log: None,
 		store: Store::default(),
+		update_check: None,
 		display: None,
 	};
 	let game = Game::start(&gpu, &boot)?;

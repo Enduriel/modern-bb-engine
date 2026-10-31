@@ -406,6 +406,10 @@ impl App {
 				steam_build: options.steam_build,
 				user_stats: options.steam.clone().map(|s| s as Rc<dyn squirrel_bb::UserStats>),
 			},
+			update_check: Some(bb_app::update_check::UpdateCheck {
+				endpoint: bb_app::update_check::endpoint(),
+				settings: self.settings.path().map(Path::to_path_buf),
+			}),
 	
 			display: Some(event_loop.owned_display_handle()),
 		};

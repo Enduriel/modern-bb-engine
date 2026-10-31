@@ -72,6 +72,13 @@ impl Front {
 		&self.engine
 	}
 
+	/// No page, no update notice (nor check: `Boot::update_check` is the page's).
+	pub fn update_notice_shown(&self) -> bool {
+		false
+	}
+
+	pub fn check_for_update(&mut self) {}
+
 	/// Advance the game by `ms` of real time. It always runs: no page to wait on.
 	pub fn step(&mut self, ms: f64) -> Result<bool, String> {
 		let engine = &self.engine;

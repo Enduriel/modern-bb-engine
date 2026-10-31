@@ -102,6 +102,9 @@ pub struct Boot<'a> {
 	pub cef_log: Option<std::path::PathBuf>,
 	/// The store the install is from, and the achievements' service.
 	pub store: Store,
+	/// The update check, with the page's front: bb's asks GitHub; without one (tests)
+	/// none is made.
+	pub update_check: Option<crate::update_check::UpdateCheck>,
 	/// The game window's display, whose clipboard the page's copy and paste use (on
 	/// Wayland, served through the window's connection); the system's clipboard
 	/// programs without one (the page's front only).
@@ -178,6 +181,7 @@ impl Game {
 			saves: None,
 			cef_log: None,
 			store: Store::default(),
+			update_check: None,
 			display: None,
 		};
 		Game::start(gpu, &boot)
@@ -228,6 +232,12 @@ impl Game {
 	/// The scripts and their UI.
 	pub fn front(&self) -> &Front {
 		&self.front
+	}
+
+	/// Ask for the engine's latest release again, as at the start (only if the boot
+	/// asked for the update check, and only with the page's front).
+	pub fn check_for_update(&mut self) {
+		self.front.check_for_update();
 	}
 
 	/// Whether the scripts have quit: their last state finished (the main menu's Quit
@@ -453,6 +463,10 @@ impl Game {
 	/// AltGr, which Windows reports as Ctrl+Alt, types. Nor does a key with the Mac's
 	/// Command held (a shortcut there, as Cmd+C; `KEY_MODIFIER_COMMAND`).
 	pub fn key(&mut self, key: &Key) -> Result<(), String> {
+		// The update notice takes the player's input while it shows: none for the states.
+		if self.front.update_notice_shown() {
+			return Ok(());
+		}
 		if let Some(code) = key.engine {
 			self.engine().queue_key(code, key.down, self.modifier);
 		}
