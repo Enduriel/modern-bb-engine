@@ -10,7 +10,7 @@ also cross-build on Linux through cargo-xwin, as `windows_cross.py` does.
 
 1. Checks the inputs: the Rust toolchain `rust-toolchain.toml` names (installed with the
    target's standard library through rustup), `Cargo.lock` current (`--locked`) and
-   naming the pinned cef-dll-sys, squirrel-sys in the repository (ignored; its commit is
+   naming the pinned cef-dll-sys, the squirrel-sys submodule checked out (its commit is
    recorded), and the build tools (cmake, ninja: the pinned release is fetched into the
    cache when none is on the path).
 2. Fetches CEF's distribution for the target (`CEF`: one version, each platform's archive
@@ -204,11 +204,11 @@ def check_lock(env):
 
 
 def squirrel_sys():
-	"""squirrel-sys in the repository (ignored), and its commit (with its squirrel submodule's)."""
+	"""The squirrel-sys submodule, and its commit (with its squirrel submodule's)."""
 	if not (SQUIRREL_SYS / "Cargo.toml").is_file():
-		fail(f"no squirrel-sys at {SQUIRREL_SYS} (a separate repository, checked out in the repository's root, ignored)")
+		fail(f"no squirrel-sys at {SQUIRREL_SYS}: check out the submodules (git submodule update --init --recursive)")
 	if not (SQUIRREL_SYS / "squirrel" / "CMakeLists.txt").is_file():
-		fail(f"squirrel-sys has no squirrel submodule checked out ({SQUIRREL_SYS / 'squirrel'})")
+		fail(f"squirrel-sys has no squirrel submodule checked out ({SQUIRREL_SYS / 'squirrel'}): git submodule update --init --recursive")
 	described = []
 	for path in (SQUIRREL_SYS, SQUIRREL_SYS / "squirrel"):
 		rev = output(["git", "-C", path, "rev-parse", "HEAD"]) or "unknown"

@@ -97,7 +97,6 @@ and `inputs.txt` as the artifact `bb-<target>`:
   Not the target folder: each run builds from scratch.
 - **squirrel-sys** is a submodule (`squirrel-sys/`, Enduriel/squirrel-sys), with the VM
   (Enduriel/squirrel) a submodule of it; the checkout takes both at the commits recorded.
-  While they are private, the `SUBMODULES_TOKEN` secret holds a read-only token for them.
 - No tests: the suite needs the game's Steam data, which the runners don't have.
 
 ## What it does

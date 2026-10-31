@@ -17,8 +17,7 @@ permissions:
 env:
   # squirrel-sys (Enduriel/squirrel-sys) is a submodule at squirrel-sys/, and the VM
   # (Enduriel/squirrel) a submodule of it; both are checked out with this repository at
-  # the commits it records. While they are private, the SUBMODULES_TOKEN secret holds a
-  # read-only token for them.
+  # the commits it records.
   CARGO_TERM_COLOR: never
 
 jobs:
@@ -52,7 +51,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
           persist-credentials: false
 
       - name: Python (the script needs 3.11+)
