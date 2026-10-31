@@ -79,7 +79,10 @@ runs. Updating a pin (CEF with cef-dll-sys, ninja, cargo-xwin, Steam's crate in
 
 On demand (`workflow_dispatch`) and on `v*` tags, never on pushes. One job per target
 on its own runner, each running `bundle.py` and uploading the archive, its `.sha256`
-and `inputs.txt` as the artifact `bb-<target>`:
+and `inputs.txt` as the artifact `bb-<target>`. On a `v*` tag, once every target has
+built, a last job makes a **draft** release for the tag: every target's files attached
+and each archive's SHA-256 in its notes. Check it and publish it by hand (Releases on
+GitHub).
 
 | Target | Runner |
 | --- | --- |
@@ -89,7 +92,7 @@ and `inputs.txt` as the artifact `bb-<target>`:
 | `aarch64-pc-windows-msvc` | `windows-11-arm` |
 | `aarch64-apple-darwin` | `macos-15` |
 
-- Third-party actions are pinned by commit (checkout, setup-python, cache,
+- Third-party actions are pinned by commit (checkout, setup-python, cache, download-artifact,
   upload-artifact). Linux installs cmake, ninja, clang (bindgen's libclang), ALSA's
   headers and the libraries `libcef.so` links (for the smoke check) with apt.
 - Caches: cargo's registry and git downloads (keyed on `Cargo.lock`), and the pinned

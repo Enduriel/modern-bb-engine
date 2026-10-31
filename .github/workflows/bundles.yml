@@ -3,7 +3,9 @@
 # uploaded as an artifact. Builds and packages only: the test suite needs the game's
 # Steam data, which isn't on GitHub's runners.
 #
-# Runs on demand (Actions > bundles > Run workflow) and on version tags.
+# Runs on demand (Actions > bundles > Run workflow) and on version tags. A version tag
+# also gets a draft release with every target's bundle and their SHA-256s, published
+# by hand once checked.
 name: bundles
 
 on:
@@ -105,3 +107,42 @@ jobs:
             bundles/bb-${{ matrix.target }}.inputs.txt
           if-no-files-found: error
           compression-level: 0
+
+  # After every target's bundle: a draft release for the tag, with the bundles attached and
+  # their SHA-256s in its notes. Only on version tags, and only when every target built.
+  release:
+    name: draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: bundle
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the bundles
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bb-*
+          path: bundles
+          merge-multiple: true
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        working-directory: bundles
+        run: |
+          shopt -s nullglob
+          archives=(bb-*.tar.gz bb-*.zip)
+          [ ${#archives[@]} -gt 0 ] || { echo "no bundles downloaded"; exit 1; }
+          {
+            echo "Auto generated release. Unpack the archive for your system and double-click \`bb\`; see the README inside."
+            echo
+            echo "| Package | SHA-256 |"
+            echo "| --- | --- |"
+            for a in "${archives[@]}"; do
+              echo "| \`$a\` | \`$(sha256sum "$a" | cut -d' ' -f1)\` |"
+            done
+          } > ../notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "bb ${TAG#v}" --notes-file ../notes.md \
+            "${archives[@]}" bb-*.sha256 bb-*.inputs.txt
