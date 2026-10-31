@@ -27,7 +27,12 @@
 //!   promise, nor those of the other void calls;
 //! - `openURL(url)`: opened in the system's browser, as the original does, by the
 //!   opener the game installs ([`set_url_opener`](UiProtocol::set_url_opener)); without
-//!   one (tests, examples) only logged. Only `http(s)` URLs are opened ([`web_url`]).
+//!   one (tests, examples) only logged. Only `http(s)` URLs are opened ([`web_url`]);
+//! - a name starting with [`ENGINE_PREFIX`] (`bb.`): the engine's own, for what it adds
+//!   to the page beside the game's UI (its update notice, `bb.updateNotice(choice)`).
+//!   Neither the game's JS nor its mods' call such names (Coherent had none): each goes
+//!   to the handler the game set for it ([`set_engine_handler`](UiProtocol::set_engine_handler)),
+//!   inline on the game's thread like the others, and is an unknown handler without one.
 //!
 //! **Timing.** With `BB_UI_SLOW_CALLS=<ms>` in the environment, every call either way
 //! that takes at least that long is logged to stderr with its time, for profiling the
@@ -50,6 +55,10 @@ const BUILD_DATE: &str = "2026-06-22 15:00:00";
 
 /// The environment variable that turns on logging slow calls (see the module docs).
 const SLOW_CALLS: &str = "BB_UI_SLOW_CALLS";
+
+/// What the names of the engine's own `engine.call` handlers start with (see the
+/// module docs).
+pub const ENGINE_PREFIX: &str = "bb.";
 
 /// Coherent's error code for a call to a handler that doesn't exist
 /// (`engine._Errors[2]`).
@@ -111,7 +120,13 @@ pub struct UiProtocol<T: Transport> {
 	log: Box<dyn Fn(&str)>,
 	/// What opens the page's `openURL` URLs (already checked), if anything does.
 	url_opener: RefCell<Option<Box<UrlOpener>>>,
+	/// The engine's own handlers, by name (each starts with [`ENGINE_PREFIX`]).
+	engine_handlers: RefCell<Vec<(String, Rc<EngineHandler>)>>,
 }
+
+/// One of the engine's own `engine.call` handlers (see
+/// [`UiProtocol::set_engine_handler`]): given the call's arguments, its reply.
+pub type EngineHandler = dyn Fn(&[Json]) -> Reply;
 
 /// Opens a URL in the system's browser (see [`UiProtocol::set_url_opener`]); an error
 /// says why it couldn't.
@@ -139,6 +154,7 @@ impl<T: Transport + 'static> UiProtocol<T> {
 				.map(|ms| Duration::from_secs_f64(ms.max(0.0) / 1000.0)),
 			log: Box::new(log),
 			url_opener: RefCell::new(None),
+			engine_handlers: RefCell::new(Vec::new()),
 		})
 	}
 
@@ -174,6 +190,16 @@ impl<T: Transport> UiProtocol<T> {
 	/// them, and must not block. Without one, they are only logged.
 	pub fn set_url_opener(&self, opener: impl Fn(&str) -> Result<(), String> + 'static) {
 		*self.url_opener.borrow_mut() = Some(Box::new(opener));
+	}
+
+	/// Answer the page's `engine.call(name, ...)` with `handler`, replacing any it had:
+	/// one of the engine's own calls, so `name` must start with [`ENGINE_PREFIX`]. It runs
+	/// on the game's thread, inside the page's call, and must not call into the page.
+	pub fn set_engine_handler(&self, name: &str, handler: impl Fn(&[Json]) -> Reply + 'static) {
+		assert!(name.starts_with(ENGINE_PREFIX), "the engine's own handlers start with {ENGINE_PREFIX}: {name}");
+		let mut handlers = self.engine_handlers.borrow_mut();
+		handlers.retain(|(n, _)| n != name);
+		handlers.push((name.to_string(), Rc::new(handler)));
 	}
 
 	/// Run `engine._trigger(event, args...)` in the page now, serving the page's calls
@@ -263,11 +289,18 @@ impl<T: Transport> UiProtocol<T> {
 				self.open_url(args.first());
 				Reply::Void
 			}
+			_ if name.starts_with(ENGINE_PREFIX) && let Some(handler) = self.engine_handler(name) => handler(args),
 			_ => {
 				(self.log)(&format!("ui: engine.call to unknown handler '{name}'"));
 				Reply::Error(format!("no handler '{name}'"))
 			}
 		}
+	}
+
+	/// The engine's own handler named `name`, if the game set one (cloned out, so the
+	/// handler may set handlers itself).
+	fn engine_handler(&self, name: &str) -> Option<Rc<EngineHandler>> {
+		self.engine_handlers.borrow().iter().find(|(n, _)| n == name).map(|(_, h)| h.clone())
 	}
 
 	/// `openURL(url)`: open `url` with the opener, if it may be opened and there is one.
@@ -713,6 +746,37 @@ mod tests {
 			]
 		);
 		bridge.clear();
+	}
+
+	#[test]
+	fn engine_handlers_answer_their_own_names() {
+		let (vm, bridge, page, _) = setup();
+		let log = Rc::new(RefCell::new(Vec::new()));
+		let sink = log.clone();
+		let protocol = UiProtocol::new(page, move |m| sink.borrow_mut().push(m.to_string()));
+		let heard = Rc::new(RefCell::new(Vec::new()));
+		let sink = heard.clone();
+		protocol.set_engine_handler("bb.test", move |args| {
+			sink.borrow_mut().push(Json::Array(args.to_vec()).to_text());
+			Reply::Value(Json::Int(7))
+		});
+		let reply = protocol.handle_message(&vm, &bridge, &message(r#"["bb.test",3,"ignore","1.2.3"]"#));
+		assert_eq!(reply, Reply::Value(Json::Int(7)));
+		assert_eq!(heard.borrow().as_slice(), [r#"["ignore","1.2.3"]"#]);
+		// A name of the engine's without a handler is unknown, as any other.
+		let reply = protocol.handle_message(&vm, &bridge, &message(r#"["bb.other",4]"#));
+		assert_eq!(reply, Reply::Error("no handler 'bb.other'".into()));
+		assert_eq!(log.borrow().as_slice(), ["ui: engine.call to unknown handler 'bb.other'"]);
+		bridge.clear();
+	}
+
+	#[test]
+	#[should_panic(expected = "the engine's own handlers start with bb.")]
+	fn engine_handlers_need_the_engines_prefix() {
+		let (_vm, bridge, page, _) = setup();
+		let protocol = UiProtocol::new(page, |_| {});
+		bridge.clear();
+		protocol.set_engine_handler("openURL", |_| Reply::Void);
 	}
 
 	#[test]

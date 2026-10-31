@@ -44,6 +44,7 @@ mod client;
 mod damage;
 mod display;
 mod edit_keys;
+mod fetch;
 mod file_dialog;
 #[cfg(target_os = "linux")]
 mod fonts;
@@ -74,6 +75,7 @@ mod scheme;
 mod session;
 mod session_click_check;
 mod session_input;
+mod session_notice;
 mod session_fps;
 mod session_play;
 #[cfg(target_os = "macos")]
@@ -94,6 +96,7 @@ use cef::*;
 use client::Shared;
 pub use client::Event;
 pub use damage::PaintRect;
+pub use fetch::{Fetched, fetch};
 pub use display::{Display, with_display};
 pub use frame::FrameBuffer;
 pub use input::{Key, WHEEL_DELTA_PER_NOTCH};
@@ -116,6 +119,7 @@ pub use paint_sink::{PageSink, PaintBuffer, SharedPaint};
 pub use paint_stats::PaintStats;
 pub use pump_schedule::Waker;
 pub use session::{NO_PAINTS, UiSession};
+pub use session_notice::{UPDATE_NOTICE_HANDLER, UpdateNoticeView};
 pub use session_play::{FRAME_PARK_WAIT, ProceduralRequest};
 
 use crate::bridge::{Reply, Transport};

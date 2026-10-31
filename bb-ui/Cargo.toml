@@ -73,3 +73,8 @@ required-features = ["cef"]
 name = "mod_fonts_ui"
 harness = false
 required-features = ["cef"]
+
+[[test]]
+name = "update_fetch_ui"
+harness = false
+required-features = ["cef"]
