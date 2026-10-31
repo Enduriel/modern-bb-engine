@@ -102,6 +102,14 @@ hand (Releases on GitHub).
   (Enduriel/squirrel) a submodule of it; the checkout takes both at the commits recorded.
 - No tests: the suite needs the game's Steam data, which the runners don't have.
 
+### Making a release: `scripts/release.py`
+
+`scripts/release.py 0.3.0` (on `main`, nothing uncommitted) sets the version in every
+workspace crate, the `bb --version` examples in the sources and `Cargo.lock`, commits it
+as `chore: version 0.3.0` and makes the annotated tag `v0.3.0`. It pushes nothing; it
+prints the two pushes (`main`, then the tag) that start the workflow above. `--dry-run`
+lists the files it would change.
+
 ## What it does
 
 1. Builds `bb` (`bb-app` with `ui`) in release for the target, with
