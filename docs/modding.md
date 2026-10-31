@@ -12,7 +12,7 @@ if ("ModernEngine" in ::getroottable())
 }
 ```
 
-`::ModernEngine.Version` is the API's version (an integer, `3` for now). A later
+`::ModernEngine.Version` is the API's version (an integer, `4` for now). A later
 version only adds to this page. Each section names the version that added it.
 
 The UI's JavaScript can tell the same way (version 3): `window.ModernEngine` is defined
@@ -174,7 +174,7 @@ Each handler finds only its own kind of entity, as the original's does:
   included, or an entity with nothing to draw, the load fails (the `error` event,
   status 0) and the same warning is logged.
 
-## Positional sounds pan by their place on the screen
+## Positional sounds pan by their place on the screen (version 4)
 
 `Sound.play(file, volume, pos)` with a position plays the sound at that world point. In
 the original game its pan says only which side of the camera the point is on: every
@@ -195,5 +195,18 @@ the ambience's random pan, are as in the original.
 
 A mod that works around the original's pan by moving each sound's position towards the
 camera, so that it lands in the narrow band where the original pans in between, makes
-every sound play near the centre on the modern engine. Such a mod should keep the
-position as it is when `"ModernEngine" in ::getroottable()`.
+every sound play near the centre on the modern engine. `::ModernEngine.Version >= 4`
+means positional sounds pan by their place on the screen (earlier versions of the
+modern engine pan as the original), so such a mod should keep the position as it is
+then:
+
+```squirrel
+if ("ModernEngine" in ::getroottable() && ::ModernEngine.Version >= 4)
+{
+	// The engine pans by the sound's place on the screen: play at the real position.
+}
+else
+{
+	// The original's pan: move the position into its narrow band as before.
+}
+```
