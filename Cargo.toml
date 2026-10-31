@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["squirrel", "squirrel-bb", "bb-engine", "bb-assets", "bb-ui", "bb-render", "bb-audio", "bb-app", "bb-steam", "bb-package"]
+members = ["squirrel", "squirrel-bb", "bb-engine", "bb-assets", "bb-ui", "bb-render", "bb-audio", "bb-app", "bb-steam", "bb-package", "bb-sha256"]
 # squirrel-sys is its own repository, a submodule in this folder: a path dependency of
 # squirrel, not a member. vendor/ holds patched third-party crates.
 exclude = ["squirrel-sys", "vendor/download-cef"]

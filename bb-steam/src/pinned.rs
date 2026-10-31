@@ -143,7 +143,7 @@ mod tests {
 	#[test]
 	fn verification_refuses_anything_but_the_pin() {
 		let data = b"not the steam library";
-		let actual = crate::sha256::hex(data);
+		let actual = bb_sha256::hex(data);
 		assert!(verify("lib", &actual, &actual).is_ok());
 		let err = verify("lib", &actual, LIBRARIES[0].sha256).unwrap_err();
 		assert!(err.contains("refusing"), "{err}");

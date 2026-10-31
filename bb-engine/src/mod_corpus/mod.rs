@@ -157,7 +157,7 @@ mod tests {
 	fn pin_list(files: &[(&str, &str)]) -> std::collections::BTreeMap<String, pins::Pin> {
 		let text: String = files
 			.iter()
-			.map(|(path, content)| format!("{} {} {path}\n", bb_steam::sha256::hex(content.as_bytes()), content.len()))
+			.map(|(path, content)| format!("{} {} {path}\n", bb_sha256::hex(content.as_bytes()), content.len()))
 			.collect();
 		pins::parse(&text).unwrap()
 	}

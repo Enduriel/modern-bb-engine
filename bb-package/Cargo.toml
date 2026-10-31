@@ -13,3 +13,4 @@ path = "src/main.rs"
 
 [dependencies]
 bb-steam = { path = "../bb-steam" }
+bb-sha256 = { path = "../bb-sha256" }

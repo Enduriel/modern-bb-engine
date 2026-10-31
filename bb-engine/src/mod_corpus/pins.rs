@@ -48,7 +48,7 @@ pub fn found_in(dir: &Path, subfolders: &[&str]) -> io::Result<BTreeMap<String, 
 			let path = entry?.path();
 			let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
 			let size = std::fs::metadata(&path)?.len();
-			let sha256 = bb_steam::sha256::file_hex(&path)?;
+			let sha256 = bb_sha256::file_hex(&path)?;
 			found.insert(format!("{sub}/{name}"), Pin { size, sha256 });
 		}
 	}

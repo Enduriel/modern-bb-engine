@@ -1,0 +1,9 @@
+[package]
+name = "bb-sha256"
+version = "0.2.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+# SHA-256, std only: for the files pinned by hash (the release package's Steam library,
+# the reference mod corpus of the tests). No dependencies, so whatever needs a hash can
+# use it without pulling in the engine or the Steam binding.

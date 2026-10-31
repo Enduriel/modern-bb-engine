@@ -11,7 +11,7 @@ use std::path::PathBuf;
 fn the_pinned_library_exports_the_binding() {
 	let path = std::env::var_os("BB_STEAM_API").map(PathBuf::from).expect("BB_STEAM_API naming Steam's library");
 	if let Some(pinned) = bb_steam::pinned::library_for(env!("BB_STEAM_TARGET")) {
-		let hash = bb_steam::sha256::file_hex(&path).expect("the library reads");
+		let hash = bb_sha256::file_hex(&path).expect("the library reads");
 		bb_steam::pinned::verify(&path.display().to_string(), &hash, pinned.sha256).expect("the pinned library");
 	}
 	bb_steam::client::check_library(&path).expect("every function the binding calls");

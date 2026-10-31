@@ -33,7 +33,7 @@ pub fn for_target(target: &str, cache: &Path) -> Result<Steam, String> {
 
 /// Check the file at `path` against the `expected` SHA-256.
 pub fn check_file(path: &Path, expected: &str) -> Result<(), String> {
-	let actual = bb_steam::sha256::file_hex(path).map_err(|e| format!("{}: {e}", path.display()))?;
+	let actual = bb_sha256::file_hex(path).map_err(|e| format!("{}: {e}", path.display()))?;
 	pinned::verify(&path.display().to_string(), &actual, expected)
 }
 
@@ -84,7 +84,7 @@ mod tests {
 		fs::write(&file, b"a library swapped in upstream").unwrap();
 		let err = check_file(&file, pinned::LIBRARIES[0].sha256).unwrap_err();
 		assert!(err.contains("refusing"), "{err}");
-		let own = bb_steam::sha256::hex(b"a library swapped in upstream");
+		let own = bb_sha256::hex(b"a library swapped in upstream");
 		assert!(check_file(&file, &own).is_ok());
 	}
 }

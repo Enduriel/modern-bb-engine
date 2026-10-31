@@ -22,8 +22,8 @@ jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-sy
 # (`install::steam`). Pinned: what it reads is Steam's
 # own files, whose handling we check against this version.
 steamlocate = "=2.1.1"
-# Its SHA-256 (std only), for the reference mod corpus's pins (`mod_corpus`).
-bb-steam = { path = "../bb-steam" }
+# SHA-256 (std only), for the reference mod corpus's pins (`mod_corpus`).
+bb-sha256 = { path = "../bb-sha256" }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

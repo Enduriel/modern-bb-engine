@@ -1,6 +1,7 @@
-//! SHA-256 (FIPS 180-4), for checking the pinned Steam library and the crate it comes
-//! in against their hard-coded hashes. Std only: a hash is a few dozen lines, not a
-//! dependency.
+//! SHA-256 (FIPS 180-4), for checking files against their pinned hashes: the Steam
+//! library a release package carries and the crate it comes in (`bb-package`), and the
+//! tests' reference mod corpus (`bb_engine::mod_corpus`). Std only: a hash is a few
+//! dozen lines, not a dependency.
 
 use std::io::{self, Read};
 use std::path::Path;

@@ -14,6 +14,8 @@ license = "AGPL-3.0-or-later"
 libc = "0.2.186"
 
 [dev-dependencies]
+# The pinned library's hash, in the tests.
+bb-sha256 = { path = "../bb-sha256" }
 # The local Steam install of the game, for the tests that read it (as bb-engine's
 # `install` finds it; the version pinned there).
 steamlocate = "=2.1.1"

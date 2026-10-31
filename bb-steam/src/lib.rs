@@ -7,7 +7,7 @@
 //! - [`client`] is the binding: the few calls of Steam's flat C API the game needs
 //!   (`SteamAPI_InitFlat`, `ISteamUserStats`, `SteamAPI_RunCallbacks`, `SteamAPI_Shutdown`).
 //! - [`pinned`] names the one copy of Steam's redistributable library a release package
-//!   carries, with the hashes the packaging checks it against; [`sha256`] computes them.
+//!   carries, with the hashes the packaging checks it against (`bb-sha256` computes them).
 //!
 //! The game's natives don't know Steam: `squirrel-bb` calls a `UserStats` service, which
 //! `bb-app` makes from a [`client::Steam`].
@@ -16,7 +16,6 @@ pub mod client;
 pub mod install;
 pub mod library;
 pub mod pinned;
-pub mod sha256;
 
 /// Battle Brothers' Steam app id.
 pub const APP_ID: u32 = 365_360;

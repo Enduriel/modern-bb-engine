@@ -310,7 +310,7 @@ name = "bb-engine"
 version = "0.2.0"
 dependencies = [
  "bb-assets",
- "bb-steam",
+ "bb-sha256",
  "criterion",
  "jiff",
  "squirrel",
@@ -323,6 +323,7 @@ dependencies = [
 name = "bb-package"
 version = "0.2.0"
 dependencies = [
+ "bb-sha256",
  "bb-steam",
 ]
 
@@ -343,9 +344,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bb-sha256"
+version = "0.2.0"
+
+[[package]]
 name = "bb-steam"
 version = "0.2.0"
 dependencies = [
+ "bb-sha256",
  "libc",
  "steamlocate",
 ]
