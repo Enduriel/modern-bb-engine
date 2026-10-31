@@ -38,6 +38,7 @@ otherwise.
 A memory snapshot needs no variable: Ctrl+Shift+F11, or `SIGUSR1` on Linux and macOS, writes one into the log folder (`docs/memory-snapshots.md`).
 
 Without any of these, a page that keeps the game waiting is a warning in log.html (tag `UI`, and on stderr), with its time to the millisecond: a park answered a second or more after it was asked (`the page parked 1.402 s after it was asked to`), one not answered within 5 s, and a call into the page not answered within 5 s.
+| `BB_UPDATE_CHECK_URL=URL` | Ask `URL` instead of GitHub's API for the latest release (the update notice, `bb-app/src/update_check`): a local server's, for testing the notice. The window tests point it at a local port where nothing listens, so no test asks GitHub. |
 | `BB_ALLOW_TRACE=1` | Let any process of the user's trace `bb` (Linux's Yama), so a hung run's stacks can be read (`eu-stack`). The window tests set it. |
 
 ## Comparing engine choices

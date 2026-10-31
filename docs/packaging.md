@@ -84,6 +84,26 @@ built, a last job makes a **draft** release for the tag with only the archives a
 one per target (GitHub shows each asset's SHA-256 itself). Check it and publish it by
 hand (Releases on GitHub).
 
+**Publishing tells players.** At start, `bb` asks GitHub for the latest release
+(`/repos/Enduriel/modern-bb-engine/releases/latest`, which never gives a draft or a
+pre-release) and, if its tag is a newer version than its own, shows a notice on the main
+menu: both versions, the release notes (as text: Markdown's headings and list items are
+kept, no HTML), and "Open link", "Continue" (asked again next start) and "Ignore this
+version" (kept in the settings file as `update.ignored_version`). So:
+
+- Tag releases `vMAJOR.MINOR.PATCH` (SemVer, `v` optional; `-rc.1` and the like sort
+  below their release), matching the crate's `version`: a tag that isn't a version
+  shows nothing, and bb's own version is what it compares with.
+- Write the notes for players: the notice shows them, up to 6,000 characters.
+- Publishing a release is what makes every older `bb` offer it; a draft or a
+  pre-release offers nothing.
+
+"Open link" goes to the release's page on GitHub, until the engine has a Nexus Mods
+page: then set `NEXUS_PAGE` in `bb-app/src/update_check/link.rs` to it
+(`Some("https://www.nexusmods.com/battlebrothers/mods/<n>")`), and the notices of builds
+made from then on send players there instead, where most of them get their mods. A
+value that isn't such a page is not used (a unit test checks the constant).
+
 | Target | Runner |
 | --- | --- |
 | `x86_64-unknown-linux-gnu` | `ubuntu-24.04` |
