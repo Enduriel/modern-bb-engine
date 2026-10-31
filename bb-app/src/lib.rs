@@ -41,7 +41,7 @@ pub mod win_process;
 pub mod world_scale;
 
 /// What `bb --version` prints: the version, the Rust target, and whether the build has
-/// the UI (`bb 0.2.0 (x86_64-unknown-linux-gnu, ui)`).
+/// the UI (`bb 0.3.0 (x86_64-unknown-linux-gnu, ui)`).
 pub fn version() -> String {
 	let ui = if cfg!(feature = "ui") { ", ui" } else { "" };
 	format!("bb {} ({}{ui})", env!("CARGO_PKG_VERSION"), env!("BB_TARGET"))
