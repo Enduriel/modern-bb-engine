@@ -22,6 +22,12 @@ impl Logs {
 	pub fn start(dir: &Path) -> Result<Logs, String> {
 		let files = LogFiles::start(dir).map_err(|e| format!("the log folder {}: {e}", dir.display()))?;
 		html_log::open(&files.html, TITLE).map_err(|e| format!("{}: {e}", files.html.display()))?;
+		// The log's paths show the home folder as `%USERPROFILE%` or `~`; a Documents
+		// moved off it (another drive) gets its own placeholder.
+		#[cfg(windows)]
+		if let Ok(documents) = crate::saves::documents::documents_dir() {
+			html_log::hide(&documents, "%DOCUMENTS%");
+		}
 		html_log::line(Class::Info, "Core", format!("Using write path: {}", dir.display()));
 		html_log::line(Class::Info, "Core", format!("Engine: battle-brothers-modern {}", env!("CARGO_PKG_VERSION")));
 		for problem in &files.problems {

@@ -4,13 +4,17 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
+use super::anonymise::Anonymiser;
 use super::format;
 
 /// A log.html open for writing. Each row goes to the file as it's written (the file is
 /// unbuffered, so tools reading the log while the game runs see every line, as the
-/// original's flushes each); dropping it closes the page.
+/// original's flushes each); dropping it closes the page. Every row is written with the
+/// user's home folder (and any other folder [`hide`](Self::hide) is given) as a
+/// placeholder ([`anonymise`](super::anonymise)).
 pub struct HtmlLog {
 	file: File,
+	anonymiser: Anonymiser,
 }
 
 impl HtmlLog {
@@ -19,12 +23,18 @@ impl HtmlLog {
 	pub fn create(path: &Path, title: &str) -> io::Result<HtmlLog> {
 		let mut file = File::create(path)?;
 		file.write_all(format::header(title).as_bytes())?;
-		Ok(HtmlLog { file })
+		Ok(HtmlLog { file, anonymiser: Anonymiser::for_this_user() })
 	}
 
-	/// Write `bytes` (whole rows) to the file.
+	/// Write `bytes` (whole rows) to the file, the hidden folders as their placeholders.
 	pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
-		self.file.write_all(bytes)
+		self.file.write_all(&self.anonymiser.apply(bytes))
+	}
+
+	/// Write `folder` as `placeholder` from now on, unless it's no folder of its own or
+	/// inside a hidden one ([`Anonymiser::hide`]).
+	pub fn hide(&mut self, folder: &Path, placeholder: &str) {
+		self.anonymiser.hide(folder, placeholder);
 	}
 }
 

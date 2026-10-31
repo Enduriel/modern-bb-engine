@@ -17,7 +17,7 @@
 //! saves in a folder of their own (`BB_SAVES_DIR` or `--saves`), never the player's.
 
 #[cfg(windows)]
-mod documents;
+pub(crate) mod documents;
 pub mod lock;
 pub mod original;
 

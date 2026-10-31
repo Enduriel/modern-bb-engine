@@ -6,7 +6,10 @@
 //! The log is process-wide: the scripts' `logInfo` and kin, uncaught script errors, the
 //! engine's own lines and the page's errors all go to the one open [`HtmlLog`]. Without
 //! one open (tests, tools) writing is a no-op; the terminal output is separate.
+//!
+//! Paths in it never show the user's home folder ([`anonymise`]).
 
+pub mod anonymise;
 pub mod format;
 pub mod value;
 mod writer;
@@ -38,6 +41,13 @@ pub fn open(path: &Path, title: &str) -> io::Result<()> {
 	let log = HtmlLog::create(path, title)?;
 	*LOG.lock().unwrap_or_else(|e| e.into_inner()) = Some(log);
 	Ok(())
+}
+
+/// Write `folder` in the open log's rows as `placeholder` from now on (a folder outside
+/// the home folder that would show the user's name: a Documents moved to another
+/// drive), unless it's inside the home folder or no folder of its own.
+pub fn hide(folder: &Path, placeholder: &str) {
+	with_log(|log| log.hide(folder, placeholder));
 }
 
 /// Close the log (its page ends, as the original's does at a clean quit).

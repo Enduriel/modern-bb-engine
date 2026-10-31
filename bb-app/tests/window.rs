@@ -764,8 +764,11 @@ fn a_memory_snapshot_is_written_on_the_hotkey_and_on_sigusr1() {
 		.collect();
 	snapshots.sort();
 	assert_eq!(snapshots.len(), 2, "{snapshots:?}");
+	// The log shows the folder as its paths are logged: the home folder a placeholder.
+	let anonymiser = squirrel_bb::html_log::anonymise::Anonymiser::for_this_user();
 	for snapshot in &snapshots {
 		let written = format!("Memory snapshot written to {} in ", snapshot.display());
+		let written = String::from_utf8(anonymiser.apply(written.as_bytes()).into_owned()).unwrap();
 		assert!(html.contains(&written), "{written}: {html}");
 		check_snapshot(snapshot);
 	}
