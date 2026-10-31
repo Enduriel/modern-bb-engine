@@ -90,7 +90,7 @@
 //!   scripts. Under a preloaded jemalloc with profiling on, `BB_HEAP_PROFILE_DIR=DIR` dumps a
 //!   heap profile every `BB_HEAP_PROFILE_SECS` (10) seconds (builds without `ui`).
 //! - `--version` prints the version, the target it was built for and whether it has the
-//!   UI (`bb 0.1.0 (x86_64-unknown-linux-gnu, ui)`), and exits. It needs no display, but
+//!   UI (`bb 0.2.0 (x86_64-unknown-linux-gnu, ui)`), and exits. It needs no display, but
 //!   a UI build has loaded CEF's library by then: the release bundles' smoke check.
 //! - Every environment variable, these and the ones for measuring, comparing and the
 //!   tests: `docs/environment.md`.
