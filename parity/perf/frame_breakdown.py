@@ -319,7 +319,10 @@ def main():
         bb += ["--at", str(frame), code]
     for frame, code in t.at_page:
         bb += ["--at-page", str(frame), code]
-    env = dict(os.environ, BB_FRAME_TIMES=os.path.join(out, "frames.txt"), BB_STATS="1")
+    # bb's update check asks a local port where nothing listens, as the window tests
+    # do (bb-app/tests/window.rs): no run asks GitHub, nor shows a notice on the menu.
+    env = dict(os.environ, BB_FRAME_TIMES=os.path.join(out, "frames.txt"), BB_STATS="1",
+               BB_UPDATE_CHECK_URL="http://127.0.0.1:9/")
     if "--gpu-times" in args:
         env.update(BB_GPU_TIMES="1")
     if "--script-profile" in args:

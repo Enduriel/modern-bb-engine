@@ -296,6 +296,12 @@ def skips_in(text):
 	return found
 
 
+# Where bb's update check asks instead of GitHub (`BB_UPDATE_CHECK_URL`): a local port
+# where nothing listens, as the window tests use (bb-app/tests/window.rs), so no run asks
+# GitHub and no update notice stands over the main menu.
+NO_UPDATE_CHECK = "http://127.0.0.1:9/"
+
+
 def wine(files, prefix, args, cwd, log, timeout, extra_env=None):
 	"""Run `args` (a Windows program and its arguments) under Proton's Wine in a headless
 	gamescope, its output in `log`; (exit status or None, output)."""
@@ -306,6 +312,7 @@ def wine(files, prefix, args, cwd, log, timeout, extra_env=None):
 		"WINEDEBUG": "-all",
 		"WINEDLLOVERRIDES": DLL_OVERRIDES,
 		"PULSE_SINK": NULL_SINK,
+		"BB_UPDATE_CHECK_URL": NO_UPDATE_CHECK,
 		**(extra_env or {}),
 	})
 	# The program's status, then the prefix's Wine processes stopped (a lingering

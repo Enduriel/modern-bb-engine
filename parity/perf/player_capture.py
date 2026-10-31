@@ -87,6 +87,8 @@ lines = [
     'mkdir "%OUT%"',
     'set "BB_FRAME_TIMES=%OUT%\\frames.txt"',
     "set BB_STATS=1",
+    "rem No update check (a local port where nothing listens): no notice over the menu.",
+    'set "BB_UPDATE_CHECK_URL=http://127.0.0.1:9/"',
     "echo Capturing... the game closes by itself in about a minute.",
     '"%~dp0bb.exe" --no-steam --mute --no-mods --saves "%OUT%\\saves" --logs "%OUT%\\logs" '
     + " ".join(args) + ' > "%OUT%\\output.txt" 2>&1',
