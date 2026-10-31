@@ -42,6 +42,9 @@ pub struct Options {
 	pub start: Start,
 	/// The install's mods mounted (unless `--no-mods`).
 	pub mods: bool,
+	/// The folder whose `.zip`s are the mods mounted instead of the install's
+	/// (`--mods-dir DIR`, for tests and comparisons).
+	pub mods_dir: Option<PathBuf>,
 	/// Save the frame after this many frames as a PNG and quit (`--shot N PATH`).
 	pub shot: Option<(u64, PathBuf)>,
 	/// No sound (`--mute`); otherwise it plays on the default output device.
@@ -394,7 +397,7 @@ impl App {
 		let boot = Boot {
 			data_dir: &options.data_dir,
 			start: options.start.clone(),
-			mods: options.mods,
+			mods: options.mods.then(|| options.mods_dir.as_deref().unwrap_or(&options.data_dir)),
 			sound: !options.mute,
 			world_size: options.world_size,
 			mode,

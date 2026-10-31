@@ -1,7 +1,7 @@
 //! Battle Brothers on the modern engine, in a window.
 //!
 //! ```text
-//! cargo run --release -p bb-app --features ui -- [--no-mods] [--new-campaign] [--seed SEED]
+//! cargo run --release -p bb-app --features ui -- [--no-mods] [--mods-dir DIR] [--new-campaign] [--seed SEED]
 //!     [--data DIR] [--world-size COLSxROWS] [--shot FRAMES OUT.png] [--mute]
 //!     [--devtools PORT] [--settings PATH] [--saves DIR] [--at FRAMES CODE]...
 //!     [--at-page FRAMES JS]...
@@ -36,6 +36,9 @@
 //!   as the original loads them: for the scripts, the UI page, the sprites and the
 //!   sounds. `--no-mods` (or `BB_NO_MODS=1`) plays vanilla; `--mods` is the default
 //!   (it was once needed, and still turns them on after a `--no-mods`: the last wins).
+//!   `--mods-dir DIR` mounts the `.zip`s in `DIR` instead of the install's (and turns
+//!   the mods on): for tests and comparisons, e.g. the reference mod corpus's
+//!   (`bb_engine::mod_corpus`).
 //! - `--world-size` makes the campaigns' maps that many tiles across and down instead of
 //!   vanilla's 140x170 (vanilla's worldgen needs more than 130x130).
 //! - `--shot` saves the frame after that many frames and quits; `--at` runs the Squirrel
@@ -158,6 +161,7 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArgumen
 		// Without the page there's no menu to click.
 		start: if cfg!(feature = "ui") { Start::Menu } else { Start::NewCampaign(DEFAULT_SEED.to_string()) },
 		mods: std::env::var_os("BB_NO_MODS").is_none_or(|v| v == "0"),
+		mods_dir: None,
 		shot: None,
 		mute: false,
 		world_size: None,
@@ -188,6 +192,10 @@ fn options() -> Result<(app::Options, SteamOptions, Option<PathBuf>, DataArgumen
 			}
 			"--mods" => options.mods = true,
 			"--no-mods" => options.mods = false,
+			"--mods-dir" => {
+				options.mods_dir = Some(PathBuf::from(value()?));
+				options.mods = true;
+			}
 			"--mute" => options.mute = true,
 			"--fps" => options.fps = true,
 			"--no-steam" => steam.off = true,

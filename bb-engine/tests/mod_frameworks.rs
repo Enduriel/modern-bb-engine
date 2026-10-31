@@ -1,35 +1,40 @@
-//! The mod frameworks run unchanged. Each test mounts one framework from the
-//! install's mods over the vanilla archives, as the original loads them, and boots the
-//! main menu. Skips when the Steam install or the mod is missing (the mods are the
-//! installed ones, read-only, as `harness::mod_archives` lists them: a probe run's changes to
-//! `data/` don't count). The whole corpus is the pinned one (`bb_engine::mod_corpus`).
+//! The mod frameworks run unchanged. Each test mounts one framework from the reference
+//! mod corpus over the vanilla archives, as the original loads them, and boots the main
+//! menu. The mods are the corpus's (`bb_engine::mod_corpus`), never the install's, so
+//! updating the installed mods changes nothing here; skips without the Steam install
+//! or the corpus, fails if the corpus is not the pinned one.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bb_engine::mod_corpus::{self, CorpusError};
 use bb_engine::{harness, tactical_player as player};
 
-/// The installed mod archive whose name starts with `prefix`, if any.
-fn find_mod(prefix: &str) -> Option<PathBuf> {
-	let mods = harness::mod_archives(Path::new(harness::STEAM_DATA_DIR)).ok()?;
-	mods.into_iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix))).next_back()
+/// The reference corpus, or `None` (and a skip notice) without it; fails if it is not
+/// the pinned one.
+fn corpus() -> Option<mod_corpus::Corpus> {
+	match mod_corpus::reference() {
+		Ok(corpus) => Some(corpus),
+		Err(CorpusError::Absent(why)) => {
+			harness::skip(why);
+			None
+		}
+		Err(e) => panic!("{e}"),
+	}
 }
 
-/// An engine over the vanilla archives plus the mods named by `prefixes`, or `None` (and
-/// a skip notice) when the install or one of the mods is missing.
+/// An engine over the vanilla archives plus the corpus's mods named by `prefixes`, or
+/// `None` (and a skip notice) when the install or the corpus is missing.
 fn open_with(prefixes: &[&str]) -> Option<harness::GameEngine> {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
 	if !dir.exists() {
-		bb_engine::harness::skip(format!("{} not present", dir.display()));
+		harness::skip(format!("{} not present", dir.display()));
 		return None;
 	}
+	let corpus = corpus()?;
 	let mut archives = harness::data_archives(dir).expect("list the data archives");
 	for prefix in prefixes {
-		let Some(zip) = find_mod(prefix) else {
-			bb_engine::harness::skip(format!("no {prefix}* mod installed"));
-			return None;
-		};
-		archives.push(zip);
+		let zip = corpus.find(prefix).unwrap_or_else(|| panic!("no {prefix}* mod in the reference corpus"));
+		archives.push(zip.clone());
 	}
 	Some(harness::open_mounted(dir, archives, |_| {}).expect("open the archives"))
 }
@@ -58,20 +63,18 @@ fn modern_hooks_boots_the_menu() {
 	check(&engine, "its UI files are listed", "::IO.enumerateFiles(\"ui/mods/\").find(\"ui/mods/modern_hooks/main\") != null");
 }
 
-/// The whole installed corpus (every mod in the data dir, as the original loads them):
-/// Modern Hooks registers every class it saw (3,614 for the pinned 32 mods, as in the
-/// original), and a new campaign starts through the menus and runs. Skips without mods;
-/// fails if they are not the pinned corpus.
+/// The whole reference corpus (every mod in it, as the original loads them): every class
+/// is registered with Modern Hooks, and a new campaign starts through the menus and
+/// runs.
 #[test]
-fn the_installed_mods_boot_and_start_a_campaign() {
+fn the_corpus_mods_boot_and_start_a_campaign() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
-	let mods = match mod_corpus::installed(dir) {
-		Ok(mods) => mods,
-		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
-		Err(e) => panic!("{e}"),
-	};
+	if !dir.exists() {
+		return harness::skip(format!("{} not present", dir.display()));
+	}
+	let Some(corpus) = corpus() else { return };
 	let mut archives = harness::data_archives(dir).expect("list the data archives");
-	archives.extend(mods);
+	archives.extend(corpus.mods().iter().cloned());
 	let engine = harness::open_mounted(dir, archives, |_| {}).expect("open the archives");
 	harness::boot_menu(&engine).expect("boot the menu");
 	for _ in 0..10 {

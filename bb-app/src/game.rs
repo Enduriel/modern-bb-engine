@@ -84,9 +84,10 @@ pub struct Boot<'a> {
 	/// The install's data folder.
 	pub data_dir: &'a Path,
 	pub start: Start,
-	/// The install's mods mounted over its archives ([`archives`]), for the scripts,
-	/// the page, the renderer and the sound alike.
-	pub mods: bool,
+	/// The mods mounted over the install's archives ([`archives`]), for the scripts,
+	/// the page, the renderer and the sound alike: the `.zip`s in this folder (the
+	/// install's data folder for its own mods); vanilla without one.
+	pub mods: Option<&'a Path>,
 	/// The sound on the system's output device; silent otherwise (as for tests).
 	pub sound: bool,
 	/// The world map's columns and rows for the campaigns started; vanilla's otherwise.
@@ -148,14 +149,19 @@ impl Store {
 	}
 }
 
-/// The archives the game reads from the install at `data_dir`: its `data_*.dat`, then,
-/// with `mods`, its mods' zips over them, as the original mounts them.
-pub fn archives(data_dir: &Path, mods: bool) -> std::io::Result<Vec<std::path::PathBuf>> {
+/// The archives the game reads from the install at `data_dir`: its `data_*.dat`, then
+/// the mods' zips over them ([`mod_archives`]), as the original mounts them.
+pub fn archives(data_dir: &Path, mods: Option<&Path>) -> std::io::Result<Vec<std::path::PathBuf>> {
 	let mut archives = harness::data_archives(data_dir)?;
-	if mods {
-		archives.extend(harness::mod_archives(data_dir)?.iter().map(|p| harness::locate_mod(p)));
-	}
+	archives.extend(mod_archives(mods)?);
 	Ok(archives)
+}
+
+/// The mods' zips in the folder `mods` (none without one), in the order the original
+/// mounts them; where each is now, in a data folder a probe run holds mods aside from.
+pub fn mod_archives(mods: Option<&Path>) -> std::io::Result<Vec<std::path::PathBuf>> {
+	let Some(dir) = mods else { return Ok(Vec::new()) };
+	Ok(harness::mod_archives(dir)?.iter().map(|p| harness::locate_mod(p)).collect())
 }
 
 impl Game {
@@ -175,7 +181,7 @@ impl Game {
 		let boot = Boot {
 			data_dir,
 			start: Start::NewCampaign(seed.to_string()),
-			mods: false,
+			mods: None,
 			sound,
 			world_size,
 			mode,

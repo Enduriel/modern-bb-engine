@@ -95,19 +95,22 @@ fn menu_to_campaign_to_battle_to_save_and_load() {
 	smoke(harness::open_install(dir).expect("open install"));
 }
 
-/// The same, with the install's mods mounted (32 of them, among them Modern
-/// Hooks, MSU, Reforged and Modular Vanilla, which change the battles; the pinned corpus,
-/// `bb_engine::mod_corpus`). Skips without mods; fails if they are not the corpus.
+/// The same, with the reference mod corpus mounted (`bb_engine::mod_corpus`: among them
+/// Modern Hooks, MSU, Reforged and Modular Vanilla, which change the battles), never the
+/// install's mods. Skips without the corpus; fails if it is not the pinned one.
 #[test]
-fn the_installed_mods_play_through_menu_campaign_battle_save_and_load() {
+fn the_corpus_mods_play_through_menu_campaign_battle_save_and_load() {
 	let dir = Path::new(harness::STEAM_DATA_DIR);
-	let mods = match mod_corpus::installed(dir) {
-		Ok(mods) => mods,
+	if !dir.exists() {
+		return bb_engine::harness::skip(format!("{} not present", dir.display()));
+	}
+	let corpus = match mod_corpus::reference() {
+		Ok(corpus) => corpus,
 		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
 		Err(e) => panic!("{e}"),
 	};
 	let mut archives = harness::data_archives(dir).expect("list the data archives");
-	archives.extend(mods);
+	archives.extend(corpus.mods().iter().cloned());
 	smoke(harness::open_mounted(dir, archives, |_| {}).expect("open the archives"));
 }
 

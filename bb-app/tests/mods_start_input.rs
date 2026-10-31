@@ -1,4 +1,5 @@
-//! The pointer moving over the game while a campaign starts, with the install's mods:
+//! The pointer moving over the game while a campaign starts, with the reference mod
+//! corpus mounted (`bb_engine::mod_corpus`; never the install's mods):
 //! every frame of the start, from the main menu's Start through MSU's
 //! new-campaign settings, the loading screen and worldgen to the world with its opening
 //! event, the cursor moves, as a player's does. No script errs. Configurable Pause's
@@ -12,9 +13,9 @@
 //! rate on the main menu and over the world, though Modern Hooks replaces the page's
 //! root screen, and the game's `setFPS` never reaches a module without its label.
 //!
-//! Skips without a Steam install, without the mods this needs (Modern Hooks, MSU,
-//! Configurable Pause) or without a GPU; fails if the install's mods are not the pinned
-//! corpus (`bb_engine::mod_corpus`).
+//! Skips without a Steam install, without the corpus or without a GPU; fails if the
+//! corpus is not the pinned one, or lacks the mods this needs (Modern Hooks, MSU,
+//! Configurable Pause).
 //!
 //! Run: `cargo test -p bb-app --features ui --test mods_start_input`
 //!
@@ -90,11 +91,11 @@ fn holds(game: &Game, expr: &str) -> Result<bool, String> {
 		.ok_or_else(|| "no answer".to_string())
 }
 
-fn check(gpu: &Gpu) -> Result<(), String> {
+fn check(gpu: &Gpu, mods_dir: &Path) -> Result<(), String> {
 	let boot = Boot {
 		data_dir: Path::new(STEAM_DATA_DIR),
 		start: Start::Menu,
-		mods: true,
+		mods: Some(mods_dir),
 		sound: false,
 		world_size: None,
 		mode: VideoMode::DEFAULT,
@@ -177,21 +178,18 @@ fn run_main() -> ExitCode {
 	if !data.exists() {
 		return bb_engine::harness::skip_case(NAME, format!("{STEAM_DATA_DIR} not present"));
 	}
-	let mods = match bb_engine::mod_corpus::installed(data) {
-		Ok(mods) => mods,
+	let corpus = match bb_engine::mod_corpus::reference() {
+		Ok(corpus) => corpus,
 		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip_case(NAME, why),
 		Err(e) => {
 			println!("test {NAME} ... FAILED\n{e}");
 			return ExitCode::FAILURE;
 		}
 	};
-	let missing: Vec<&str> = MODS
-		.iter()
-		.copied()
-		.filter(|m| !mods.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(m))))
-		.collect();
+	let missing: Vec<&str> = MODS.iter().copied().filter(|m| corpus.find(m).is_none()).collect();
 	if !missing.is_empty() {
-		return bb_engine::harness::skip_case(NAME, format!("mods not installed: {missing:?}"));
+		println!("test {NAME} ... FAILED\nmods not in the reference mod corpus: {missing:?}");
+		return ExitCode::FAILURE;
 	}
 	let gpu = match Gpu::headless_with(bb_app::front::GPU_FEATURES) {
 		Ok(gpu) => gpu,
@@ -199,7 +197,7 @@ fn run_main() -> ExitCode {
 			return bb_engine::harness::skip_case(NAME, format!("no GPU: {e}"));
 		}
 	};
-	match check(&gpu) {
+	match check(&gpu, &corpus.mods_dir()) {
 		Ok(()) => {
 			println!("test {NAME} ... ok");
 			ExitCode::SUCCESS

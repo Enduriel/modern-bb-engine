@@ -44,7 +44,7 @@ pub fn tolerance(name: &str) -> Tolerance {
 		"options" => tolerance
 			.ignore_paths
 			.push("div.control.l-list-container".into()),
-		// With the install's mods (`probes/modded_goldens.js`): MSU's popup shows when
+		// With the reference mod corpus (`probes/modded_goldens.js`): MSU's popup shows when
 		// its update check (a request to GitHub) has answered by then, in either engine.
 		"modded_main_menu" | "modded_mod_options" => tolerance.ignore_paths.push("div.msu-popup".into()),
 		"world_combat" => tolerance

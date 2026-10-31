@@ -310,6 +310,7 @@ name = "bb-engine"
 version = "0.2.0"
 dependencies = [
  "bb-assets",
+ "bb-steam",
  "criterion",
  "jiff",
  "squirrel",

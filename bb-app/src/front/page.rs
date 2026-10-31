@@ -51,7 +51,7 @@ impl Front {
 			battle_camera: squirrel_bb::BattleCamera::Glides,
 			// Units hop over time, as the original's; the scripts wait for them.
 			battle_motion: squirrel_bb::BattleMotion::Timed,
-			mods: boot.mods,
+			extra_mods: crate::game::mod_archives(boot.mods).map_err(|e| e.to_string())?,
 			steam_build: boot.store.steam_build,
 			cef_log: boot.cef_log.clone(),
 			// Copy and paste reach the player's other programs, as the original's do.

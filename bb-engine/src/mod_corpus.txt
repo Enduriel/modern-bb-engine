@@ -1,36 +1,54 @@
-# The mod corpus the corpus tests expect (mod_frameworks, smoke, mods_ui,
-# mods_start_input, window's modded campaign): the installed mods, one per line,
-# "<size in bytes> <file name>". After updating the installed mods, update this list
-# (and expect to retake the modded goldens, see bb-ui/tests/mods_ui.rs).
-62137 mod_EIMO 239 10.0.7 2026-10-21T16-35Z XnCG833ZS.zip
-12270 mod_breditor_reforged_patch-765-1-0-2-1745962787.zip
-9961 mod_clever_recruiter 549 2.1.7 2026-10-21T16-35Z N25OmEEc5.zip
-1441 mod_coastal_location_fix.zip
-4566 mod_configurable_pause 731 1.0.7 2026-10-21T16-27Z tSEX1vvrY.zip
-23633 mod_dev_console 380 2.6.2 2026-08-08T11-21Z 8g4hpVHpe.zip
-53707 mod_dynamic_perks-758-0-5-1-1765412898.zip
-47359 mod_dynamic_spawns-759-0-6-0-1775059173.zip
-2735 mod_ends_buyback-357-1-1-1644604729.zip
-848 mod_ends_colored_rumors-373-1-1-0-1717532458.zip
-9936 mod_hooks.zip-42-20-1-1621709174.zip
-1901 mod_item_tables-760-0-1-3-1739956251.zip
-885403 mod_legends_xBreditor_LEGENDS-294-4-3-1685869773.zip
-25220 mod_modern_hooks-685-0-6-0-1748620177.zip
-93432 mod_modular_vanilla 768 0.9.1 2026-07-03T03-39Z QR12G6eB5.zip
-1087 mod_more_save_slots-389-2-2-1699990162.zip
-2453031 mod_msu 479 1.9.0 2026-06-23T04-27Z eVJjKbX9c.zip
-31002 mod_nested_tooltips-0.5.3.zip
-1808392 mod_plan_perks-452-6-1-0-1765891749.zip
-5157 mod_prepare_for_battle-557-1-0-1-1652847896.zip
-46064079 mod_reforged_assets.zip
-1299599 mod_reforged_core 765 0.9.3 2026-08-28T05-12Z Jr2H0SC7i.zip
-1967 mod_removableUpgrades.zip-278-4-1716838203.zip
-7343 mod_settlement_prices_msu-556-1-0-1-1654673706.zip
-27928 mod_settlement_situations_msu-551-2-0-1-1701802824.zip
-4429 mod_stack_based_skills-766-0-5-3-1764528330.zip
-10422 mod_streamlined_ui-730-1-0-4-1743596173.zip
-10110064 mod_stronghold-324-2-18-1-1777832897.zip
-16486 mod_swifter 542 1.3.1 2026-10-21T18-43Z L5qPjAAk1.zip
-7732 mod_unified_perk_descriptions-767-0-1-2-1726115621.zip
-8853 mod_world_parameters 732 1.1.0 2026-10-21T16-35Z Z3ILe00nx.zip
-3127 namedItemStats-850-1-2-1751250218.zip
+# The reference mod corpus the mod corpus tests mount (bb_engine::mod_corpus: mod_frameworks,
+# smoke, archive_index, world_size_settings, mods_ui, mods_battle_ui, mods_start_input,
+# window's modded campaign), never the installed mods: every file of the corpus folder
+# (outside the repository: BB_MOD_CORPUS, else a mod-corpus folder beside the checkout),
+# one per line, "<sha256> <size in bytes> <path in the corpus folder>". mods/ holds the
+# archives, storages/ the mods' storages they start from (MSU's settings).
+# Written by scripts/refresh_mod_corpus.py, which copies the installed mods and storages
+# into the corpus folder; don't edit it by hand. After a refresh, retake the modded
+# goldens (the script says how; see bb-ui/tests/mods_ui.rs).
+d67782915adad1d752d6949fd87b3927b9addaa82d54983452f7e52b8b3a8a2c 62137 mods/mod_EIMO 239 10.0.7 2026-10-21T16-35Z XnCG833ZS.zip
+46cd4e8db778c68c26d38b78ffee46a911409d82e2180b8e0ea56e840da52555 830742 mods/mod_beast_gear.zip
+f8b340ba67f96fc02f7ed69950d469ec97719a559678422ae4c276b02fc36c34 12270 mods/mod_breditor_reforged_patch-765-1-0-2-1745962787.zip
+f930a1bd29a359d9fc0012ed0ad27444658788a61dc23a55ae5f73c769e52c8b 9961 mods/mod_clever_recruiter 549 2.1.7 2026-10-21T16-35Z N25OmEEc5.zip
+81fbad30329d14f51c82f8d65ed7f982d268b6bba2a7ffa9c1e605263c613026 1441 mods/mod_coastal_location_fix.zip
+43a87aa48d5957def02d21c8d0073b0191577bc971c40d76da5b19b1d9b3a3b3 4681 mods/mod_configurable_pause 731 1.0.8 2026-10-27T19-31Z IofqJiix5.zip
+58faacdd61e0c162a8f7c5c3b4ef16f632e16dbdfaff4df6922f8a4655eb3316 23633 mods/mod_dev_console 380 2.6.2 2026-08-08T11-21Z 8g4hpVHpe.zip
+7b4c3168f842b7ea42200ec0bf9d3fdd20d079fac94f963c6d8f63013c8ab599 53707 mods/mod_dynamic_perks-758-0-5-1-1765412898.zip
+b910bc22a768c686c63072b805a9a1d62110a4775522fba0e973e5e062691906 47359 mods/mod_dynamic_spawns-759-0-6-0-1775059173.zip
+ed0b4049350b3ac59dffe761949a8b0f0435b7b89391daef251cc99a09fc5c3b 2735 mods/mod_ends_buyback-357-1-1-1644604729.zip
+4a2a0e6afbbb2a256f4cdb95c74ca30964041e8efe396bdaf0e5475d25d9c763 848 mods/mod_ends_colored_rumors-373-1-1-0-1717532458.zip
+0461ea3f457a798e6af2082ecbe6e058f5917e70f4487a1298160161b0a8d38c 9936 mods/mod_hooks.zip-42-20-1-1621709174.zip
+106470ecf1d8a85d1730375cf3bc124c329d29be050f5ac8b47e9495feda441c 1901 mods/mod_item_tables-760-0-1-3-1739956251.zip
+a8370b1e569e5d4fb6e8dbf242990f9804eea584662628fc48be9aead9550e8c 885403 mods/mod_legends_xBreditor_LEGENDS-294-4-3-1685869773.zip
+18fbf059480a09483693b8eef9c97c3a32450885b1971dda49b5cc14a66d7ed1 25220 mods/mod_modern_hooks-685-0-6-0-1748620177.zip
+ef9783ca87979b3e049f499cf89f68d30ed637c68c789cce915255364f4581d1 93432 mods/mod_modular_vanilla 768 0.9.1 2026-07-03T03-39Z QR12G6eB5.zip
+5a2e01fe6e8119037c86e206910f5a48f6cc46852d2f9f72886a82f114be34ff 1087 mods/mod_more_save_slots-389-2-2-1699990162.zip
+617af64bd4b354408b91f8b8618f94f664491edcd2cf4649b8ad52673c81b37b 2453031 mods/mod_msu 479 1.9.0 2026-06-23T04-27Z eVJjKbX9c.zip
+5faf037e5c3c05389ee561704544beec02ac3ec61696314a363f0ea056ea9cd8 31002 mods/mod_nested_tooltips-0.5.3.zip
+676c916268f2fcab67bd5673388f8c7ecfde28f82d4ab5e805955dd6714f114c 1808392 mods/mod_plan_perks-452-6-1-0-1765891749.zip
+4d639ad34356f4e654fcf235c5e27f52c21167378c2bbc323408b936fe60269e 5157 mods/mod_prepare_for_battle-557-1-0-1-1652847896.zip
+8f57a8ab1e795ad6c44cd68833ce744b68879971df2f30b4554dac3f2aa4f4ff 46064079 mods/mod_reforged_assets.zip
+9ae6f9ddfdd8216725efd744cacd1700cd6ad8919c633d8eaa07b545115cdb15 1299599 mods/mod_reforged_core 765 0.9.3 2026-08-28T05-12Z Jr2H0SC7i.zip
+f9dab58f726b9579e338a4c7df2d368fff6ef38ed10b555742c0ace57f510d76 1967 mods/mod_removableUpgrades.zip-278-4-1716838203.zip
+6007bdb6f9f75aedc994ee0d7531b3f6e04d33bbb46d7a66afbc28285ed75a0c 7343 mods/mod_settlement_prices_msu-556-1-0-1-1654673706.zip
+fd262b50637b32ce3e3095a6e640251c93e69cfa997ae7b4c995faf45474fee2 27928 mods/mod_settlement_situations_msu-551-2-0-1-1701802824.zip
+a5cfb8786829e7e78ec34f56015b2a8af9ba56bfd91cf4c59662c056fd2af68e 4429 mods/mod_stack_based_skills-766-0-5-3-1764528330.zip
+bc31c5e1c9210e935a9efc3b49da329f06d4e94eab578e2e84d62925a002c49a 10422 mods/mod_streamlined_ui-730-1-0-4-1743596173.zip
+de49aed889f489170ee5d1eb0fddec8091a1fa979fb1284c4a2a89d479dd0358 10110064 mods/mod_stronghold-324-2-18-1-1777832897.zip
+1a331364b0f44aa2277e37a1ba61b61de71411a5891a4ca8b81c2199221481c1 16101 mods/mod_swifter 542 1.3.2 2026-10-27T19-31Z hf6SNFFwn.zip
+90ff0e7b6618fa6d2659846cbe885ee1f4139adcc1cdf1912877591bed11a104 7732 mods/mod_unified_perk_descriptions-767-0-1-2-1726115621.zip
+7fe2aa9a6e465873dfd46ea1ed27c883d9d0d678aa846e2d462035959698d302 8853 mods/mod_world_parameters 732 1.1.0 2026-10-21T16-35Z Z3ILe00nx.zip
+8d66056649ac31d10f7021eb3f6229e5ea7d4ead86249deb5486cd50ec82f4cc 3127 mods/namedItemStats-850-1-2-1751250218.zip
+61cb08c101cdb06c1ef0f810346dc71e54b6a5dff14bb28617df7b849dbd1b91 11878 storages/MSU#mod_dev_console#PreviousCommands.sav
+d197cd1471b17c24af9cdaea4a83f6f71072538364cd438ed4ebe7f87c3c4137 858 storages/MSU#mod_msu#ModSettings.sav
+677890808f700a1a7cf7cbf4e8cd26a4ca757d4c52d239c5148e36e355e6a796 564 storages/MSU#mod_msu#StoredModUpdates.sav
+9752733fd069f60eab0a351ead51a3e72abc8ba1dff6b3fcfbd7ecbae06499b2 48 storages/MSU#mod_msu#a.sav
+2f67aa3e0cad1e74f0cb1324ca2c39c75e69eca962c039c9acefc47e1400e22e 93 storages/MSU#mod_msu#testBasic.sav
+8fad6a039d4edd86ca34768e367ea6a39b2a87d0a55e0e6c0c06e362ab8dc66d 1049 storages/MSU#mod_msu#testCustom.sav
+2a111d7a1e1aa96effeba34856366618c7bb96b7dc5ce7c9a56a1fe42bb2db1f 1226 storages/MSU#mod_msu#testPersistence.sav
+ddfc3394aebff85e5e1affb0dcdac6e62b2180909790b96a98b99ec57b8c2d23 1768 storages/MSU#mod_my_mod1#MyFile.sav
+b61acb20e73a6bcd09d84b99b1881b5ea6e5880549fabbd95ed68dcdb6149c0d 1809 storages/MSU#mod_my_mod2#MyFile.sav
+251f8acbd6f1708503e1307145ca5cbff7f6aded00daba3e318fc8a02ee81f34 1850 storages/MSU#mod_my_mod4#MyFile.sav
+86e7201c304b071965cecd9bd4b086726dfe6d66e022963835eafa16818d618b 1891 storages/MSU#mod_my_mod5#MyFile.sav
+4adbfe5772cdd9d1ed7d5b04c70bf012236e44ca31a1fe3d367651431fde4e78 1932 storages/MSU#mod_my_mod6#MyFile.sav

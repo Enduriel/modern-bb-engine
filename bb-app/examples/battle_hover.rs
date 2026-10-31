@@ -189,7 +189,7 @@ fn run(o: &Options) -> Result<(), String> {
 	let boot = Boot {
 		data_dir: Path::new(STEAM_DATA_DIR),
 		start: Start::Menu,
-		mods: o.mods,
+		mods: o.mods.then_some(Path::new(STEAM_DATA_DIR)),
 		sound: false,
 		world_size: None,
 		mode: VideoMode { width: 2560, height: 1440, refresh_rate: o.hz.round() as i64, ..VideoMode::DEFAULT },

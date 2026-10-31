@@ -7,7 +7,8 @@
 //!   campaign;
 //! - a mod that sets the world generator's `m.MinX/MinY` itself keeps its size.
 //!
-//! Skips without the Steam install (and the first, without Modern Hooks).
+//! Skips without the Steam install (and the first, without the reference mod corpus,
+//! `bb_engine::mod_corpus`, for its Modern Hooks).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -95,13 +96,11 @@ fn a_mod_sets_the_size_as_it_loads() {
 		return;
 	}
 	let data = Path::new(harness::STEAM_DATA_DIR);
-	let Some(hooks) = harness::mod_archives(data)
-		.unwrap()
-		.into_iter()
-		.find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("mod_modern_hooks")))
-	else {
-		bb_engine::harness::skip("Modern Hooks not installed");
-		return;
+	// Modern Hooks from the reference mod corpus, not the install's mods.
+	let hooks = match bb_engine::mod_corpus::reference() {
+		Ok(corpus) => corpus.find("mod_modern_hooks").expect("Modern Hooks in the reference mod corpus").clone(),
+		Err(bb_engine::mod_corpus::CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
+		Err(e) => panic!("{e}"),
 	};
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("world_size_settings");
 	let _ = std::fs::remove_dir_all(&dir);

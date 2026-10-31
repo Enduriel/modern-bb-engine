@@ -1,5 +1,5 @@
 //! A modded battle's turn bar on the real UI: with Modern Hooks and MSU mounted
-//! (the installed ones, as `harness::mod_archives` lists them), a new campaign's company fights
+//! (the reference mod corpus's, `bb_engine::mod_corpus`), a new campaign's company fights
 //! bandits and takes the first turn, the battle the original locks up in. There the
 //! turn bar logs "ERROR: Failed to query entity data for entity (N). Reason: Invalid
 //! result." and stays locked, with no entity active: the original sends stray empty
@@ -9,8 +9,8 @@
 //! battle). Ours answers each request once, so the turn bar
 //! fills, the company's brother is active, and its turns go on to the next entities.
 //! No reply reaches the page twice or without a value (an intentional divergence,
-//! docs/differences.md). Skips without a Steam install or without those mods; fails if
-//! the install's mods are not the pinned corpus (`bb_engine::mod_corpus`).
+//! docs/differences.md). Skips without a Steam install or without the corpus; fails if
+//! it is not the pinned one.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test mods_battle_ui`
 //!
@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_engine::mod_corpus::CorpusError;
+use bb_engine::mod_corpus::{Corpus, CorpusError};
 use bb_engine::tactical_player as player;
 use bb_ui::host::{Echo, HostConfig, UiSession};
 use bb_ui::json::Json;
@@ -59,15 +59,12 @@ fn until(session: &UiSession, cond: &str, timeout: Duration) -> Result<(), Strin
 	}
 }
 
-/// The mods' storages as the original keeps them for this install (MSU's settings),
-/// copied: never written back.
-fn copy_mod_storages() -> Result<PathBuf, String> {
+/// The corpus's mod storages (MSU's settings), copied: never written back.
+fn copy_mod_storages(corpus: &Corpus) -> Result<PathBuf, String> {
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("mods_battle_ui_storages");
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-	if let Some(documents) = squirrel_bb::platform::original_documents_dir() {
-		bb_engine::probe_aside::copy_user_mod_storages(&documents, &dir).map_err(|e| format!("the mods' storages: {e}"))?;
-	}
+	corpus.copy_storages(&dir).map_err(|e| format!("the mods' storages: {e}"))?;
 	Ok(dir)
 }
 
@@ -218,10 +215,10 @@ fn first_turn(session: &UiSession) -> Result<(), String> {
 	Ok(())
 }
 
-fn check(data_dir: &Path, mods: Vec<PathBuf>) -> Result<(), String> {
+fn check(data_dir: &Path, corpus: &Corpus, mods: Vec<PathBuf>) -> Result<(), String> {
 	let config = HostConfig { extra_mods: mods, sink: Some(gpu_page::sink()?), ..HostConfig::default() };
 	let session = UiSession::start(data_dir, config, Echo::Off)?;
-	session.engine().saves().set_directory(copy_mod_storages()?);
+	session.engine().saves().set_directory(copy_mod_storages(corpus)?);
 	session.boot_menu()?;
 	first_turn(&session).map_err(|error| {
 		let shot = Path::new(env!("CARGO_TARGET_TMPDIR")).join("mods_battle_ui-failure.png");
@@ -253,8 +250,11 @@ fn main() -> ExitCode {
 
 fn run_main() -> ExitCode {
 	let data_dir = Path::new(STEAM_DATA_DIR);
-	let installed = match bb_engine::mod_corpus::installed(data_dir) {
-		Ok(mods) => mods,
+	if !data_dir.exists() {
+		return bb_engine::harness::skip_case(NAME, format!("{STEAM_DATA_DIR} not present"));
+	}
+	let corpus = match bb_engine::mod_corpus::reference() {
+		Ok(corpus) => corpus,
 		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip_case(NAME, why),
 		Err(e) => {
 			println!("test {NAME} ... FAILED\n{e}");
@@ -263,12 +263,15 @@ fn run_main() -> ExitCode {
 	};
 	let mut mods = Vec::new();
 	for prefix in MODS {
-		match installed.iter().find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix))) {
-			Some(zip) => mods.push(bb_engine::harness::locate_mod(zip)),
-			None => return bb_engine::harness::skip_case(NAME, format!("{prefix} not installed")),
+		match corpus.find(prefix) {
+			Some(zip) => mods.push(zip.clone()),
+			None => {
+				println!("test {NAME} ... FAILED\nno {prefix}* mod in the reference mod corpus");
+				return ExitCode::FAILURE;
+			}
 		}
 	}
-	match check(data_dir, mods) {
+	match check(data_dir, &corpus, mods) {
 		Ok(()) => {
 			println!("test {NAME} ... ok");
 			ExitCode::SUCCESS

@@ -1,13 +1,15 @@
-//! Mods' JS on the real UI: with the install's mods mounted (every `.zip` in
-//! `data/`, the installed corpus), the game's page runs in the Chromium host and the mod
+//! Mods' JS on the real UI: with the reference mod corpus mounted (every mod in it,
+//! `bb_engine::mod_corpus`; never the install's mods), the game's page runs in the
+//! Chromium host and the mod
 //! frameworks' own JS does what it does in the original: Modern Hooks' handshake loads
 //! every mod's JS and CSS and then resumes the scripts' boot (`resumeOnInit`), and MSU's
 //! late JS connects MSU's screens (`connectBackend`). The main menu comes up, and it and
 //! MSU's mod settings screen match the original's with the same mods
 //! (`tests/goldens/modded_*.json`, `probes/modded_goldens.js`). The FPS display shows
-//! on it, though Modern Hooks replaces the root screen. Skips without a Steam
-//! install or without mods; fails if they are not the pinned corpus
-//! (`bb_engine::mod_corpus`), which the goldens were taken with.
+//! on it, though Modern Hooks replaces the root screen. The mods start from the corpus's
+//! copies of their storages (MSU's settings), which the goldens were taken with. Skips
+//! without a Steam install or without the corpus; fails if it is not the pinned one.
+//! After the corpus moves forward (`scripts/refresh_mod_corpus.py`), retake the goldens.
 //!
 //! Run: `cargo test -p bb-ui --features cef --test mods_ui`
 //!
@@ -19,7 +21,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use bb_engine::harness::STEAM_DATA_DIR;
-use bb_engine::mod_corpus::CorpusError;
+use bb_engine::mod_corpus::{Corpus, CorpusError};
 use bb_engine::tactical_player as player;
 use bb_ui::host::{Echo, HostConfig, UiSession, goldens};
 use bb_ui::json::Json;
@@ -37,13 +39,14 @@ fn holds(session: &UiSession, expr: &str) -> Result<bool, String> {
 	Ok(player::eval_i64(session.engine(), &format!("({expr}) ? 1 : 0"))? == Some(1))
 }
 
-fn mods_js_runs_on_the_real_ui(data_dir: &Path) -> Result<(), String> {
+fn mods_js_runs_on_the_real_ui(data_dir: &Path, corpus: &Corpus) -> Result<(), String> {
 	// The goldens' screen.
-	let config = HostConfig { mods: true, width: 2560, height: 1440, sink: Some(gpu_page::sink()?), ..HostConfig::default() };
+	let extra_mods = corpus.mods().to_vec();
+	let config = HostConfig { extra_mods, width: 2560, height: 1440, sink: Some(gpu_page::sink()?), ..HostConfig::default() };
 	let session = UiSession::start(data_dir, config, Echo::Off)?;
-	// The mods' own storages as the original keeps them for this install (MSU's settings,
-	// say), so the mods start from the same data (copies: never written back).
-	session.engine().saves().set_directory(copy_mod_storages()?);
+	// The mods' own storages as the goldens had them (MSU's settings, say), so the mods
+	// start from the same data (copies: never written back).
+	session.engine().saves().set_directory(copy_mod_storages(corpus)?);
 	session.boot_menu()?;
 	ensure(holds(&session, "\"Cursor\" in ::getroottable()")?, "root_state's own onInit never ran (no ::Cursor)")?;
 
@@ -145,16 +148,12 @@ fn fps_display_shows(session: &UiSession) -> Result<(), String> {
 	)
 }
 
-/// A fresh folder with copies of the installed mods' storages from the original's savegames
-/// (the `<mod>#<name>.sav` ones; not the saves; those a probe run holds aside, not its
-/// own), or an empty one where there are none.
-fn copy_mod_storages() -> Result<std::path::PathBuf, String> {
+/// A fresh folder with copies of the corpus's mod storages (the `<mod>#<name>.sav` ones).
+fn copy_mod_storages(corpus: &Corpus) -> Result<std::path::PathBuf, String> {
 	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("mods_ui_storages");
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-	if let Some(documents) = squirrel_bb::platform::original_documents_dir() {
-		bb_engine::probe_aside::copy_user_mod_storages(&documents, &dir).map_err(|e| format!("the mods' storages: {e}"))?;
-	}
+	corpus.copy_storages(&dir).map_err(|e| format!("the mods' storages: {e}"))?;
 	Ok(dir)
 }
 
@@ -233,15 +232,18 @@ fn main() -> ExitCode {
 fn run_main() -> ExitCode {
 	let name = "mods_js_runs_on_the_real_ui";
 	let data_dir = Path::new(STEAM_DATA_DIR);
-	match bb_engine::mod_corpus::installed(data_dir) {
-		Ok(_) => {}
+	if !data_dir.exists() {
+		return bb_engine::harness::skip_case(name, format!("{STEAM_DATA_DIR} not present"));
+	}
+	let corpus = match bb_engine::mod_corpus::reference() {
+		Ok(corpus) => corpus,
 		Err(CorpusError::Absent(why)) => return bb_engine::harness::skip_case(name, why),
 		Err(e) => {
 			println!("test {name} ... FAILED\n{e}");
 			return ExitCode::FAILURE;
 		}
-	}
-	match mods_js_runs_on_the_real_ui(data_dir) {
+	};
+	match mods_js_runs_on_the_real_ui(data_dir, &corpus) {
 		Ok(()) => {
 			println!("test {name} ... ok");
 			ExitCode::SUCCESS

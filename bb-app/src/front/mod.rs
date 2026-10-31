@@ -60,9 +60,9 @@ pub struct Key {
 }
 
 /// Play the game's sound on the system's output device (kira), reading the sounds
-/// from the install at `data_dir` (and its mods' with `mods`); without a device the game
-/// stays silent. Before the menu boots, so its music starts there.
-fn play_on_device(engine: &GameEngine, data_dir: &Path, mods: bool) {
+/// from the install at `data_dir` (and the mods' in the folder `mods`); without a device
+/// the game stays silent. Before the menu boots, so its music starts there.
+fn play_on_device(engine: &GameEngine, data_dir: &Path, mods: Option<&Path>) {
 	let out = || -> Result<bb_audio::KiraOut<_>, String> {
 		let io = |e: std::io::Error| e.to_string();
 		let files = GameFiles::open(crate::game::archives(data_dir, mods).map_err(io)?).map_err(io)?;

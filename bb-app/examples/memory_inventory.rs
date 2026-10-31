@@ -597,7 +597,7 @@ fn run(gpu: &Gpu, o: &Options) -> Result<(Vec<Sample>, Vec<String>, Option<Strin
 	let boot = bb_app::game::Boot {
 		data_dir: &o.data,
 		start: bb_app::game::Start::NewCampaign(o.seed.clone()),
-		mods: o.mods,
+		mods: o.mods.then_some(o.data.as_path()),
 		sound: false,
 		world_size: None,
 		mode: VideoMode::DEFAULT,

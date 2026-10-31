@@ -92,7 +92,7 @@ fn run(hz: f64, seconds: f64) -> Result<(), String> {
 	let boot = Boot {
 		data_dir: Path::new(STEAM_DATA_DIR),
 		start: Start::NewCampaign("heldkey".into()),
-		mods: false,
+		mods: None,
 		sound: false,
 		world_size: None,
 		mode: VideoMode { width: 2560, height: 1358, refresh_rate: hz.round() as i64, ..VideoMode::DEFAULT },

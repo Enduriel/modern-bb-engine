@@ -1,21 +1,17 @@
-//! The installed mods and mod storages as they are outside probe runs. A probe run (the
-//! runner that launches the original game; not part of this repository) moves the
-//! installed files aside for its duration and puts them back afterwards, so what is in
-//! `data/` and `savegames/` during a run is not what was installed:
+//! The installed mods as they are outside probe runs. A probe run (the runner that
+//! launches the original game; not part of this repository) moves the installed files
+//! aside for its duration and puts them back afterwards, so what is in `data/` during a
+//! run is not what was installed:
 //!
 //! - every mod but Modern Hooks is moved from `data/` into [`HELD_MODS`] beside it;
 //! - `--with-mod` copies other zips into `data/` (a mod under development, Legends, a
 //!   held mod), each recorded by name in [`WITH_MODS_STATE`] before it lands and removed
-//!   with its record afterwards;
-//! - runs with mods snapshot `savegames/` into [`SAVES_SNAPSHOT`] (stamped once
-//!   complete) and put it back afterwards, so the mods' writes there are the run's;
-//! - `--with-mod` runs move the installed mod storages (`MSU#….sav`) into [`HELD_SETTINGS`],
-//!   each recorded by name in [`HELD_SETTINGS_STATE`] before it moves, and back after the
-//!   snapshot is restored.
+//!   with its record afterwards.
 //!
-//! The readers here see the installed files whatever phase a run is in: each move is a
+//! The readers here see the installed mods whatever phase a run is in: each move is a
 //! rename, every record is written before its move and dropped after its undo, and a
-//! listing that a run's state changed under is taken again.
+//! listing that a run's state changed under is taken again. (The corpus tests don't read
+//! the installed mods at all: they mount the reference corpus, `crate::mod_corpus`.)
 
 use std::collections::BTreeMap;
 use std::io;
@@ -29,14 +25,6 @@ pub const HELD_MODS: &str = "_bb_probe_held_mods";
 pub const WITH_MODS_STATE: &str = "_bb_probe_with_mods.json";
 /// The probe harness's own mod, in `data/` while a run is up.
 const HARNESS_MOD: &str = "mod_zz_bb_probe";
-/// A probe run's snapshot of `savegames/`, beside it.
-pub const SAVES_SNAPSHOT: &str = "savegames.bb_probe_backup";
-/// In [`SAVES_SNAPSHOT`] once the snapshot is complete.
-const SNAPSHOT_STAMP: &str = ".bb_probe_snapshot";
-/// Where a probe run keeps the installed mod storages, beside `savegames/`.
-pub const HELD_SETTINGS: &str = "_bb_probe_held_settings";
-/// The mod storages in [`HELD_SETTINGS`] (JSON: `[{name, sha256}]`), beside it.
-pub const HELD_SETTINGS_STATE: &str = "_bb_probe_held_settings.json";
 
 /// How often a reading is taken again while a run's state changes under it, and the
 /// pause between: a run's moves take milliseconds.
@@ -117,57 +105,6 @@ fn zips_in(dir: &Path) -> io::Result<Vec<PathBuf>> {
 
 fn file_name(path: &Path) -> String {
 	path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
-}
-
-/// Copies the installed mod storages (`<mod>#<name>.sav`, e.g. MSU's `MSU#mod_msu#ModSettings.sav`)
-/// from the original's documents folder `documents` into `dest`, as they are outside
-/// probe runs: during a run, those it holds aside ([`HELD_SETTINGS`]) and those of its
-/// snapshot ([`SAVES_SNAPSHOT`]); not what the run's mods write. Returns their names.
-pub fn copy_user_mod_storages(documents: &Path, dest: &Path) -> io::Result<Vec<String>> {
-	for attempt in 1.. {
-		let storages = user_mod_storages(documents)?;
-		let copied: io::Result<()> = storages.iter().try_for_each(|(name, from)| std::fs::copy(from, dest.join(name)).map(drop));
-		match copied {
-			Ok(()) => return Ok(storages.into_keys().collect()),
-			// Moved by a run meanwhile: look again.
-			Err(e) if e.kind() == io::ErrorKind::NotFound && attempt < ATTEMPTS => std::thread::sleep(PAUSE),
-			Err(e) => return Err(e),
-		}
-	}
-	unreachable!()
-}
-
-/// The installed mod storages by name, where each is now (see [`copy_user_mod_storages`]).
-fn user_mod_storages(documents: &Path) -> io::Result<BTreeMap<String, PathBuf>> {
-	let saves = documents.join("savegames");
-	let (held, snapshot) = (documents.join(HELD_SETTINGS), documents.join(SAVES_SNAPSHOT));
-	let mut out = BTreeMap::new();
-	// Held aside: each recorded before it moves, so it's either held or still in savegames/.
-	for name in recorded_names(&documents.join(HELD_SETTINGS_STATE))? {
-		if let Some(path) = [held.join(&name), saves.join(&name)].into_iter().find(|p| p.is_file()) {
-			out.insert(name, path);
-		}
-	}
-	// The rest: a complete snapshot has the installed ones (savegames/ then has the run's
-	// writes); without one, the run has not started the game, or has put savegames/ back.
-	let rest = if snapshot.join(SNAPSHOT_STAMP).is_file() { snapshot } else { saves };
-	let entries = match std::fs::read_dir(&rest) {
-		Ok(entries) => entries,
-		Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(out),
-		Err(e) => return Err(e),
-	};
-	for path in entries.flatten().map(|e| e.path()) {
-		let name = file_name(&path);
-		if is_mod_storage(&name) && path.is_file() {
-			out.entry(name).or_insert(path);
-		}
-	}
-	Ok(out)
-}
-
-/// A mod's storage in savegames/ (`<mod>#<name>.sav`), not a campaign save or a probe's.
-fn is_mod_storage(name: &str) -> bool {
-	name.contains('#') && name.ends_with(".sav") && !name.starts_with("bb_probe_")
 }
 
 /// The `name`s a probe run's state file records (`[{"name": …, "sha256": …}, …]`, as
@@ -300,45 +237,5 @@ mod tests {
 		std::fs::remove_dir(&held).unwrap();
 		assert_eq!(names(&user_mods(&data).unwrap()), ["a_mod.zip", "mod_modern_hooks.zip", "mod_msu.zip"]);
 		std::fs::remove_dir_all(&game).unwrap();
-	}
-
-	#[test]
-	fn the_users_mod_storages_are_read_whatever_a_run_holds() {
-		let docs = game("storages");
-		let (saves, held, snapshot) = (docs.join("savegames"), docs.join(HELD_SETTINGS), docs.join(SAVES_SNAPSHOT));
-		std::fs::create_dir_all(&saves).unwrap();
-		let dest = docs.join("dest");
-		// The storages copied: (name, content).
-		let copy = || -> Vec<(String, String)> {
-			let _ = std::fs::remove_dir_all(&dest);
-			std::fs::create_dir_all(&dest).unwrap();
-			let names = copy_user_mod_storages(&docs, &dest).unwrap();
-			names.into_iter().map(|n| (n.clone(), std::fs::read_to_string(dest.join(&n)).unwrap())).collect()
-		};
-		let users = || vec![("MSU#a#S.sav".to_string(), "user a".to_string()), ("MSU#b#S.sav".to_string(), "user b".to_string())];
-		std::fs::write(saves.join("MSU#a#S.sav"), "user a").unwrap();
-		std::fs::write(saves.join("MSU#b#S.sav"), "user b").unwrap();
-		std::fs::write(saves.join("campaign.sav"), "c").unwrap();
-		std::fs::write(saves.join("bb_probe_MSU#x.sav"), "p").unwrap();
-		assert_eq!(copy(), users());
-		// --with-mod: a held, b recorded but not moved yet, no snapshot yet.
-		std::fs::create_dir_all(&held).unwrap();
-		std::fs::write(docs.join(HELD_SETTINGS_STATE), r#"[{"name": "MSU#a#S.sav", "sha256": "0"}, {"name": "MSU#b#S.sav", "sha256": "1"}]"#).unwrap();
-		std::fs::rename(saves.join("MSU#a#S.sav"), held.join("MSU#a#S.sav")).unwrap();
-		assert_eq!(copy(), users());
-		std::fs::rename(saves.join("MSU#b#S.sav"), held.join("MSU#b#S.sav")).unwrap();
-		// The snapshot (without the held ones), then the run's mods write theirs.
-		std::fs::create_dir_all(&snapshot).unwrap();
-		std::fs::write(snapshot.join("campaign.sav"), "c").unwrap();
-		std::fs::write(snapshot.join(SNAPSHOT_STAMP), "0").unwrap();
-		std::fs::write(saves.join("MSU#a#S.sav"), "run a").unwrap();
-		std::fs::write(saves.join("MSU#c#S.sav"), "run c").unwrap();
-		assert_eq!(copy(), users());
-		// --keep-mods: nothing held, the snapshot has the installed ones.
-		std::fs::remove_file(docs.join(HELD_SETTINGS_STATE)).unwrap();
-		std::fs::rename(held.join("MSU#a#S.sav"), snapshot.join("MSU#a#S.sav")).unwrap();
-		std::fs::rename(held.join("MSU#b#S.sav"), snapshot.join("MSU#b#S.sav")).unwrap();
-		assert_eq!(copy(), users());
-		std::fs::remove_dir_all(&docs).unwrap();
 	}
 }

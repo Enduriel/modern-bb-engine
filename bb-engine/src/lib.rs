@@ -13,8 +13,8 @@
 //!   * [`script_cache`] — transcoded scripts kept on disk for warm starts
 //!   * [`log_files`] — bb's log files, the earlier sessions' kept as zips
 //!   * [`harness`] — headless boot steps over a real install (menu, new campaign)
-//!   * [`probe_aside`] — the installed mods and storages while a probe run holds them aside
-//!   * [`mod_corpus`] — the pinned mod corpus the corpus tests mount
+//!   * [`probe_aside`] — the installed mods while a probe run holds them aside
+//!   * [`mod_corpus`] — the reference mod corpus the corpus tests mount, pinned by hash
 //!   * [`heap`] — the C heap's usage, for the memory tests and tools
 //!   * [`install`] — finding the player's copy of the game (overrides, the chosen folder, Steam)
 //!   * [`script_profile`] — reports of where the scripts' time goes, by function and mod

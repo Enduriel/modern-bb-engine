@@ -1,7 +1,8 @@
-//! Our archive index reads every installed archive as the `zip` crate does: vanilla's
-//! `.dat`s and every mod zip, the same names in the same order, the same CRC and size per
-//! entry, the same bytes (one entry in 25, and every script and brush), and an entry read
-//! in place matching its whole read. Skips without the Steam install.
+//! Our archive index reads every archive as the `zip` crate does: vanilla's `.dat`s and
+//! every mod zip of the reference mod corpus (`bb_engine::mod_corpus`), the same names
+//! in the same order, the same CRC and size per entry, the same bytes (one entry in 25,
+//! and every script and brush), and an entry read in place matching its whole read.
+//! Skips without the Steam install or the corpus.
 
 use std::io::Read;
 use std::path::Path;
@@ -10,18 +11,21 @@ use bb_engine::harness;
 use bb_engine::vfs::DatArchive;
 
 #[test]
-fn reads_every_installed_archive_as_the_zip_crate_does() {
+fn reads_every_corpus_archive_as_the_zip_crate_does() {
 	let data = Path::new(harness::STEAM_DATA_DIR);
 	if !data.exists() {
 		bb_engine::harness::skip(format!("{} not present", data.display()));
 		return;
 	}
+	let corpus = match bb_engine::mod_corpus::reference() {
+		Ok(corpus) => corpus,
+		Err(bb_engine::mod_corpus::CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
+		Err(e) => panic!("{e}"),
+	};
 	let mut archives = harness::data_archives(data).unwrap();
-	archives.extend(harness::mod_archives(data).unwrap());
+	archives.extend(corpus.mods().iter().cloned());
 	let (mut entries, mut compared) = (0, 0);
 	for path in &archives {
-		// Where a probe run may have moved a mod since it was listed.
-		let path = &harness::locate_mod(path);
 		let mut ours = DatArchive::open(path).unwrap();
 		let mut theirs = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
 		let names: Vec<String> = theirs.file_names().map(str::to_owned).collect();

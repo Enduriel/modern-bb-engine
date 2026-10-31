@@ -54,7 +54,7 @@ fn run_bb_at(dir: &Path, size: (u32, u32), refresh: Option<u32>, args: &[&str], 
 	let mut command: Vec<OsString> = vec![bb_binary().into()];
 	// Tests never start Steam, even with its library beside the test's bb. Its log goes
 	// to the run's folder, never the player's. Vanilla unless the run asks for the mods
-	// (`--mods`, after this: the last wins).
+	// (`--mods-dir`, the reference mod corpus's, after this: the last wins).
 	command.extend(["--mute", "--no-steam", "--logs"].map(OsString::from));
 	command.push(dir.join("logs").into());
 	command.push("--no-mods".into());
@@ -615,21 +615,18 @@ fn bb_starts_borderless_and_draws() {
 /// new campaign shows first, used to throw "The screen 'null' does not have a
 /// JSHandle" at boot). Its Save, pressed as a player would, goes on with the start.
 /// Then back to the main menu and Quit. The saves (and the mods' storages) and the
-/// settings go to the run's own folder. Skips without the mods it needs; fails if the
-/// install's are not the pinned corpus (`bb_engine::mod_corpus`).
+/// settings go to the run's own folder. The mods are the reference mod corpus's
+/// (`bb_engine::mod_corpus`, through `--mods-dir`), never the install's. Skips without
+/// the corpus; fails if it is not the pinned one or lacks Modern Hooks or MSU.
 #[test]
 fn bb_starts_a_modded_campaign_at_once() {
-	let data = Path::new(STEAM_DATA_DIR);
-	let mods = match bb_engine::mod_corpus::installed(data) {
-		Ok(mods) => mods,
+	let corpus = match bb_engine::mod_corpus::reference() {
+		Ok(corpus) => corpus,
 		Err(bb_engine::mod_corpus::CorpusError::Absent(why)) => return bb_engine::harness::skip(why),
 		Err(e) => panic!("{e}"),
 	};
-	let has = |prefix: &str| mods.iter().any(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(prefix)));
-	if !has("mod_modern_hooks") || !has("mod_msu") {
-		bb_engine::harness::skip("Modern Hooks or MSU not installed");
-		return;
-	}
+	assert!(corpus.find("mod_modern_hooks").is_some() && corpus.find("mod_msu").is_some(), "Modern Hooks or MSU not in the reference mod corpus");
+	let mods_dir = corpus.mods_dir();
 	let dir = run_dir("modded_campaign");
 	let (settings, saves) = (dir.join("settings.cfg"), dir.join("saves"));
 	std::fs::create_dir_all(&saves).expect("the saves folder");
@@ -663,7 +660,8 @@ fn bb_starts_a_modded_campaign_at_once() {
 	let quit = r#"local menu = ::RootState.get("MainMenuState"); if (("__player" in getroottable()) && ::__player.exited && ::RootState.get("WorldState") == null && menu != null) menu.main_menu_module_onQuitPressed();"#;
 	let frames: Vec<String> = (1..=400).map(|i| (i * 30).to_string()).collect();
 	let mut args = vec![
-		"--mods",
+		"--mods-dir",
+		mods_dir.to_str().expect("the corpus's folder as text"),
 		"--new-campaign",
 		"--settings",
 		settings.to_str().unwrap(),

@@ -348,7 +348,7 @@ fn run(width: i64, height: i64, hz: f64, seconds: f64) -> Result<(), String> {
 	let boot = Boot {
 		data_dir: Path::new(STEAM_DATA_DIR),
 		start: Start::Menu,
-		mods: false,
+		mods: None,
 		sound: false,
 		world_size: None,
 		mode: VideoMode { width, height, refresh_rate: hz.round() as i64, ..VideoMode::DEFAULT },

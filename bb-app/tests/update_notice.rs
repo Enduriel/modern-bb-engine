@@ -223,7 +223,7 @@ fn check(gpu: &Gpu, dir: &Path) -> Result<(), String> {
 	let boot = Boot {
 		data_dir: Path::new(STEAM_DATA_DIR),
 		start: Start::Menu,
-		mods: false,
+		mods: None,
 		sound: false,
 		world_size: None,
 		mode: VideoMode::DEFAULT,
