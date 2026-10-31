@@ -33,11 +33,44 @@ once:
   install.data_dir = C:\GOG Games\Battle Brothers\data
   ```
 
-**macOS:** Battle Brothers has no macOS version, so Steam on a Mac doesn't install it.
-Copy the game's folder from a Windows install (the folder with `data` and `win32` in it)
-to your Mac, and choose that folder in the window. The app isn't notarized by Apple, so
-macOS may refuse to open it the first time; allow it under System Settings, Privacy &
-Security.
+**macOS:** Battle Brothers has no macOS version, so Steam on a Mac won't install it
+unless you tell Steam to act as Windows. Once you have, `bb` finds the game by itself:
+
+1. Quit Steam.
+2. Create a text file named `steam_dev.cfg` in
+   `~/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/`
+   containing this one line:
+
+   ```text
+   @sSteamCmdForcePlatformType windows
+   ```
+
+3. Start Steam and install Battle Brothers (and its DLCs) from your Library as usual.
+   Start the game with `bb`, not with Steam's Play button.
+
+This setting applies to all of Steam, not just Battle Brothers:
+
+- Steam keeps downloading the Windows version of every game. Games that have a macOS
+  version may be replaced by their Windows version, and macOS-only games stop updating.
+- Steam can't update itself while the file is there. Remove it for one start of Steam
+  to let Steam update, then put it back.
+- To undo it, delete the file and restart Steam.
+
+If you'd rather not change Steam, download the game with Valve's command-line client
+[SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD) (`brew install --cask
+steamcmd`), then choose the folder in the window:
+
+```sh
+steamcmd +@sSteamCmdForcePlatformType windows \
+  +force_install_dir "$HOME/Games/Battle Brothers" \
+  +login <your-steam-username> +app_update 365360 validate +quit
+```
+
+Or copy the game's folder from a Windows install (the folder with `data` and `win32` in
+it) to your Mac and choose that.
+
+The app isn't notarized by Apple, so macOS may refuse to open it the first time; allow
+it under System Settings, Privacy & Security.
 
 ### Saves
 
