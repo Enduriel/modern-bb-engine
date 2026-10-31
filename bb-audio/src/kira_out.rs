@@ -1,10 +1,11 @@
 //! The game's sound through kira: an [`AudioOut`] that plays what the game's sound
 //! manager says, at the gains the original's library and driver give (see
-//! [`gains`](crate::gains)).
+//! [`gains`](crate::gains)), except that positional sounds pan by their place on the
+//! screen (see [`pan`](crate::pan)).
 //!
 //! A sound the game starts paused isn't handed to kira until it first unpauses, so
 //! nothing leaks out before; after that, pauses pause it in kira. Positional sounds
-//! take new gains whenever the listener moves.
+//! take new gains whenever the listener moves or the zoom changes.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use squirrel_bb::{AudioOut, Voice};
 
 use crate::bank::{Sound, SoundBank};
 use crate::gains::{self, Listener};
+use crate::pan::{self, View};
 
 /// kira's silence: anything quieter plays as nothing.
 const FLOOR_DB: f32 = -60.0;
@@ -110,7 +112,7 @@ pub struct KiraOut<B: Backend> {
 	bank: SoundBank,
 	voices: HashMap<Voice, KiraVoice>,
 	next: Voice,
-	listener: Listener,
+	view: View,
 	rolloff: f32,
 	/// The backend's report (only the device has one).
 	status: fn(&mut AudioManager<B>) -> Option<String>,
@@ -235,7 +237,7 @@ impl<B: Backend> KiraOut<B> {
 			bank: SoundBank::new(files),
 			voices: HashMap::new(),
 			next: 1,
-			listener: Listener::Default,
+			view: View::DEFAULT,
 			rolloff,
 			status: |_| None,
 		})
@@ -263,7 +265,7 @@ impl<B: Backend> KiraOut<B> {
 	fn settings(&self, v: &KiraVoice) -> (f32, f32) {
 		let gains = match v.at {
 			None => gains::flat(v.volume, v.pan),
-			Some(at) => gains::positional(v.volume, at, self.listener, self.rolloff),
+			Some(at) => pan::positional(v.volume, at, self.view, self.rolloff),
 		};
 		gains::kira_settings(gains)
 	}
@@ -396,12 +398,15 @@ impl<B: Backend> AudioOut for KiraOut<B> {
 		self.bank.discard_unused();
 	}
 
-	fn set_listener(&mut self, at: (f32, f32)) {
-		let listener = Listener::At(at.0, at.1);
-		if self.listener == listener {
+	fn set_listener(&mut self, at: (f32, f32), half_width: f32) {
+		let view = View {
+			listener: Listener::At(at.0, at.1),
+			half_width,
+		};
+		if self.view == view {
 			return;
 		}
-		self.listener = listener;
+		self.view = view;
 		let positional: Vec<Voice> = self.voices.iter().filter(|(_, v)| v.at.is_some()).map(|(id, _)| *id).collect();
 		for voice in positional {
 			self.apply(voice);

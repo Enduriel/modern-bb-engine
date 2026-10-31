@@ -197,8 +197,22 @@ impl<S: ScriptSource + 'static> Engine<S> {
 			config.engine_seed.map_or_else(crate::native::EngineRng::unseeded, |s| crate::native::EngineRng::seeded(s ^ AUDIO_SEED)),
 			time.clone(),
 		);
+		// The listener: a camera's centre, and half its view's width in world units.
 		let world_camera = natives.world_camera.clone();
-		audio.install(&mut vm, move || crate::native::world_camera::view(&world_camera).pos, tactical_grid.camera_reader());
+		let (video, video2) = (natives.video.clone(), natives.video.clone());
+		let half_width = |video: &VideoSettings, zoom: f32| video.screen().0 as f32 * zoom * 0.5;
+		let battle_camera = tactical_grid.camera_reader();
+		audio.install(
+			&mut vm,
+			move || {
+				let view = crate::native::world_camera::view(&world_camera);
+				(view.pos, half_width(&video, view.zoom))
+			},
+			move || {
+				let (pos, zoom) = battle_camera();
+				(pos, half_width(&video2, zoom))
+			},
+		);
 		let root_state = RootState::new(modules.instantiator());
 		root_state.install(&mut vm);
 		// The world scene's per-frame update (entity thinkers) runs from updateScene.

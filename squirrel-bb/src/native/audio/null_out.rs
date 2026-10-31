@@ -109,7 +109,7 @@ impl AudioOut for NullOut {
 		self.length(file).unwrap_or(0)
 	}
 
-	fn set_listener(&mut self, _at: (f32, f32)) {}
+	fn set_listener(&mut self, _at: (f32, f32), _half_width: f32) {}
 
 	fn update(&mut self, now_ms: u32) {
 		let dt = self.now.map_or(0, |then| now_ms.saturating_sub(then));

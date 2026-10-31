@@ -341,8 +341,8 @@ impl AudioOut for SilentOut {
 	fn preload(&mut self, file: &str) {
 		self.out.borrow_mut().preload(file)
 	}
-	fn set_listener(&mut self, at: (f32, f32)) {
-		self.out.borrow_mut().set_listener(at)
+	fn set_listener(&mut self, at: (f32, f32), half_width: f32) {
+		self.out.borrow_mut().set_listener(at, half_width)
 	}
 	fn update(&mut self, now_ms: u32) {
 		let mut out = self.out.borrow_mut();

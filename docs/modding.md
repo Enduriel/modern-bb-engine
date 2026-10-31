@@ -173,3 +173,27 @@ Each handler finds only its own kind of entity, as the original's does:
 - `worldentity(...)` shows world entities only. For any other id, a brother's
   included, or an entity with nothing to draw, the load fails (the `error` event,
   status 0) and the same warning is logged.
+
+## Positional sounds pan by their place on the screen
+
+`Sound.play(file, volume, pos)` with a position plays the sound at that world point. In
+the original game its pan says only which side of the camera the point is on: every
+sound left of the screen's centre plays at the same pan (left 0.87, right 0.50), 5
+units away or 500, and only sounds within a few units of the centre pan in between. The
+modern engine pans by where the sound is on the screen, left to right:
+
+- at the screen's centre (or straight above or below it), centred;
+- further out, more to that side, as the angle `atan(dx / w)`, where `dx` is the
+  sound's horizontal offset from the camera and `w` half the screen's width in world
+  units at the current zoom;
+- at the screen's edge and beyond, 45°: the original's pan for every off-centre sound.
+
+The volume is unchanged: the same distance rolloff as the original's (full within 512
+units of the camera, then `2000 · log10(d / 512)` millibels quieter, by the original's
+rolloff factor), and the same split between the ears. Sounds without a position, and
+the ambience's random pan, are as in the original.
+
+A mod that works around the original's pan by moving each sound's position towards the
+camera, so that it lands in the narrow band where the original pans in between, makes
+every sound play near the centre on the modern engine. Such a mod should keep the
+position as it is when `"ModernEngine" in ::getroottable()`.

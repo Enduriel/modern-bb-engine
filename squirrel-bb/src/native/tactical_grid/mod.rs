@@ -623,11 +623,12 @@ impl TacticalGrid {
 		g.idx_axial(q, r)
 	}
 
-	pub(crate) fn camera_reader(&self) -> impl Fn() -> (f32, f32) + 'static {
+	pub(crate) fn camera_reader(&self) -> impl Fn() -> ((f32, f32), f32) + 'static {
 		let grid = self.grid.clone();
 		move || {
-			let (x, y) = grid.borrow().camera.pos();
-			(x as f32, y as f32)
+			let g = grid.borrow();
+			let (x, y) = g.camera.pos();
+			((x as f32, y as f32), g.camera.zoom() as f32)
 		}
 	}
 

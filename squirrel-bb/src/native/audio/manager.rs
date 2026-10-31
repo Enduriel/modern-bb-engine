@@ -452,7 +452,7 @@ pub(crate) mod tests {
 		fn length_ms(&mut self, _file: &str) -> u32 {
 			self.length
 		}
-		fn set_listener(&mut self, _at: (f32, f32)) {}
+		fn set_listener(&mut self, _at: (f32, f32), _half_width: f32) {}
 		fn update(&mut self, _now_ms: u32) {}
 	}
 

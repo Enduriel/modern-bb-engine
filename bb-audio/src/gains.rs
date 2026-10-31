@@ -18,6 +18,9 @@
 //! `(cx, cy, 1000)` (a direction, so it turns as the camera moves: the original's,
 //! kept), with up `(0, 1, 0)`; a sound sits at `(x, y, 0)`. Before any scene sets it,
 //! the listener is the library's default: at the origin, facing `(0, 0, 1)`.
+//!
+//! [`positional`] is the original's pan, kept for reference: this engine pans by the
+//! sound's place on the screen instead ([`crate::pan`]), with the same rolloff.
 
 /// Left and right gains, 1 is full.
 pub type Gains = (f32, f32);
@@ -84,19 +87,43 @@ fn angle(a: V3, b: V3) -> f64 {
 	(dot(a, b) / (la * lb)).clamp(-1.0, 1.0).acos()
 }
 
-/// A positional sound's gains: its volume, where it is, the listener, the rolloff.
-pub fn positional(volume: f32, at: (f32, f32), listener: Listener, rolloff: f32) -> Gains {
-	let (position, front) = match listener {
+/// The listener's position and the direction it faces.
+fn placement(listener: Listener) -> (V3, V3) {
+	match listener {
 		Listener::Default => ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
 		Listener::At(x, y) => ([f64::from(x), f64::from(y), -1.0], [f64::from(x), f64::from(y), 1000.0]),
-	};
-	let top = [0.0, 1.0, 0.0];
-	let to = [f64::from(at.0) - position[0], f64::from(at.1) - position[1], 0.0 - position[2]];
+	}
+}
+
+/// From the listener to a sound at `at`.
+fn towards(at: (f32, f32), position: V3) -> V3 {
+	[f64::from(at.0) - position[0], f64::from(at.1) - position[1], 0.0 - position[2]]
+}
+
+/// A positional sound's whole gain, before it is split between the ears: its volume
+/// and its distance from the listener, rolling off by `rolloff`.
+pub(crate) fn distance_gain(volume: f32, at: (f32, f32), listener: Listener, rolloff: f32) -> f32 {
+	let to = towards(at, placement(listener).0);
 	let (min, max) = (f64::from(MIN_DISTANCE), f64::from(MAX_DISTANCE));
 	let d = dot(to, to).sqrt().clamp(min, max);
 	let d = min + (d - min) * f64::from(rolloff);
 	let mb = volume_mb(volume) - ((d / min) * (d / min)).log10() * 1000.0;
-	let gain = gain(mb);
+	gain(mb)
+}
+
+/// The two ears' shares of a gain for a sound at `t` between the speakers (0 left, 1
+/// right): `√(1 − t)` and `√t`.
+pub(crate) fn split(gain: f32, t: f32) -> Gains {
+	((1.0 - t).sqrt() * gain, t.sqrt() * gain)
+}
+
+/// A positional sound's gains as the original makes them: its volume, where it is, the
+/// listener, the rolloff. Bypassed by default (see [`crate::pan`]); kept for reference.
+pub fn positional(volume: f32, at: (f32, f32), listener: Listener, rolloff: f32) -> Gains {
+	let (position, front) = placement(listener);
+	let top = [0.0, 1.0, 0.0];
+	let to = towards(at, position);
+	let gain = distance_gain(volume, at, listener, rolloff);
 	use std::f64::consts::{FRAC_PI_2, PI};
 	let mut a = if to == [0.0; 3] {
 		0.0
@@ -114,8 +141,7 @@ pub fn positional(volume: f32, at: (f32, f32), listener: Listener, rolloff: f32)
 	};
 	// Speakers at -90° (left) and 90° (right).
 	if (-FRAC_PI_2..FRAC_PI_2).contains(&a) {
-		let t = ((a + FRAC_PI_2) / PI) as f32;
-		((1.0 - t).sqrt() * gain, t.sqrt() * gain)
+		split(gain, ((a + FRAC_PI_2) / PI) as f32)
 	} else {
 		if a < -FRAC_PI_2 {
 			a += 2.0 * PI;

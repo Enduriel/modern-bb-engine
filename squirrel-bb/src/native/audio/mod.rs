@@ -10,7 +10,9 @@
 //!
 //! None of it reaches the game's state or its random streams: the original draws its
 //! audio's randomness from a stream of its own, and so does this. The listener is the
-//! camera's centre, rounded, which `World.update` and `Tactical.update` set (`0x543f20`).
+//! camera's centre, rounded, which `World.update` and `Tactical.update` set (`0x543f20`),
+//! with half the view's width in world units, which the output pans against (this
+//! engine's pan, not the original's: see `bb_audio::pan`).
 
 mod ambience;
 mod length;
@@ -77,24 +79,26 @@ impl Audio {
 	}
 
 	/// Register the natives. Call after `Settings`, `World` and `Tactical` exist:
-	/// `listener` says where the camera of the scene being updated is.
-	pub fn install(&self, vm: &mut SQVM, world_listener: impl Fn() -> (f32, f32) + 'static, battle_listener: impl Fn() -> (f32, f32) + 'static) {
+	/// each listener says where the camera of the scene being updated is, and how
+	/// many world units its view reaches either side (half the screen's width times
+	/// the zoom).
+	pub fn install(&self, vm: &mut SQVM, world_listener: impl Fn() -> ((f32, f32), f32) + 'static, battle_listener: impl Fn() -> ((f32, f32), f32) + 'static) {
 		natives::install(vm, &self.0);
 		self.listen_on(vm, "World", world_listener);
 		self.listen_on(vm, "Tactical", battle_listener);
 	}
 
 	/// After `table.update()` runs, the listener moves to the camera's rounded centre.
-	fn listen_on(&self, vm: &mut SQVM, table: &str, camera: impl Fn() -> (f32, f32) + 'static) {
+	fn listen_on(&self, vm: &mut SQVM, table: &str, camera: impl Fn() -> ((f32, f32), f32) + 'static) {
 		let inner = SqTable::root(vm).get::<SqTable>(table).and_then(|t| t.get::<SqStrongRef>("update"));
 		let m = self.0.clone();
 		let update = vm.make_closure(move |vm: &SQVM| -> Result<(), String> {
 			if let Some(inner) = &inner {
 				inner.call(vm, ())?;
 			}
-			let (x, y) = camera();
+			let ((x, y), half_width) = camera();
 			let at = (x.round() as i32 as f32, y.round() as i32 as f32);
-			m.borrow_mut().out.set_listener(at);
+			m.borrow_mut().out.set_listener(at, half_width);
 			Ok(())
 		});
 		if let Some(mut t) = SqTable::root(vm).get::<SqTable>(table) {

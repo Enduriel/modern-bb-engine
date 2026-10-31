@@ -6,7 +6,8 @@
 //!
 //! Volumes are irrKlang's, linear and not clamped (the output applies the original's
 //! conversion); pans are irrKlang's, `-1` right to `1` left; speeds scale both pitch
-//! and tempo. Positions are world units, the listener the camera's centre.
+//! and tempo. Positions are world units, the listener the camera's centre, with the
+//! view's half-width.
 
 /// A playing (or paused) sound.
 pub type Voice = u64;
@@ -44,8 +45,10 @@ pub trait AudioOut {
 	/// Start reading `file` ahead of its use (the next music track).
 	fn preload(&mut self, _file: &str) {}
 
-	/// The listener moved to `at` (the camera's centre, rounded).
-	fn set_listener(&mut self, at: (f32, f32));
+	/// The listener moved to `at` (the camera's centre, rounded); the view is
+	/// `half_width` world units either side of it (half the screen's width times the
+	/// zoom), for the pan (see `bb_audio::pan`).
+	fn set_listener(&mut self, at: (f32, f32), half_width: f32);
 
 	/// The real time is `now_ms` (a frame passed).
 	fn update(&mut self, now_ms: u32);
