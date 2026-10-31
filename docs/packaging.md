@@ -80,9 +80,9 @@ runs. Updating a pin (CEF with cef-dll-sys, ninja, cargo-xwin, Steam's crate in
 On demand (`workflow_dispatch`) and on `v*` tags, never on pushes. One job per target
 on its own runner, each running `bundle.py` and uploading the archive, its `.sha256`
 and `inputs.txt` as the artifact `bb-<target>`. On a `v*` tag, once every target has
-built, a last job makes a **draft** release for the tag: every target's files attached
-and each archive's SHA-256 in its notes. Check it and publish it by hand (Releases on
-GitHub).
+built, a last job makes a **draft** release for the tag with only the archives attached,
+one per target (GitHub shows each asset's SHA-256 itself). Check it and publish it by
+hand (Releases on GitHub).
 
 | Target | Runner |
 | --- | --- |

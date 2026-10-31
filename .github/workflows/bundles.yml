@@ -4,8 +4,8 @@
 # Steam data, which isn't on GitHub's runners.
 #
 # Runs on demand (Actions > bundles > Run workflow) and on version tags. A version tag
-# also gets a draft release with every target's bundle and their SHA-256s, published
-# by hand once checked.
+# also gets a draft release with every target's archive (GitHub shows each asset's
+# SHA-256 itself), published by hand once checked.
 name: bundles
 
 on:
@@ -108,8 +108,8 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  # After every target's bundle: a draft release for the tag, with the bundles attached and
-  # their SHA-256s in its notes. Only on version tags, and only when every target built.
+  # After every target's bundle: a draft release for the tag, with one archive per target
+  # attached. Only on version tags, and only when every target built.
   release:
     name: draft release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -134,15 +134,7 @@ jobs:
           shopt -s nullglob
           archives=(bb-*.tar.gz bb-*.zip)
           [ ${#archives[@]} -gt 0 ] || { echo "no bundles downloaded"; exit 1; }
-          {
-            echo "Auto generated release. Unpack the archive for your system and double-click \`bb\`; see the README inside."
-            echo
-            echo "| Package | SHA-256 |"
-            echo "| --- | --- |"
-            for a in "${archives[@]}"; do
-              echo "| \`$a\` | \`$(sha256sum "$a" | cut -d' ' -f1)\` |"
-            done
-          } > ../notes.md
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "bb ${TAG#v}" --notes-file ../notes.md \
-            "${archives[@]}" bb-*.sha256 bb-*.inputs.txt
+            --title "bb ${TAG#v}" \
+            --notes "Auto generated release. Unpack the archive for your system and double-click \`bb\`; see the README inside." \
+            "${archives[@]}"
