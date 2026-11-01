@@ -50,6 +50,7 @@ No mod can rely on the original's behaviour in these cases.
 | An FPS display | Vanilla's FPS box exists but is never shown | Shown with `bb --fps`, `ui.show_fps = true` in the settings file, or Ctrl+Shift+F | Only while shown: the box is on the page |
 | Portraits of parties and locations (`worldentity` images) | Always fail to load | A picture of the entity as the map shows it | Yes: see [modding](modding.md#portraits-of-world-entities-worldentity-images-version-3) |
 | Squirrel 3.2's `split` and `format` | Not available | As `split3_2` and `format3_2`; `split` and `format` stay the original's | Yes: see [modding](modding.md#modern-variants-of-the-string-library-split3_2-format3_2-version-2) |
+| Mods replacing each other's files | Only one copy is used, silently | The same copy is used, and `log.html` warns once per pair of mods: `"mod_b.zip" overrides 2 files of "mod_a.zip": …` (see [modding](modding.md#which-copy-of-a-file-is-used)). A mod replacing the game's own files is normal and not reported | No: log lines only |
 | Telling the engines apart | - | `::ModernEngine` in scripts, `window.ModernEngine` in the UI | Yes, by design |
 | Saves | Its own format | The same format by default, in the original's savegames folder: each game loads the other's saves. A map larger than the original allows is saved in bb's own format, with a warning | Only extra sections the original skips |
 
@@ -57,6 +58,7 @@ No mod can rely on the original's behaviour in these cases.
 
 | What | The original | bb | Can mods notice? |
 | --- | --- | --- | --- |
+| Loose files in the install folder | Read after the archives: a `scripts/` folder there runs at start | Never read: loose files come only from `data/`. `IO.enumerateFiles("data/")` still lists the data folder | Only mods that put files in the install folder (none known) |
 | Fullscreen | Exclusive: switches the monitor's mode | A borderless window over the monitor on Windows and macOS (and on Wayland); exclusive only on Linux under X11. A smaller mode is scaled to fit | No: scripts see the same video mode |
 | The mouse cursor | Drawn into the game's frames | The same picture, shown as the system's cursor, so it never lags behind a slow frame. `ui.software_cursor = true` brings back the drawn one | No |
 | Settings | `config.cfg` in the original's folder | `settings.cfg` in bb's own folder; the original's file is never read or written | No |

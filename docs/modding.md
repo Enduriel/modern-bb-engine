@@ -26,6 +26,35 @@ if (typeof window.ModernEngine === 'object' && window.ModernEngine.Version >= 3)
 }
 ```
 
+## Which copy of a file is used
+
+When several places have the same file, the modern engine uses the copy the original
+uses (checked against the original game):
+
+1. a loose file in the game's `data/` folder (e.g. `data/scripts/x.nut`);
+2. otherwise the last archive in `data/` that has it. Every `.zip` there loads, sorted
+   in with the game's own `data_*.dat` by file name, character by character, capitals
+   first: `mod_b.zip` beats `mod_a.zip`, and a zip named before `data_` (`aaa.zip`, or any
+   name starting with a capital, like `Better Tooltips.zip`) loads before the game's own
+   archives and loses to them.
+
+The original also looks for loose files in the install folder (the one holding
+`data/`), after the archives. The modern engine doesn't: put files in `data/`.
+
+A script exists as source (`x.nut`) or compiled (`x.cnut`). Each is found as above, and
+then **the newer one is loaded**, by the time stored in the archive; if both have the
+same time, the `.cnut`. So a mod's `scripts/…/x.nut` only replaces the game's compiled
+`x.cnut` if the mod's file is newer than the game's (dated 2025 or 2026). In the original
+an older one is silently ignored; the modern engine ignores it too, but says so in the
+log.
+
+At start, `log.html` lists likely conflicts as warnings, one per pair:
+`"mod_b.zip" overrides 2 files of "mod_a.zip": ui/main.html, …`. A file several mods
+ship in identical copies is not a conflict, and a mod replacing the game's own files is
+not reported (that's what mods do), except when the game's copy wins as above:
+`"data_001.dat" (the game's own) overrides 1 file of "mod_a.zip": scripts/x.nut (its
+.cnut is as new or newer)`.
+
 ## Fonts for text in any language (`registerFont`, version 1)
 
 Vanilla draws the map's text (settlement and party names, region names) with bitmap
