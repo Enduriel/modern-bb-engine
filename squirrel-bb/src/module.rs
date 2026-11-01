@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use squirrel::{Retained, SQVM, SqStrongRef, SqTable, StackArgs, This};
 
-use crate::class::{inherit, is_kind_of, new_instance, prototype};
+use crate::class::{adopt_base, inherit, is_kind_of, new_instance, prototype};
 use crate::compile_context::compile_context;
 use crate::error::ScriptError;
 use crate::hash::normalize_path;
@@ -80,7 +80,10 @@ pub(crate) fn include<S: ScriptSource>(
 	});
 
 	state.borrow_mut().load_stack.pop();
-	result.map_err(ScriptError::Runtime)
+	result.map_err(ScriptError::Runtime)?;
+	// A base class is stamped as soon as its script has run (see `adopt_base`).
+	adopt_base(vm, state, &norm);
+	Ok(())
 }
 
 /// A `ScriptSource`-erased "instantiate a class by path" callback (the `this.new`

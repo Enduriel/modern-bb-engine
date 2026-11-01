@@ -74,9 +74,8 @@ use crate::state::SharedState;
 /// Resolve the class prototype for `path`, loading the script if needed.
 ///
 /// A derived class is registered by [`inherit`] while its script runs; a base
-/// class is a plain literal under its basename in the file's own scope (see
-/// `include`), which we adopt (stamping `ClassNameHash`) the first time it is
-/// requested.
+/// class is a plain literal under its basename in the file's own scope, which
+/// `include` adopts (stamping `ClassNameHash`) once the script has run.
 pub(crate) fn prototype<'vm, S: ScriptSource>(
 	vm: &'vm SQVM,
 	state: &SharedState<S>,
@@ -92,37 +91,48 @@ pub(crate) fn prototype<'vm, S: ScriptSource>(
 		}
 	}
 
-	// Load it. A derived class registers its prototype via `inherit` during this.
+	// Load it: a derived class registers its prototype via `inherit` while its script
+	// runs, and `include` adopts a base class after. (A script that failed after
+	// defining its class, on an earlier load, is adopted here.)
 	include(vm, state, &norm)?;
-	{
-		let st = state.borrow();
-		if let Some(proto) = st.prototypes.get(&norm) {
-			return Ok(proto.as_table(vm).expect("registered prototype is a table"));
-		}
-	}
+	adopt_base(vm, state, &norm).ok_or_else(|| {
+		ScriptError::Runtime(format!(
+			"script '{norm}' did not register a class named '{}'",
+			basename(&norm)
+		))
+	})
+}
 
-	// Base class: a plain literal under its basename in the file's scope. Adopt it.
-	let scope = state.borrow().scopes.get(&norm).cloned();
+/// Adopt the base class a script just defined: a plain literal under its basename in
+/// the file's scope that no `inherit` registered. Stamps `ClassNameHash` and
+/// `ClassName` and caches it as the class prototype. `include` calls this as soon as
+/// the script has run: hook frameworks keep that table and read its hash before
+/// anything inherits or instantiates it (Modern Hooks' tree hooks on
+/// `item_container`), and in the original every base class carries its hash once
+/// the scripts are loaded (probed at the main menu).
+pub(crate) fn adopt_base<'vm, S: ScriptSource>(
+	vm: &'vm SQVM,
+	state: &SharedState<S>,
+	norm: &str,
+) -> Option<SqTable<'vm>> {
+	if let Some(proto) = state.borrow().prototypes.get(norm) {
+		return Some(proto.as_table(vm).expect("cached prototype is a table"));
+	}
+	let scope = state.borrow().scopes.get(norm).cloned();
 	let mut proto = scope
 		.as_ref()
 		.and_then(|s| s.as_table(vm))
-		.and_then(|s| s.get::<SqTable>(basename(&norm)))
-		.ok_or_else(|| {
-			ScriptError::Runtime(format!(
-				"script '{norm}' did not register a class named '{}'",
-				basename(&norm)
-			))
-		})?;
-	let hash = class_name_hash(&norm);
+		.and_then(|s| s.get::<SqTable>(basename(norm)))?;
+	let hash = class_name_hash(norm);
 	proto.set("ClassNameHash", hash);
-	proto.set("ClassName", basename(&norm).to_string());
+	proto.set("ClassName", basename(norm).to_string());
 	ensure_m(vm, &mut proto);
 	{
 		let mut st = state.borrow_mut();
-		st.prototypes.insert(norm.clone(), proto.to_strong());
-		st.by_hash.insert(hash, norm);
+		st.prototypes.insert(norm.to_string(), proto.to_strong());
+		st.by_hash.insert(hash, norm.to_string());
 	}
-	Ok(proto)
+	Some(proto)
 }
 
 /// `this.inherit(parentPath, body)`: turn `body` into a derived-class prototype of

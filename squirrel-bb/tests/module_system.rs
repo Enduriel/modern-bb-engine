@@ -294,6 +294,34 @@ fn io_registry_round_trips_and_matches_class_name_hash() {
 }
 
 #[test]
+fn base_class_is_stamped_when_its_script_loads() {
+	// Hook frameworks keep a file's class table from when its script ran and read its
+	// `ClassNameHash` later, before anything inherits or instantiates it (Modern Hooks'
+	// tree hooks on `item_container`). Probed in the original: every base class carries
+	// its hash by the time the main menu shows.
+	let (vm, _m) = vm_with(&[(
+		"scripts/items/item_container",
+		r#"
+		this.item_container <- { m = {}, function create() {} };
+		::__heldClass <- this.item_container;
+		"#,
+	)]);
+
+	vm.run_script(
+		r#"
+		this.include("scripts/items/item_container");
+		local h = IO.scriptHashByFilename("scripts/items/item_container");
+		assert(h != null);
+		assert(::__heldClass.ClassNameHash == h);
+		assert(::__heldClass.ClassName == "item_container");
+		assert(IO.scriptFilenameByHash(h) == "scripts/items/item_container");
+		"#,
+		"base_stamp_test",
+	)
+	.expect("a base class is stamped as soon as its script has run");
+}
+
+#[test]
 fn module_system_and_native_globals_coexist() {
 	// Both subsystems install into the same root table; their slots are disjoint
 	// and a module-loaded class can use the native value classes.
