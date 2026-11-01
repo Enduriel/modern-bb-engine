@@ -199,7 +199,10 @@ which a mod checks for through `::ModernEngine`: see [docs/modding.md](docs/modd
 ## Building from source
 
 The engine is a Rust workspace on a pinned nightly toolchain (`rust-toolchain.toml`;
-`rustup` installs it on the first build). The Squirrel VM is a submodule, so clone
+`rustup` installs it on the first build). It also compiles C and C++, so it needs a C++
+compiler, CMake, Ninja and LLVM's libclang on top of Rust. On Windows those don't come
+with Rust: [docs/building.md](docs/building.md) walks through installing and checking
+each one, and lists the usual build errors. The Squirrel VM is a submodule, so clone
 with its submodules:
 
 ```bash
@@ -216,6 +219,7 @@ but developers and the tests use some: [docs/environment.md](docs/environment.md
 
 ## Documentation
 
+- [docs/building.md](docs/building.md): building from source, step by step (Windows in detail).
 - [docs/requirements.md](docs/requirements.md): what `bb` needs, and what each claim rests on.
 - [docs/differences.md](docs/differences.md): every deliberate difference from the original.
 - [docs/modding.md](docs/modding.md): what `bb` adds for mods, and `::ModernEngine`.

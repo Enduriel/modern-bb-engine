@@ -15,6 +15,7 @@ const DOCUMENTS: &[(&str, &str)] = &[
 	("docs/memory-snapshots.md", include_str!("../../docs/memory-snapshots.md")),
 	("docs/environment.md", include_str!("../../docs/environment.md")),
 	("docs/packaging.md", include_str!("../../docs/packaging.md")),
+	("docs/building.md", include_str!("../../docs/building.md")),
 	("LICENSE", include_str!("../../LICENSE")),
 ];
 
