@@ -31,6 +31,7 @@ pub mod game_queue;
 pub mod harness;
 pub mod heap;
 pub mod install;
+pub mod load_order;
 pub mod log_files;
 pub mod mod_corpus;
 pub mod mounts;
@@ -38,6 +39,8 @@ pub mod probe_aside;
 pub mod script_cache;
 pub mod script_profile;
 pub mod tactical_player;
+#[cfg(test)]
+mod test_game;
 pub mod transcode;
 pub mod vfs;
 

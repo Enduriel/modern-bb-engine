@@ -3,11 +3,13 @@
 //! The UI addresses everything as `coui://<path>`, where `<path>` is an archive path:
 //! `coui://ui/main.html`, `coui://gfx/ui/...png`, `coui://gfx/fonts/...ttf`. A few
 //! vanilla references point at loose files beside the archives instead
-//! (`coui://data/gfx/fonts/cinzel/...`, relative to the game directory).
+//! (`coui://data/gfx/fonts/cinzel/...`, relative to the game directory in the original).
 //!
 //! Lookup order (probed 2026-10-13): the archives, last-loaded first (so a mod archive
 //! shadows vanilla), with exact casing (`coui://ui/MAIN.html` fails in the original);
-//! then the game directory on disk, case-insensitively as on Windows. A query
+//! then loose files on disk, case-insensitively as on Windows. The original looks below
+//! the install folder; we read only the data folder (user, 2026-11-01), so
+//! `coui://data/<path>` and `coui://<path>` are both the data folder's `<path>`. A query
 //! (`?reload=…`) is ignored. (Chromium lowercases the first segment, the URL host; no
 //! UI file uses an uppercase one.)
 //!
@@ -26,23 +28,26 @@ pub const SCHEME: &str = "coui";
 /// The UI's entry page.
 pub const MAIN_PAGE: &str = "coui://ui/main.html";
 
-/// The UI's file system: archives in load order, plus the game directory.
+/// The UI's file system: archives in load order, plus the data folder's loose files.
 pub struct UiFiles {
 	/// The archives' files, in load order.
 	paths: Vec<PathBuf>,
 	archives: Mutex<Vec<DatArchive>>,
-	/// The game directory (`coui://data/...` resolves below it), if known.
-	game_dir: Option<PathBuf>,
+	/// The game's data folder (`coui://data/...` and other loose files resolve below
+	/// it), if known.
+	data_dir: Option<PathBuf>,
 }
 
 impl UiFiles {
-	/// Open `archives` (in load order: a later one overrides an earlier one). Loose
-	/// files are looked up below `game_dir`.
-	pub fn open(archives: &[PathBuf], game_dir: Option<PathBuf>) -> io::Result<Self> {
+	/// Open `archives` (mounted in load order: a later one overrides an earlier one).
+	/// Loose files are looked up below `data_dir`, the game's data folder.
+	pub fn open(archives: &[PathBuf], data_dir: Option<PathBuf>) -> io::Result<Self> {
+		let mut archives = archives.to_vec();
+		bb_engine::load_order::sort(&mut archives);
 		Ok(UiFiles {
-			paths: archives.to_vec(),
-			archives: Mutex::new(open_all(archives)?),
-			game_dir,
+			archives: Mutex::new(open_all(&archives)?),
+			paths: archives,
+			data_dir,
 		})
 	}
 
@@ -60,14 +65,14 @@ impl UiFiles {
 	}
 
 	/// Open an install's `data_*.dat` archives (`data_dir` is the game's `data/`).
-	/// With `mods`, its mods load after them, as the original orders them (every
-	/// `.zip`, see [`bb_engine::harness::mod_archives`]).
+	/// With `mods`, its mods too (every `.zip`, see [`bb_engine::harness::mod_archives`]),
+	/// all in the original's load order ([`bb_engine::load_order`]).
 	pub fn open_install(data_dir: &Path, mods: bool) -> io::Result<Self> {
 		let mut archives = bb_engine::harness::data_archives(data_dir)?;
 		if mods {
 			archives.extend(bb_engine::harness::mod_archives(data_dir)?);
 		}
-		Self::open(&archives, data_dir.parent().map(Path::to_path_buf))
+		Self::open(&archives, Some(data_dir.to_path_buf()))
 	}
 
 	/// The bytes of `path` (an archive path such as `ui/main.html`), or `None`.
@@ -87,10 +92,13 @@ impl UiFiles {
 		self.read_loose(path)
 	}
 
-	/// A file below the game directory, matching each segment case-insensitively if
-	/// the exact name is missing. Never leaves the game directory.
+	/// A loose file in the data folder, matching each segment case-insensitively if the
+	/// exact name is missing. `data/<path>` is the data folder's `<path>` (vanilla's UI
+	/// loads its Cinzel fonts as `coui://data/gfx/fonts/...`: in the original, through the
+	/// install folder, which we don't read). Never leaves the data folder.
 	fn read_loose(&self, path: &str) -> Option<Vec<u8>> {
-		let mut current = self.game_dir.clone()?;
+		let path = path.strip_prefix("data/").unwrap_or(path);
+		let mut current = self.data_dir.clone()?;
 		for segment in path.split('/') {
 			if segment.is_empty() || segment == "." || segment == ".." {
 				return None;
@@ -207,6 +215,20 @@ mod tests {
 			Some("gfx/ui/a b.png")
 		);
 		assert_eq!(url_to_path("https://example.com/"), None);
+	}
+
+	#[test]
+	fn loose_files_come_from_the_data_folder_only() {
+		let game = std::env::temp_dir().join(format!("bb-coui-loose-{}", std::process::id()));
+		std::fs::create_dir_all(game.join("data/gfx/fonts")).unwrap();
+		std::fs::write(game.join("data/gfx/fonts/Cinzel.ttf"), b"font").unwrap();
+		std::fs::write(game.join("outside.txt"), b"install folder").unwrap();
+		let files = super::UiFiles::open(&[], Some(game.join("data"))).unwrap();
+		assert_eq!(files.read("data/gfx/fonts/Cinzel.ttf").as_deref(), Some(&b"font"[..]));
+		assert_eq!(files.read("gfx/fonts/cinzel.ttf").as_deref(), Some(&b"font"[..]), "case-insensitive");
+		assert_eq!(files.read("outside.txt"), None, "the install folder isn't read");
+		assert_eq!(files.read("data/../outside.txt"), None);
+		std::fs::remove_dir_all(game).unwrap();
 	}
 
 	#[test]

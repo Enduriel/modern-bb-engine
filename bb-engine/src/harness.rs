@@ -154,8 +154,9 @@ pub fn data_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
 	Ok(dats)
 }
 
-/// The installed mods in `dir`: every `.zip`, in the order the original mounts them
-/// after the `data_*.dat` archives (by name; a later archive wins).
+/// The installed mods in `dir`: every `.zip`, by name. The original sorts them in among
+/// the `data_*.dat` archives by name ([`crate::load_order`], which the openers apply): a
+/// mod named before `data_` loads before vanilla's archives, and a later archive wins.
 ///
 /// While a probe run is up, `data/` is not what was installed: the run holds the
 /// installed mods aside and may copy others in. The list is the installed mods all
@@ -226,20 +227,21 @@ pub fn open_install_with(dir: &Path, configure: impl FnOnce(&mut NativeConfig)) 
 	open_mounted(dir, data_archives(dir)?, configure)
 }
 
-/// An engine over `archives` (in mount order) with the data folder `dir` and the install
-/// folder above it mounted beside them ([`Mounts`]), configured as [`open_install`] says,
+/// An engine over `archives` (in any order: they mount in load order) with the data
+/// folder `dir` mounted beside them ([`Mounts`]), configured as [`open_install`] says,
 /// then by `configure`.
 pub fn open_mounted(
 	dir: &Path,
 	archives: Vec<PathBuf>,
 	configure: impl FnOnce(&mut NativeConfig),
 ) -> io::Result<GameEngine> {
-	let mut mounts = vec![dir.to_path_buf()];
-	mounts.extend(dir.parent().map(Path::to_path_buf));
+	// The data folder before the archives, as the original, and listed as `data/` (the
+	// original lists it through the install folder, which we don't read otherwise).
+	let mounts = Mounts::new(vec![dir.to_path_buf()]).listed_at("data/", dir.to_path_buf());
 	let archives: Vec<PathBuf> = archives.iter().map(|a| locate_mod(a)).collect();
 	let source = DatScriptSource::open(archives)?
 		.with_cache(ScriptCache::from_env())
-		.with_mounts(Mounts::new(mounts));
+		.with_mounts(mounts);
 	let sprites = source.with_archives(|archives| load_sprites(archives));
 	for failure in &sprites.failures {
 		eprintln!("[Error] brush {failure}");

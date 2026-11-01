@@ -20,8 +20,11 @@ pub struct GameFiles {
 }
 
 impl GameFiles {
-	/// Open the archives at `paths`, in load order (later ones override earlier ones).
+	/// Open the archives at `paths`, mounted in the original's load order
+	/// ([`crate::load_order`]: by file name; later ones override earlier ones).
 	pub fn open(paths: impl IntoIterator<Item = impl AsRef<Path>>) -> io::Result<Self> {
+		let mut paths: Vec<_> = paths.into_iter().collect();
+		crate::load_order::sort(&mut paths);
 		let archives = paths
 			.into_iter()
 			.map(|path| DatArchive::open(path).map(Mutex::new))

@@ -64,7 +64,7 @@ impl UiSession {
 			archives.extend(harness::mod_archives(data_dir).map_err(|e| format!("mods: {e}"))?);
 		}
 		archives.extend(config.extra_mods.iter().cloned());
-		let files = Arc::new(UiFiles::open(&archives, data_dir.parent().map(Path::to_path_buf)).map_err(|e| format!("archives: {e}"))?);
+		let files = Arc::new(UiFiles::open(&archives, Some(data_dir.to_path_buf())).map_err(|e| format!("archives: {e}"))?);
 		let (screen_width, screen_height) = (config.width, config.height);
 		let (exact_clock, battle_camera, battle_motion) = (config.exact_clock, config.battle_camera, config.battle_motion);
 		let steam_build = config.steam_build;
