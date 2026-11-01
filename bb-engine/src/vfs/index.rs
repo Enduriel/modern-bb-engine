@@ -22,6 +22,9 @@ pub(super) struct Entry {
 	pub(super) size: u64,
 	/// Its local header's offset in the file.
 	pub(super) header: u64,
+	/// Its last-modified date and time as the directory records them, in MS-DOS form
+	/// (date in the high 16 bits, time in the low).
+	pub(super) modified: u32,
 }
 
 impl Entry {
@@ -116,6 +119,7 @@ mod tests {
 			compressed: 1,
 			size: 1,
 			header,
+			modified: 0,
 		}
 	}
 

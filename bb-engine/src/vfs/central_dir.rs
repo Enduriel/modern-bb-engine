@@ -101,6 +101,7 @@ pub(super) fn read(file: &mut (impl Read + Seek)) -> io::Result<Index> {
 		}
 		let flags = u16_at(&fixed, 8);
 		let method = u16_at(&fixed, 10);
+		let modified = u32::from(u16_at(&fixed, 14)) << 16 | u32::from(u16_at(&fixed, 12));
 		let crc32 = u32_at(&fixed, 16);
 		let mut compressed = u64::from(u32_at(&fixed, 20));
 		let mut size = u64::from(u32_at(&fixed, 24));
@@ -147,6 +148,7 @@ pub(super) fn read(file: &mut (impl Read + Seek)) -> io::Result<Index> {
 				compressed,
 				size,
 				header: dir.base + header,
+				modified,
 			},
 		);
 	}

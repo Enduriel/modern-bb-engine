@@ -11,6 +11,7 @@
 
 mod central_dir;
 mod cp437;
+mod dos_time;
 mod entry_window;
 mod index;
 mod opened;
@@ -63,9 +64,15 @@ impl DatArchive {
 
 	/// The CRC32 and uncompressed size the central directory records for `name`, or
 	/// `None` if there is no such entry. Reads no entry data.
-	pub fn entry_meta(&mut self, name: &str) -> Option<(u32, u64)> {
+	pub fn entry_meta(&self, name: &str) -> Option<(u32, u64)> {
 		let entry = self.entry(name)?;
 		Some((entry.crc32, entry.size))
+	}
+
+	/// When the entry at `name` was last modified, as Unix seconds: its directory's MS-DOS
+	/// time read as local time, as the original reads it. `None` if there's no such entry.
+	pub fn modified(&self, name: &str) -> Option<i64> {
+		dos_time::to_unix(self.entry(name)?.modified)
 	}
 
 	/// The full bytes of the entry at `name`, or `None` if there is no such entry (or it

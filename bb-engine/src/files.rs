@@ -63,7 +63,7 @@ impl FileSource for GameFiles {
 
 	fn identity(&self, path: &str) -> Option<String> {
 		self.archives.iter().rev().find_map(|archive| {
-			let mut archive = archive.lock().unwrap();
+			let archive = archive.lock().unwrap();
 			let (crc32, size) = archive.entry_meta(path)?;
 			Some(format!("{}|{crc32:08x}|{size}", archive.path().display()))
 		})
