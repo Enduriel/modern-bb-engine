@@ -11,70 +11,66 @@
 //! layout: AZERTY's `A` (the key a US keyboard has `Q` on) is `A`. So the code comes
 //! from what the layout makes of a key where that's a letter (see [`code_for`]).
 //!
-//! A key reports state 1 when pressed and 0 when released (`KeyState` Down/Up); vanilla
-//! acts on 0. Held-down repeats come again as pressed with `getFire()` 1 (`KeyFire`
-//! Repeated). The modifier is the `KeyModifier` mask: Shift 1, Ctrl 2, Alt 4 (the
-//! original's enums, disassembled).
+//! A key reports `KeyState::Down` when pressed and `Up` when released; vanilla acts on
+//! `Up`. Held-down repeats come again as pressed (`squirrel_bb::key_queue`). The
+//! modifier is the [`KeyModifier`] mask.
 //!
 //! The UI page gets the same keys from the engine's key queue, by the Windows
 //! virtual-key code the original's UI gives each engine code
 //! (`bb_ui::host::coherent_key_code`).
 
+use squirrel_bb::enums::{Key as EngineKey, KeyModifier};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey};
 
-/// The engine's codes for Escape and Enter (see [`code`]).
-pub const ESCAPE: i64 = 41;
-pub const ENTER: i64 = 39;
-
-/// The engine's code for `key`, if the scripts can see it.
-pub fn code(key: KeyCode) -> Option<i64> {
+/// The engine's key for `key`, if the scripts can see it.
+pub fn code(key: KeyCode) -> Option<EngineKey> {
 	use KeyCode::*;
 	let letters = [
 		KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR,
 		KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
 	];
 	if let Some(i) = letters.iter().position(|&k| k == key) {
-		return Some(11 + i as i64);
+		return EngineKey::A.offset(i as i64);
 	}
 	let digits = [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0];
 	if let Some(i) = digits.iter().position(|&k| k == key) {
-		return Some(1 + i as i64);
+		return EngineKey::One.offset(i as i64);
 	}
 	let numpad = [
 		Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9,
 	];
 	if let Some(i) = numpad.iter().position(|&k| k == key) {
-		return Some(55 + i as i64);
+		return EngineKey::Numpad0.offset(i as i64);
 	}
 	// SFML 2 names F1 to F15.
 	let functions = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12, F13, F14, F15];
 	if let Some(i) = functions.iter().position(|&k| k == key) {
-		return Some(71 + i as i64);
+		return EngineKey::F1.offset(i as i64);
 	}
 	Some(match key {
-		Backspace => 37,
-		Tab => 38,
-		Enter | NumpadEnter => 39,
-		Space => 40,
-		Escape => 41,
-		Pause => 42,
-		End => 44,
-		Home => 45,
-		PageUp => 46,
-		PageDown => 47,
-		ArrowLeft => 48,
-		ArrowUp => 49,
-		ArrowRight => 50,
-		ArrowDown => 51,
-		Insert => 53,
-		Delete => 54,
-		NumpadMultiply => 66,
-		NumpadAdd => 67,
-		NumpadSubtract => 68,
-		NumpadDivide => 70,
-		ControlLeft | ControlRight => 95,
-		ShiftLeft | ShiftRight => 96,
-		AltLeft | AltRight => 97,
+		Backspace => EngineKey::Backspace,
+		Tab => EngineKey::Tab,
+		Enter | NumpadEnter => EngineKey::Return,
+		Space => EngineKey::Space,
+		Escape => EngineKey::Escape,
+		Pause => EngineKey::Pause,
+		End => EngineKey::End,
+		Home => EngineKey::Home,
+		PageUp => EngineKey::PageUp,
+		PageDown => EngineKey::PageDown,
+		ArrowLeft => EngineKey::ArrowLeft,
+		ArrowUp => EngineKey::ArrowUp,
+		ArrowRight => EngineKey::ArrowRight,
+		ArrowDown => EngineKey::ArrowDown,
+		Insert => EngineKey::Insert,
+		Delete => EngineKey::Delete,
+		NumpadMultiply => EngineKey::Multiply,
+		NumpadAdd => EngineKey::Add,
+		NumpadSubtract => EngineKey::Subtract,
+		NumpadDivide => EngineKey::Divide,
+		ControlLeft | ControlRight => EngineKey::Control,
+		ShiftLeft | ShiftRight => EngineKey::Shift,
+		AltLeft | AltRight => EngineKey::Alt,
 		_ => return None,
 	})
 }
@@ -87,7 +83,7 @@ pub fn code(key: KeyCode) -> Option<i64> {
 /// - A numpad key with NumLock off is the key it stands for (Home, an arrow, Delete),
 ///   or none (the middle 5).
 /// - Any other key (the digits, whatever they type) is the key itself.
-pub fn code_for(physical: KeyCode, logical: &Key) -> Option<i64> {
+pub fn code_for(physical: KeyCode, logical: &Key) -> Option<EngineKey> {
 	code(layout_key(physical, logical)?)
 }
 
@@ -143,26 +139,16 @@ pub fn toggles_fps(key: KeyCode, modifiers: ModifiersState) -> bool {
 	key == KeyCode::KeyF && modifiers == ModifiersState::CONTROL | ModifiersState::SHIFT
 }
 
-/// The `KeyModifier` bit of the engine's key `code`, if it's a modifier key: Shift 96,
-/// Ctrl 95, Alt 97.
-pub fn modifier_bit(code: i64) -> Option<i64> {
-	match code {
-		96 => Some(1),
-		95 => Some(2),
-		97 => Some(4),
-		_ => None,
-	}
-}
-
-/// The modifier mask for `getModifier()`, and on macOS the Command key for the UI page
-/// ([`squirrel_bb::KEY_MODIFIER_COMMAND`], which the scripts don't see). Elsewhere the
-/// Super (Windows) key stays out, as in the original.
-pub fn modifier(state: ModifiersState) -> i64 {
+/// The modifier keys held, for `getModifier()`, and on macOS the Command key for the UI
+/// page ([`KeyModifier::COMMAND`], which the scripts don't see). Elsewhere the Super
+/// (Windows) key stays out, as in the original.
+pub fn modifier(state: ModifiersState) -> KeyModifier {
 	let command = cfg!(target_os = "macos") && state.super_key();
-	i64::from(state.shift_key())
-		| i64::from(state.control_key()) << 1
-		| i64::from(state.alt_key()) << 2
-		| if command { squirrel_bb::KEY_MODIFIER_COMMAND } else { 0 }
+	KeyModifier::NONE
+		.with(KeyModifier::SHIFT, state.shift_key())
+		.with(KeyModifier::CONTROL, state.control_key())
+		.with(KeyModifier::ALT, state.alt_key())
+		.with(KeyModifier::COMMAND, command)
 }
 
 #[cfg(test)]
@@ -171,24 +157,24 @@ mod tests {
 
 	#[test]
 	fn codes_vanilla_tests_for() {
-		assert_eq!(code(KeyCode::Escape), Some(41));
-		assert_eq!(code(KeyCode::KeyC), Some(13));
-		assert_eq!(code(KeyCode::KeyI), Some(19));
-		assert_eq!(code(KeyCode::Space), Some(40));
-		assert_eq!(code(KeyCode::Digit1), Some(1));
-		assert_eq!(code(KeyCode::Digit0), Some(10));
-		assert_eq!(code(KeyCode::F5), Some(75));
-		assert_eq!(code(KeyCode::F9), Some(79));
-		assert_eq!(code(KeyCode::KeyZ), Some(36));
+		assert_eq!(code(KeyCode::Escape), Some(EngineKey::Escape));
+		assert_eq!(code(KeyCode::KeyC), Some(EngineKey::C));
+		assert_eq!(code(KeyCode::KeyI), Some(EngineKey::I));
+		assert_eq!(code(KeyCode::Space), Some(EngineKey::Space));
+		assert_eq!(code(KeyCode::Digit1), Some(EngineKey::One));
+		assert_eq!(code(KeyCode::Digit0), Some(EngineKey::Zero));
+		assert_eq!(code(KeyCode::F5), Some(EngineKey::F5));
+		assert_eq!(code(KeyCode::F9), Some(EngineKey::F9));
+		assert_eq!(code(KeyCode::KeyZ), Some(EngineKey::Z));
 	}
 
 	#[test]
 	fn codes_from_the_originals_table() {
 		// world_state pauses on 42 (with Space and 0).
-		assert_eq!(code(KeyCode::Pause), Some(42));
-		assert_eq!(code(KeyCode::PageUp), Some(46));
-		assert_eq!(code(KeyCode::PageDown), Some(47));
-		assert_eq!(code(KeyCode::F15), Some(85));
+		assert_eq!(code(KeyCode::Pause), Some(EngineKey::Pause));
+		assert_eq!(code(KeyCode::PageUp), Some(EngineKey::PageUp));
+		assert_eq!(code(KeyCode::PageDown), Some(EngineKey::PageDown));
+		assert_eq!(code(KeyCode::F15), Some(EngineKey::F15));
 		assert_eq!(code(KeyCode::F16), None);
 		assert_eq!(code(KeyCode::CapsLock), None);
 		assert_eq!(code(KeyCode::Comma), None);
@@ -200,37 +186,35 @@ mod tests {
 	fn letters_follow_the_layout() {
 		let typed = |s: &str| Key::Character(s.into());
 		// AZERTY: the US `Q` key types `a`, the US `;` key `m`.
-		assert_eq!(code_for(KeyCode::KeyQ, &typed("a")), Some(11));
-		assert_eq!(code_for(KeyCode::Semicolon, &typed("m")), Some(23));
+		assert_eq!(code_for(KeyCode::KeyQ, &typed("a")), Some(EngineKey::A));
+		assert_eq!(code_for(KeyCode::Semicolon, &typed("m")), Some(EngineKey::M));
 		// With Shift.
-		assert_eq!(code_for(KeyCode::KeyW, &typed("Z")), Some(36));
+		assert_eq!(code_for(KeyCode::KeyW, &typed("Z")), Some(EngineKey::Z));
 		// AZERTY's digit row types `&` unshifted: still the digit.
-		assert_eq!(code_for(KeyCode::Digit1, &typed("&")), Some(1));
+		assert_eq!(code_for(KeyCode::Digit1, &typed("&")), Some(EngineKey::One));
 		// A Cyrillic letter: the key as a US keyboard names it.
-		assert_eq!(code_for(KeyCode::KeyA, &typed("ф")), Some(11));
+		assert_eq!(code_for(KeyCode::KeyA, &typed("ф")), Some(EngineKey::A));
 		// AltGr+E on a German layout types `€`.
-		assert_eq!(code_for(KeyCode::KeyE, &typed("€")), Some(15));
-		assert_eq!(code_for(KeyCode::Escape, &Key::Named(NamedKey::Escape)), Some(41));
+		assert_eq!(code_for(KeyCode::KeyE, &typed("€")), Some(EngineKey::E));
+		assert_eq!(code_for(KeyCode::Escape, &Key::Named(NamedKey::Escape)), Some(EngineKey::Escape));
 	}
 
 	#[test]
 	fn numpad_follows_num_lock() {
-		assert_eq!(code_for(KeyCode::Numpad7, &Key::Character("7".into())), Some(62));
-		assert_eq!(code_for(KeyCode::Numpad7, &Key::Named(NamedKey::Home)), Some(45));
-		assert_eq!(code_for(KeyCode::Numpad8, &Key::Named(NamedKey::ArrowUp)), Some(49));
-		assert_eq!(code_for(KeyCode::NumpadDecimal, &Key::Named(NamedKey::Delete)), Some(54));
+		assert_eq!(code_for(KeyCode::Numpad7, &Key::Character("7".into())), Some(EngineKey::Numpad7));
+		assert_eq!(code_for(KeyCode::Numpad7, &Key::Named(NamedKey::Home)), Some(EngineKey::Home));
+		assert_eq!(code_for(KeyCode::Numpad8, &Key::Named(NamedKey::ArrowUp)), Some(EngineKey::ArrowUp));
+		assert_eq!(code_for(KeyCode::NumpadDecimal, &Key::Named(NamedKey::Delete)), Some(EngineKey::Delete));
 		assert_eq!(code_for(KeyCode::Numpad5, &Key::Named(NamedKey::Clear)), None);
 	}
 
 	#[test]
 	fn modifiers_are_a_mask() {
-		assert_eq!(modifier(ModifiersState::empty()), 0);
-		assert_eq!(modifier(ModifiersState::SHIFT), 1);
-		assert_eq!(modifier(ModifiersState::CONTROL), 2);
-		assert_eq!(modifier(ModifiersState::ALT | ModifiersState::SHIFT), 5);
-		let command = if cfg!(target_os = "macos") { 8 } else { 0 };
-		assert_eq!(modifier(ModifiersState::SUPER | ModifiersState::CONTROL), 2 | command);
-		assert_eq!(modifier_bit(95), Some(2));
-		assert_eq!(modifier_bit(13), None);
+		assert_eq!(modifier(ModifiersState::empty()), KeyModifier::NONE);
+		assert_eq!(modifier(ModifiersState::SHIFT), KeyModifier::SHIFT);
+		assert_eq!(modifier(ModifiersState::CONTROL), KeyModifier::CONTROL);
+		assert_eq!(modifier(ModifiersState::ALT | ModifiersState::SHIFT), KeyModifier::ALT | KeyModifier::SHIFT);
+		let command = KeyModifier::NONE.with(KeyModifier::COMMAND, cfg!(target_os = "macos"));
+		assert_eq!(modifier(ModifiersState::SUPER | ModifiersState::CONTROL), KeyModifier::CONTROL | command);
 	}
 }

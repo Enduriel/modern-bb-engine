@@ -91,32 +91,6 @@ const BUILDERS: &[&str] = &[
 	"clear",
 ];
 
-/// The enums the original registers in the const table with its weather class.
-const AMBIENT_LIGHTING_PRESET: &[(&str, i64)] = &[
-	("Default", 0),
-	("Dawn", 1),
-	("Dusk", 2),
-	("Night", 3),
-	("Midday", 4),
-	("Rain", 5),
-	("Storm", 6),
-	("Desert", 7),
-];
-const CLOUD_TYPE: &[(&str, i64)] = &[("Default", 0), ("Fog", 1), ("StaticFog", 2), ("SunHighlights", 3), ("Custom", 4)];
-
-/// Register `AmbientLightingPreset` and `CloudType` in the const table (values from the
-/// original binary's weather binding).
-pub(crate) fn install_consts(vm: &SQVM) {
-	for (name, members) in [("AmbientLightingPreset", AMBIENT_LIGHTING_PRESET), ("CloudType", CLOUD_TYPE)] {
-		let mut e = SqTable::new(vm);
-		for (k, v) in members {
-			e.set(k, *v);
-		}
-		let e = e.to_strong();
-		SqTable::const_table(vm).set(name, e);
-	}
-}
-
 /// A fresh weather object for `scope` (`World` or `Tactical`; its stubs' names).
 pub(crate) fn weather(vm: &mut SQVM, scope: &str) -> SqStrongRef {
 	let creators: Vec<(&str, SqStrongRef)> = [

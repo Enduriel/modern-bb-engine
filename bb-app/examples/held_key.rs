@@ -18,14 +18,14 @@ use bb_app::front::Key;
 use bb_app::game::{Boot, Game, Start, Store};
 use bb_engine::harness::STEAM_DATA_DIR;
 use bb_engine::tactical_player as player;
+use squirrel_bb::enums::Key as EngineKey;
 use bb_render::{Gpu, RenderTarget};
 use squirrel_bb::VideoMode;
 
 const IN_WORLD: &str = "::RootState.get(\"WorldState\") != null && (\"State\" in ::World) && ::World.State != null && ::World.State.getPlayer() != null && !::LoadingScreen.isVisible()";
 
-/// The engine's codes: `W`, Alt.
-const W: i64 = 33;
-const ALT: i64 = 97;
+const W: EngineKey = EngineKey::W;
+const ALT: EngineKey = EngineKey::Alt;
 
 struct Run<'a> {
 	game: Game,
@@ -73,7 +73,7 @@ impl Run<'_> {
 		Ok(())
 	}
 
-	fn key(&mut self, engine: i64, text: Option<&str>, down: bool) -> Result<(), String> {
+	fn key(&mut self, engine: EngineKey, text: Option<&str>, down: bool) -> Result<(), String> {
 		self.game.key(&Key { engine: Some(engine), text: text.map(str::to_string), down, repeat: false })
 	}
 }

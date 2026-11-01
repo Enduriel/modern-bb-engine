@@ -14,6 +14,7 @@
 //! JS→SQ callbacks, as its page calls them.
 
 use squirrel::SqTable;
+use squirrel_bb::enums::Key;
 use squirrel_bb::{KeyInput, MouseInput};
 
 use crate::harness::GameEngine;
@@ -116,11 +117,9 @@ pub fn end_turn(engine: &GameEngine) -> Result<(), String> {
 	engine.run_script("::Tactical.State.m.TacticalScreen.m.TurnSequenceBar.onNextTurnButtonPressed();", "player")
 }
 
-/// The 'C' key: opens the inventory (the character screen), and closes it again.
-pub const KEY_C: i64 = 13;
-
-/// Press and release key `key`.
-pub fn press_key(engine: &GameEngine, key: i64) -> Result<(), String> {
+/// Press and release key `key` (`Key::C` opens the inventory, the character screen, and
+/// closes it again).
+pub fn press_key(engine: &GameEngine, key: Key) -> Result<(), String> {
 	let root = engine.root_state();
 	root.key_input(engine.vm(), KeyInput::pressed(key))?;
 	root.key_input(engine.vm(), KeyInput::released(key))?;

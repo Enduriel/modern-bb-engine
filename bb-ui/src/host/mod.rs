@@ -104,7 +104,7 @@ pub use memory_dump::ChromiumDump;
 pub use memory_dump_trace::ChromiumProcess;
 pub use memory_flight::Released;
 use ipc::Arg;
-pub use live_input::{Modifiers, MouseButton, coherent_key_code, modifiers_of_mask};
+pub use live_input::{Modifiers, MouseButton, coherent_key_code, modifiers_of};
 pub use bridge_server::RequestKind;
 pub use responder::Responder;
 pub use page_frames::PageFrames;

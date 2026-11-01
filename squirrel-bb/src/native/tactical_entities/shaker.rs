@@ -23,6 +23,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Number, Retained, SQVM, SqArray, SqStrongRef, SqTable, StackArgs, This, Variadic};
 
 use super::{TacticalMachine, UnitSpriteData, unit_identity};
+use crate::enums::ShakeType;
 use crate::native::color::color_argb;
 use crate::native::overload::{Overload, overload_key};
 use crate::native::tactical_grid;
@@ -88,7 +89,8 @@ pub(super) enum Layers {
 
 /// The arguments of a shake.
 struct Args {
-	kind: i64,
+	/// `None` for a code that's no `ShakeType`: no shake.
+	kind: Option<ShakeType>,
 	color: u32,
 	highlight: u32,
 	factor: f32,
@@ -118,7 +120,7 @@ pub(super) fn build_class(vm: &mut SQVM) -> squirrel::SqClass<ShakerHandle> {
 			&overload_key("shake", 3),
 			|s: &mut ShakerHandle, vm: &SQVM, entity: Retained, tile: Retained, kind: Number| -> Result<(), String> {
 				let args = Args {
-					kind: kind.0 as i64,
+					kind: ShakeType::from_code(kind.0 as i64),
 					color: 0xffff_ffff,
 					highlight: 0,
 					factor: 0.0,
@@ -142,7 +144,7 @@ pub(super) fn build_class(vm: &mut SQVM) -> squirrel::SqClass<ShakerHandle> {
 				.map(|l| l.iter::<String>().collect())
 				.ok_or("shake: argument 8 is not an array")?;
 			let args = Args {
-				kind: number(2)? as i64,
+				kind: ShakeType::from_code(number(2)? as i64),
 				color: color(3)?,
 				highlight: color(4)?,
 				factor: number(5)?,
@@ -183,24 +185,24 @@ fn shake(m: &Machine, vm: &SQVM, entity: &SqStrongRef, tile: &SqStrongRef, a: Ar
 	let (src, own) = ((src.0 as f32, src.1 as f32), (own.0 as f32, own.1 as f32));
 	let away = (own.0 - src.0, own.1 - src.1);
 	let toward = (src.0 - own.0, src.1 - own.1);
-	// Types 2 to 6 point at or away from the tile, and move up by ampX's amount; the
-	// small hit's (3) shares the hit's tail, which moves it up by 7 (a quirk).
+	// KnockBack to LightAttack point at or away from the tile, and move up by ampX's
+	// amount; LightKnockBack shares KnockBack's tail, which moves it up by 7 (a quirk).
 	let pointed = |v: (f32, f32), amp: (f32, f32), up: f32| match normalize(v) {
 		Some(dir) => (dir, if dir.1 > 0.0 { (amp.0, up) } else { amp }),
 		None => ((0.0, -1.0), amp),
 	};
 	let (dir, amp, out, back) = match a.kind {
-		0 => ((0.0, 0.0), (0.0, 0.0), 0.08, 0.4),
-		1 => ((0.0, 1.0), (0.0, 7.0), 0.4, 0.4),
-		2 => {
+		Some(ShakeType::None) => ((0.0, 0.0), (0.0, 0.0), 0.08, 0.4),
+		Some(ShakeType::Jump) => ((0.0, 1.0), (0.0, 7.0), 0.4, 0.4),
+		Some(ShakeType::KnockBack) => {
 			let (dir, amp) = pointed(away, (7.0, 6.0), 7.0);
 			(dir, amp, 0.08, 0.4 * a.recover)
 		}
-		3 => {
+		Some(ShakeType::LightKnockBack) => {
 			let (dir, amp) = pointed(away, (3.0, 2.0), 7.0);
 			(dir, amp, 0.05, 0.25)
 		}
-		4 => {
+		Some(ShakeType::Dodge) => {
 			// Away, turned 45° to a random side (`0x4b6f20`).
 			let crt = machine.effects.as_ref().map(|e| e.borrow().crt()).ok_or("shake: no random stream")?;
 			let (dx, dy) = away;
@@ -208,16 +210,16 @@ fn shake(m: &Machine, vm: &SQVM, entity: &SqStrongRef, tile: &SqStrongRef, a: Ar
 			let (dir, amp) = pointed(v, (7.0, 6.0), 7.0);
 			(dir, amp, 0.2, 0.35)
 		}
-		5 => {
+		Some(ShakeType::Attack) => {
 			let (dir, amp) = pointed(toward, (3.5, 3.0), 3.5);
 			(dir, amp, 0.08, 0.4)
 		}
-		6 => {
+		Some(ShakeType::LightAttack) => {
 			let (dir, amp) = pointed(toward, (1.75, 1.5), 1.75);
 			(dir, amp, 0.08, 0.4)
 		}
-		7 => ((0.0, 1.0), (0.0, 14.0), 0.1, 0.2),
-		_ => ((0.0, 0.0), (0.0, 0.0), 0.0, 0.0),
+		Some(ShakeType::KnockUp) => ((0.0, 1.0), (0.0, 14.0), 0.1, 0.2),
+		None => ((0.0, 0.0), (0.0, 0.0), 0.0, 0.0),
 	};
 	let rec = &machine.units[unit];
 	let mut s = Shake {

@@ -31,6 +31,7 @@ use bb_render::{Gpu, RenderTarget, save_png};
 use bb_ui::json::Json;
 use squirrel::SqTable;
 use squirrel_bb::VideoMode;
+use squirrel_bb::enums::{Key as EngineKey, Mouse};
 
 /// The campaign's map seed (the UI goldens').
 const SEED: &str = "bbuitest";
@@ -508,7 +509,7 @@ fn a_timer_fires_on_time(
 /// keyboard forgets the keys held, releasing none, as the original does.
 fn a_held_key_lets_the_page_rest(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
 	let seen = |game: &Game| game.front().session().eval("window.__bbKeysSeen").ok().and_then(|n| n.as_i64()).unwrap_or(-1);
-	for (name, code, text) in [("W", 33, Some("w")), ("Alt", 97, None)] {
+	for (name, code, text) in [("W", EngineKey::W, Some("w")), ("Alt", EngineKey::Alt, None)] {
 		let before = seen(game);
 		let rested = game.front().page_rested();
 		game.key(&Key { engine: Some(code), text: text.map(str::to_string), down: true, repeat: false })?;
@@ -531,7 +532,7 @@ fn a_held_key_lets_the_page_rest(game: &mut Game, gpu: &Gpu, target: &RenderTarg
 	}
 	// Alt+Tab: Alt down, then the window loses the keyboard; Alt's release comes
 	// elsewhere.
-	game.key(&Key { engine: Some(97), text: None, down: true, repeat: false })?;
+	game.key(&Key { engine: Some(EngineKey::Alt), text: None, down: true, repeat: false })?;
 	frame_in_real_time(game, gpu, target)?;
 	game.keyboard_focus(false);
 	let before = seen(game);
@@ -561,7 +562,7 @@ fn play(game: &mut Game, gpu: &Gpu, target: &RenderTarget, seconds: f64) -> Resu
 fn escape(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Result<(), String> {
 	for down in [true, false] {
 		let key = Key {
-			engine: Some(41),
+			engine: Some(EngineKey::Escape),
 			text: None,
 			down,
 			repeat: false,
@@ -579,8 +580,8 @@ fn quits_from_the_in_game_menu(game: &mut Game, gpu: &Gpu, target: &RenderTarget
 	escape(game, gpu, target)?;
 	let (qx, qy) = game.front().session().locate_when_ready("Quit", Duration::from_secs(30))?;
 	game.mouse_moved(i64::from(qx), i64::from(qy))?;
-	game.mouse_button(1, true)?;
-	game.mouse_button(1, false)?;
+	game.mouse_button(Mouse::LeftButton, true)?;
+	game.mouse_button(Mouse::LeftButton, false)?;
 	let deadline = std::time::Instant::now() + Duration::from_secs(120);
 	loop {
 		play(game, gpu, target, 0.2)?;
@@ -656,7 +657,7 @@ fn keys_reach_the_states_while_typing(game: &mut Game, gpu: &Gpu, target: &Rende
 	for (round, shown) in [(1, true), (2, false)] {
 		for down in [true, false] {
 			let key = Key {
-				engine: Some(13),
+				engine: Some(EngineKey::C),
 				text: down.then(|| "c".to_string()),
 				down,
 				repeat: false,
@@ -783,8 +784,8 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 		return Err("UI.isMouseOver() is false over the event".into());
 	}
 	game.front().engine().run_script(MARK, "mark")?;
-	game.mouse_button(1, true)?;
-	game.mouse_button(1, false)?;
+	game.mouse_button(Mouse::LeftButton, true)?;
+	game.mouse_button(Mouse::LeftButton, false)?;
 	let session = game.front().session();
 	let deadline = std::time::Instant::now() + Duration::from_secs(30);
 	while session.shows_text("Huzzah!")? {
@@ -823,10 +824,10 @@ fn check(gpu: &Gpu) -> Result<(), String> {
 	}
 	cursor_is_drawn_at_the_mouse(&mut game, gpu, &target, (mx, my))?;
 	game.front().engine().run_script(MARK, "mark")?;
-	game.mouse_button(1, true)?;
+	game.mouse_button(Mouse::LeftButton, true)?;
 	// Our world map can't move the party yet, so the click may stop with an error
 	// after it has reached the state.
-	let release = game.mouse_button(1, false);
+	let release = game.mouse_button(Mouse::LeftButton, false);
 	if !clicked(&game)? {
 		return Err(format!("the map's click didn't reach the states ({release:?})"));
 	}
@@ -850,9 +851,9 @@ fn a_busy_page_holds_a_click_not_the_window(game: &mut Game) -> Result<(), Strin
 	// Time for the timer to start.
 	std::thread::sleep(Duration::from_millis(100));
 	let start = Instant::now();
-	game.mouse_button(1, true)?;
+	game.mouse_button(Mouse::LeftButton, true)?;
 	// The map's click may stop with an error once it reaches the state (see `check`).
-	let _ = game.mouse_button(1, false);
+	let _ = game.mouse_button(Mouse::LeftButton, false);
 	if start.elapsed() > Duration::from_millis(500) || clicked(game)? {
 		return Err(format!("the click waited {:?} on the busy page, or reached the states while it was", start.elapsed()));
 	}

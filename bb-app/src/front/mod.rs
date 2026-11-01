@@ -50,8 +50,8 @@ pub const GPU_FEATURES: wgpu::Features = wgpu::Features::empty();
 /// A key as the window reports it.
 #[derive(Clone, Debug, Default)]
 pub struct Key {
-	/// The engine's code (what the states see), if the scripts can see the key.
-	pub engine: Option<i64>,
+	/// The engine's key (what the states see), if the scripts can see the key.
+	pub engine: Option<squirrel_bb::enums::Key>,
 	/// What the press typed, if anything.
 	pub text: Option<String>,
 	pub down: bool,

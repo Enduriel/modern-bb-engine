@@ -1,83 +1,74 @@
 //! The input events the engine hands the states: `onMouseInput(mouse)` and
 //! `onKeyInput(key)` receive small native objects the scripts only read.
 //!
-//! The codes are the original's, from the enums it binds (disassembled): `Mouse`
-//! (`getID()`): 1 `LeftButton`, 2 `RightButton`, 3 `MiddleButton`, 4/5 `ExtraButton1`/
-//! `2`, 6 `Pointer` (a move), 7 `Wheel`. `MouseState` (`getState()`): 0 `Down`, 1 `Up`
-//! (a click acts on the release), 2 `Moved` (every pointer move, button held or not),
-//! 3 `WheelUp`, 4 `WheelDown`; and `getModifier()`, the modifier keys held.
-//! Keys: `getKey()` is the engine's key code (e.g. 41 is Escape); `KeyState`
-//! (`getState()`): 0 `Up`, 1 `Down`, so vanilla's handlers, which test for 0, act when a
-//! key is released and scroll while one is held (a held key comes every frame, see
-//! `key_queue`); `KeyModifier` (`getModifier()`), a mask: 1 `Shift`, 2 `Control`, 4
-//! `Alt`; `getFire()`, which the original fills with the same as the state.
-//!
-//! The host may add [`KEY_MODIFIER_COMMAND`] to an event's mask for the UI page; the
-//! scripts never see it.
+//! The codes are the original's enums ([`crate::enums`]): a mouse event's `getID()` is
+//! a [`Mouse`] and its `getState()` a [`MouseState`]; a key event's `getKey()` is a
+//! [`Key`], its `getState()` a [`KeyState`] and its `getFire()` a [`KeyFire`]. Both
+//! carry the [`KeyModifier`] mask held, which the host may give the Command key for the
+//! UI page; the scripts never see it.
 
 use squirrel::{ClassBuilder, SQVM, SqClass, SqStrongRef};
 
-/// The Mac's Command key in a `KeyModifier` mask: `bb` sets it on macOS so the UI page
-/// gets it (`metaKey`, and Cmd+C and the other editing keys). The original had no such
-/// key, so `getModifier()` leaves it out and the scripts see Shift, Ctrl and Alt only.
-pub const KEY_MODIFIER_COMMAND: i64 = 8;
-
-/// The mask the scripts see: Shift, Ctrl and Alt.
-fn script_modifier(modifier: i64) -> i64 {
-	modifier & !KEY_MODIFIER_COMMAND
-}
+use crate::enums::{Key, KeyFire, KeyModifier, KeyState, Mouse, MouseState};
 
 /// A mouse event: what button or motion, its state, and the cursor's screen position.
 #[derive(Clone, Copy, Debug)]
 pub struct MouseInput {
-	pub id: i64,
-	pub state: i64,
+	pub id: Mouse,
+	pub state: MouseState,
 	pub x: i64,
 	pub y: i64,
-	/// The modifier keys held (`KeyModifier` mask).
-	pub modifier: i64,
+	/// The modifier keys held.
+	pub modifier: KeyModifier,
 }
 
 impl MouseInput {
 	/// The cursor moved to `(x, y)`.
 	pub fn moved(x: i64, y: i64) -> Self {
-		MouseInput { id: 6, state: 2, x, y, modifier: 0 }
+		MouseInput { id: Mouse::Pointer, state: MouseState::Moved, x, y, modifier: KeyModifier::NONE }
 	}
 
 	/// The left button went down at `(x, y)`.
 	pub fn left_down(x: i64, y: i64) -> Self {
-		MouseInput { id: 1, state: 0, x, y, modifier: 0 }
+		MouseInput { id: Mouse::LeftButton, state: MouseState::Down, x, y, modifier: KeyModifier::NONE }
 	}
 
 	/// The left button came up at `(x, y)` (what acts as a click).
 	pub fn left_up(x: i64, y: i64) -> Self {
-		MouseInput { id: 1, state: 1, x, y, modifier: 0 }
+		MouseInput { id: Mouse::LeftButton, state: MouseState::Up, x, y, modifier: KeyModifier::NONE }
 	}
 
 	/// The right button came up at `(x, y)` (cancels the current action).
 	pub fn right_up(x: i64, y: i64) -> Self {
-		MouseInput { id: 2, state: 1, x, y, modifier: 0 }
+		MouseInput { id: Mouse::RightButton, state: MouseState::Up, x, y, modifier: KeyModifier::NONE }
 	}
 }
 
 /// A key event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyInput {
-	pub key: i64,
-	pub state: i64,
-	pub modifier: i64,
-	pub fire: i64,
+	pub key: Key,
+	pub state: KeyState,
+	pub modifier: KeyModifier,
+	pub fire: KeyFire,
 }
 
 impl KeyInput {
-	/// Key `key` went down (`KeyState.Down`), no modifier held.
-	pub fn pressed(key: i64) -> Self {
-		KeyInput { key, state: 1, modifier: 0, fire: 1 }
+	/// Key `key` went down, no modifier held.
+	pub fn pressed(key: Key) -> Self {
+		KeyInput { key, state: KeyState::Down, modifier: KeyModifier::NONE, fire: KeyFire::Repeated }
 	}
 
-	/// Key `key` came up (`KeyState.Up`), which is when vanilla's key handlers act.
-	pub fn released(key: i64) -> Self {
-		KeyInput { key, state: 0, modifier: 0, fire: 0 }
+	/// Key `key` came up, which is when vanilla's key handlers act.
+	pub fn released(key: Key) -> Self {
+		KeyInput { key, state: KeyState::Up, modifier: KeyModifier::NONE, fire: KeyFire::Once }
+	}
+
+	/// Key `key` went down (`down`) or up, with `modifier` held. `getFire()` is the
+	/// state, as the original fills it.
+	pub fn new(key: Key, down: bool, modifier: KeyModifier) -> Self {
+		let (state, fire) = if down { (KeyState::Down, KeyFire::Repeated) } else { (KeyState::Up, KeyFire::Once) };
+		KeyInput { key, state, modifier, fire }
 	}
 }
 
@@ -90,17 +81,17 @@ pub(crate) struct InputClasses {
 impl InputClasses {
 	pub(crate) fn build(vm: &mut SQVM) -> Self {
 		let mouse = ClassBuilder::<MouseInput>::new("MouseEvent")
-			.method("getID", |e: &mut MouseInput| e.id)
-			.method("getState", |e: &mut MouseInput| e.state)
+			.method("getID", |e: &mut MouseInput| e.id.code())
+			.method("getState", |e: &mut MouseInput| e.state.code())
 			.method("getX", |e: &mut MouseInput| e.x)
 			.method("getY", |e: &mut MouseInput| e.y)
-			.method("getModifier", |e: &mut MouseInput| script_modifier(e.modifier))
+			.method("getModifier", |e: &mut MouseInput| e.modifier.for_scripts())
 			.build(vm);
 		let key = ClassBuilder::<KeyInput>::new("KeyEvent")
-			.method("getKey", |e: &mut KeyInput| e.key)
-			.method("getState", |e: &mut KeyInput| e.state)
-			.method("getModifier", |e: &mut KeyInput| script_modifier(e.modifier))
-			.method("getFire", |e: &mut KeyInput| e.fire)
+			.method("getKey", |e: &mut KeyInput| e.key.code())
+			.method("getState", |e: &mut KeyInput| e.state.code())
+			.method("getModifier", |e: &mut KeyInput| e.modifier.for_scripts())
+			.method("getFire", |e: &mut KeyInput| e.fire.code())
 			.build(vm);
 		InputClasses { mouse, key }
 	}
@@ -111,17 +102,5 @@ impl InputClasses {
 
 	pub(crate) fn key(&self, vm: &SQVM, input: KeyInput) -> SqStrongRef {
 		self.key.instantiate(vm, input)
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn the_scripts_never_see_command() {
-		assert_eq!(script_modifier(KEY_MODIFIER_COMMAND), 0);
-		assert_eq!(script_modifier(KEY_MODIFIER_COMMAND | 2), 2);
-		assert_eq!(script_modifier(7), 7);
 	}
 }

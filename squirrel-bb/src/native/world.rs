@@ -9,6 +9,7 @@ use std::rc::Rc;
 use squirrel::{Number, Retained, SQVM, SqStrongRef, SqTable};
 
 use super::world_clouds::{CloudCover, CloudSettings, Clouds, MapSpan};
+use crate::enums::CloudType;
 use super::world_layout::tile_pos;
 use super::world_waves::Waves;
 
@@ -31,7 +32,7 @@ pub(super) fn cloud_settings(vm: &SQVM, table: &SqStrongRef) -> CloudSettings {
 		max_alpha: f("MaxAlpha", d.max_alpha),
 		min_scale: f("MinScale", d.min_scale),
 		max_scale: f("MaxScale", d.max_scale),
-		kind: i("Type", d.kind),
+		kind: table.get_member::<Number>(vm, "Type").map_or(d.kind, |n| CloudType::from_code(n.0 as i64)),
 		color,
 	}
 }

@@ -28,6 +28,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::EngineRng;
+use crate::enums::CloudType;
 
 /// The default type's brushes (`0x4840cc`…).
 const CLOUD_BRUSHES: [&str; 6] = [
@@ -41,9 +42,6 @@ const CLOUD_BRUSHES: [&str; 6] = [
 
 /// The other types' brush.
 const FOG_BRUSH: &str = "foggy_weather_01";
-
-/// `CloudType.StaticFog`: placed on the map, without the upwind margin.
-const STATIC_FOG: i64 = 2;
 
 /// How far past the map clouds reach and respawn.
 const MARGIN: f32 = 2000.0;
@@ -60,8 +58,8 @@ pub struct CloudSettings {
 	pub max_alpha: f32,
 	pub min_scale: f32,
 	pub max_scale: f32,
-	/// `CloudType`.
-	pub kind: i64,
+	/// `None` for a code that's no `CloudType` (built as fog, with the margin).
+	pub kind: Option<CloudType>,
 	/// ARGB.
 	pub color: u32,
 }
@@ -77,7 +75,7 @@ impl Default for CloudSettings {
 			max_alpha: 1.0,
 			min_scale: 1.0,
 			max_scale: 1.0,
-			kind: 0,
+			kind: Some(CloudType::Default),
 			color: 0xffff_ffff,
 		}
 	}
@@ -166,7 +164,8 @@ impl CloudCover {
 		self.span = Some(span);
 		for _ in 0..count.max(0) {
 			let brush = self.brush();
-			let pos = if self.settings.kind == STATIC_FOG {
+			// A static fog is placed on the map, without the upwind margin.
+			let pos = if self.settings.kind == Some(CloudType::StaticFog) {
 				let y = self.rng.between(span.min.1, span.max.1);
 				(self.rng.between(span.min.0, span.max.0), y)
 			} else {
@@ -231,7 +230,7 @@ impl CloudCover {
 	}
 
 	fn brush(&self) -> &'static str {
-		if self.settings.kind == 0 {
+		if self.settings.kind == Some(CloudType::Default) {
 			CLOUD_BRUSHES[self.rng.range(0, CLOUD_BRUSHES.len() as i64 - 1) as usize]
 		} else {
 			FOG_BRUSH
@@ -349,7 +348,7 @@ mod tests {
 			CloudSettings {
 				min_clouds: 20,
 				max_clouds: 20,
-				kind: STATIC_FOG,
+				kind: Some(CloudType::StaticFog),
 				..CloudSettings::default()
 			},
 			SPAN,

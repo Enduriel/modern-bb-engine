@@ -3,6 +3,7 @@
 use bb_engine::harness::GameEngine;
 use bb_render::{Gpu, RenderTarget, UiLayer, UiPage};
 use bb_ui::host::{Echo, HostConfig, MouseButton, PageFrames, UiSession};
+use squirrel_bb::enums::{KeyModifier, Mouse};
 
 use crate::game::{Boot, Start};
 
@@ -253,14 +254,14 @@ impl Front {
 
 	/// Whether the page takes button `id`'s press (over the UI) or release (after its
 	/// press went to the page).
-	pub fn button(&mut self, x: i64, y: i64, id: i64, down: bool) -> bool {
+	pub fn button(&mut self, x: i64, y: i64, id: Mouse, down: bool) -> bool {
 		let button = match id {
-			1 => MouseButton::Left,
-			2 => MouseButton::Right,
-			3 => MouseButton::Middle,
+			Mouse::LeftButton => MouseButton::Left,
+			Mouse::RightButton => MouseButton::Right,
+			Mouse::MiddleButton => MouseButton::Middle,
 			_ => return false,
 		};
-		let bit = 1 << id;
+		let bit = 1 << id.code();
 		let to_page = if down {
 			self.session.is_over_ui(x, y)
 		} else {
@@ -289,10 +290,9 @@ impl Front {
 		true
 	}
 
-	/// The modifier keys held now (the `KeyModifier` mask): the page's mouse events
-	/// carry them.
-	pub fn set_modifier(&mut self, modifier: i64) {
-		self.session.host().set_modifiers(bb_ui::host::modifiers_of_mask(modifier));
+	/// The modifier keys held now: the page's mouse events carry them.
+	pub fn set_modifier(&mut self, modifier: KeyModifier) {
+		self.session.host().set_modifiers(bb_ui::host::modifiers_of(modifier));
 	}
 
 	/// Answer the procedural images (portraits) the page asked for with `compose`, given

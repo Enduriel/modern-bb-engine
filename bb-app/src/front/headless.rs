@@ -123,7 +123,7 @@ impl Front {
 	}
 
 	/// Whether the UI takes button `id`'s press or release: never.
-	pub fn button(&mut self, _x: i64, _y: i64, _id: i64, _down: bool) -> bool {
+	pub fn button(&mut self, _x: i64, _y: i64, _id: squirrel_bb::enums::Mouse, _down: bool) -> bool {
 		false
 	}
 
@@ -133,7 +133,7 @@ impl Front {
 	}
 
 	/// The modifier keys held now: there is no page to carry them.
-	pub fn set_modifier(&mut self, _modifier: i64) {}
+	pub fn set_modifier(&mut self, _modifier: squirrel_bb::enums::KeyModifier) {}
 
 	/// Nothing is painted headless.
 	pub fn set_frame_scale(&mut self, _scale: f64) {}

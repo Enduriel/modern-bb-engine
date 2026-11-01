@@ -252,7 +252,7 @@ fn an_added_state_waits_hidden_until_it_shows() {
 	assert_eq!(take(&vm), ["RootState:onShow"], "the boot");
 	let input = |vm: &SQVM| {
 		root_state.mouse_input(vm, MouseInput::moved(10, 20)).expect("mouse");
-		root_state.key_input(vm, KeyInput::pressed(41)).expect("key");
+		root_state.key_input(vm, KeyInput::pressed(squirrel_bb::enums::Key::Escape)).expect("key");
 	};
 
 	vm.run_script(

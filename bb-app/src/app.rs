@@ -31,6 +31,7 @@ use bb_app::wheel::{self, Notches};
 use bb_app::pacing::Pacer;
 use bb_app::{keys, platform, screen_scale};
 use squirrel_bb::VideoMode;
+use squirrel_bb::enums::{KeyModifier, Mouse};
 use squirrel_bb::html_log::{self, Class};
 
 use crate::window_mode::{self, Monitor};
@@ -212,7 +213,7 @@ struct Running {
 	modifiers: ModifiersState,
 	/// The engine's code each key held down was pressed as: its release comes as the
 	/// same, whatever the layout or NumLock make of it by then.
-	keys_down: HashMap<KeyCode, Option<i64>>,
+	keys_down: HashMap<KeyCode, Option<squirrel_bb::enums::Key>>,
 	/// Steam's API, whose callbacks run once a frame.
 	steam: Option<Rc<SteamStats>>,
 	/// With `BB_FRAME_TIMES=PATH`, each frame's time by span goes to that file (see
@@ -984,11 +985,11 @@ impl Running {
 			}
 			WindowEvent::MouseInput { state, button, .. } => {
 				let id = match button {
-					MouseButton::Left => 1,
-					MouseButton::Right => 2,
-					MouseButton::Middle => 3,
-					MouseButton::Back => 4,
-					MouseButton::Forward => 5,
+					MouseButton::Left => Mouse::LeftButton,
+					MouseButton::Right => Mouse::RightButton,
+					MouseButton::Middle => Mouse::MiddleButton,
+					MouseButton::Back => Mouse::ExtraButton1,
+					MouseButton::Forward => Mouse::ExtraButton2,
 					MouseButton::Other(_) => return Ok(()),
 				};
 				self.game.mouse_button(id, *state == ElementState::Pressed)
@@ -1053,9 +1054,8 @@ impl Running {
 				// A modifier key's own event carries the mask as it is after it, as the
 				// original reads the keys held as it queues one (`0x5b6790`): Ctrl's press
 				// has Ctrl, its release not (probed). winit may report the change after it.
-				if let Some(bit) = engine.and_then(keys::modifier_bit) {
-					let mask = keys::modifier(self.modifiers);
-					self.game.set_modifier(if down { mask | bit } else { mask & !bit });
+				if let Some(held) = engine.and_then(KeyModifier::of_key) {
+					self.game.set_modifier(keys::modifier(self.modifiers).with(held, down));
 				}
 				// The FPS display's key; the game gets it too, as any other (nothing in
 				// vanilla or the mods surveyed binds it).

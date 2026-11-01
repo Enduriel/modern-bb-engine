@@ -3,8 +3,8 @@
 //! states again every frame until its release takes it out, so the scripts' held-key
 //! handlers (the world map's and the battle's WASD scrolling: `1500 · Time.getDelta()`
 //! a call) run once a frame, from the first frame, not at the system's key-repeat
-//! rate. The system's repeats of a held key are dropped. Backspace and Tab (codes 37
-//! and 38) are dispatched once, held or not.
+//! rate. The system's repeats of a held key are dropped. Backspace and Tab are
+//! dispatched once, held or not.
 //!
 //! A key event's `getState()` and `getFire()` are both whether the key is down (the
 //! original fills both fields with it).
@@ -29,18 +29,19 @@
 
 use std::cell::RefCell;
 
+use crate::enums::{Key, KeyFire, KeyModifier, KeyState};
 use crate::input_events::KeyInput;
 
-/// Keys dispatched once even while held: Backspace, Tab.
-const ONCE: [i64; 2] = [37, 38];
+/// Keys dispatched once even while held.
+const ONCE: [Key; 2] = [Key::Backspace, Key::Tab];
 
 /// One of the queue's events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueuedInput {
 	/// A key's press (again each frame while held) or release.
 	Key(KeyInput),
-	/// What a key typed, with the `KeyModifier` mask held (for the UI only).
-	Text(char, i64),
+	/// What a key typed, with the modifier keys held (for the UI only).
+	Text(char, KeyModifier),
 }
 
 #[derive(Default)]
@@ -60,14 +61,14 @@ impl KeyQueue {
 	}
 
 	/// A key went down (`down`) or up; the system's repeats can come in too.
-	pub fn push(&self, key: i64, down: bool, modifier: i64) {
+	pub fn push(&self, key: Key, down: bool, modifier: KeyModifier) {
 		if self.unfocused.get() {
 			return;
 		}
 		let mut queue = self.queue.borrow_mut();
 		let held = queue
 			.iter()
-			.position(|e| matches!(e, QueuedInput::Key(e) if e.key == key && e.state == 1));
+			.position(|e| matches!(e, QueuedInput::Key(e) if e.key == key && e.state == KeyState::Down));
 		match (held, down) {
 			// Already held: a repeat.
 			(Some(_), true) => return,
@@ -77,12 +78,11 @@ impl KeyQueue {
 			}
 			(None, _) => {}
 		}
-		let state = i64::from(down);
-		queue.push(QueuedInput::Key(KeyInput { key, state, modifier, fire: state }));
+		queue.push(QueuedInput::Key(KeyInput::new(key, down, modifier)));
 	}
 
 	/// A key typed `c` (each of the system's repeats again).
-	pub fn push_text(&self, c: char, modifier: i64) {
+	pub fn push_text(&self, c: char, modifier: KeyModifier) {
 		if !self.unfocused.get() {
 			self.queue.borrow_mut().push(QueuedInput::Text(c, modifier));
 		}
@@ -92,7 +92,7 @@ impl KeyQueue {
 	pub fn take_frame(&self) -> Vec<QueuedInput> {
 		let mut queue = self.queue.borrow_mut();
 		let frame = queue.clone();
-		queue.retain(|e| matches!(e, QueuedInput::Key(e) if e.state == 1 && e.fire == 1 && !ONCE.contains(&e.key)));
+		queue.retain(|e| matches!(e, QueuedInput::Key(e) if e.state == KeyState::Down && e.fire == KeyFire::Repeated && !ONCE.contains(&e.key)));
 		frame
 	}
 }
@@ -105,7 +105,7 @@ mod tests {
 		events
 			.iter()
 			.map(|e| match e {
-				QueuedInput::Key(e) => (e.key, e.state),
+				QueuedInput::Key(e) => (e.key.code(), e.state.code()),
 				QueuedInput::Text(c, _) => (-i64::from(u32::from(*c)), 0),
 			})
 			.collect()
@@ -114,8 +114,8 @@ mod tests {
 	#[test]
 	fn what_a_key_types_comes_once_after_it() {
 		let q = KeyQueue::default();
-		q.push(13, true, 0);
-		q.push_text('c', 0);
+		q.push(Key::C, true, KeyModifier::NONE);
+		q.push_text('c', KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(13, 1), (-99, 0)]);
 		assert_eq!(keys(&q.take_frame()), [(13, 1)]);
 	}
@@ -123,12 +123,12 @@ mod tests {
 	#[test]
 	fn a_held_key_comes_every_frame_until_released() {
 		let q = KeyQueue::default();
-		q.push(33, true, 0);
+		q.push(Key::W, true, KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(33, 1)]);
 		assert_eq!(keys(&q.take_frame()), [(33, 1)], "again the next frame");
-		q.push(33, true, 0);
+		q.push(Key::W, true, KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(33, 1)], "a system repeat adds nothing");
-		q.push(33, false, 0);
+		q.push(Key::W, false, KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(33, 0)], "the release, once");
 		assert!(q.take_frame().is_empty());
 	}
@@ -138,19 +138,19 @@ mod tests {
 	#[test]
 	fn losing_the_keyboard_forgets_the_held_keys_without_a_release() {
 		let q = KeyQueue::default();
-		q.push(97, true, 4);
-		q.push(33, true, 0);
+		q.push(Key::Alt, true, KeyModifier::ALT);
+		q.push(Key::W, true, KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(97, 1), (33, 1)]);
 		q.set_focused(false);
 		assert!(q.take_frame().is_empty(), "no release, and no more presses");
-		q.push(97, false, 0);
-		q.push_text('w', 0);
+		q.push(Key::Alt, false, KeyModifier::NONE);
+		q.push_text('w', KeyModifier::NONE);
 		assert!(q.take_frame().is_empty(), "input while the window lacks the keyboard is dropped");
 		q.set_focused(false);
 		q.set_focused(true);
 		assert!(q.take_frame().is_empty());
 		// W still down: the system's next repeat is a new press.
-		q.push(33, true, 0);
+		q.push(Key::W, true, KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(33, 1)]);
 		assert_eq!(keys(&q.take_frame()), [(33, 1)]);
 		// Getting the keyboard back clears it too.
@@ -161,8 +161,8 @@ mod tests {
 	#[test]
 	fn backspace_and_tab_come_once() {
 		let q = KeyQueue::default();
-		q.push(37, true, 0);
-		q.push(14, true, 0);
+		q.push(Key::Backspace, true, KeyModifier::NONE);
+		q.push(Key::D, true, KeyModifier::NONE);
 		assert_eq!(keys(&q.take_frame()), [(37, 1), (14, 1)]);
 		assert_eq!(keys(&q.take_frame()), [(14, 1)]);
 	}

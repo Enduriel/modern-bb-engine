@@ -34,13 +34,13 @@ use bb_render::Gpu;
 use bb_ui::json::Json;
 use squirrel::SqTable;
 use squirrel_bb::VideoMode;
+use squirrel_bb::enums::{Key, Mouse};
 
 const NAME: &str = "the_update_notice_shows_on_the_main_menu";
-/// The engine's key codes for Escape and Enter, and a key the main menu does nothing
-/// with (`A`).
-const ESCAPE: i64 = bb_app::keys::ESCAPE;
-const ENTER: i64 = bb_app::keys::ENTER;
-const OTHER_KEY: i64 = 11;
+/// Escape and Enter, and a key the main menu does nothing with.
+const ESCAPE: Key = Key::Escape;
+const ENTER: Key = Key::Return;
+const OTHER_KEY: Key = Key::A;
 const RELEASES: &str = "https://github.com/Enduriel/modern-bb-engine/releases/tag/";
 
 fn ensure(condition: bool, what: impl std::fmt::Display) -> Result<(), String> {
@@ -166,8 +166,8 @@ fn click(game: &mut Game, choice: &str) -> Result<(), String> {
 	let (x, y) = button_at(game, choice)?;
 	game.mouse_moved(x, y)?;
 	frame(game)?;
-	game.mouse_button(1, true)?;
-	game.mouse_button(1, false)?;
+	game.mouse_button(Mouse::LeftButton, true)?;
+	game.mouse_button(Mouse::LeftButton, false)?;
 	frames_until(game, Duration::from_secs(5), &format!("{choice} left the notice up"), |g| !g.front().update_notice_shown())?;
 	for _ in 0..10 {
 		frame(game)?;
@@ -196,9 +196,9 @@ fn shows(game: &mut Game, found: &str) -> Result<(), String> {
 }
 
 /// The key with the engine's `code` pressed and released, and a few frames.
-fn press(game: &mut Game, code: i64) -> Result<(), String> {
+fn press(game: &mut Game, key: Key) -> Result<(), String> {
 	for down in [true, false] {
-		game.key(&bb_app::front::Key { engine: Some(code), text: None, down, repeat: false })?;
+		game.key(&bb_app::front::Key { engine: Some(key), text: None, down, repeat: false })?;
 		for _ in 0..5 {
 			frame(game)?;
 		}

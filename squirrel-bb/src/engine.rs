@@ -566,7 +566,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 	/// A key went down or up (the system's repeats may come in too): the states get it
 	/// from the next frame, and a held key every frame until it's released, as the
 	/// original's input manager does (see [`crate::key_queue`]).
-	pub fn queue_key(&self, key: i64, down: bool, modifier: i64) {
+	pub fn queue_key(&self, key: crate::enums::Key, down: bool, modifier: crate::enums::KeyModifier) {
 		self.keys.push(key, down, modifier);
 	}
 
@@ -587,11 +587,11 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		self.mouse.borrow_mut().push(input);
 	}
 
-	/// A key typed `c` with the `modifier` mask held (each of the system's repeats
+	/// A key typed `c` with `modifier` held (each of the system's repeats
 	/// again): the UI gets it from the next frame, after the key (see [`queue_key`]).
 	///
 	/// [`queue_key`]: Self::queue_key
-	pub fn queue_text(&self, c: char, modifier: i64) {
+	pub fn queue_text(&self, c: char, modifier: crate::enums::KeyModifier) {
 		self.keys.push_text(c, modifier);
 	}
 

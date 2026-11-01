@@ -1730,15 +1730,16 @@ fn keys_come_to_the_page_from_the_frames(session: &UiSession) -> Result<(), Stri
 		}, true);
 		true",
 	)?;
-	// K (21), held for 15 frames.
-	engine.queue_key(21, true, 0);
-	engine.queue_text('k', 0);
+	use squirrel_bb::enums::{Key, KeyModifier};
+	// K, held for 15 frames.
+	engine.queue_key(Key::K, true, KeyModifier::NONE);
+	engine.queue_text('k', KeyModifier::NONE);
 	session.run_frames(0.25)?;
-	engine.queue_key(21, false, 0);
-	// F5 (75), a frame.
-	engine.queue_key(75, true, 0);
+	engine.queue_key(Key::K, false, KeyModifier::NONE);
+	// F5, a frame.
+	engine.queue_key(Key::F5, true, KeyModifier::NONE);
 	session.run_frames(1.0 / 60.0)?;
-	engine.queue_key(75, false, 0);
+	engine.queue_key(Key::F5, false, KeyModifier::NONE);
 	session.run_frames(0.3)?;
 	let seen = session.eval("window.__bbKeys.join(' ')")?;
 	let seen = seen.as_str().unwrap_or_default().to_string();

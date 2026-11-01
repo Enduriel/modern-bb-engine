@@ -16,9 +16,7 @@ use bb_engine::mod_corpus::{self, CorpusError};
 use bb_engine::{harness, tactical_player as player};
 use squirrel::SqTable;
 use squirrel_bb::KeyInput;
-
-/// The engine's Escape key code.
-const KEY_ESCAPE: i64 = 41;
+use squirrel_bb::enums::Key;
 
 fn frame(engine: &harness::GameEngine) {
 	harness::run_frame(engine, 1000.0 / 60.0).unwrap_or_else(|e| panic!("frame: {e}"));
@@ -254,8 +252,8 @@ fn smoke(mut engine: harness::GameEngine) {
 	let root = engine.root_state();
 	let menu_up = format!("{WORLD_MENU}.isVisible() && !{WORLD_MENU}.isAnimating()");
 	for _ in 0..3 {
-		root.key_input(engine.vm(), KeyInput::pressed(KEY_ESCAPE)).expect("escape");
-		root.key_input(engine.vm(), KeyInput::released(KEY_ESCAPE)).expect("escape");
+		root.key_input(engine.vm(), KeyInput::pressed(Key::Escape)).expect("escape");
+		root.key_input(engine.vm(), KeyInput::released(Key::Escape)).expect("escape");
 		for _ in 0..60 {
 			frame(&engine);
 		}

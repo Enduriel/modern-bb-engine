@@ -215,6 +215,8 @@ impl NativeConfig {
 	/// clocks ([`TimeService`] — also needed before preload, since config scripts
 	/// read `Time.*`).
 	pub fn install(&self, vm: &mut SQVM) -> InstalledNatives {
+		// The enums first: the compiler folds them into every script compiled after.
+		crate::enums::install(vm);
 		// One shared RNG stream feeds Math.rand and color.varyRGB.
 		let prng = prng::Prng::new();
 		// Pools draw from the C runtime's rand(), which 0-argument Math.rand also is.

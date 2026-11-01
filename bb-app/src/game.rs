@@ -14,6 +14,7 @@ use bb_engine::harness::{self, GameEngine};
 use bb_render::world::WorldView;
 use bb_render::{Atlases, Clock, Discard, FrameStats, Gpu, RenderTarget, WorldMap, WorldRenderer};
 use squirrel::{SqStrongRef, SqTable};
+use squirrel_bb::enums::{Key as EngineKey, KeyModifier, Mouse, MouseState};
 use squirrel_bb::{MouseInput, VideoMode, VideoSettings};
 
 use crate::fps::FpsMeter;
@@ -52,13 +53,13 @@ pub struct Game {
 	/// Frame pixels per pixel of the drawn cursor's picture (see
 	/// [`set_cursor_scale`](Self::set_cursor_scale)).
 	cursor_scale: f32,
-	/// The modifier keys held (`KeyModifier` mask), sent with every event.
-	modifier: i64,
+	/// The modifier keys held, sent with every event.
+	modifier: KeyModifier,
 	/// What the last frame drawn showed (see [`Game::draw_if_changed`]).
 	shown: Shown,
 	/// Keys pressed while the update notice showed, until released (see
 	/// [`Game::notice_keys`]).
-	notice_held: HashSet<i64>,
+	notice_held: HashSet<EngineKey>,
 	/// While the FPS display shows, what measures the frame rate for it.
 	fps: Option<FpsMeter>,
 	/// Battles are drawn in steps (see `squirrel_bb::scene::steps`); `BB_SCENE_STEPS=0`
@@ -221,7 +222,7 @@ impl Game {
 			system_cursor: false,
 			cursor_pictures: CursorPictures::new(files),
 			cursor_scale: 1.0,
-			modifier: 0,
+			modifier: KeyModifier::NONE,
 			shown: Shown::default(),
 			notice_held: HashSet::new(),
 			fps: None,
@@ -371,7 +372,7 @@ impl Game {
 		let page = bb_render::frame_timing::span("input page");
 		self.front.cursor(x, y);
 		drop(page);
-		Some(MouseInput { id: 6, state: 2, x, y, modifier: self.modifier })
+		Some(MouseInput { id: Mouse::Pointer, state: MouseState::Moved, x, y, modifier: self.modifier })
 	}
 
 	/// Show the FPS display (vanilla's FPS module, which the original never shows), or
@@ -409,9 +410,8 @@ impl Game {
 		Ok(())
 	}
 
-	/// Button `id` (1 left, 2 right, 3 middle, 4 back, 5 forward) went down or up: to
-	/// the UI, or to the states.
-	pub fn mouse_button(&mut self, id: i64, down: bool) -> Result<(), String> {
+	/// Button `id` went down or up: to the UI, or to the states.
+	pub fn mouse_button(&mut self, id: Mouse, down: bool) -> Result<(), String> {
 		self.deliver_move()?;
 		let (x, y) = self.cursor;
 		let page = bb_render::frame_timing::span("input page");
@@ -422,7 +422,7 @@ impl Game {
 		}
 		self.mouse(MouseInput {
 			id,
-			state: if down { 0 } else { 1 },
+			state: if down { MouseState::Down } else { MouseState::Up },
 			x,
 			y,
 			modifier: self.modifier,
@@ -440,8 +440,8 @@ impl Game {
 			return Ok(());
 		}
 		self.mouse(MouseInput {
-			id: 7,
-			state: if up { 3 } else { 4 },
+			id: Mouse::Wheel,
+			state: if up { MouseState::WheelUp } else { MouseState::WheelDown },
 			x,
 			y,
 			modifier: self.modifier,
@@ -456,7 +456,7 @@ impl Game {
 	}
 
 	/// The modifier keys held now (see `keys::modifier`).
-	pub fn set_modifier(&mut self, modifier: i64) {
+	pub fn set_modifier(&mut self, modifier: KeyModifier) {
 		self.modifier = modifier;
 		self.front.set_modifier(modifier);
 	}
@@ -471,7 +471,7 @@ impl Game {
 	/// each repeat again; Tab types nothing there, nor does a key with Alt held (Windows
 	/// makes that a system character, which SFML doesn't take; probed 2026-10-21).
 	/// AltGr, which Windows reports as Ctrl+Alt, types. Nor does a key with the Mac's
-	/// Command held (a shortcut there, as Cmd+C; `KEY_MODIFIER_COMMAND`).
+	/// Command held (a shortcut there, as Cmd+C; `KeyModifier::COMMAND`).
 	pub fn key(&mut self, key: &Key) -> Result<(), String> {
 		if self.notice_keys(key) {
 			return Ok(());
@@ -479,8 +479,8 @@ impl Game {
 		if let Some(code) = key.engine {
 			self.engine().queue_key(code, key.down, self.modifier);
 		}
-		let alt_only = self.modifier & 4 != 0 && self.modifier & 2 == 0;
-		let command = self.modifier & squirrel_bb::KEY_MODIFIER_COMMAND != 0;
+		let alt_only = self.modifier.contains(KeyModifier::ALT) && !self.modifier.contains(KeyModifier::CONTROL);
+		let command = self.modifier.contains(KeyModifier::COMMAND);
 		if key.down && !alt_only && !command {
 			for c in key.text.iter().flat_map(|t| t.chars()).filter(|&c| c != '\t') {
 				self.engine().queue_text(c, self.modifier);
@@ -499,8 +499,8 @@ impl Game {
 			if let Some(code) = code.filter(|_| key.down) {
 				self.notice_held.insert(code);
 				let choice = match code {
-					crate::keys::ESCAPE => Some("continue"),
-					crate::keys::ENTER => Some("open"),
+					EngineKey::Escape => Some("continue"),
+					EngineKey::Return => Some("open"),
 					_ => None,
 				};
 				if let Some(choice) = choice.filter(|_| !key.repeat) {

@@ -18,6 +18,7 @@ use std::rc::Rc;
 use squirrel::{ClassBuilder, Native, Number, Retained, SQVM, SqStrongRef, SqTable, Variadic};
 
 use super::world_clouds::{CloudCover, Clouds, MapSpan};
+use crate::enums::AmbientLightingPreset;
 
 /// One tile type's transition configuration — the payload behind a
 /// `createTileTransition()` instance, and what `Tactical.setTransitions` caches.
@@ -40,8 +41,7 @@ pub(crate) type Transitions = Rc<RefCell<HashMap<String, TileTransition>>>;
 /// the battle scene's ambient).
 pub(crate) type TacticalLight = Rc<std::cell::Cell<(u32, f32)>>;
 
-/// `setAmbientLightingPreset(i)`'s colours, by `AmbientLightingPreset` (Default, Dawn,
-/// Dusk, Night, Midday, Rain, Storm, Desert), from the table the original fills at
+/// `setAmbientLightingPreset(i)`'s colours, indexed by `AmbientLightingPreset`, from the table the original fills at
 /// startup (`0x463b79`…).
 const LIGHTING_PRESETS: [u32; 8] = [
 	0xffff_ffff,
@@ -196,7 +196,6 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng, crt: &super:
 	// Tactical.getShaker() comes with the units (see `tactical_entities::shaker`), and
 	// Tactical.getHighlighter() with the map (see `tactical_highlighter`).
 	// Tactical.getWeather(): visual only (see `weather`).
-	super::weather::install_consts(vm);
 	let weather = super::weather::weather(vm, "Tactical");
 	let light: TacticalLight = Rc::new(std::cell::Cell::new((0xffff_ffff, 1.0)));
 	let set_color = {
@@ -214,8 +213,8 @@ pub(crate) fn install(vm: &mut SQVM, engine_rng: &super::EngineRng, crt: &super:
 	let set_preset = {
 		let light = light.clone();
 		vm.make_closure(move |preset: i64| {
-			if let Some(&argb) = usize::try_from(preset).ok().and_then(|i| LIGHTING_PRESETS.get(i)) {
-				light.set((argb, light.get().1));
+			if let Some(preset) = AmbientLightingPreset::from_code(preset) {
+				light.set((LIGHTING_PRESETS[preset as usize], light.get().1));
 			}
 		})
 	};

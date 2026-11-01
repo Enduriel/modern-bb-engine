@@ -10,6 +10,7 @@
 use std::path::Path;
 
 use bb_engine::{harness, tactical_player as player};
+use squirrel_bb::enums::Key;
 use squirrel_bb::{KeyInput, MouseInput};
 
 /// Screen positions: corners, the middle, and well off the screen both ways.
@@ -17,8 +18,12 @@ const POSITIONS: [(i64, i64); 7] = [(0, 0), (1, 1), (640, 360), (1279, 719), (-5
 
 /// Keys the scripts see (digits, letters, Tab, Space, navigation, arrows, numpad,
 /// modifiers); not Escape, Enter or the function keys, which leave the screen under test.
-fn keys() -> impl Iterator<Item = i64> {
-	(1..=36).chain([38, 40, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54]).chain(55..=70).chain(95..=97)
+fn keys() -> impl Iterator<Item = Key> {
+	(1..=36)
+		.chain([38, 40, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54])
+		.chain(55..=70)
+		.chain(95..=97)
+		.map(|code| Key::from_code(code).expect("a key"))
 }
 
 /// Mouse moves and right clicks at every position, then each key pressed and released.

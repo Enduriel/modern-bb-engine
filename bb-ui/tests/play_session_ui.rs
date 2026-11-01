@@ -990,7 +990,7 @@ fn save_and_load(p: &Play, name: &str) -> Result<(), String> {
 	leave_town(p)?;
 	p.script("::World.State.setPause(true);")?;
 	let saved = p.text(CAMPAIGN)?;
-	player::press_key(p.session.engine(), 41)?;
+	player::press_key(p.session.engine(), squirrel_bb::enums::Key::Escape)?;
 	during("the menu", p.session.click_when_ready("Save Campaign", STEP))?;
 	during("waiting for the saves", settled(p, |p| nth(p, ".ui-control.campaign", 0).is_ok()))?;
 	p.shot("save");
@@ -1008,7 +1008,7 @@ fn save_and_load(p: &Play, name: &str) -> Result<(), String> {
 	// Back to the menu's first page, then load what was saved.
 	p.session.pump_until(Duration::from_secs(2), |s| !s.animating().unwrap_or(true));
 	if !p.session.shows_text("Load Campaign")? {
-		player::press_key(p.session.engine(), 41)?;
+		player::press_key(p.session.engine(), squirrel_bb::enums::Key::Escape)?;
 	}
 	during("the menu", p.session.click_when_ready("Load Campaign", STEP))?;
 	during("waiting for the saves", settled(p, |p| nth(p, ".ui-control.campaign", 0).is_ok()))?;

@@ -137,10 +137,10 @@ fn take_from_bag(engine: &harness::GameEngine, item_id: &str) -> bool {
 	if slot < 0 {
 		return false;
 	}
-	player::press_key(engine, player::KEY_C).expect("open the inventory");
+	player::press_key(engine, squirrel_bb::enums::Key::C).expect("open the inventory");
 	assert!(frames_until(engine, 30, |e| player::inventory_open(e).unwrap()), "the inventory didn't open");
 	let equipped = player::equip_bag_item(engine, slot).expect("equip");
-	player::press_key(engine, player::KEY_C).expect("close the inventory");
+	player::press_key(engine, squirrel_bb::enums::Key::C).expect("close the inventory");
 	assert!(frames_until(engine, 30, |e| player::ready(e).unwrap()), "the battle didn't come back");
 	equipped
 }

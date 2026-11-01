@@ -57,11 +57,11 @@ impl UiSession {
 			match *input {
 				squirrel_bb::QueuedInput::Key(key) => {
 					let code = super::coherent_key_code(key.key);
-					host.key(code, key.state != 0, super::modifiers_of_mask(key.modifier));
+					host.key(code, key.state == squirrel_bb::enums::KeyState::Down, super::modifiers_of(key.modifier));
 					expected += 1;
 				}
 				squirrel_bb::QueuedInput::Text(c, modifier) => {
-					host.character(c, super::modifiers_of_mask(modifier));
+					host.character(c, super::modifiers_of(modifier));
 				}
 			}
 		}

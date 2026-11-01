@@ -4,6 +4,8 @@
 
 use cef::*;
 
+use squirrel_bb::enums::{Key, KeyModifier};
+
 use super::input::send_key;
 
 /// Modifier keys held during an event.
@@ -70,53 +72,63 @@ pub(super) fn button(
 	host.send_mouse_click_event(Some(&event), button.cef(), i32::from(!down), count);
 }
 
-/// The Windows virtual-key code Coherent got for the engine's key `code`: the
-/// original's UI looks it up in its own table (built at `0x56cbe0`, read by `0x56d8c0`;
-/// disassembled 2026-10-20), and a key not in it, the function keys, is -1 (probed
-/// 2026-10-21: F1 to F12 come to the page as keyCode -1).
-pub fn coherent_key_code(code: i64) -> i32 {
-	match code {
-		1..=9 => 0x30 + code as i32,
-		10 => 0x30,
-		11..=36 => 0x41 + (code - 11) as i32,
-		37 => 0x08,
-		38 => 0x09,
-		39 => 0x0D,
-		40 => 0x20,
-		41 => 0x1B,
-		42 => 0x13,
-		43 => 0x14,
-		44 => 0x23,
-		45 => 0x24,
-		46 => 0x21,
-		47 => 0x22,
-		48 => 0x25,
-		49 => 0x26,
-		50 => 0x27,
-		51 => 0x28,
-		53 => 0x2D,
-		54 => 0x2E,
-		55..=64 => 0x60 + (code - 55) as i32,
-		66 => 0x6A,
-		67 => 0x6B,
-		68 => 0x6D,
-		69 => 0x6E,
-		70 => 0x6F,
-		95 => 0x11,
-		96 => 0x10,
-		97 => 0x12,
+/// The Windows virtual-key code Coherent got for the engine's `key`: the original's UI
+/// looks it up in its own table (built at `0x56cbe0`, read by `0x56d8c0`; disassembled
+/// 2026-10-20), and a key not in it, the function keys, is -1 (probed 2026-10-21: F1
+/// to F12 come to the page as keyCode -1).
+pub fn coherent_key_code(key: Key) -> i32 {
+	use Key::*;
+	// The position of `key` in the run `first` to `last`, if it's in it.
+	let run = |first: Key, last: Key| {
+		(first.code()..=last.code()).contains(&key.code()).then(|| (key.code() - first.code()) as i32)
+	};
+	if let Some(i) = run(One, Nine) {
+		return 0x31 + i;
+	}
+	if let Some(i) = run(A, Z) {
+		return 0x41 + i;
+	}
+	if let Some(i) = run(Numpad0, Numpad9) {
+		return 0x60 + i;
+	}
+	match key {
+		Zero => 0x30,
+		Backspace => 0x08,
+		Tab => 0x09,
+		Return => 0x0D,
+		Space => 0x20,
+		Escape => 0x1B,
+		Pause => 0x13,
+		Capital => 0x14,
+		End => 0x23,
+		Home => 0x24,
+		PageUp => 0x21,
+		PageDown => 0x22,
+		ArrowLeft => 0x25,
+		ArrowUp => 0x26,
+		ArrowRight => 0x27,
+		ArrowDown => 0x28,
+		Insert => 0x2D,
+		Delete => 0x2E,
+		Multiply => 0x6A,
+		Add => 0x6B,
+		Subtract => 0x6D,
+		Decimal => 0x6E,
+		Divide => 0x6F,
+		Control => 0x11,
+		Shift => 0x10,
+		Alt => 0x12,
 		_ => -1,
 	}
 }
 
-/// The modifier keys in the engine's `KeyModifier` mask (Shift 1, Ctrl 2, Alt 4), and
-/// the host's Command bit ([`squirrel_bb::KEY_MODIFIER_COMMAND`]).
-pub fn modifiers_of_mask(mask: i64) -> Modifiers {
+/// The modifier keys held, Command included.
+pub fn modifiers_of(held: KeyModifier) -> Modifiers {
 	Modifiers {
-		shift: mask & 1 != 0,
-		control: mask & 2 != 0,
-		alt: mask & 4 != 0,
-		command: mask & squirrel_bb::KEY_MODIFIER_COMMAND != 0,
+		shift: held.contains(KeyModifier::SHIFT),
+		control: held.contains(KeyModifier::CONTROL),
+		alt: held.contains(KeyModifier::ALT),
+		command: held.contains(KeyModifier::COMMAND),
 	}
 }
 
@@ -154,17 +166,19 @@ mod tests {
 
 	#[test]
 	fn coherents_key_codes() {
-		assert_eq!(coherent_key_code(12), 66);
-		assert_eq!(coherent_key_code(10), 0x30);
-		assert_eq!(coherent_key_code(41), 0x1B);
-		assert_eq!(coherent_key_code(42), 0x13);
-		assert_eq!(coherent_key_code(46), 0x21);
-		assert_eq!(coherent_key_code(66), 0x6A);
-		assert_eq!(coherent_key_code(97), 0x12);
+		assert_eq!(coherent_key_code(Key::B), 66);
+		assert_eq!(coherent_key_code(Key::One), 0x31);
+		assert_eq!(coherent_key_code(Key::Zero), 0x30);
+		assert_eq!(coherent_key_code(Key::Numpad9), 0x69);
+		assert_eq!(coherent_key_code(Key::Escape), 0x1B);
+		assert_eq!(coherent_key_code(Key::Pause), 0x13);
+		assert_eq!(coherent_key_code(Key::PageUp), 0x21);
+		assert_eq!(coherent_key_code(Key::Multiply), 0x6A);
+		assert_eq!(coherent_key_code(Key::Alt), 0x12);
 		// The function keys aren't in its table.
-		assert_eq!(coherent_key_code(75), -1);
-		assert_eq!(modifiers_of_mask(6), Modifiers { shift: false, control: true, alt: true, command: false });
-		assert_eq!(modifiers_of_mask(8), Modifiers { command: true, ..Modifiers::default() });
+		assert_eq!(coherent_key_code(Key::F5), -1);
+		assert_eq!(modifiers_of(KeyModifier::CONTROL | KeyModifier::ALT), Modifiers { shift: false, control: true, alt: true, command: false });
+		assert_eq!(modifiers_of(KeyModifier::COMMAND), Modifiers { command: true, ..Modifiers::default() });
 	}
 
 	#[test]
