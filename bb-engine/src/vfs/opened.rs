@@ -77,4 +77,17 @@ mod tests {
 		assert_eq!(three.read("b.txt"), None);
 		let _ = std::fs::remove_file(&path);
 	}
+
+	#[test]
+	fn names_written_with_backslashes_read_with_slashes() {
+		// Zips made on Windows can store `scripts\!mods_preload\x.nut`; the original
+		// reads them as paths (ContractColors and Smaller Item Slots register there).
+		let path = std::env::temp_dir().join(format!("bb-backslashes-{}.zip", std::process::id()));
+		write_zip(&path, &[("scripts\\!mods_preload\\x.nut", b"x"), ("ui\\mods\\a.css", b"a")]);
+		let mut zip = DatArchive::open(&path).unwrap();
+		assert_eq!(zip.names(), ["scripts/!mods_preload/x.nut", "ui/mods/a.css"]);
+		assert_eq!(zip.read("scripts/!mods_preload/x.nut").as_deref(), Some(&b"x"[..]));
+		assert!(zip.contains("ui/mods/a.css"));
+		let _ = std::fs::remove_file(&path);
+	}
 }

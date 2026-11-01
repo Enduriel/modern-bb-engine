@@ -134,6 +134,9 @@ pub(super) fn read(file: &mut (impl Read + Seek)) -> io::Result<Index> {
 		} else {
 			cp437::decode(&name)
 		};
+		// Zips made on Windows can separate with backslashes; the original reads those
+		// as paths (mods packed that way load there).
+		let text = text.replace('\\', "/");
 		index.add(
 			&text,
 			Entry {
