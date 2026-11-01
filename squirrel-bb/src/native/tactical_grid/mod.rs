@@ -143,6 +143,8 @@ pub(crate) struct TacticalGridState {
 	/// `Tactical.getCamera()`'s fields.
 	camera: camera::CameraState,
 	camera_class: Option<SqClass<camera::CameraHandle>>,
+	/// The `vec2i` class, for tile coordinates (set by the host).
+	vec2i: Option<crate::native::vec::Vec2iClass>,
 	/// Game files (the picking masks come from the game data).
 	file_reader: Option<FileReader>,
 	/// The picking masks, read on first use (`None` inside if the data lacks them).
@@ -171,6 +173,7 @@ impl TacticalGridState {
 			clear_hook: None,
 			camera: camera::CameraState::default(),
 			camera_class: None,
+			vec2i: None,
 			file_reader: None,
 			sprites: Sprites::default(),
 			hex_masks: None,
@@ -437,6 +440,21 @@ pub(crate) fn tile_id_of(grid: &Grid, vm: &SQVM, value: &SqStrongRef) -> Option<
 	class.with_payload(vm, value, |t| t.id)
 }
 
+/// Tile coordinates as scripts get them: a `vec2i`, as in the original. On a map the
+/// host gave no class, an `{X, Y}` table.
+pub(crate) fn coords(grid: &Grid, vm: &SQVM, x: i64, y: i64) -> SqStrongRef {
+	let class = grid.borrow().vec2i.clone();
+	match class {
+		Some(class) => class.instantiate(vm, crate::native::vec::Vec2i { x, y }),
+		None => {
+			let mut t = SqTable::new(vm);
+			t.set("X", x);
+			t.set("Y", y);
+			t.to_strong()
+		}
+	}
+}
+
 /// The tactical map service (cheap to clone; clones share it).
 #[derive(Clone)]
 pub struct TacticalGrid {
@@ -459,6 +477,11 @@ impl TacticalGrid {
 	/// The shared map state (for the entity host's placement).
 	pub(crate) fn handle(&self) -> Grid {
 		self.grid.clone()
+	}
+
+	/// Make tile coordinates of `vec2i`. Call before the scripts run.
+	pub(crate) fn set_vec2i_class(&self, vec2i: crate::native::vec::Vec2iClass) {
+		self.grid.borrow_mut().vec2i = Some(vec2i);
 	}
 
 	/// Set what `tile.spawnObject` runs (the entity host's object creation).
@@ -678,32 +701,27 @@ impl TacticalGrid {
 		let get_camera = vm.make_closure(move || camera.clone());
 		// Tactical.worldToTile(pos): the tile drawn at a world point (see `picking`).
 		let world_to_tile = {
-			let g = self.grid.clone();
+			let grid = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<SqStrongRef, String> {
-				let x = pos.0.get_member::<Number>(vm, "X").ok_or("worldToTile: expected a vector")?.0;
-				let y = pos.0.get_member::<Number>(vm, "Y").ok_or("worldToTile: expected a vector")?.0;
-				let mut g = g.borrow_mut();
+				let (x, y) = crate::native::vec::position(vm, &pos.0, "worldToTile")?;
+				let mut g = grid.borrow_mut();
 				let masks = g.hex_masks().ok_or("worldToTile: the game data has no gfx/masks/hex_mask.0-3")?;
 				let (q, r) = picking::world_to_tile(&g, &masks, g.camera.level, x, y);
-				let mut t = SqTable::new(vm);
-				t.set("X", q);
-				t.set("Y", r);
-				Ok(t.to_strong())
+				drop(g);
+				Ok(coords(&grid, vm, q, r))
 			})
 		};
 
 		// Tactical.screenToTile(x, y): the tile under a screen pixel (clicks).
 		let screen_to_tile = {
-			let g = self.grid.clone();
+			let grid = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, x: Number, y: Number| -> Result<SqStrongRef, String> {
-				let mut g = g.borrow_mut();
+				let mut g = grid.borrow_mut();
 				let (wx, wy) = camera::screen_to_world(&g.camera, vm, x.0, y.0);
 				let masks = g.hex_masks().ok_or("screenToTile: the game data has no gfx/masks/hex_mask.0-3")?;
 				let (q, r) = picking::world_to_tile(&g, &masks, g.camera.level, wx, wy);
-				let mut t = SqTable::new(vm);
-				t.set("X", q);
-				t.set("Y", r);
-				Ok(t.to_strong())
+				drop(g);
+				Ok(coords(&grid, vm, q, r))
 			})
 		};
 
@@ -722,10 +740,7 @@ impl TacticalGrid {
 					let g = g.borrow();
 					(g.width, g.height)
 				};
-				let mut t = SqTable::new(vm);
-				t.set("X", w);
-				t.set("Y", h);
-				t.to_strong()
+				coords(&g, vm, w, h)
 			})
 		};
 		let get_tile_square = {
@@ -746,8 +761,7 @@ impl TacticalGrid {
 		let get_tile_1 = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<SqStrongRef, String> {
-				let q = coords.0.get_member::<i64>(vm, "X").ok_or("getTile: coords need X")?;
-				let r = coords.0.get_member::<i64>(vm, "Y").ok_or("getTile: coords need Y")?;
+				let (q, r) = crate::native::vec::tile_coords(vm, &coords.0, "getTile")?;
 				let id = g.borrow().idx_axial(q, r).ok_or_else(|| format!("getTile: ({q}, {r}) is off the map"))?;
 				tile_handle(&g, vm, id).ok_or_else(|| "getTile: no tile class".to_string())
 			})
@@ -763,8 +777,7 @@ impl TacticalGrid {
 		let tile_to_world_1 = {
 			let grid = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
-				let q = coords.0.get_member::<i64>(vm, "X").ok_or("tileToWorld: coords need X")?;
-				let r = coords.0.get_member::<i64>(vm, "Y").ok_or("tileToWorld: coords need Y")?;
+				let (q, r) = crate::native::vec::tile_coords(vm, &coords.0, "tileToWorld")?;
 				let g = grid.borrow();
 				vec(vm, g.idx_axial(q, r).map_or_else(|| tile_pos(q, r + q / 2), |id| g.tiles[id].world_pos()))
 			})

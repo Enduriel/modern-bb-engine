@@ -128,7 +128,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		world_grid.set_sprites(natives.sprites.clone());
 		world_grid.set_engine_rng(natives.engine_rng.clone());
 		world_grid.set_camera(natives.world_camera.clone());
-		world_grid.set_vec_class(natives.vec2f.clone());
+		world_grid.set_vec_classes(natives.vec2f.clone(), natives.vec2i.clone());
 		world_grid.install(&mut vm);
 		// After the grid natives.
 		let world_entities = WorldEntities::new(modules.instantiator());
@@ -148,6 +148,7 @@ impl<S: ScriptSource + 'static> Engine<S> {
 		// The battle map, with units and objects placed on it by the entity host.
 		let tactical_grid = TacticalGrid::new();
 		tactical_grid.set_file_reader(modules.file_reader());
+		tactical_grid.set_vec2i_class(natives.vec2i.clone());
 		tactical_grid.set_sprites(natives.sprites.clone());
 		// A tile's `clear(flags)` takes the pools and landed heads lying there too.
 		{

@@ -88,9 +88,10 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	};
 	let set_offset = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, name: &str, offset: Retained| {
-			let offset = vec_xy(vm, &offset.0);
+		vm.make_closure(move |vm: &SQVM, name: &str, offset: Retained| -> Result<(), String> {
+			let offset = vec_xy(vm, &offset.0, "setSpriteOffset")?;
 			with_sprite(&m, vm, &name, |s| s.offset = offset);
+			Ok(())
 		})
 	};
 	let set_scaling = {

@@ -122,3 +122,42 @@ fn spawn_location_instantiates_registers_and_binds_tile() {
 
 	assert_eq!(engine.world_entities().count(), 1);
 }
+
+/// The two-argument spawn takes tile coordinates: a `vec2i` like `tile.Coords`. The
+/// original reads any instance's payload as two i32s, so a `createVec` lands on the tile
+/// its float bits spell (or crashes it) and a table crashes it (probed 2026-11-01); here
+/// both are a script error that says what to pass.
+#[test]
+fn spawn_takes_only_tile_coordinates() {
+	let engine = Engine::new(sources());
+	engine
+		.run_script(
+			r#"
+			this.World.resizeScene(8, 8);
+			this.World.EntityManager <- this.new("scripts/entity/world/entity_manager");
+			"#,
+			"setup",
+		)
+		.expect("grid + entity manager set up");
+
+	engine
+		.run_script(
+			r#"
+			local path = "scripts/entity/world/locations/test_location";
+			local e = this.World.spawnEntity(path, this.World.getTile(2, 3).Coords);
+			assert(e.getTile().Coords.X == 2 && e.getTile().Coords.Y == 3);
+			"#,
+			"coords",
+		)
+		.expect("spawnEntity at tile.Coords");
+
+	for (arg, says) in [
+		("this.createVec(0, 0)", "spawnEntity: expected tile coordinates, a vec2i like tile.Coords (got a vec2f"),
+		("{ X = 2, Y = 3 }", "spawnEntity: expected tile coordinates, a vec2i like tile.Coords"),
+	] {
+		let err = engine
+			.run_script(&format!(r#"this.World.spawnEntity("scripts/entity/world/locations/test_location", {arg});"#), "wrong")
+			.expect_err(arg);
+		assert!(err.contains(says), "{arg}: {err}");
+	}
+}

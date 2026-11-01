@@ -511,25 +511,9 @@ fn reap(m: &Rc<RefCell<EntityMachine>>, vm: &SQVM, idx: usize, now: i64) -> Resu
 	Ok(due)
 }
 
-/// The `X`/`Y` of a script vector.
-fn vec_xy(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
-	crate::native::vec::xy(vm, v)
-}
-
-/// The centre a spatial query (`getAllEntitiesAtPos`, `getAllEntitiesVisibleAtPos`)
-/// reads from its argument. The original takes any class instance unchecked
-/// (0x587010) and reads its native object's first two f32s (0x4f8467): a vector's `X`
-/// and `Y`, but a world tile's are its bridge's pointer bits, a centre at the map's
-/// origin in practice (probed 2026-10-21: Reforged's
-/// `getAllEntitiesAtPos(World.getTileSquare(70, 85), 25000)` finds the 171 entities
-/// `createVec(0, 0)` finds, not the 172 around the tile's own `X`/`Y`). A tile is told
-/// from a vector by its `Pos`.
-fn query_center(vm: &SQVM, v: &SqStrongRef) -> (f64, f64) {
-	if v.get_member::<SqStrongRef>(vm, "Pos").is_some() {
-		(0.0, 0.0)
-	} else {
-		vec_xy(vm, v)
-	}
+/// The `X`/`Y` of the `vec2f` handed to `native` (see [`crate::native::vec::position`]).
+fn vec_xy(vm: &SQVM, v: &SqStrongRef, native: &str) -> Result<(f64, f64), String> {
+	crate::native::vec::position(vm, v, native)
 }
 
 /// The axial tile under a world pixel position (`World.worldToTile`).
@@ -726,7 +710,7 @@ fn build_label_class(vm: &mut SQVM) -> SqClass<LabelData> {
 				create.call_ret::<SqStrongRef, _>(vm, l.offset).ok().flatten()
 			},
 			noted_obj(|l: &mut LabelData, vm: &SQVM, v: SqStrongRef| {
-				l.offset = vec_xy(vm, &v);
+				l.offset = vec_xy(vm, &v, "Offset")?;
 				Ok(())
 			}),
 		)
@@ -833,7 +817,7 @@ impl WorldEntities {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<(), String> {
 				let world = world_access(&m, "setPos")?;
-				let xy = crate::native::vec::xy(vm, &pos.0);
+				let xy = vec_xy(vm, &pos.0, "setPos")?;
 				let (q, r) = world.grid.world_to_tile(xy.0, xy.1);
 				if let Some(rec) = m.borrow_mut().record_mut(vm.this_identity()) {
 					draw_key::set_pos(rec, xy, (q, r));
@@ -1069,9 +1053,8 @@ impl WorldEntities {
 			let spawn_2 = {
 				let m = self.machine.clone();
 				vm.make_closure(
-					move |vm: &SQVM, path: &str, coords: SqTable| -> Result<SqStrongRef, String> {
-						let q = coords.get::<i64>("X").ok_or("spawn: coords table needs X")?;
-						let r = coords.get::<i64>("Y").ok_or("spawn: coords table needs Y")?;
+					move |vm: &SQVM, path: &str, coords: Retained| -> Result<SqStrongRef, String> {
+						let (q, r) = super::vec::tile_coords(vm, &coords.0, name)?;
 						spawn(&m, vm, path, q, r, occupy)
 					},
 				)
@@ -1093,17 +1076,17 @@ impl WorldEntities {
 		// World spatial queries and id lookup over the live entities.
 		let all_at_pos = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
-				let center = query_center(vm, &pos.0);
+			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> Result<SqStrongRef, String> {
+				let center = vec_xy(vm, &pos.0, "getAllEntitiesAtPos")?;
 				let machine = m.borrow();
-				entity_array(vm, &machine.entities, world_query::all_at_pos(center, radius.0, &machine.entities))
+				Ok(entity_array(vm, &machine.entities, world_query::all_at_pos(center, radius.0, &machine.entities)))
 			})
 		};
 		let all_and_one_location_at_pos = {
 			let m = self.machine.clone();
 			vm.make_closure(
 				move |vm: &SQVM, pos: Retained, radius: Number| -> Result<SqStrongRef, String> {
-					let center = vec_xy(vm, &pos.0);
+					let center = vec_xy(vm, &pos.0, "getAllEntitiesAndOneLocationAtPos")?;
 					let tile = tile_under(vm, &pos.0)?;
 					let machine = m.borrow();
 					let hits = world_query::all_and_one_location_at_pos(center, radius.0, tile, &machine.entities);
@@ -1113,11 +1096,11 @@ impl WorldEntities {
 		};
 		let all_visible_at_pos = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> SqStrongRef {
-				let center = query_center(vm, &pos.0);
+			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> Result<SqStrongRef, String> {
+				let center = vec_xy(vm, &pos.0, "getAllEntitiesVisibleAtPos")?;
 				let machine = m.borrow();
 				let hits = world_query::all_visible_at_pos(center, radius.0, &machine.entities);
-				entity_array(vm, &machine.entities, hits)
+				Ok(entity_array(vm, &machine.entities, hits))
 			})
 		};
 		// getPlayerEntity(): the first entity by id in the player's faction (from the
@@ -1136,11 +1119,10 @@ impl WorldEntities {
 		};
 		let get_entity_at_tile = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Option<SqStrongRef> {
-				let q = coords.0.get_member::<i64>(vm, "X")?;
-				let r = coords.0.get_member::<i64>(vm, "Y")?;
+			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
+				let (q, r) = super::vec::tile_coords(vm, &coords.0, "getEntityAtTile")?;
 				let machine = m.borrow();
-				world_query::entity_at_tile((q, r), &machine.entities).and_then(|i| machine.entities[i].entity.clone())
+				Ok(world_query::entity_at_tile((q, r), &machine.entities).and_then(|i| machine.entities[i].entity.clone()))
 			})
 		};
 		let get_entity_by_id = {

@@ -1001,16 +1001,16 @@ impl TacticalEntities {
 		};
 		let set_sprite_offset = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, name: &str, offset: Retained| {
+			vm.make_closure(move |vm: &SQVM, name: &str, offset: Retained| -> Result<(), String> {
+				let xy = crate::native::vec::position(vm, &offset.0, "setSpriteOffset")?;
 				let (handle, class) = {
 					let m = m.borrow();
 					(m.record(vm.this_identity()).and_then(|r| r.sprites.get(&name).cloned()), m.sprite_class.clone())
 				};
 				if let (Some(h), Some(c)) = (handle, class) {
-					let c2 = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
-					let xy = (c2("X"), c2("Y"));
 					c.with_payload(vm, &h, |s| s.offset = xy);
 				}
+				Ok(())
 			})
 		};
 		// Unit state the scripts read back (semantics probed in the original, 2026-10-13).
@@ -1043,14 +1043,15 @@ impl TacticalEntities {
 		};
 		let set_pos = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, pos: Retained| {
-				let x = pos.0.get_member::<squirrel::Number>(vm, "X").map_or(0.0, |n| n.0);
-				let y = pos.0.get_member::<squirrel::Number>(vm, "Y").map_or(0.0, |n| n.0);
+			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<(), String> {
+				let (x, y) = crate::native::vec::position(vm, &pos.0, "setPos")?;
 				// Relative to the unit's tile, as the original's (see `pos_origin`): undead
 				// rise from (0, -200) to (0, 0) under their tile.
 				let mut m = m.borrow_mut();
-				let Some(&idx) = m.by_identity.get(&vm.this_identity()) else { return };
-				m.units[idx].local = (x, y);
+				if let Some(&idx) = m.by_identity.get(&vm.this_identity()) {
+					m.units[idx].local = (x, y);
+				}
+				Ok(())
 			})
 		};
 
@@ -1219,8 +1220,7 @@ impl TacticalEntities {
 		let spawn_2 = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, path: String, coords: Retained| -> Result<Option<SqStrongRef>, String> {
-				let q = coords.0.get_member::<squirrel::Number>(vm, "X").ok_or("spawnEntity: coords need X")?.0 as i64;
-				let r = coords.0.get_member::<squirrel::Number>(vm, "Y").ok_or("spawnEntity: coords need Y")?.0 as i64;
+				let (q, r) = crate::native::vec::tile_coords(vm, &coords.0, "spawnEntity")?;
 				placement::spawn_at(&m, vm, &path, spawn_tile(&m, q, r)?, 0)
 			})
 		};

@@ -70,7 +70,7 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 			};
 			let world = world_access(&m, "move")?;
 			let pos = (pos.0 as f32, pos.1 as f32);
-			let (dx, dy) = crate::native::vec::xy(vm, &dest.0);
+			let (dx, dy) = crate::native::vec::position(vm, &dest.0, "move")?;
 			let on_blocking_tile = !ignore_collision && terrain_at(&world, tile.0, tile.1)? <= BLOCKING_TERRAIN;
 			let blocked = |x: f32, y: f32| -> Result<bool, String> {
 				Ok(!ignore_collision && terrain_under(&world, x, y)? <= BLOCKING_TERRAIN)

@@ -120,14 +120,14 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 	};
 	let get_direction_to_pos = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, pos: Retained| -> i64 {
-			world_query::direction6(this_pos(&m, vm), vec_xy(vm, &pos.0))
+		vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<i64, String> {
+			Ok(world_query::direction6(this_pos(&m, vm), vec_xy(vm, &pos.0, "getDirectionToPos")?))
 		})
 	};
 	let get_direction8_to = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, pos: Retained| -> i64 {
-			world_query::direction8(this_pos(&m, vm), vec_xy(vm, &pos.0))
+		vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<i64, String> {
+			Ok(world_query::direction8(this_pos(&m, vm), vec_xy(vm, &pos.0, "getDirection8To")?))
 		})
 	};
 	let get_visibility = {
@@ -238,12 +238,13 @@ pub(super) fn entity_methods(m: &Machine, vm: &mut SQVM) -> Vec<(&'static str, S
 pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrongRef)> {
 	let set_player_pos = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, pos: Retained| {
-			let pos = vec_xy(vm, &pos.0);
+		vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<(), String> {
+			let pos = vec_xy(vm, &pos.0, "setPlayerPos")?;
 			// Which footprints show follows it (see `world_scene_changes`).
 			if std::mem::replace(&mut m.borrow_mut().player_view.pos, pos) != pos {
 				crate::native::world_scene_changes::note();
 			}
+			Ok(())
 		})
 	};
 	// getPlayerPos(): what setPlayerPos stored, an f32 vector (disassembled: World+0x120).

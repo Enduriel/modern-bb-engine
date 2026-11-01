@@ -346,62 +346,67 @@ impl Particles {
 	}
 }
 
-/// A vector's `X` and `Y`.
-fn vec2(vm: &SQVM, v: &SqStrongRef) -> Option<(f32, f32)> {
-	let c = |axis: &str| v.get_member::<Number>(vm, axis).map(|n| n.0 as f32);
-	Some((c("X")?, c("Y")?))
+/// A `vec2f`'s `X` and `Y` (see [`super::vec::position`]).
+fn vec2(vm: &SQVM, v: &SqStrongRef) -> Result<(f32, f32), String> {
+	super::vec::position_f32(vm, v, "spawnParticleEffect")
 }
 
 /// A stage table as the scripts write it (`Const.Tactical.*Particles[i].Stages[j]`).
-fn stage(vm: &SQVM, t: &SqStrongRef) -> Stage {
+fn stage(vm: &SQVM, t: &SqStrongRef) -> Result<Stage, String> {
 	let d = Stage::default();
 	let num = |k: &str| t.get_member::<Number>(vm, k).map(|n| n.0 as f32);
 	let pair = |min: &str, max: &str, def: (f32, f32)| (num(min).unwrap_or(def.0), num(max).unwrap_or(def.1));
 	let color = |k: &str, def: u32| {
 		t.get_member::<SqStrongRef>(vm, k).and_then(|c| super::color::color_argb(vm, &c)).unwrap_or(def)
 	};
-	let v = |k: &str, def: (f32, f32)| t.get_member::<SqStrongRef>(vm, k).and_then(|v| vec2(vm, &v)).unwrap_or(def);
-	let vpair = |min: &str, max: &str, def: ((f32, f32), (f32, f32))| (v(min, def.0), v(max, def.1));
-	Stage {
+	let v = |k: &str, def: (f32, f32)| t.get_member::<SqStrongRef>(vm, k).map_or(Ok(def), |v| vec2(vm, &v));
+	let vpair = |min: &str, max: &str, def: ((f32, f32), (f32, f32))| -> Result<_, String> { Ok((v(min, def.0)?, v(max, def.1)?)) };
+	Ok(Stage {
 		lifetime: pair("LifeTimeMin", "LifeTimeMax", d.lifetime),
 		color: (color("ColorMin", d.color.0), color("ColorMax", d.color.1)),
-		spawn_offset: vpair("SpawnOffsetMin", "SpawnOffsetMax", d.spawn_offset),
-		direction: vpair("DirectionMin", "DirectionMax", d.direction),
-		force: vpair("ForceMin", "ForceMax", d.force),
+		spawn_offset: vpair("SpawnOffsetMin", "SpawnOffsetMax", d.spawn_offset)?,
+		direction: vpair("DirectionMin", "DirectionMax", d.direction)?,
+		force: vpair("ForceMin", "ForceMax", d.force)?,
 		saturation: pair("SaturationMin", "SaturationMax", d.saturation),
 		scale: pair("ScaleMin", "ScaleMax", d.scale),
 		velocity: pair("VelocityMin", "VelocityMax", d.velocity),
 		rotation: pair("RotationMin", "RotationMax", d.rotation),
 		torque: pair("TorqueMin", "TorqueMax", d.torque),
 		flicker: t.get_member::<bool>(vm, "FlickerEffect").unwrap_or(d.flicker),
-	}
+	})
 }
 
 /// `spawnParticleEffect(persistent, brushes, tile, delay, quantity, lifeTimeQuantity,
 /// spawnRate, stages [, offset])`'s effect, the tile's `Pos` its place (`None` if the
-/// arguments don't read).
-pub(crate) fn parse_effect(vm: &SQVM, args: &[Retained]) -> Option<EffectSpec> {
+/// arguments don't read; an error for a vector that isn't a `vec2f`).
+pub(crate) fn parse_effect(vm: &SQVM, args: &[Retained]) -> Result<Option<EffectSpec>, String> {
 	let [_persistent, brushes, tile, delay, quantity, life, rate, stages, rest @ ..] = args else {
-		return None;
+		return Ok(None);
 	};
 	let int = |a: &Retained| a.0.get_value::<Number>(vm).map(|n| n.0.max(0.0) as u32);
 	let list = |a: &Retained| a.0.get_value::<squirrel::SqArray>(vm);
-	let brushes = list(brushes)?;
+	let (Some(brushes), Some(stage_list)) = (list(brushes), list(stages)) else { return Ok(None) };
 	let brushes: Vec<std::rc::Rc<str>> = (0..brushes.len()).filter_map(|i| brushes.get::<String>(i)).map(Into::into).collect();
-	let stages = list(stages)?;
-	let stages: Vec<Stage> =
-		(0..stages.len()).filter_map(|i| stages.get::<SqStrongRef>(i)).map(|t| stage(vm, &t)).collect();
-	let at = tile.0.get_member::<SqStrongRef>(vm, "Pos").and_then(|p| vec2(vm, &p))?;
-	let offset = rest.first().and_then(|o| vec2(vm, &o.0)).unwrap_or((0.0, 0.0));
-	Some(EffectSpec {
+	let stages = (0..stage_list.len())
+		.filter_map(|i| stage_list.get::<SqStrongRef>(i))
+		.map(|t| stage(vm, &t))
+		.collect::<Result<Vec<Stage>, String>>()?;
+	let offset = rest.first().map_or(Ok((0.0, 0.0)), |o| vec2(vm, &o.0))?;
+	let Some(at) = tile.0.get_member::<SqStrongRef>(vm, "Pos") else { return Ok(None) };
+	let at = vec2(vm, &at)?;
+	let (Some(delay), Some(quantity), Some(life_time_quantity), Some(spawn_rate)) = (int(delay), int(quantity), int(life), int(rate))
+	else {
+		return Ok(None);
+	};
+	Ok(Some(EffectSpec {
 		brushes,
 		pos: (at.0 + offset.0, at.1 + offset.1),
-		delay: int(delay)?,
-		quantity: int(quantity)?,
-		life_time_quantity: int(life)?,
-		spawn_rate: int(rate)?,
+		delay,
+		quantity,
+		life_time_quantity,
+		spawn_rate,
 		stages,
-	})
+	}))
 }
 
 /// `Time.getRealTime()` (ms) and `Time.getRealTimeF()` (s).
@@ -437,12 +442,12 @@ pub(crate) fn install_on(vm: &mut SQVM, table: &str, particles: &ParticlesHandle
 		.build(vm);
 	let leaf = {
 		let particles = particles.clone();
-		vm.make_closure(move |vm: &SQVM, Variadic(args): Variadic<Retained>| -> SqStrongRef {
-			let id = parse_effect(vm, &args).and_then(|spec| {
+		vm.make_closure(move |vm: &SQVM, Variadic(args): Variadic<Retained>| -> Result<SqStrongRef, String> {
+			let id = parse_effect(vm, &args)?.and_then(|spec| {
 				let (ms, _) = real_now(vm);
 				particles.borrow_mut().spawn(spec, ms)
 			});
-			class.instantiate(vm, EffectHandle(particles.clone(), id))
+			Ok(class.instantiate(vm, EffectHandle(particles.clone(), id)))
 		})
 	};
 	let dispatch = super::overload::make_dispatcher(vm, "spawnParticleEffect");

@@ -155,15 +155,17 @@ impl PathData {
 	/// The axial `{X, Y}` of waypoint `at`.
 	fn coords_at(&self, vm: &SQVM, at: usize) -> Option<SqStrongRef> {
 		let id = *self.tiles.get(at)?;
-		let g = self.grid.borrow();
-		Some(xy_table(vm, g.tiles[id].q, g.tiles[id].r))
+		let (q, r) = {
+			let g = self.grid.borrow();
+			(g.tiles[id].q, g.tiles[id].r)
+		};
+		Some(coords(&self.grid, vm, q, r))
 	}
 
-	/// The tile id of axial `{X, Y}` coords, if on the map.
-	fn tile_of(&self, vm: &SQVM, coords: &SqStrongRef) -> Option<usize> {
-		let q = coords.get_member::<i64>(vm, "X")?;
-		let r = coords.get_member::<i64>(vm, "Y")?;
-		self.grid.borrow().idx(q, r + q / 2)
+	/// The tile id of axial tile coordinates (a `vec2i`), if on the map.
+	fn tile_of(&self, vm: &SQVM, coords: &SqStrongRef, native: &str) -> Result<Option<usize>, String> {
+		let (q, r) = super::vec::tile_coords(vm, coords, native)?;
+		Ok(self.grid.borrow().idx(q, r + q / 2))
 	}
 }
 
@@ -200,6 +202,8 @@ struct GridState {
 	/// The `vec2f` class, for `tileToWorld`'s vectors (set by the host; released by
 	/// `clear`).
 	vec2f: Option<super::vec::VecClass>,
+	/// The `vec2i` class, for tile coordinates (set by the host; released by `clear`).
+	vec2i: Option<super::vec::Vec2iClass>,
 	/// Where brushes set on tiles and details hint their atlases.
 	sprites: Sprites,
 	/// The engine's random stream: new details' mirroring, scale and rotation.
@@ -302,6 +306,16 @@ impl TileHandle {
 	}
 }
 
+/// Tile coordinates as scripts get them: a `vec2i`, as in the original. On a grid the
+/// host gave no class (a standalone grid in a test), an `{X, Y}` table.
+fn coords(grid: &RefCell<GridState>, vm: &SQVM, x: i64, y: i64) -> SqStrongRef {
+	let class = grid.borrow().vec2i.clone();
+	match class {
+		Some(class) => class.instantiate(vm, super::vec::Vec2i { x, y }),
+		None => xy_table(vm, x, y),
+	}
+}
+
 fn xy_table(vm: &SQVM, x: i64, y: i64) -> SqStrongRef {
 	let mut t = SqTable::new(vm);
 	t.set("X", x);
@@ -348,6 +362,7 @@ impl WorldGrid {
 				detail_class: None,
 				nav_path_class: None,
 				vec2f: None,
+				vec2i: None,
 				sprites: Sprites::default(),
 				engine_rng: EngineRng::unseeded(),
 				ids: EntityIds::default(),
@@ -443,7 +458,7 @@ impl WorldGrid {
 					let g = g.borrow();
 					(g.width, g.height)
 				};
-				xy_table(vm, w, h)
+				coords(&g, vm, w, h)
 			})
 		};
 		let get_tile_square = {
@@ -483,11 +498,9 @@ impl WorldGrid {
 		// and entity getTile delegates with (q, r) [2-arg].
 		let get_tile_1 = {
 			let g = self.grid.clone();
-			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Option<NewInstance<TileHandle>> {
-				// coords is an {X, Y} table or a vec2i; read axial q/r via member access.
-				let q = coords.0.get_member::<i64>(vm, "X")?;
-				let r = coords.0.get_member::<i64>(vm, "Y")?;
-				tile_new(&g, q, r + q / 2) // axial -> square
+			vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<Option<NewInstance<TileHandle>>, String> {
+				let (q, r) = super::vec::tile_coords(vm, &coords.0, "getTile")?;
+				Ok(tile_new(&g, q, r + q / 2)) // axial -> square
 			})
 		};
 		let get_tile_2 = {
@@ -619,8 +632,8 @@ impl WorldGrid {
 		// mask at `pos` with scale rt (see `fog_mask`).
 		let uncover_fog_of_war = {
 			let g = self.grid.clone();
-			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| {
-				let (px, py) = super::vec::xy(vm, &pos.0);
+			vm.make_closure(move |vm: &SQVM, pos: Retained, radius: Number| -> Result<(), String> {
+				let (px, py) = super::vec::position(vm, &pos.0, "uncoverFogOfWar")?;
 				let mut grid = g.borrow_mut();
 				let (w, h) = (grid.width, grid.height);
 				let (cq, cr) = world_layout::world_to_tile(px, py, w, h);
@@ -640,6 +653,7 @@ impl WorldGrid {
 					}
 				}
 				grid.fog.stamp((px as f32, py as f32), rt);
+				Ok(())
 			})
 		};
 		// Fog-of-war switches. setFogOfWar(false) reveals the whole map, as the original
@@ -686,13 +700,13 @@ impl WorldGrid {
 		let world_to_tile = {
 			let g = self.grid.clone();
 			vm.make_closure(move |vm: &SQVM, pos: Retained| -> Result<SqStrongRef, String> {
-				let (px, py) = super::vec::xy(vm, &pos.0);
+				let (px, py) = super::vec::position(vm, &pos.0, "worldToTile")?;
 				let (w, h) = {
 					let grid = g.borrow();
 					(grid.width, grid.height)
 				};
 				let (q, r) = world_layout::world_to_tile(px, py, w, h);
-				Ok(xy_table(vm, q, r))
+				Ok(coords(&g, vm, q, r))
 			})
 		};
 		// World.findNextTileOfType(tile, dist, type, result): set result.Result to the
@@ -740,8 +754,8 @@ impl WorldGrid {
 		// kept for the renderer (`0x4f0350`; see `SceneRegionText`).
 		let spawn_region_text = {
 			let g = self.grid.clone();
-			vm.make_closure(move |vm: &SQVM, name: SqBytes, scale: Number, rotation: Number, pos: Retained| {
-				let coord = |axis: &str| pos.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
+			vm.make_closure(move |vm: &SQVM, name: SqBytes, scale: Number, rotation: Number, pos: Retained| -> Result<(), String> {
+				let pos = super::vec::position_f32(vm, &pos.0, "spawnRegionText")?;
 				let mut g = g.borrow_mut();
 				// It's a scene entity in the original, so it takes an id.
 				let id = g.ids.next();
@@ -751,8 +765,9 @@ impl WorldGrid {
 					text: name.0.into(),
 					scale: scale.0 as f32,
 					rotation: rotation.0 as f32,
-					pos: (coord("X"), coord("Y")),
+					pos,
 				});
+				Ok(())
 			})
 		};
 
@@ -1045,11 +1060,15 @@ impl WorldGrid {
 		g.detail_class = None;
 		g.nav_path_class = None;
 		g.vec2f = None;
+		g.vec2i = None;
 	}
 
-	/// Make `tileToWorld`'s vectors of `vec2f`. Call before the scripts run.
-	pub(crate) fn set_vec_class(&self, vec2f: super::vec::VecClass) {
-		self.grid.borrow_mut().vec2f = Some(vec2f);
+	/// Make `tileToWorld`'s vectors of `vec2f` and tile coordinates of `vec2i`. Call
+	/// before the scripts run.
+	pub(crate) fn set_vec_classes(&self, vec2f: super::vec::VecClass, vec2i: super::vec::Vec2iClass) {
+		let mut g = self.grid.borrow_mut();
+		g.vec2f = Some(vec2f);
+		g.vec2i = Some(vec2i);
 	}
 
 	/// `World.clearScene()`'s share: the details and the region names go, and fog of
@@ -1198,8 +1217,7 @@ fn tile_to_world_overloads(vm: &mut SQVM, grid: &Rc<RefCell<GridState>>) -> Vec<
 	}
 	let g = grid.clone();
 	let from_coords = vm.make_closure(move |vm: &SQVM, coords: Retained| -> Result<Option<SqStrongRef>, String> {
-		let q = coords.0.get_member::<i64>(vm, "X").ok_or("tileToWorld: coords need X")?;
-		let r = coords.0.get_member::<i64>(vm, "Y").ok_or("tileToWorld: coords need Y")?;
+		let (q, r) = super::vec::tile_coords(vm, &coords.0, "tileToWorld")?;
 		centre(&g, vm, q, r)
 	});
 	let g = grid.clone();
@@ -1231,7 +1249,7 @@ fn build_world_navigation_path_class(vm: &mut SQVM) -> SqClass<PathData> {
 					let t = &g.tiles[id];
 					(t.q, t.r)
 				};
-				Some(xy_table(vm, q, r))
+				Some(coords(&p.grid, vm, q, r))
 			},
 		)
 		.method("pop", |p: &mut PathData| {
@@ -1255,29 +1273,31 @@ fn build_world_navigation_path_class(vm: &mut SQVM) -> SqClass<PathData> {
 			}
 			p.coords_at(vm, p.tiles.len() - 1)
 		})
-		.method("pushFront", |p: &mut PathData, vm: &SQVM, coords: Retained| {
-			if let Some(id) = p.tile_of(vm, &coords.0) {
+		.method("pushFront", |p: &mut PathData, vm: &SQVM, coords: Retained| -> Result<(), String> {
+			if let Some(id) = p.tile_of(vm, &coords.0, "pushFront")? {
 				p.tiles.insert(p.cursor, id);
 			}
+			Ok(())
 		})
-		.method("pushBack", |p: &mut PathData, vm: &SQVM, coords: Retained| {
-			if let Some(id) = p.tile_of(vm, &coords.0) {
+		.method("pushBack", |p: &mut PathData, vm: &SQVM, coords: Retained| -> Result<(), String> {
+			if let Some(id) = p.tile_of(vm, &coords.0, "pushBack")? {
 				p.tiles.push(id);
 			}
+			Ok(())
 		})
 		// isAtWaypoint(pos): within 4 px of the current waypoint's tile centre (an empty
 		// path counts as arrived). From the original's disassembly.
-		.method("isAtWaypoint", |p: &mut PathData, vm: &SQVM, pos: Retained| -> bool {
+		.method("isAtWaypoint", |p: &mut PathData, vm: &SQVM, pos: Retained| -> Result<bool, String> {
+			let (x, y) = super::vec::position(vm, &pos.0, "isAtWaypoint")?;
 			let Some(&id) = p.tiles.get(p.cursor) else {
-				return true;
+				return Ok(true);
 			};
 			let (q, r) = {
 				let g = p.grid.borrow();
 				(g.tiles[id].q, g.tiles[id].r)
 			};
-			let (x, y) = super::vec::xy(vm, &pos.0);
 			let centre = world_layout::tile_pos(q, r + q / 2);
-			super::world_query::distance(centre, (x, y)) <= 4.0
+			Ok(super::world_query::distance(centre, (x, y)) <= 4.0)
 		})
 		.build(vm)
 }
@@ -1373,11 +1393,11 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.property_obj("Coords", |t, vm| {
 			let (q, r) = t.with(|d| (d.q, d.r));
-			xy_table(vm, q, r)
+			coords(&t.grid, vm, q, r)
 		})
 		.property_obj("SquareCoords", |t, vm| {
 			let (c, r) = t.with(|d| (d.col, d.row));
-			xy_table(vm, c, r)
+			coords(&t.grid, vm, c, r)
 		})
 		// The tile centre in world pixels, as a vec2f (like the original); see
 		// `world_layout`.
@@ -1522,10 +1542,9 @@ fn build_world_tile_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 			 flipped: Retained,
 			 _fade_in: Retained,
 			 offset: Retained|
-			 -> Option<SqStrongRef> {
-				let coord = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
-				let offset = (coord("X"), coord("Y"));
-				make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false, offset)
+			 -> Result<Option<SqStrongRef>, String> {
+				let offset = super::vec::position_f32(vm, &offset.0, "spawnDetail")?;
+				Ok(make_detail(t, vm, detail_args(vm, brush, &z, &flags, &flipped), false, offset))
 			},
 		)
 		.native_method(

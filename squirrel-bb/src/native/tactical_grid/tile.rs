@@ -152,14 +152,15 @@ pub(super) fn clear_tile(t: &TileHandle, vm: &SQVM, flags: Option<i64>) {
 }
 
 /// `spawnDetail(brush [, flags [, mirrored [, fadeIn [, offset]]]])`: see `detail`.
-fn spawn_detail(t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>) -> Option<SqStrongRef> {
+fn spawn_detail(t: &mut TileHandle, vm: &SQVM, Variadic(args): Variadic<Retained>) -> Result<Option<SqStrongRef>, String> {
+	let offset = args.get(4).map_or(Ok((0.0, 0.0)), |a| crate::native::vec::position_f32(vm, &a.0, "spawnDetail"))?;
+	Ok(spawn_detail_at(t, vm, &args, offset))
+}
+
+fn spawn_detail_at(t: &mut TileHandle, vm: &SQVM, args: &[Retained], offset: (f32, f32)) -> Option<SqStrongRef> {
 	let brush = args.first()?.0.get_value::<String>(vm)?;
 	let number = |i: usize| args.get(i).and_then(|a| a.0.get_value::<Number>(vm)).map(|n| n.0);
 	let flag = |i: usize| args.get(i).and_then(|a| a.0.get_value::<bool>(vm));
-	let offset = args.get(4).map_or((0.0, 0.0), |a| {
-		let c = |axis: &str| a.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
-		(c("X"), c("Y"))
-	});
 	let spawn = detail::Spawn {
 		brush,
 		flags: number(1).map_or(0, |n| n as i64),
@@ -217,11 +218,11 @@ pub(super) fn build_class(vm: &mut SQVM) -> SqClass<TileHandle> {
 	b = b
 		.property_obj("Coords", |t, vm| {
 			let (q, r) = t.with(|d| (d.q, d.r));
-			xy(vm, q, r)
+			super::coords(&t.grid, vm, q, r)
 		})
 		.property_obj("SquareCoords", |t, vm| {
 			let (c, r) = t.with(|d| (d.col, d.row));
-			xy(vm, c, r)
+			super::coords(&t.grid, vm, c, r)
 		})
 		.property_obj("Pos", |t, vm| vec(vm, t.pos()).ok().flatten().unwrap_or_else(|| xy(vm, 0, 0)))
 		.property_obj("Properties", properties)

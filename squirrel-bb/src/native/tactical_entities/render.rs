@@ -51,14 +51,11 @@ pub(super) fn unit_natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqS
 					let handle = machine.record(vm.this_identity()).and_then(|r| r.sprites.get(&sprite).cloned());
 					(machine.sprite_class.clone(), handle)
 				};
+				let xy = |v: &Retained| crate::native::vec::position_f32(vm, &v.0, "moveSpriteOffset");
+				let (from, to) = (xy(&from)?, xy(&to)?);
 				let (Some(class), Some(handle)) = (class, handle) else { return Ok(true) };
 				let now = virtual_seconds(vm)? as f32;
 				let t = (now - start.0 as f32) / duration.0 as f32;
-				let xy = |v: &Retained| {
-					let axis = |a: &str| v.0.get_member::<Number>(vm, a).map_or(0.0, |n| n.0 as f32);
-					(axis("X"), axis("Y"))
-				};
-				let (from, to) = (xy(&from), xy(&to));
 				let (offset, done) = if t >= 1.0 {
 					(to, true)
 				} else {

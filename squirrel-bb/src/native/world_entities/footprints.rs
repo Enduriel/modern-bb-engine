@@ -154,8 +154,9 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 			      scale: Number,
 			      stay: Number,
 			      visibility: Number,
-			      kind: Number| {
-				let (x, y) = vec_xy(vm, &pos.0);
+			      kind: Number|
+			      -> Result<(), String> {
+				let (x, y) = vec_xy(vm, &pos.0, "spawnFootprint")?;
 				let now = virtual_time(vm);
 				let (view, _) = view_of(&m);
 				let mut machine = m.borrow_mut();
@@ -177,13 +178,14 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 					now,
 					&ids,
 				);
+				Ok(())
 			},
 		)
 	};
 	let all_at_pos = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, pos: Retained, count: Number| -> SqStrongRef {
-			let (x, y) = vec_xy(vm, &pos.0);
+		vm.make_closure(move |vm: &SQVM, pos: Retained, count: Number| -> Result<SqStrongRef, String> {
+			let (x, y) = vec_xy(vm, &pos.0, "getAllFootprintsAtPos")?;
 			let now = virtual_time(vm);
 			let (view, vision) = view_of(&m);
 			let found = {
@@ -197,11 +199,12 @@ pub(super) fn world_methods(m: &Machine, vm: &mut SQVM) -> Vec<(String, SqStrong
 			for flag in found {
 				out.push(flag);
 			}
-			out.to_strong()
+			Ok(out.to_strong())
 		})
 	};
-	let direction8_from_to = vm.make_closure(|vm: &SQVM, from: Retained, to: Retained| -> i64 {
-		world_query::direction8(vec_xy(vm, &from.0), vec_xy(vm, &to.0))
+	let direction8_from_to = vm.make_closure(|vm: &SQVM, from: Retained, to: Retained| -> Result<i64, String> {
+		let native = "getDirection8FromTo";
+		Ok(world_query::direction8(vec_xy(vm, &from.0, native)?, vec_xy(vm, &to.0, native)?))
 	});
 	vec![
 		("spawnFootprint".to_string(), spawn),

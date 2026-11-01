@@ -42,11 +42,9 @@ fn num(vm: &SQVM, args: &[Retained], i: usize) -> f32 {
 	args.get(i).and_then(|a| a.0.get_value::<Number>(vm)).map_or(0.0, |n| n.0 as f32)
 }
 
-/// Argument `i` as a vector's `X`, `Y`.
-fn vec2(vm: &SQVM, args: &[Retained], i: usize) -> (f32, f32) {
-	let Some(v) = args.get(i) else { return (0.0, 0.0) };
-	let c = |k: &str| v.0.get_member::<Number>(vm, k).map_or(0.0, |n| n.0 as f32);
-	(c("X"), c("Y"))
+/// Argument `i` as a `vec2f`'s `X`, `Y` (0, 0 if missing).
+fn vec2(vm: &SQVM, args: &[Retained], i: usize, native: &str) -> Result<(f32, f32), String> {
+	args.get(i).map_or(Ok((0.0, 0.0)), |v| crate::native::vec::position_f32(vm, &v.0, native))
 }
 
 /// `brush`'s rotation speed, or `None` for an unknown brush.
@@ -58,8 +56,9 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 	// spawnIconEffect(brush, tile, offsetX, offsetY, scale, fadeIn, stay, fadeOut, movement)
 	let icon = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, brush: String, tile: Native<TileHandle>, Variadic(a): Variadic<Retained>| {
-			let (Some(_), Some(effects)) = (brush_speed(&m, &brush), m.borrow().effects.clone()) else { return };
+		vm.make_closure(move |vm: &SQVM, brush: String, tile: Native<TileHandle>, Variadic(a): Variadic<Retained>| -> Result<(), String> {
+			let movement = vec2(vm, &a, 6, "spawnIconEffect")?;
+			let (Some(_), Some(effects)) = (brush_speed(&m, &brush), m.borrow().effects.clone()) else { return Ok(()) };
 			let ((x, y), id) = tile_of(&tile.0);
 			let phases = crate::native::battle_effects::Phases {
 				fade_in: num(vm, &a, 3),
@@ -67,15 +66,17 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 				fade_out: num(vm, &a, 5),
 			};
 			let pos = (x + num(vm, &a, 0), y + num(vm, &a, 1));
-			effects.borrow_mut().spawn_icon(brush, id, pos, num(vm, &a, 2), phases, vec2(vm, &a, 6), virtual_time(vm));
+			effects.borrow_mut().spawn_icon(brush, id, pos, num(vm, &a, 2), phases, movement, virtual_time(vm));
+			Ok(())
 		})
 	};
 	// spawnAttackEffect(brush, tile, offsetX, offsetY, fadeIn, stay, fadeOut, movement,
 	// switchMs, movementAfter, inFront)
 	let attack = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, brush: String, tile: Native<TileHandle>, Variadic(a): Variadic<Retained>| {
-			let (Some(_), Some(effects)) = (brush_speed(&m, &brush), m.borrow().effects.clone()) else { return };
+		vm.make_closure(move |vm: &SQVM, brush: String, tile: Native<TileHandle>, Variadic(a): Variadic<Retained>| -> Result<(), String> {
+			let moves = [vec2(vm, &a, 5, "spawnAttackEffect")?, vec2(vm, &a, 7, "spawnAttackEffect")?];
+			let (Some(_), Some(effects)) = (brush_speed(&m, &brush), m.borrow().effects.clone()) else { return Ok(()) };
 			let ((x, y), _) = tile_of(&tile.0);
 			let phases = crate::native::battle_effects::Phases {
 				fade_in: num(vm, &a, 2),
@@ -83,8 +84,8 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 				fade_out: num(vm, &a, 4),
 			};
 			let pos = (x + num(vm, &a, 0), y + num(vm, &a, 1));
-			let moves = [vec2(vm, &a, 5), vec2(vm, &a, 7)];
 			effects.borrow_mut().spawn_attack(brush, pos, phases, moves, num(vm, &a, 6), virtual_time(vm));
+			Ok(())
 		})
 	};
 	// spawnPoolEffect(brush, tile, alpha, scale, flags)
@@ -126,7 +127,8 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 	// (brush names), which the script colours; the head flies off with them.
 	let head_effect = {
 		let m = m.clone();
-		vm.make_closure(move |vm: &SQVM, tile: Native<TileHandle>, layers: SqArray, Variadic(a): Variadic<Retained>| -> SqStrongRef {
+		vm.make_closure(move |vm: &SQVM, tile: Native<TileHandle>, layers: SqArray, Variadic(a): Variadic<Retained>| -> Result<SqStrongRef, String> {
+			let offset = vec2(vm, &a, 0, "spawnHeadEffect")?;
 			let rotation = num(vm, &a, 1);
 			let (class, sprites) = {
 				let mm = m.borrow();
@@ -156,10 +158,10 @@ pub(super) fn natives(vm: &mut SQVM, m: &Machine) -> Vec<(&'static str, SqStrong
 				let land = heads::landing_tile(&tile.0.grid, vm, id, || crt.rand_default());
 				heads::mark_head(&tile.0.grid, vm, land);
 				let rng = effects.borrow().rng();
-				let head = Head::new(&rng, id, (x, y), land, handles, pool, vec2(vm, &a, 0), rotation, virtual_time(vm));
+				let head = Head::new(&rng, id, (x, y), land, handles, pool, offset, rotation, virtual_time(vm));
 				effects.borrow_mut().spawn_head(head);
 			}
-			out.to_strong()
+			Ok(out.to_strong())
 		})
 	};
 	// spawnProjectileEffect(brush, from, to, scale, timeScale, rotated, flip) -> ms.

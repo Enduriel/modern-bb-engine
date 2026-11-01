@@ -23,7 +23,7 @@
 
 use std::rc::Rc;
 
-use squirrel::{ClassBuilder, Number, Retained, SQVM, SqStrongRef, Variadic};
+use squirrel::{ClassBuilder, Retained, SQVM, SqStrongRef, Variadic};
 
 use super::color::{color_argb, color_object};
 use crate::native::Sprites;
@@ -180,9 +180,10 @@ pub(crate) fn members<H: SpriteHandle>(b: ClassBuilder<H>, kind: Kind<H>) -> Cla
 	.method("getBrush", move |h: &mut H, vm: &SQVM| -> Option<SqStrongRef> {
 		h.with(|s| get_with.brush_object(vm, s.brush()))
 	})
-	.method("setOffset", |h: &mut H, vm: &SQVM, offset: Retained| {
-		let c = |axis: &str| offset.0.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0);
-		h.with_mut(|s| s.set_offset(c("X"), c("Y")));
+	.method("setOffset", |h: &mut H, vm: &SQVM, offset: Retained| -> Result<(), String> {
+		let (x, y) = crate::native::vec::position(vm, &offset.0, "setOffset")?;
+		h.with_mut(|s| s.set_offset(x, y));
+		Ok(())
 	})
 	.method("setHorizontalFlipping", |h: &mut H, on: bool| h.with_mut(|s| s.set_flag(Flag::Flipped, on)))
 	.method("isFlippedHorizontally", |h: &mut H| h.with(|s| s.flag(Flag::Flipped)))

@@ -152,15 +152,13 @@ pub(crate) fn install(
 	// brush spawns nothing.
 	let spawn_wave_sprite = {
 		let (waves, sprites) = (waves.clone(), sprites.clone());
-		vm.make_closure(move |vm: &SQVM, brush: &str, pos: Retained, drift: Retained, lifetime: Number| {
-			if !sprites.with(|r| r.contains(brush)) {
-				return;
+		vm.make_closure(move |vm: &SQVM, brush: &str, pos: Retained, drift: Retained, lifetime: Number| -> Result<(), String> {
+			let xy = |v: &SqStrongRef| super::vec::position_f32(vm, v, "spawnWaveSprite");
+			let (pos, drift) = (xy(&pos.0)?, xy(&drift.0)?);
+			if sprites.with(|r| r.contains(brush)) {
+				waves.borrow_mut().spawn(brush, pos, drift, lifetime.0 as f32);
 			}
-			let xy = |v: &SqStrongRef| {
-				let c = |axis: &str| v.get_member::<Number>(vm, axis).map_or(0.0, |n| n.0 as f32);
-				(c("X"), c("Y"))
-			};
-			waves.borrow_mut().spawn(brush, xy(&pos.0), xy(&drift.0), lifetime.0 as f32);
+			Ok(())
 		})
 	};
 	// World.setVisible/isVisible: whether the campaign map is drawn (the world state
@@ -172,12 +170,12 @@ pub(crate) fn install(
 	};
 	let is_visible = vm.make_closure(move || visible.get());
 	// World.move(from, to, max): `from` moved toward `to` by at most `max` pixels.
-	let step = vm.make_closure(|vm: &SQVM, from: Retained, to: Retained, max: Number| -> Option<SqStrongRef> {
-		let xy = |v: &SqStrongRef| super::vec::xy(vm, v);
-		let (x, y) = super::world_layout::step_toward(xy(&from.0), xy(&to.0), max.0);
-		SqTable::root(vm)
+	let step = vm.make_closure(|vm: &SQVM, from: Retained, to: Retained, max: Number| -> Result<Option<SqStrongRef>, String> {
+		let xy = |v: &SqStrongRef| super::vec::position(vm, v, "World.move");
+		let (x, y) = super::world_layout::step_toward(xy(&from.0)?, xy(&to.0)?, max.0);
+		Ok(SqTable::root(vm)
 			.get::<SqStrongRef>("createVec")
-			.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (x as f64, y as f64)).ok().flatten())
+			.and_then(|create| create.call_ret::<SqStrongRef, _>(vm, (x as f64, y as f64)).ok().flatten()))
 	});
 	let mut world = SqTable::new(vm);
 	world.set("move", step);

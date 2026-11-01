@@ -1,7 +1,7 @@
 //! World natives built from the original's disassembly, on a new campaign:
 //! `World.move`, `getPlayerPos`, `getAllTilesOfRegion`, `getAllRosters` and `roster.get`, the world tile's
 //! `getTileBetweenThisAnd`/`getPosBetweenThisAnd`, and `presave`/`canLoad` around a save.
-//! `getAllEntitiesAtPos` given a world tile (the origin, probed).
+//! `getAllEntitiesAtPos` given a world tile (an error here; the origin in the original).
 //! Then the Sqrat overloads probed on 2026-10-14: `getDistanceTo(x, y)`, `getEntityAtPos`,
 //! and `spawnEntity(script)` at the tile under the mouse; and `IO.enumerateFiles` over
 //! the real data folder.
@@ -46,20 +46,17 @@ fn world_natives_from_the_disassembly() {
 		if (::fabs(m.X - 3) > 0.00001 || ::fabs(m.Y - 4) > 0.00001) wrong.push("a step of 5: " + m.X + "," + m.Y);
 		"#,
 	);
-	// A world tile as the position (Reforged's "next objective" button): the original
-	// reads pointer bits as the centre, the map's origin in practice (probed
-	// 2026-10-21), not the tile's X/Y or Pos.
+	// A world tile as the position (Reforged 0.9.3's contract details): the original reads
+	// its pointer bits as the centre, the map's origin in practice (probed 2026-10-21). We
+	// take only a vec2f there (an intentional divergence): a script error saying so.
 	check(
 		&engine,
 		"getAllEntitiesAtPos(tile)",
 		r#"
 		local tile = ::World.State.getPlayer().getTile();
-		foreach (r in [400, 5000, 25000])
-		{
-			local n = ::World.getAllEntitiesAtPos(tile, r).len();
-			local origin = ::World.getAllEntitiesAtPos(::createVec(0, 0), r).len();
-			if (n != origin) wrong.push("radius " + r + ": " + n + " around the tile, " + origin + " around the origin");
-		}
+		local err = null;
+		try { ::World.getAllEntitiesAtPos(tile, 400); } catch (e) { err = e; }
+		if (err == null || err.find("expected a vector, a vec2f") == null) wrong.push("a tile is taken: " + err);
 		if (::World.getAllEntitiesAtPos(tile.Pos, 400).len() == 0) wrong.push("nothing around the player's own position");
 		"#,
 	);

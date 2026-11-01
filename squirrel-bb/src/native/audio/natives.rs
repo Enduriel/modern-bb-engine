@@ -31,10 +31,9 @@ use crate::native::overload::{make_dispatcher, overload_key};
 
 type Manager = Rc<RefCell<SoundManager>>;
 
-/// A world position vector's `X`, `Y`.
-fn position(vm: &SQVM, v: &Retained) -> (f32, f32) {
-	let c = |k: &str| v.0.get_member::<Number>(vm, k).map_or(0.0, |n| n.0 as f32);
-	(c("X"), c("Y"))
+/// The world position (`vec2f`) a sound plays at.
+fn position(vm: &SQVM, v: &Retained) -> Result<(f32, f32), String> {
+	crate::native::vec::position_f32(vm, &v.0, "Sound.play")
 }
 
 /// `Sound.play` with every argument (`0x4aed40`).
@@ -95,15 +94,17 @@ pub(crate) fn install(vm: &mut SQVM, m: &Manager) {
 		let m3 = m.clone();
 		sound.push((
 			overload_key("play", 3),
-			vm.make_closure(move |vm: &SQVM, file: String, volume: Number, at: Retained| {
-				play(&mut m3.borrow_mut(), &file, volume.0 as f32, position(vm, &at), 1.0)
+			vm.make_closure(move |vm: &SQVM, file: String, volume: Number, at: Retained| -> Result<(), String> {
+				play(&mut m3.borrow_mut(), &file, volume.0 as f32, position(vm, &at)?, 1.0);
+				Ok(())
 			}),
 		));
 		let m4 = m.clone();
 		sound.push((
 			overload_key("play", 4),
-			vm.make_closure(move |vm: &SQVM, file: String, volume: Number, at: Retained, pitch: Number| {
-				play(&mut m4.borrow_mut(), &file, volume.0 as f32, position(vm, &at), pitch.0 as f32)
+			vm.make_closure(move |vm: &SQVM, file: String, volume: Number, at: Retained, pitch: Number| -> Result<(), String> {
+				play(&mut m4.borrow_mut(), &file, volume.0 as f32, position(vm, &at)?, pitch.0 as f32);
+				Ok(())
 			}),
 		));
 	}

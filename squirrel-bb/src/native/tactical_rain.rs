@@ -243,7 +243,7 @@ impl State {
 pub(crate) struct TacticalRain(Rc<RefCell<State>>);
 
 /// Read the script settings table `t` into `s`.
-fn read_settings(vm: &SQVM, t: &SqStrongRef, s: &mut Settings) {
+fn read_settings(vm: &SQVM, t: &SqStrongRef, s: &mut Settings) -> Result<(), String> {
 	let float = |name: &str, v: &mut f32| {
 		if let Some(n) = t.get_member::<Number>(vm, name) {
 			*v = n.0 as f32;
@@ -272,11 +272,9 @@ fn read_settings(vm: &SQVM, t: &SqStrongRef, s: &mut Settings) {
 		s.splat_brush = brush;
 	}
 	if let Some(d) = t.get_member::<SqStrongRef>(vm, "Direction") {
-		let axis = |a: &str| d.get_member::<Number>(vm, a).map(|n| n.0 as f32);
-		if let (Some(x), Some(y)) = (axis("X"), axis("Y")) {
-			s.direction = (x, y);
-		}
+		s.direction = crate::native::vec::position_f32(vm, &d, "buildRain")?;
 	}
+	Ok(())
 }
 
 impl TacticalRain {
@@ -361,10 +359,10 @@ impl TacticalRain {
 		// buildRain(settings): the rain anew.
 		let build = {
 			let st = self.0.clone();
-			vm.make_closure(move |vm: &SQVM, settings: Retained| {
+			vm.make_closure(move |vm: &SQVM, settings: Retained| -> Result<(), String> {
 				let mut s = st.borrow_mut();
 				let mut settings_now = s.settings.clone();
-				read_settings(vm, &settings.0, &mut settings_now);
+				read_settings(vm, &settings.0, &mut settings_now)?;
 				s.settings = settings_now;
 				s.generation += 1;
 				s.drops.clear();
@@ -381,6 +379,7 @@ impl TacticalRain {
 					s.new_splat(&v, now);
 				}
 				s.note_raining(vm);
+				Ok(())
 			})
 		};
 		let inner_clear = weather.get_member::<SqStrongRef>(vm, "clear");

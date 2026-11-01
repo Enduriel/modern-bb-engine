@@ -76,35 +76,35 @@ fn vec(vm: &SQVM, (x, y): (f32, f32)) -> Result<SqStrongRef, String> {
 	create_vec.call_ret::<SqStrongRef, _>(vm, (f64::from(x), f64::from(y)))?.ok_or_else(|| "createVec returned null".into())
 }
 
-/// A vector's `X` and `Y`.
-fn xy(vm: &SQVM, v: &SqStrongRef) -> Option<(f32, f32)> {
-	let c = |axis: &str| v.get_member::<Number>(vm, axis).map(|n| n.0 as f32);
-	Some((c("X")?, c("Y")?))
+/// The `vec2f` handed to `native` (see [`super::vec::position`]).
+fn xy(vm: &SQVM, v: &SqStrongRef, native: &str) -> Result<(f32, f32), String> {
+	super::vec::position_f32(vm, v, native)
 }
 
-/// A position from `(x, y)` numbers or one vector.
-fn pos_arg(vm: &SQVM, args: &[Retained]) -> Option<(f32, f32)> {
+/// A position from `(x, y)` numbers or one `vec2f`.
+fn pos_arg(vm: &SQVM, args: &[Retained], native: &str) -> Result<Option<(f32, f32)>, String> {
 	match args {
 		[x, y, ..] => {
 			let n = |v: &Retained| v.0.get_value::<Number>(vm).map(|n| n.0 as f32);
-			Some((n(x)?, n(y)?))
+			Ok(n(x).zip(n(y)))
 		}
-		[v] => xy(vm, &v.0),
-		[] => None,
+		[v] => xy(vm, &v.0, native).map(Some),
+		[] => Ok(None),
 	}
 }
 
-/// A pixel from `(x, y)` numbers or one vector, truncated to whole pixels.
-fn pixel_arg(vm: &SQVM, args: &[Retained]) -> Option<(i32, i32)> {
-	pos_arg(vm, args).map(|(x, y)| (x as i32, y as i32))
+/// A pixel from `(x, y)` numbers or one `vec2f`, truncated to whole pixels.
+fn pixel_arg(vm: &SQVM, args: &[Retained], native: &str) -> Result<Option<(i32, i32)>, String> {
+	Ok(pos_arg(vm, args, native)?.map(|(x, y)| (x as i32, y as i32)))
 }
 
 /// `entity.getPos()` (or a tile's `Pos`): where `moveTo`, `jumpTo` and `moveToTile` go.
-fn target_pos(vm: &SQVM, target: &SqStrongRef) -> Option<(f32, f32)> {
-	if let Ok(Some(pos)) = target.call_method_ret::<SqStrongRef, _>(vm, "getPos", ()) {
-		return xy(vm, &pos);
-	}
-	target.get_member::<SqStrongRef>(vm, "Pos").and_then(|p| xy(vm, &p))
+fn target_pos(vm: &SQVM, target: &SqStrongRef, native: &str) -> Result<Option<(f32, f32)>, String> {
+	let pos = match target.call_method_ret::<SqStrongRef, _>(vm, "getPos", ()) {
+		Ok(Some(pos)) => Some(pos),
+		_ => target.get_member::<SqStrongRef>(vm, "Pos"),
+	};
+	pos.map(|p| xy(vm, &p, native)).transpose()
 }
 
 /// The original rounds a float half away from zero to a whole number.
@@ -113,10 +113,11 @@ fn round_half_away(v: f32) -> f32 {
 }
 
 fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallbacks) -> SqClass<CameraHandle> {
-	let glide_to = |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
-		if let Some(p) = target_pos(vm, &target.0) {
+	let glide_to = |c: &mut CameraHandle, vm: &SQVM, target: Retained| -> Result<(), String> {
+		if let Some(p) = target_pos(vm, &target.0, "moveTo")? {
 			c.0.borrow_mut().glide(p, GLIDE_SPEED, true, 0.0);
 		}
+		Ok(())
 	};
 	let mut b = ClassBuilder::<CameraHandle>::new("WorldCamera")
 		// The world's camera has no levels: its range is 0 to 0 (disassembled, 0x4eeb31),
@@ -136,13 +137,14 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 		})
 		.method("moveTo", glide_to)
 		.method("moveToTile", glide_to)
-		.method("jumpTo", |c: &mut CameraHandle, vm: &SQVM, target: Retained| {
-			if let Some(p) = target_pos(vm, &target.0) {
+		.method("jumpTo", |c: &mut CameraHandle, vm: &SQVM, target: Retained| -> Result<(), String> {
+			if let Some(p) = target_pos(vm, &target.0, "jumpTo")? {
 				c.0.borrow_mut().set_pos(p);
 			}
+			Ok(())
 		})
-		.method("isMovingToTile", |c: &mut CameraHandle, vm: &SQVM, tile: Retained| {
-			target_pos(vm, &tile.0).is_some_and(|p| c.0.borrow().target() == p)
+		.method("isMovingToTile", |c: &mut CameraHandle, vm: &SQVM, tile: Retained| -> Result<bool, String> {
+			Ok(target_pos(vm, &tile.0, "isMovingToTile")?.is_some_and(|p| c.0.borrow().target() == p))
 		})
 		.method("zoomTo", |c: &mut CameraHandle, zoom: f64, speed: f64| {
 			c.0.borrow_mut().zoom_to(zoom as f32, speed as f32)
@@ -151,17 +153,17 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 		.method("cancelMovement", |c: &mut CameraHandle| c.0.borrow_mut().cancel())
 		.method("worldToScreen", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
 			let view = view(&c.0);
-			let (x, y) = Screen::of(vm).to_screen(view.pos, view.zoom, xy(vm, &pos.0).unwrap_or((0.0, 0.0)));
+			let (x, y) = Screen::of(vm).to_screen(view.pos, view.zoom, xy(vm, &pos.0, "worldToScreen")?);
 			vec(vm, (x as f32, y as f32))
 		})
 		// Within 3 units of `pos` on both axes (`0x4a3ce0`, the camera class's).
-		.method("isCenteredOnPos", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| {
-			xy(vm, &pos.0).is_some_and(|p| c.0.borrow().is_centered_on(p, CENTRED_ON_POS))
+		.method("isCenteredOnPos", |c: &mut CameraHandle, vm: &SQVM, pos: Retained| -> Result<bool, String> {
+			Ok(c.0.borrow().is_centered_on(xy(vm, &pos.0, "isCenteredOnPos")?, CENTRED_ON_POS))
 		});
 	// Sqrat overloads, as the original's: the arities it binds.
 	// (vec) or (x, y): there at once.
 	b = class_overloads!(b, CameraHandle, "setPos", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
-		if let Some(p) = pos_arg(vm, a) {
+		if let Some(p) = pos_arg(vm, a, "setPos")? {
 			c.0.borrow_mut().set_pos(p);
 		}
 		Ok::<(), String>(())
@@ -170,14 +172,14 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 	b = class_overloads!(b, CameraHandle, "moveToPos", [1, 2, 3], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
 		let speed = if a.len() == 3 { a[2].0.get_value::<Number>(vm).map(|n| n.0 as f32) } else { None };
 		let a = if a.len() == 3 { &a[..2] } else { a };
-		if let Some(p) = pos_arg(vm, a) {
+		if let Some(p) = pos_arg(vm, a, "moveToPos")? {
 			c.0.borrow_mut().glide(p, speed.unwrap_or(GLIDE_SPEED), speed.is_none(), 0.0);
 		}
 		Ok::<(), String>(())
 	});
 	// (dx, dy) ends a glide where it is; (vec) shifts its target too.
 	b = class_overloads!(b, CameraHandle, "move", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
-		if let Some(d) = pos_arg(vm, a) {
+		if let Some(d) = pos_arg(vm, a, "move")? {
 			if a.len() == 1 {
 				c.0.borrow_mut().shift_with_target(d);
 			} else {
@@ -188,13 +190,13 @@ fn build_class(vm: &mut SQVM, camera: &WorldCamera, callbacks: &WorldCameraCallb
 	});
 	// (vec) or (x, y): the world point under a pixel.
 	b = class_overloads!(b, CameraHandle, "screenToWorld", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
-		let (x, y) = pixel_arg(vm, a).unwrap_or((0, 0));
+		let (x, y) = pixel_arg(vm, a, "screenToWorld")?.unwrap_or((0, 0));
 		let view = view(&c.0);
 		vec(vm, Screen::of(vm).to_world(view.pos, view.zoom, x, y))
 	});
 	// (pos) or (pos, margin): whether it's on screen.
 	b = class_overloads!(b, CameraHandle, "isInsideScreen", [1, 2], |c: &mut CameraHandle, vm: &SQVM, a: &[Retained]| {
-		let Some(pos) = a.first().and_then(|p| xy(vm, &p.0)) else { return Ok::<bool, String>(false) };
+		let Some(pos) = a.first().map(|p| xy(vm, &p.0, "isInsideScreen")).transpose()? else { return Ok::<bool, String>(false) };
 		let margin = a.get(1).and_then(|m| m.0.get_value::<Number>(vm)).map_or(0, |n| n.0 as i32);
 		let view = view(&c.0);
 		let screen = Screen::of(vm);
