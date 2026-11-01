@@ -18,6 +18,7 @@
 //!   * [`heap`] — the C heap's usage, for the memory tests and tools
 //!   * [`install`] — finding the player's copy of the game (overrides, the chosen folder, Steam)
 //!   * [`script_profile`] — reports of where the scripts' time goes, by function and mod
+//!   * [`overrides`] — files one mod provides and another replaces, logged at startup
 //!
 //! Next: the 3.0.4 → current-version bytecode transcoder (the game ships Squirrel
 //! 3.0.4 / 32-bit compiled bytecode; we run a newer 64-bit VM, so the `.cnut`
@@ -35,6 +36,7 @@ pub mod load_order;
 pub mod log_files;
 pub mod mod_corpus;
 pub mod mounts;
+pub mod overrides;
 pub mod probe_aside;
 pub mod script_cache;
 pub mod script_profile;

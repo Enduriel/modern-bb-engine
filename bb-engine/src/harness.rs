@@ -229,7 +229,8 @@ pub fn open_install_with(dir: &Path, configure: impl FnOnce(&mut NativeConfig)) 
 
 /// An engine over `archives` (in any order: they mount in load order) with the data
 /// folder `dir` mounted beside them ([`Mounts`]), configured as [`open_install`] says,
-/// then by `configure`.
+/// then by `configure`. Files one mod provides and another replaces are logged as
+/// warnings ([`crate::overrides`]).
 pub fn open_mounted(
 	dir: &Path,
 	archives: Vec<PathBuf>,
@@ -242,6 +243,7 @@ pub fn open_mounted(
 	let source = DatScriptSource::open(archives)?
 		.with_cache(ScriptCache::from_env())
 		.with_mounts(mounts);
+	crate::overrides::log(&source);
 	let sprites = source.with_archives(|archives| load_sprites(archives));
 	for failure in &sprites.failures {
 		eprintln!("[Error] brush {failure}");
