@@ -20,6 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use roster_id::roster_id;
 use squirrel::{ClassBuilder, IdentityMap, Number, Retained, SQVM, SqArray, SqClass, SqStrongRef, SqTable, Variadic};
 
 use super::inject::{Natives, inject_natives};
@@ -32,6 +33,7 @@ mod effects;
 mod original;
 mod overlay;
 mod placement;
+mod roster_id;
 mod render;
 mod shaker;
 mod vision;
@@ -56,18 +58,6 @@ const TEMPORARY_ROSTER_ID: i64 = -6;
 /// contracts put the people they offer; a different roster from the battle's
 /// (disassembled: `World+0x26c` vs `Tactical+0x2cc`).
 const WORLD_TEMPORARY_ROSTER_ID: i64 = -7;
-/// The id `World.getRoster`/`createRoster`/`deleteRoster` take for a non-number. The
-/// original's bindings don't check the argument: an id that isn't a number reads as
-/// whatever their stack slot held, the VM's address (disassembled, `0x4f8a00`), so every
-/// such id names the same roster. Mods rely on it (Clever Recruiter keys its roster by
-/// its mod id string). A large positive stand-in, as an address is.
-const NON_NUMERIC_ROSTER_ID: i64 = 0x7f00_0000;
-
-/// A roster id argument as the original's bindings read it (see [`NON_NUMERIC_ROSTER_ID`]).
-fn roster_id(vm: &SQVM, id: &Retained) -> i64 {
-	id.0.get_value::<Number>(vm).map_or(NON_NUMERIC_ROSTER_ID, |n| n.0 as i64)
-}
-
 /// A render sprite handle for a tactical unit. Richer than the world sprite (units read
 /// more back): also `Rotation`, `Color`, `HasBrush`, `getBrush` and
 /// `setHorizontalFlipping`. Its colour and fades are a [`SpriteColor`], as the world's
@@ -1128,7 +1118,9 @@ impl TacticalEntities {
 		};
 		let get_roster = {
 			let mint = mint_roster.clone();
-			vm.make_closure(move |vm: &SQVM, id: Retained| -> Option<SqStrongRef> { mint(vm, roster_id(vm, &id)) })
+			vm.make_closure(move |vm: &SQVM, id: Retained| -> Result<Option<SqStrongRef>, String> {
+				Ok(mint(vm, roster_id(vm, "getRoster", &id)?))
+			})
 		};
 		let get_player_roster = {
 			let mint = mint_roster.clone();
@@ -1167,16 +1159,17 @@ impl TacticalEntities {
 		let create_roster = {
 			let m = self.machine.clone();
 			let mint = mint_roster.clone();
-			vm.make_closure(move |vm: &SQVM, id: Retained| -> Option<SqStrongRef> {
-				let id = roster_id(vm, &id);
+			vm.make_closure(move |vm: &SQVM, id: Retained| -> Result<Option<SqStrongRef>, String> {
+				let id = roster_id(vm, "createRoster", &id)?;
 				m.borrow_mut().rosters.entry(id).or_default();
-				mint(vm, id)
+				Ok(mint(vm, id))
 			})
 		};
 		let delete_roster = {
 			let m = self.machine.clone();
-			vm.make_closure(move |vm: &SQVM, id: Retained| {
-				m.borrow_mut().rosters.remove(&roster_id(vm, &id));
+			vm.make_closure(move |vm: &SQVM, id: Retained| -> Result<(), String> {
+				m.borrow_mut().rosters.remove(&roster_id(vm, "deleteRoster", &id)?);
+				Ok(())
 			})
 		};
 

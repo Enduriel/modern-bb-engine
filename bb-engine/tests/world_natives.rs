@@ -230,15 +230,25 @@ fn world_natives_from_the_disassembly() {
 		&engine,
 		"createRoster",
 		r#"
-		// It returns the roster (made if new), and ids that aren't numbers all name one
-		// roster, as the original's unchecked argument does (Clever Recruiter's string id).
+		// It returns the roster (made if new); a float id reads as its integer.
 		local r = ::World.createRoster(424242);
 		if (r == null || r.getSize() != 0) wrong.push("createRoster didn't return the new roster");
-		local a = ::World.createRoster("mod_clever_recruiter");
-		a.create("scripts/entity/tactical/player");
-		if (::World.getRoster("another string").getSize() != 1) wrong.push("string ids name different rosters");
-		::World.deleteRoster("mod_clever_recruiter");
+		r.create("scripts/entity/tactical/player");
+		if (::World.getRoster(424242.7).getSize() != 1) wrong.push("a float id isn't read as its integer");
 		::World.deleteRoster(424242);
+		if (::World.getRoster(424242).getSize() != 0) wrong.push("deleteRoster left the roster");
+		// An id that isn't a number is an error (the original reads garbage, so every
+		// such id names one shared roster: an intentional divergence).
+		foreach (call in [
+			["createRoster", @() ::World.createRoster("mod_clever_recruiter"), "string"],
+			["getRoster", @() ::World.getRoster(null), "null"],
+			["deleteRoster", @() ::World.deleteRoster({}), "table"],
+		]) {
+			local err = null;
+			try { call[1](); } catch (e) { err = e; }
+			local expected = call[0] + ": the roster id must be an integer (got " + call[2] + ")";
+			if (err == null || err.find(expected) == null) wrong.push(call[0] + " took a " + call[2] + ": " + err);
+		}
 		"#,
 	);
 }
