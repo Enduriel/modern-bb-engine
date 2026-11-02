@@ -2,29 +2,72 @@
 
 The modern engine runs the game's scripts and mods as the original does: the same
 `scripts/`, the same `!mods_preload`, Modern Hooks, mod_hooks and MSU. What it adds is
-reached through one root table, `ModernEngine`, which only this engine defines. Check
-for it before using anything here, so the same mod works in the original game:
+reached through one root table, `ModernEngine`, which only this engine defines. A later
+release only adds to this page; each section names the release that added it.
+
+## Requiring the modern engine, or checking for it (0.4.0)
+
+The engine registers itself with Modern Hooks as a mod, `mod_modern_engine` ("Modern
+Engine"), at its release version (`0.4.0`, the version `bb --version` prints). A mod
+requires it, or checks for it, as it would any other mod.
+
+A mod that only works on the modern engine requires it:
+
+```squirrel
+local mod = ::Hooks.register("mod_my_mod", "1.0.0", "My Mod");
+mod.require("mod_modern_engine >= 0.4.0");
+```
+
+In the original game nothing registers `mod_modern_engine`, so Modern Hooks shows its
+usual popup when the game starts: the mod requires Modern Engine, which is missing. On
+an older release of the modern engine, the popup says the engine is outdated. Releases
+before 0.4.0 don't register themselves, so `0.4.0` is the lowest version worth
+requiring.
+
+A mod that works in both games, and uses something from this page when it can, checks
+the version first. Modern Hooks compares versions as semantic versions, so never compare
+the version strings yourself. In Squirrel:
+
+```squirrel
+if (::Hooks.hasMod("mod_modern_engine") && ::Hooks.getMod("mod_modern_engine").getVersion() >= ::Hooks.SQClass.ModVersion("0.4.0"))
+{
+	// The modern engine, 0.4.0 or later.
+}
+```
+
+In the UI's JavaScript (Modern Hooks 0.7.0 or later), anywhere in a file added with
+`::Hooks.registerJS` or `registerLateJS`, its first line included:
+
+```js
+if (Hooks.hasModVersion("mod_modern_engine", ">= 0.4.0"))
+{
+	// The modern engine, 0.4.0 or later.
+}
+```
+
+The engine registers during `!mods_preload`, before Modern Hooks checks the mods'
+requirements. It registers with Modern Hooks only: a mod that uses mod_hooks alone
+(without Modern Hooks) or no hook framework can still tell the engine apart, though not
+its version, by the `ModernEngine` table in Squirrel and `window.ModernEngine` in the UI
+(defined before any of the game's or mods' scripts run):
 
 ```squirrel
 if ("ModernEngine" in ::getroottable())
 {
-	// The modern engine is running: use what it adds.
+	// The modern engine is running.
 }
 ```
 
-`::ModernEngine.Version` is the API's version (an integer, `4` for now). A later
-version only adds to this page. Each section names the version that added it.
-
-The UI's JavaScript can tell the same way (version 3): `window.ModernEngine` is defined
-only by this engine, before any of the game's or mods' scripts run, with the same
-`Version`:
-
 ```js
-if (typeof window.ModernEngine === 'object' && window.ModernEngine.Version >= 3)
+if (typeof window.ModernEngine === 'object')
 {
 	// The modern engine is running.
 }
 ```
+
+Releases 0.2.0 and 0.3.0 had `ModernEngine.Version` (an integer API version, `3` and `4`)
+instead; it is gone since 0.4.0. A mod that read it should check `mod_modern_engine`'s
+version as above: everything below that says 0.2.0 or 0.3.0 is in those releases.
 
 ## Which copy of a file is used
 
@@ -55,7 +98,7 @@ not reported (that's what mods do), except when the game's copy wins as above:
 `"data_001.dat" (the game's own) overrides 1 file of "mod_a.zip": scripts/x.nut (its
 .cnut is as new or newer)`.
 
-## Fonts for text in any language (`registerFont`, version 1)
+## Fonts for text in any language (`registerFont`, 0.2.0)
 
 Vanilla draws the map's text (settlement and party names, region names) with bitmap
 fonts that only have the 256 characters of Windows-1252. The modern engine draws text
@@ -136,13 +179,13 @@ On the UI (the game's HTML pages, drawn by Chromium):
   `@font-face`) is unaffected; it can register its font too, by one of the families
   above, to cover vanilla's.
 
-## Modern variants of the string library (`split3_2`, `format3_2`, version 2)
+## Modern variants of the string library (`split3_2`, `format3_2`, 0.2.0)
 
 The game runs Squirrel 3.0, and its scripts and mods rely on 3.0's string library.
 Where this engine's newer Squirrel behaves differently, it behaves as 3.0 does, so
 `split` and `format` give what they give in the original game. The newer behaviour is
 still there, under the same name with a `3_2` suffix, for mods that want it. They're
-root functions, so check for them (or for `::ModernEngine.Version >= 2`) before use:
+root functions, so check for them before use:
 
 ```squirrel
 local parts = ("split3_2" in ::getroottable()) ? ::split3_2(text, ",") : ::split(text, ",");
@@ -161,7 +204,7 @@ local parts = ("split3_2" in ::getroottable()) ? ::split3_2(text, ",") : ::split
   `inf`, `nan` and `-nan`. The text is the same on every platform: neither function
   uses the system's C library for floats.
 
-## Portraits of world entities (`worldentity` images, version 3)
+## Portraits of world entities (`worldentity` images, 0.2.0)
 
 A world entity's `getImagePath()` (`world_entity.nut`) returns
 `worldentity(<random>,<id>)`, but the original game has no handler for it: the image
@@ -174,9 +217,9 @@ var image = $('<img/>');
 image.attr('src', Path.PROCEDURAL + data.ImagePath); // a world entity's getImagePath()
 ```
 
-Check for `::ModernEngine.Version >= 3` (or `window.ModernEngine.Version >= 3` in the
-UI) first, so the original game keeps your fallback (in the original, the image's
-`error` event fires, and an XHR for it ends with status 0).
+Check for the modern engine first (`Hooks.hasMod("mod_modern_engine")` in the UI, or
+`window.ModernEngine`; see above), so the original game keeps your fallback (in the
+original, the image's `error` event fires, and an XHR for it ends with status 0).
 
 The picture is the entity as the world map shows it at zoom 1:
 
@@ -203,7 +246,7 @@ Each handler finds only its own kind of entity, as the original's does:
   included, or an entity with nothing to draw, the load fails (the `error` event,
   status 0) and the same warning is logged.
 
-## Positional sounds pan by their place on the screen (version 4)
+## Positional sounds pan by their place on the screen (0.3.0)
 
 `Sound.play(file, volume, pos)` with a position plays the sound at that world point. In
 the original game its pan says only which side of the camera the point is on: every
@@ -224,13 +267,13 @@ the ambience's random pan, are as in the original.
 
 A mod that works around the original's pan by moving each sound's position towards the
 camera, so that it lands in the narrow band where the original pans in between, makes
-every sound play near the centre on the modern engine. `::ModernEngine.Version >= 4`
-means positional sounds pan by their place on the screen (earlier versions of the
-modern engine pan as the original), so such a mod should keep the position as it is
-then:
+every sound play near the centre on the modern engine. From 0.3.0 the modern engine
+pans positional sounds by their place on the screen (0.2.0 pans as the original), so
+such a mod should keep the position as it is there. Releases before 0.4.0 can't be told
+apart by version (see above), so this treats them all as panning as the original:
 
 ```squirrel
-if ("ModernEngine" in ::getroottable() && ::ModernEngine.Version >= 4)
+if (::Hooks.hasMod("mod_modern_engine") && ::Hooks.getMod("mod_modern_engine").getVersion() >= ::Hooks.SQClass.ModVersion("0.4.0"))
 {
 	// The engine pans by the sound's place on the screen: play at the real position.
 }

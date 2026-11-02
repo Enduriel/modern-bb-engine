@@ -194,7 +194,8 @@ if the problem goes away with them removed from the game's `data` folder, say th
 
 Mods made for the original run unchanged. `bb` also adds a few things mods can use
 (fonts for any language, Squirrel 3.2's string functions, portraits of map entities),
-which a mod checks for through `::ModernEngine`: see [docs/modding.md](docs/modding.md).
+which a mod checks for, or requires, through Modern Hooks as the mod `mod_modern_engine`:
+see [docs/modding.md](docs/modding.md).
 
 ## Building from source
 
@@ -222,7 +223,7 @@ but developers and the tests use some: [docs/environment.md](docs/environment.md
 - [docs/building.md](docs/building.md): building from source, step by step (Windows in detail).
 - [docs/requirements.md](docs/requirements.md): what `bb` needs, and what each claim rests on.
 - [docs/differences.md](docs/differences.md): every deliberate difference from the original.
-- [docs/modding.md](docs/modding.md): what `bb` adds for mods, and `::ModernEngine`.
+- [docs/modding.md](docs/modding.md): what `bb` adds for mods, and how a mod requires or checks for `bb`.
 - [docs/memory-snapshots.md](docs/memory-snapshots.md): recording where the memory goes, for a report.
 - [docs/environment.md](docs/environment.md): every environment variable `bb`, its tests and tools read.
 - [docs/packaging.md](docs/packaging.md): building release packages.
