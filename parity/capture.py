@@ -41,7 +41,49 @@ def find_runner() -> Path:
 RUNNER = find_runner()
 
 sys.path.insert(0, str(ROOT))
-from probes import load_probes, combined_source, split_sections  # noqa: E402
+from probes import LOG_START, load_probes, combined_source, log_windows, split_sections  # noqa: E402
+
+ROW_START = '<div class="row '
+TEXT_START = '<div class="text">'
+STACK_START = '</div></div><div class="stacktrace-container">'
+ROW_END = '</div></div></div>'
+
+
+def log_rows(path: Path) -> list[tuple[str, str, str]]:
+    """log.html's rows as (class, tag, text), the text as the page has it. The game writes
+    messages raw (unescaped), so a row's text is cut out by the row's own markup. An
+    uncaught script error's row (with its stack trace) is left out: log windows compare
+    rows that log functions and the engine write (see probes.log_windows)."""
+    text = path.read_text(errors="replace") if path.exists() else ""
+    rows = []
+    for chunk in text.split(ROW_START)[1:]:
+        cls = chunk.split('"', 1)[0]
+        m = re.search(r'<div class="tag">([^<]*)</div>', chunk)
+        start = chunk.find(TEXT_START)
+        if start < 0 or STACK_START in chunk:
+            continue
+        body = chunk[start + len(TEXT_START):]
+        tail = re.search(re.escape(ROW_END) + r"(?:</div>\s*</body>\s*</html>)?\s*\Z", body)
+        rows.append((cls, m.group(1) if m else "", body[:tail.start()] if tail else body))
+    return rows
+
+
+def with_log_windows(lines: list[str], out_dir: Path) -> list[str]:
+    """Replace each `PROBE_LOG <key>` line with its window's lines, read from log.html
+    (the runner prints only some rows). The k-th such line is the k-th window."""
+    if not any(l.startswith(LOG_START) for l in lines):
+        return lines
+    windows = iter(log_windows(log_rows(out_dir / "log.html")))
+    out = []
+    for line in lines:
+        if line.startswith(LOG_START):
+            window = next(windows, None)
+            if window is None:
+                sys.exit(f"{line}: no such window in {out_dir}/log.html")
+            out += window
+        else:
+            out.append(line)
+    return out
 
 
 def run_group(mode: str, seed: str | None, source: str, out_dir: Path, js: Path | None = None) -> list[str]:
@@ -67,7 +109,7 @@ def run_group(mode: str, seed: str | None, source: str, out_dir: Path, js: Path 
         m = re.match(r"^\[[^\]]*\] \S+\s+\S+\s+(PROBE.*)$", row)
         if m:
             lines.append(m.group(1))
-    return lines
+    return with_log_windows(lines, out_dir)
 
 
 def game_version(out_dir: Path) -> str:

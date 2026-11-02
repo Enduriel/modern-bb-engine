@@ -44,7 +44,7 @@ pub fn header(title: &str) -> String {
 }
 
 /// `text` with each newline as `<br>`.
-fn with_breaks(text: &[u8]) -> Vec<u8> {
+pub(crate) fn with_breaks(text: &[u8]) -> Vec<u8> {
 	let mut out = Vec::with_capacity(text.len());
 	for &b in text {
 		if b == b'\n' {

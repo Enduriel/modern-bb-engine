@@ -7,19 +7,22 @@
 //! A probe with a `// compare: subset` line is a coverage check: only the original's
 //! lines must appear in ours.
 //!
+//! A probe compares what gets logged with a log window: after a `PROBE_LOG <key>` line,
+//! every row logged up to the next `PROBE` line (by the scripts or the engine, any tag
+//! or level) must match the original's, in count and order (see `log_windows`).
+//!
 //! A known, accepted difference is listed in `parity/divergences.txt` as
 //! `probe | key | reason`; one that starts matching again fails the test, so the list
 //! stays honest. A probe without a golden is reported (capture it) but does not fail.
 //! `PARITY_DUMP=<dir>` also writes our engine's output per probe there, for review.
 //! Skips if the Steam install is missing.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use bb_engine::{harness, tactical_player};
-use squirrel_bb::LogLevel;
+use squirrel_bb::html_log;
 
 #[path = "support/parity.rs"]
 mod common;
@@ -103,16 +106,52 @@ fn split_sections(lines: &[String]) -> BTreeMap<String, Vec<String>> {
 	sections
 }
 
+const LOG_START: &str = "PROBE_LOG ";
+
+/// The rows' PROBE lines, with each log window expanded: a row `PROBE_LOG <key>` opens
+/// one and the next row whose text starts with `PROBE` closes it; the rows in between
+/// become `PROBE <key> log = <n> rows` and `PROBE <key> log <i> = <class> <tag> <text>`.
+/// Must match `parity/probes.py::log_windows` (and `capture.py`, which keeps the PROBE
+/// rows and puts each window in place of its `PROBE_LOG` line).
+fn log_windows(rows: &[(String, String, String)]) -> Vec<String> {
+	fn close(out: &mut Vec<String>, key: &str, inside: &[String]) {
+		out.push(format!("PROBE {key} log = {} rows", inside.len()));
+		out.extend(inside.iter().enumerate().map(|(i, r)| format!("PROBE {key} log {} = {r}", i + 1)));
+	}
+	let mut out = Vec::new();
+	let mut window: Option<(String, Vec<String>)> = None;
+	for (class, tag, text) in rows {
+		let text = normalize(text);
+		if text.starts_with("PROBE") {
+			if let Some((key, inside)) = window.take() {
+				close(&mut out, &key, &inside);
+			}
+			match text.strip_prefix(LOG_START) {
+				Some(key) => window = Some((key.to_string(), Vec::new())),
+				None => out.push(text),
+			}
+		} else if let Some((_, inside)) = window.as_mut() {
+			inside.push(normalize(&format!("{class} {tag} {text}")));
+		}
+	}
+	if let Some((key, inside)) = window {
+		close(&mut out, &key, &inside);
+	}
+	out
+}
+
 /// Run one (mode, seed) group in our engine; the PROBE lines in order.
 fn run_group(mode: &str, seed: Option<&str>, probes: &[&Probe]) -> Vec<String> {
 	let mut engine = harness::open_install(Path::new(harness::STEAM_DATA_DIR)).expect("open install");
-	let lines = Rc::new(RefCell::new(Vec::new()));
-	let sink = lines.clone();
-	engine.set_log_handler(move |level, message| {
-		if level == LogLevel::Info && message.starts_with("PROBE") {
-			sink.borrow_mut().push(normalize(message));
-		}
-	});
+	// The rows come through the tap; the terminal stays quiet.
+	engine.set_log_handler(|_, _| {});
+	// Every row log.html would get (the original's runner reads the same rows).
+	let rows = Arc::new(Mutex::new(Vec::new()));
+	let sink = rows.clone();
+	html_log::set_tap(Some(Box::new(move |class: html_log::Class, tag: &str, text: &[u8]| {
+		let row = (class.name().to_string(), tag.to_string(), String::from_utf8_lossy(text).into_owned());
+		sink.lock().unwrap().push(row);
+	})));
 	harness::boot_menu(&engine).expect("boot the menu");
 	if mode == "campaign" {
 		let seed = seed.unwrap_or("probe");
@@ -141,8 +180,9 @@ fn run_group(mode: &str, seed: Option<&str>, probes: &[&Probe]) -> Vec<String> {
 		harness::run_frame(&engine, 1000.0 / 60.0).expect("a frame");
 		frames += 1;
 	}
-	let out = lines.borrow().clone();
-	out
+	html_log::set_tap(None);
+	let rows = rows.lock().unwrap();
+	log_windows(&rows)
 }
 
 #[test]

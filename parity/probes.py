@@ -41,6 +41,42 @@ def combined_source(probes: list[Probe]) -> str:
     return "".join(out)
 
 
+LOG_START = "PROBE_LOG "
+
+
+def normalize(text: str) -> str:
+    """As log rows are compared: whitespace runs collapsed, trimmed."""
+    return " ".join(text.split())
+
+
+def log_windows(rows: list[tuple[str, str, str]]) -> list[list[str]]:
+    """The log windows in rows ((class, tag, text) in order), each as its PROBE lines.
+
+    A row `PROBE_LOG <key>` opens a window; the next row whose text starts with `PROBE`
+    closes it. The rows in between, whatever logged them, become
+    `PROBE <key> log = <n> rows` and `PROBE <key> log <i> = <class> <tag> <text>`, so the
+    count, the order and every row must match. Mirrored by bb-engine/tests/parity.rs."""
+    windows, key, inside = [], None, []
+
+    def close():
+        windows.append([f"PROBE {key} log = {len(inside)} rows"]
+                       + [f"PROBE {key} log {i} = {r}" for i, r in enumerate(inside, 1)])
+
+    for cls, tag, text in rows:
+        text = normalize(text)
+        if text.startswith("PROBE"):
+            if key is not None:
+                close()
+                key = None
+            if text.startswith(LOG_START):
+                key, inside = text[len(LOG_START):], []
+        elif key is not None:
+            inside.append(normalize(f"{cls} {tag} {text}"))
+    if key is not None:
+        close()
+    return windows
+
+
 def split_sections(lines: list[str]) -> dict[str, list[str]]:
     sections, current = {}, None
     for line in lines:

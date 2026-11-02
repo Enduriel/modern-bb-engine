@@ -24,6 +24,19 @@ pub use writer::HtmlLog;
 
 static LOG: Mutex<Option<HtmlLog>> = Mutex::new(None);
 
+/// What [`set_tap`] takes: each row's class, tag and text as the page shows it.
+pub type Tap = Box<dyn Fn(Class, &str, &[u8]) + Send>;
+
+static TAP: Mutex<Option<Tap>> = Mutex::new(None);
+
+/// Also hand every row [`line`] writes (the scripts' log functions and the engine's
+/// lines) to `tap`, whether a log is open or not, with its text as the page shows it (a
+/// newline as `<br>`). For tests and tools that compare what is logged (the parity
+/// suite's log windows); `None` removes it.
+pub fn set_tap(tap: Option<Tap>) {
+	*TAP.lock().unwrap_or_else(|e| e.into_inner()) = tap;
+}
+
 fn with_log(f: impl FnOnce(&mut HtmlLog)) {
 	let mut log = LOG.lock().unwrap_or_else(|e| e.into_inner());
 	if let Some(log) = log.as_mut() {
@@ -63,6 +76,9 @@ pub fn is_open() -> bool {
 /// Write a row: `tag` is who logged it (the original's: `SQ` for the scripts' log
 /// functions, `Script` for the script system, `UI`, `Core`, …).
 pub fn line(class: Class, tag: &str, text: impl AsRef<[u8]>) {
+	if let Some(tap) = TAP.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+		tap(class, tag, &format::with_breaks(text.as_ref()));
+	}
 	with_log(|log| {
 		let _ = log.write(&format::row(class, &now(), tag, text.as_ref()));
 	});

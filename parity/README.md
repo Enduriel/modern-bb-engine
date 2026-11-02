@@ -57,6 +57,19 @@ Keep the output comparable:
 - Some code crashes the original instead of raising an error, which loses the whole
   launch. Compiling `base++` does (ours reports a compile error).
 
+To compare what gets logged, open a log window: log `PROBE_LOG <key>`, and every row
+logged after it up to the next `PROBE` line (by the scripts or the engine, any tag or
+level) is compared, in count and order, as `PROBE <key> log = <n> rows` and
+`PROBE <key> log <i> = <class> <tag> <text>`. A window with no rows checks that nothing
+is logged. `capture.py` reads the window from the original's `log.html` (the runner
+prints only some rows); ours come from `html_log::set_tap`. An uncaught script error's
+row isn't compared this way. For example:
+
+```squirrel
+::logInfo("PROBE_LOG unit add again");
+p("unit add again", @() e.addSprite("bb_probe_dup").Saturation);
+```
+
 A probe that has to watch the game over time sets `::BbProbe.DeferDone = true` and
 calls `::BbProbe.done()` from a scheduled event, as with the probe harness; the
 runner here then runs frames until it does. Only a group's last probe can defer.
