@@ -199,12 +199,14 @@ see [docs/modding.md](docs/modding.md).
 
 ## Building from source
 
-The engine is a Rust workspace on a pinned nightly toolchain (`rust-toolchain.toml`;
-`rustup` installs it on the first build). It also compiles C and C++, so it needs a C++
-compiler, CMake, Ninja and LLVM's libclang on top of Rust. On Windows those don't come
-with Rust: [docs/building.md](docs/building.md) walks through installing and checking
-each one, and lists the usual build errors. The Squirrel VM is a submodule, so clone
-with its submodules:
+**Follow [docs/building.md](docs/building.md).** It lists what to install on Windows,
+Linux and macOS, how to check each tool, and the usual build errors and their fixes.
+
+In short: the engine is a Rust workspace on a pinned nightly toolchain
+(`rust-toolchain.toml`; `rustup` installs it on the first build). It also compiles C and
+C++, so besides Rust it needs a C++ compiler, CMake, Ninja and LLVM's libclang (on
+Linux, also `pkg-config` and ALSA's headers). The Squirrel VM is a submodule, so clone
+with its submodules. With the tools installed:
 
 ```bash
 git clone --recurse-submodules https://github.com/Enduriel/modern-bb-engine.git
