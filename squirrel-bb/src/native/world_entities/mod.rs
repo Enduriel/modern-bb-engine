@@ -847,7 +847,7 @@ impl WorldEntities {
 			})
 		};
 		// addSprite(name): a new sprite on top of the others; a name already there gets
-		// that sprite back (the original logs that it already exists, 0x4a7dc0).
+		// that sprite back, with the original's warning (0x4a7dc0, `sprite_slots::warn_exists`).
 		let add_sprite = {
 			let m = self.machine.clone();
 			vm.make_closure(move |vm: &SQVM, name: String| -> Option<SqStrongRef> {

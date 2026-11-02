@@ -1508,13 +1508,14 @@ impl TacticalEntities {
 
 /// `addSprite(name)` (`first`: `insertSprite`) on the calling unit, as the original's
 /// entity base class (`0x4a7dc0`, `0x4a7a60`): a new sprite on top of the others, or
-/// below them all; a name the unit has gets that sprite back (the original logs that it
-/// already exists).
+/// below them all; a name the unit has gets that sprite back, with the original's
+/// warning (`sprite_slots::warn_exists`).
 fn new_sprite(m: &Rc<RefCell<TacticalMachine>>, vm: &SQVM, name: String, first: bool) -> Option<SqStrongRef> {
 	let (class, owner) = {
 		let machine = m.borrow();
 		let idx = machine.by_identity.get(&vm.this_identity()).copied();
 		if let Some(there) = idx.and_then(|i| machine.units[i].sprites.get(&name)) {
+			crate::native::sprite_slots::warn_exists(&name, first);
 			return Some(there.clone());
 		}
 		(machine.sprite_class.clone()?, idx.map(|i| machine.owner(i)))

@@ -63,7 +63,8 @@ level) is compared, in count and order, as `PROBE <key> log = <n> rows` and
 `PROBE <key> log <i> = <class> <tag> <text>`. A window with no rows checks that nothing
 is logged. `capture.py` reads the window from the original's `log.html` (the runner
 prints only some rows); ours come from `html_log::set_tap`. An uncaught script error's
-row isn't compared this way. For example:
+row isn't compared this way. `campaign/sprites` uses windows for the original's
+`Entity` warning on a sprite name added twice:
 
 ```squirrel
 ::logInfo("PROBE_LOG unit add again");

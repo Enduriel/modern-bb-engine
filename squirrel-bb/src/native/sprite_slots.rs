@@ -6,6 +6,16 @@ use std::rc::Rc;
 
 use squirrel::SqStrongRef;
 
+use crate::html_log::{self, Class};
+
+/// What the original logs when `addSprite` (`first`: `insertSprite`) is given a name the
+/// entity already has (probed 2026-11-02): a warning tagged `Entity`; the call then hands
+/// back the sprite already there.
+pub(crate) fn warn_exists(name: &str, first: bool) {
+	let verb = if first { "insert" } else { "add" };
+	html_log::engine(Class::Warning, "Entity", &format!("Could not {verb} Sprite with ID \"{name}\", because it already exists."));
+}
+
 /// Named handles in insertion order. Entities have a handful of sprites, so lookup
 /// is a linear scan. A name is shared with the scenes a renderer reads (see
 /// `crate::scene`), which then copy no text.

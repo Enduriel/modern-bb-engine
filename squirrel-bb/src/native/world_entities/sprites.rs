@@ -1,7 +1,7 @@
 //! An entity's named sprites (the original's entity base class, disassembled
 //! 2026-10-14): `addSprite` puts a new one on top and `insertSprite` (`0x4a7a60`) below
-//! the others; either hands back the sprite already there for a name it has (and the
-//! original logs it). `removeSprite` (`0x4a8550`) drops one, keeping the others' order,
+//! the others; either hands back the sprite already there for a name it has, with the
+//! original's warning (`sprite_slots::warn_exists`). `removeSprite` (`0x4a8550`) drops one, keeping the others' order,
 //! and does nothing for a name it doesn't have.
 //!
 //! How they draw: `setSpriteOffset`/`getSpriteOffset`, `setSpriteScaling` and
@@ -40,6 +40,7 @@ pub(super) fn add(m: &Machine, vm: &SQVM, name: String, first: bool) -> Option<S
 		let machine = m.borrow();
 		let idx = machine.by_identity.get(&vm.this_identity()).copied();
 		if let Some(there) = idx.and_then(|i| machine.entities[i].sprites.get(&name)) {
+			crate::native::sprite_slots::warn_exists(&name, first);
 			return Some(there.clone());
 		}
 		(machine.sprite_class.clone()?, idx.map(|i| machine.owner(i)))
