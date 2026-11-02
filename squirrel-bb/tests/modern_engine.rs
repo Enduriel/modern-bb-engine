@@ -1,5 +1,5 @@
-//! `ModernEngine`: the root table mods detect this engine by, and its `registerFont`
-//! (`docs/modding.md`).
+//! `ModernEngine`: the root table mods detect this engine by, and its `registerFont`; and
+//! `mod_modern_engine`, the mod the engine registers with Modern Hooks (`docs/modding.md`).
 
 use std::collections::HashMap;
 
@@ -44,14 +44,14 @@ fn mods_detect_the_engine_and_register_fonts_in_load_order() {
 	engine
 		.run_script(
 			r#"
-			::found <- ("ModernEngine" in ::getroottable()) ? "yes " + ::ModernEngine.Version : "no";
+			::found <- ("ModernEngine" in ::getroottable()) ? "yes" : "no";
 			::family <- ::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf");
 			::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf", { For = ["cinzel_bold_20", "cinzel_bold_100"], Scripts = "Han", Priority = 2 });
 			"#,
 			"mod",
 		)
 		.expect("registered");
-	assert_eq!(root_string(&engine, "found").as_deref(), Some("yes 4"));
+	assert_eq!(root_string(&engine, "found").as_deref(), Some("yes"));
 	assert_eq!(root_string(&engine, "family").as_deref(), Some("BB Test Han Serif"));
 	let fonts = engine.font_registrations(0);
 	assert_eq!(fonts.len(), 2);
@@ -95,4 +95,64 @@ fn mistakes_throw_with_a_reason() {
 		.run_script(r#"::ModernEngine.registerFont("gfx/mod_cn/fonts/han.otf", { For = ["FreeUniversal-Regular", "cinzel_20"] });"#, "mod")
 		.expect("a UI family is a font it can stand in for");
 	assert_eq!(engine.font_registrations(0)[0].ui_families(), ["FreeUniversal-Regular", "Cinzel-Regular"]);
+}
+
+/// No version on the table: mods compare the engine's version through Modern Hooks.
+#[test]
+fn the_table_has_no_version() {
+	let engine = engine();
+	engine.run_script(r#"::has <- ("Version" in ::ModernEngine) ? "yes" : "no";"#, "mod").expect("ran");
+	assert_eq!(root_string(&engine, "has").as_deref(), Some("no"));
+}
+
+const REGISTRATION: &str = "scripts/!mods_preload/mod_modern_engine";
+
+/// The engine's own preload script is a file of `scripts/!mods_preload/`, listed by every
+/// sweep that covers it (preload.nut's of `scripts/`), and only those.
+#[test]
+fn the_registration_script_is_listed_in_mods_preload() {
+	let engine = engine();
+	engine
+		.run_script(
+			r#"
+			local listed = function(dir) {
+				local files = ::IO.enumerateFiles(dir);
+				return files == null ? "null" : files.reduce(@(a, b) a + "," + b);
+			};
+			::scripts <- listed("scripts/");
+			::preload <- listed("scripts/!mods_preload");
+			::dlc <- listed("scripts/dlc/");
+			::hash <- ::IO.scriptHashByFilename("scripts/!mods_preload/mod_modern_engine") != null ? "yes" : "no";
+			"#,
+			"mod",
+		)
+		.expect("ran");
+	assert_eq!(root_string(&engine, "scripts").as_deref(), Some(REGISTRATION));
+	assert_eq!(root_string(&engine, "preload").as_deref(), Some(REGISTRATION));
+	assert_eq!(root_string(&engine, "dlc").as_deref(), Some("null"), "a folder it isn't in stays missing");
+	assert_eq!(root_string(&engine, "hash").as_deref(), Some("yes"), "an existing script");
+}
+
+/// It registers `mod_modern_engine` with Modern Hooks, at the engine's release version,
+/// when Modern Hooks is there, and does nothing without it.
+#[test]
+fn the_registration_script_registers_with_modern_hooks() {
+	let engine = engine();
+	engine.include(REGISTRATION).expect("runs without Modern Hooks");
+	let engine = self::engine();
+	engine
+		.run_script(
+			r#"
+			::Hooks <- {
+				Mods = {},
+				hasMod = function(id) { return id in this.Mods; },
+				register = function(id, version, name) { this.Mods[id] <- version + " " + name; }
+			};
+			"#,
+			"modern hooks",
+		)
+		.expect("a stand-in for Modern Hooks");
+	engine.include(REGISTRATION).expect("registers");
+	engine.run_script(r#"::registered <- ::Hooks.Mods.mod_modern_engine;"#, "mod").expect("registered");
+	assert_eq!(root_string(&engine, "registered"), Some(format!("{} Modern Engine", env!("CARGO_PKG_VERSION"))));
 }

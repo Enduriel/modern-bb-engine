@@ -221,18 +221,18 @@ fn procedural_images(game: &mut Game, gpu: &Gpu, target: &RenderTarget) -> Resul
 }
 
 /// Mods detect this engine by `::ModernEngine` in Squirrel and `window.ModernEngine` in
-/// the page, both with the same version.
+/// the page, neither with a version (mods compare `mod_modern_engine`'s, through Modern
+/// Hooks).
 fn modern_engine_is_detectable(game: &Game) -> Result<(), String> {
-	let expected = squirrel_bb::modern_engine::VERSION;
-	let sq = script_string(game, "::ModernEngine.Version")?;
+	let sq = script_string(game, "(\"ModernEngine\" in ::getroottable()) ? (\"Version\" in ::ModernEngine).tostring() : \"absent\"")?;
 	let js = game
 		.front()
 		.session()
-		.eval("typeof window.ModernEngine === 'object' ? window.ModernEngine.Version : null")?;
-	if sq != expected.to_string() || js.as_i64() != Some(expected) {
-		return Err(format!("ModernEngine.Version: {sq} in Squirrel, {js:?} in the page, expected {expected}"));
+		.eval("typeof window.ModernEngine === 'object' ? String('Version' in window.ModernEngine) : 'absent'")?;
+	if sq != "false" || js.as_str() != Some("false") {
+		return Err(format!("ModernEngine (has a Version?): {sq} in Squirrel, {js:?} in the page, expected false in both"));
 	}
-	println!("  ModernEngine.Version {expected} in Squirrel and the page");
+	println!("  ModernEngine in Squirrel and the page, without a version");
 	Ok(())
 }
 

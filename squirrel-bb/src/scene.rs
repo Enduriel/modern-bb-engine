@@ -75,7 +75,7 @@ pub enum PortraitKind {
 	Tactical,
 	/// `worldentity(...)`: a world entity (a party, a location, a settlement). The
 	/// original has no such handler; ours is a deliberate divergence
-	/// (`ModernEngine.Version` 3).
+	/// (since 0.2.0, `docs/modding.md`).
 	World,
 }
 

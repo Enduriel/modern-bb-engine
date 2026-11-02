@@ -31,12 +31,17 @@ pub(crate) fn include<S: ScriptSource>(
 		return Ok(());
 	}
 
-	let caches_compiles = state.borrow().source.caches_compiles();
-	let script = state
-		.borrow()
-		.source
-		.load_for(&norm, &|| compile_context(vm))
-		.ok_or_else(|| ScriptError::NotFound(norm.clone()))?;
+	// The engine's own scripts aren't the source's to cache.
+	let ours = crate::engine_scripts::load(&norm);
+	let caches_compiles = ours.is_none() && state.borrow().source.caches_compiles();
+	let script = match ours {
+		Some(script) => script,
+		None => state
+			.borrow()
+			.source
+			.load_for(&norm, &|| compile_context(vm))
+			.ok_or_else(|| ScriptError::NotFound(norm.clone()))?,
+	};
 
 	{
 		let mut st = state.borrow_mut();

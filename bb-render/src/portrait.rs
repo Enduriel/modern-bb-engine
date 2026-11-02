@@ -15,7 +15,7 @@
 //!
 //! A world entity's (`worldentity(rand,id)`, which `world_entity.getImagePath()`
 //! returns; the original has no such handler, so these rules are ours,
-//! `ModernEngine.Version` 3): the entity as the world map shows it at zoom 1, cut out.
+//! since 0.2.0): the entity as the world map shows it at zoom 1, cut out.
 //! - Drawn: its sprites that are visible, have a brush, are drawn into portraits
 //!   (`setSpriteRenderToTexture`) and aren't transparent (`Alpha` 0: a camp's fire by
 //!   day, the player's zoomed-out banner). Left out: those that keep their screen size

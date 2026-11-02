@@ -1,5 +1,6 @@
 //! The `IO` table: the class-name hash registry (`scriptFilenameByHash` /
-//! `scriptHashByFilename`) and `enumerateFiles`, over the module system's state.
+//! `scriptHashByFilename`) and `enumerateFiles`, over the module system's state and the
+//! engine's own scripts (`engine_scripts`).
 
 use squirrel::{SQVM, SqArray, SqStrongRef, SqTable};
 
@@ -26,6 +27,7 @@ pub(crate) fn install<S: ScriptSource + 'static>(vm: &mut SQVM, state: &SharedSt
 				return None;
 			}
 			let known = state.borrow().prototypes.contains_key(path)
+				|| crate::engine_scripts::has(path)
 				|| state.borrow().source.load(path).is_some();
 			if !known {
 				return None;
@@ -44,8 +46,11 @@ pub(crate) fn install<S: ScriptSource + 'static>(vm: &mut SQVM, state: &SharedSt
 		vm.make_closure(move |vm: &SQVM, prefix: Option<String>| -> Option<SqStrongRef> {
 			// `None` (a missing directory) becomes Squirrel `null`, which
 			// `preload.nut`'s DLC sweep guards against; so does a `null` directory
-			// (probed). Otherwise an array of the files there, without extensions.
-			let paths = state.borrow().source.list_prefix(&prefix?)?;
+			// (probed). Otherwise an array of the files there, without extensions, the
+			// engine's own scripts there included.
+			let prefix = prefix?;
+			let listed = state.borrow().source.list_prefix(&prefix);
+			let paths = crate::engine_scripts::merge_listing(&prefix, listed)?;
 			let mut files = SqArray::new(vm);
 			for path in paths {
 				files.push(path);

@@ -9,7 +9,7 @@
 //!   answers 200 with its fallback image ([`FALLBACK_PNG`]) and logs the warning
 //!   `Failed to load procedural content "procedural/<path>".` (tag `UI`).
 //! - `worldentity(rand,id,hidden…)`: world entity `id`'s portrait. Ours: the original
-//!   has no such handler (`ModernEngine.Version` 3 says this engine has). It finds
+//!   has no such handler (this engine has since 0.2.0, `docs/modding.md`). It finds
 //!   world entities only; for any other id, or one with nothing to draw, the load
 //!   fails as the original's does for every `worldentity` image, logged as the
 //!   `tacticalentity` failure is.

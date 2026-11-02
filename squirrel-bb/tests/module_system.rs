@@ -366,8 +366,10 @@ fn io_enumerate_files_lists_recursively_and_nulls_missing_dirs() {
 		assert(config[0] == "scripts/config/global");
 		assert(config[1] == "scripts/config/world");
 
-		// recursive over the whole tree
-		assert(IO.enumerateFiles("scripts/").len() == 3);
+		// recursive over the whole tree, with the engine's own preload script
+		local all = IO.enumerateFiles("scripts/");
+		assert(all.len() == 4);
+		assert(all[0] == "scripts/!mods_preload/mod_modern_engine");
 
 		// a missing directory yields null (preload's DLC sweep relies on this)
 		assert(IO.enumerateFiles("scripts/dlc/") == null);

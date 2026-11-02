@@ -18,6 +18,7 @@ mod collect;
 pub use collect::Discard;
 mod compile_context;
 mod engine;
+pub mod engine_scripts;
 pub mod enums;
 mod font_file;
 pub mod frame_timing;

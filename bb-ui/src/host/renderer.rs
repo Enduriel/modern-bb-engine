@@ -30,14 +30,12 @@ const SCRIPTS: [(&str, &str); 9] = [
 ];
 
 /// `window.ModernEngine`: what mods' JS detects this engine by, as their Squirrel does by
-/// `::ModernEngine` (`docs/modding.md`). Its `Version` is the Squirrel table's; the
+/// `::ModernEngine` (`docs/modding.md`). It has no version: mods' JS compares the
+/// engine's through Modern Hooks (`Hooks.hasModVersion("mod_modern_engine", ...)`). The
 /// original's page has no such global (none of the game's or the known mods' scripts
 /// define one).
 fn modern_engine_script() -> String {
-	format!(
-		"window.ModernEngine = Object.freeze({{ Version: {} }});",
-		squirrel_bb::modern_engine::VERSION
-	)
+	"window.ModernEngine = Object.freeze({});".to_string()
 }
 
 /// Call `window.<function>(argument)` in `frame`'s context; its string result.
