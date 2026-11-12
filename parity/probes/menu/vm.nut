@@ -28,6 +28,8 @@ p("float div by zero", @() 1.0 / 0);
 p("cmp spaceship 1,2", @() 1 <=> 2);
 p("cmp str a,b", @() "a" < "b");
 p("cmp int float", @() 1 == 1.0);
+p("cmp float literal tofloat", @() 2.6 == "2.6".tofloat());
+p("cmp float literal ge tofloat", @() 2.6 >= "2.6".tofloat());
 p("call non-callable", @() (5)());
 // Not probed: compiling `base++` crashes the original (its 3.0.4 compiler); our 3.2 VM raises a compile error.
 p("typeof null", @() typeof null);
