@@ -1,0 +1,9 @@
+# captured 2026-11-16 from Battle Brothers 1.5.2.3 (vanilla + zzz_bbtales_runner.zip)
+PROBE start = string world 0 virtual 0 calls 0
+PROBE wrapper passing on x2, setSpeedMult 3 = string world 3 virtual 3 calls 0
+PROBE wrapper passing on x2, setVirtualSpeed 1.5 = string world 3 virtual 3 calls 1 arg 1.5
+PROBE wrapper swallowing, setSpeedMult 0.5 = string world 0.5 virtual 0.5 calls 0
+PROBE wrapper raising, setSpeedMult 4 = null (null : 0x00000000)
+PROBE wrapper raising, after = string world 4 virtual 4 calls 0
+PROBE native, setSpeedMult 2 = string world 2 virtual 2 calls 0
+PROBE native, setSpeedMult 1 = string world 1 virtual 1 calls 0
